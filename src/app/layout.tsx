@@ -3,6 +3,8 @@ import { Bebas_Neue } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { SessionProvider } from "@/components/SessionProvider";
+import { HomeRefresh } from "@/components/HomeRefresh";
 
 const bebas = Bebas_Neue({
   weight: "400",
@@ -24,9 +26,12 @@ export default function RootLayout({
   return (
     <html lang="en" className={bebas.variable}>
       <body className="min-h-screen bg-netflix-black font-sans antialiased">
-        <Navbar />
-        <main className="min-h-screen">{children}</main>
-        <Footer />
+        <SessionProvider>
+          <HomeRefresh />
+          <Navbar />
+          <main className="min-h-screen">{children}</main>
+          <Footer />
+        </SessionProvider>
       </body>
     </html>
   );

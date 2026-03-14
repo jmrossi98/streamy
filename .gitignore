@@ -7,6 +7,12 @@ node_modules
 .next
 out
 
+# Prisma / SQLite
+dev.db
+dev.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+
 # Env (do not commit API keys)
 .env
 .env.local

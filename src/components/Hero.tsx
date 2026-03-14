@@ -19,7 +19,7 @@ export function Hero({ featured }: HeroProps) {
         />
         <div className="hero-overlay absolute inset-0" />
       </div>
-      <div className="relative z-10 h-full flex flex-col justify-end px-6 pb-[15%] max-w-[1920px] mx-auto">
+      <div className="relative z-10 h-full flex flex-col justify-end px-6 pb-8 max-w-[1920px] mx-auto">
         <h1 className="font-display text-5xl md:text-7xl lg:text-8xl font-bold text-white drop-shadow-lg max-w-3xl">
           {featured.title}
         </h1>
@@ -28,7 +28,7 @@ export function Hero({ featured }: HeroProps) {
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href={`/watch/${featured.id}`}
+            href={`/watch/${featured.id}/play`}
             className="inline-flex items-center gap-2 px-8 py-3 bg-white text-netflix-black font-semibold rounded hover:bg-white/90 transition-colors"
           >
             <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">

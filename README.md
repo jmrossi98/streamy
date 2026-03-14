@@ -7,23 +7,42 @@ A Netflix-style discovery app built with **Next.js 14** (App Router), **TypeScri
 - **Hero section** with trending featured title
 - **Horizontal rows**: Trending Now + genre rows (Action, Comedy, Drama, Horror, Sci-Fi) from TMDB
 - **Movie detail page** with overview, rating, runtime, genres, and **Where to watch** (JustWatch + provider logos from TMDB)
+- **User accounts**: sign up, sign in, sign out (NextAuth.js + credentials)
+- **My List**: add/remove movies from your watchlist (per-user, stored in DB)
+- **Progress**: save and resume “minutes watched” per movie per user
 - **Navbar** and **footer** (Netflix-style UI)
 - **AWS Amplify**–ready for deployment
 
 ## Setup
 
-### 1. TMDB API key (required)
+### 1. Environment variables
+
+Copy `.env.example` to `.env.local` and set:
+
+- **TMDB_API_KEY** – get a free key at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
+- **DATABASE_URL** – for local dev use `file:./dev.db` (SQLite)
+- **NEXTAUTH_SECRET** – random string (e.g. `openssl rand -base64 32`)
+- **NEXTAUTH_URL** – `http://localhost:3000` for local dev
+
+### 2. Database (required for auth and watchlist)
+
+Requires **Node.js 18+**. From the project root:
+
+```bash
+npm install
+npx prisma migrate deploy
+# or, to create the DB from scratch: npx prisma migrate dev --name init
+```
+
+This creates the SQLite DB and tables (User, WatchlistItem, WatchProgress).
+
+### 3. TMDB API key
 
 1. Sign up at [themoviedb.org](https://www.themoviedb.org/signup).
 2. Go to [Settings → API](https://www.themoviedb.org/settings/api) and request an API key (free).
-3. Copy `.env.example` to `.env.local` and set your key:
+Ensure `TMDB_API_KEY` is set in `.env.local` (see step 1).
 
-```bash
-cp .env.example .env.local
-# Edit .env.local and set TMDB_API_KEY=your_key
-```
-
-### 2. Run locally
+### 4. Run locally
 
 Requires **Node.js 18.17+**.
 
@@ -54,9 +73,8 @@ Use the project path under Windows (e.g. `/mnt/c/Users/.../streamy`) or clone in
 
 3. **Set environment variables**
    - In Amplify: **App settings** → **Environment variables**.
-   - Add:
-     - **Key:** `TMDB_API_KEY`
-     - **Value:** your TMDB API key
+   - Add: `TMDB_API_KEY`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (your app URL).
+   - For production you’ll need a real database: set `DATABASE_URL` to a Postgres URL (e.g. Neon, PlanetScale). Then run `npx prisma migrate deploy` in the build (add to `amplify.yml` preBuild if needed).
    - Save and **Redeploy** the app.
 
 4. **Deploy**

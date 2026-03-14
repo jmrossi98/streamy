@@ -78,3 +78,9 @@ body {
 .navbar-scrolled {
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.9), transparent);
 }
+
+/* Dark select dropdown (e.g. season picker) */
+select option {
+  background: var(--netflix-black);
+  color: #fff;
+}

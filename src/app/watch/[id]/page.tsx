@@ -1,8 +1,12 @@
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import type { WatchProviderItem } from "@/lib/tmdb";
 import { getMovieById } from "@/lib/tmdb";
+import { WatchlistButton } from "@/components/WatchlistButton";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -58,7 +62,15 @@ function ProviderLogos({
 
 export default async function WatchPage({ params }: Props) {
   const { id } = await params;
-  const movie = await getMovieById(id);
+  const session = await getServerSession(authOptions);
+  const [movie, progressRow] = await Promise.all([
+    getMovieById(id),
+    session?.user?.id
+      ? prisma.watchProgress.findUnique({
+          where: { userId_movieId: { userId: session.user.id, movieId: id } },
+        })
+      : null,
+  ]);
   if (!movie) notFound();
 
   const hasProviders =
@@ -66,34 +78,49 @@ export default async function WatchPage({ params }: Props) {
     (movie.rent?.length ?? 0) > 0 ||
     (movie.buy?.length ?? 0) > 0;
 
+  const progressSeconds = progressRow?.progressSeconds ?? 0;
+  const hasProgress = progressSeconds > 0;
+
   return (
     <div className="min-h-screen bg-netflix-black">
-      <div className="relative h-[60vh] min-h-[400px]">
+      <div className="relative min-h-[400px] h-[60vh] w-full">
         <Image
           src={movie.backdrop}
           alt=""
           fill
           className="object-cover"
-          priority
           sizes="100vw"
+          priority
         />
         <div className="hero-overlay absolute inset-0" />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Link
-            href="/"
-            className="w-20 h-20 rounded-full bg-white/90 flex items-center justify-center text-netflix-black hover:bg-white transition-colors shadow-xl"
-          >
-            <svg className="w-10 h-10 ml-1" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-          </Link>
+        <div className="relative z-10 h-full min-h-[400px] flex flex-col justify-end px-6 pb-8 max-w-[1920px] mx-auto">
+          <h1 className="font-display text-4xl md:text-6xl font-bold text-white drop-shadow-lg max-w-3xl">
+            {movie.title}
+          </h1>
+          <p className="mt-4 text-lg text-white/90 max-w-xl line-clamp-3 drop-shadow">
+            {movie.overview}
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href={`/watch/${id}/play`}
+              className="inline-flex items-center gap-2 px-8 py-3 bg-white text-netflix-black font-semibold rounded hover:bg-white/90 transition-colors"
+            >
+              <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              {hasProgress ? "Resume" : "Play"}
+            </Link>
+            <WatchlistButton movieId={movie.id} />
+          </div>
+          <div className="mt-4 flex items-center gap-4 text-sm text-white/80">
+            <span className="font-medium text-green-400">{movie.rating} Rating</span>
+            {movie.year && <span>{movie.year}</span>}
+            {movie.duration && <span>{movie.duration}</span>}
+          </div>
         </div>
       </div>
       <div className="max-w-4xl mx-auto px-6 py-10">
-        <h1 className="font-display text-4xl md:text-5xl font-bold text-white">
-          {movie.title}
-        </h1>
-        <p className="mt-4 text-white/80 text-lg">{movie.overview}</p>
+        <p className="text-white/80 text-lg">{movie.overview}</p>
         <div className="mt-6 flex flex-wrap gap-4 text-white/70">
           {movie.year && <span>{movie.year}</span>}
           {movie.duration && <span>{movie.duration}</span>}
@@ -111,6 +138,19 @@ export default async function WatchPage({ params }: Props) {
             ))}
           </div>
         )}
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            href={`/watch/${id}/play`}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-white/20 text-white font-semibold rounded border border-white/40 hover:bg-white/30 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            {hasProgress ? `Resume from ${Math.floor(progressSeconds / 60)}m` : "Play"}
+          </Link>
+          <WatchlistButton movieId={movie.id} />
+        </div>
 
         <section className="mt-10 pt-8 border-t border-white/10">
           <h2 className="font-display text-2xl font-bold text-white mb-3">
@@ -135,13 +175,6 @@ export default async function WatchPage({ params }: Props) {
             </div>
           )}
         </section>
-
-        <Link
-          href="/"
-          className="inline-block mt-8 text-netflix-red hover:underline font-medium"
-        >
-          ← Back to Browse
-        </Link>
       </div>
     </div>
   );
