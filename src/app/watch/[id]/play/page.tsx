@@ -1,16 +1,21 @@
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getMovieById } from "@/lib/tmdb";
-import { WatchPlayer } from "@/components/WatchPlayer";
+import { PrefetchBack } from "./PrefetchBack";
+
+const WatchPlayer = dynamic(
+  () => import("@/components/WatchPlayer").then((m) => ({ default: m.WatchPlayer })),
+  { ssr: false }
+);
 
 type Props = { params: Promise<{ id: string }> };
 
 export default async function WatchPlayPage({ params }: Props) {
   const { id } = await params;
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   const [movie, progressRow] = await Promise.all([
     getMovieById(id),
     session?.user?.id
@@ -24,24 +29,25 @@ export default async function WatchPlayPage({ params }: Props) {
   const initialProgressSeconds = progressRow?.progressSeconds ?? 0;
 
   return (
-    <div className="min-h-screen bg-netflix-black">
-      <div className="absolute top-4 left-4 z-20">
-        <Link
-          href={`/watch/${id}`}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded bg-black/60 text-white hover:bg-black/80 transition-colors text-sm"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to info
-        </Link>
-      </div>
+    <div className="min-h-screen bg-netflix-black relative">
+      <PrefetchBack movieId={id} />
+      <Link
+        href={`/watch/${id}`}
+        prefetch
+        className="absolute top-[calc(1rem+env(safe-area-inset-top,0px))] right-[max(1rem,env(safe-area-inset-right))] z-40 min-w-[44px] min-h-[44px] w-11 h-11 rounded-full bg-black/60 text-white hover:bg-black/80 active:bg-black/90 flex items-center justify-center transition-colors touch-manipulation"
+        aria-label="Close and return to info"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </Link>
       <WatchPlayer
         movieId={movie.id}
         movieTitle={movie.title}
         backdropUrl={movie.backdrop}
         initialProgressSeconds={initialProgressSeconds}
         runtimeMinutes={movie.runtime ?? null}
+        autoPlay
       />
     </div>
   );

@@ -12,27 +12,54 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [shows, setShows] = useState<TVShow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(1);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const search = useCallback(async (q: string) => {
+  const search = useCallback(async (q: string, pageNum: number = 1, append: boolean = false) => {
     if (!q.trim()) {
-      setMovies([]);
-      setShows([]);
+      if (!append) {
+        setMovies([]);
+        setShows([]);
+        setHasMore(false);
+      }
       return;
     }
-    setLoading(true);
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(
+        `/api/search?q=${encodeURIComponent(q)}&page=${pageNum}`
+      );
       const data = await res.json();
-      setMovies(Array.isArray(data.movies) ? data.movies : []);
-      setShows(Array.isArray(data.shows) ? data.shows : []);
+      const nextMovies = Array.isArray(data.movies) ? data.movies : [];
+      const nextShows = Array.isArray(data.shows) ? data.shows : [];
+      if (append) {
+        setMovies((prev) => [...prev, ...nextMovies]);
+        setShows((prev) => [...prev, ...nextShows]);
+      } else {
+        setMovies(nextMovies);
+        setShows(nextShows);
+      }
+      setHasMore(!!data.hasMore);
+      setPage(pageNum);
     } catch {
-      setMovies([]);
-      setShows([]);
+      if (!append) {
+        setMovies([]);
+        setShows([]);
+        setHasMore(false);
+      }
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, []);
+
+  const loadMore = useCallback(() => {
+    if (!query.trim() || loadingMore || !hasMore) return;
+    search(query, page + 1, true);
+  }, [query, page, hasMore, loadingMore, search]);
 
   useEffect(() => {
     if (!open) return;
@@ -40,15 +67,18 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
     setQuery("");
     setMovies([]);
     setShows([]);
+    setHasMore(false);
+    setPage(1);
   }, [open]);
 
   useEffect(() => {
     if (!query.trim()) {
       setMovies([]);
       setShows([]);
+      setHasMore(false);
       return;
     }
-    const t = setTimeout(() => search(query), 300);
+    const t = setTimeout(() => search(query, 1, false), 300);
     return () => clearTimeout(t);
   }, [query, search]);
 
@@ -69,7 +99,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
         aria-hidden
         onClick={onClose}
       />
-      <div className="fixed left-1/2 top-24 z-[101] w-full max-w-2xl -translate-x-1/2 px-4">
+      <div className="fixed left-1/2 top-[calc(5rem+env(safe-area-inset-top,0px))] z-[101] w-full max-w-2xl -translate-x-1/2 px-4">
         <div className="rounded-lg bg-netflix-dark border border-white/20 shadow-xl overflow-hidden">
           <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <svg className="w-5 h-5 text-white/60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -81,7 +111,8 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search movies and shows..."
-              className="flex-1 bg-transparent text-white placeholder-white/50 outline-none"
+              className="flex-1 min-w-0 bg-transparent text-base text-white placeholder-white/50 outline-none"
+              autoComplete="off"
             />
           </div>
           <div className="max-h-[70vh] overflow-y-auto">
@@ -92,52 +123,56 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
               <div className="p-6 text-center text-white/60">No results found.</div>
             )}
             {!loading && hasResults && (
-              <ul className="py-2">
-                {movies.map((movie) => (
-                  <li key={`m-${movie.id}`}>
-                    <Link
-                      href={`/watch/${movie.id}`}
-                      onClick={onClose}
-                      className="flex gap-3 p-3 hover:bg-white/10 transition-colors"
+              <>
+                <ul className="py-2">
+                  {movies.map((movie) => (
+                    <li key={`m-${movie.id}`}>
+                      <Link
+                        href={`/watch/${movie.id}`}
+                        onClick={onClose}
+                        className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
+                      >
+                        <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
+                          <Image src={movie.poster} alt="" fill className="object-cover" sizes="64px" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-white font-medium truncate">{movie.title}</p>
+                          <p className="text-white/60 text-sm">{movie.year} · Movie</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                  {shows.map((show) => (
+                    <li key={`s-${show.id}`}>
+                      <Link
+                        href={`/show/${show.id}`}
+                        onClick={onClose}
+                        className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
+                      >
+                        <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
+                          <Image src={show.poster} alt="" fill className="object-cover" sizes="64px" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-white font-medium truncate">{show.name}</p>
+                          <p className="text-white/60 text-sm">{show.year} · TV Show</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                {hasMore && (
+                  <div className="p-3 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={loadMore}
+                      disabled={loadingMore}
+                      className="w-full py-2 rounded bg-white/10 text-white text-sm font-medium hover:bg-white/20 disabled:opacity-50 transition-colors"
                     >
-                      <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
-                        <Image src={movie.poster} alt="" fill className="object-cover" sizes="64px" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-white font-medium truncate">{movie.title}</p>
-                        <p className="text-white/60 text-sm">{movie.year} · Movie</p>
-                      </div>
-                      <span className="text-white/40 self-center">
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-                {shows.map((show) => (
-                  <li key={`s-${show.id}`}>
-                    <Link
-                      href={`/show/${show.id}`}
-                      onClick={onClose}
-                      className="flex gap-3 p-3 hover:bg-white/10 transition-colors"
-                    >
-                      <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
-                        <Image src={show.poster} alt="" fill className="object-cover" sizes="64px" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-white font-medium truncate">{show.name}</p>
-                        <p className="text-white/60 text-sm">{show.year} · TV Show</p>
-                      </div>
-                      <span className="text-white/40 self-center">
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+                      {loadingMore ? "Loading…" : "Load more"}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

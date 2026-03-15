@@ -1,10 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Bebas_Neue } from "next/font/google";
 import "./globals.css";
-import { Navbar } from "@/components/Navbar";
-import { Footer } from "@/components/Footer";
 import { SessionProvider } from "@/components/SessionProvider";
 import { HomeRefresh } from "@/components/HomeRefresh";
+import { NavigationSync } from "@/components/NavigationSync";
+import { LayoutShell } from "@/components/LayoutShell";
 
 const bebas = Bebas_Neue({
   weight: "400",
@@ -16,6 +16,16 @@ const bebas = Bebas_Neue({
 export const metadata: Metadata = {
   title: "Streamy - Watch TV Shows & Movies Online",
   description: "Watch unlimited movies and TV shows. Stream anywhere. Cancel anytime.",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Streamy" },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  viewportFit: "cover",
+  themeColor: "#141414",
 };
 
 export default function RootLayout({
@@ -28,9 +38,8 @@ export default function RootLayout({
       <body className="min-h-screen bg-netflix-black font-sans antialiased">
         <SessionProvider>
           <HomeRefresh />
-          <Navbar />
-          <main className="min-h-screen">{children}</main>
-          <Footer />
+          <NavigationSync />
+          <LayoutShell>{children}</LayoutShell>
         </SessionProvider>
       </body>
     </html>

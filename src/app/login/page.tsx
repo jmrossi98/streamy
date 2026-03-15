@@ -1,16 +1,23 @@
 "use client";
 
-import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { useState, useEffect } from "react";
+import { signIn, useSession } from "next-auth/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
+  const { data: session, status } = useSession();
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (status === "authenticated" && session) {
+      window.location.href = callbackUrl.startsWith("/") ? callbackUrl : "/";
+    }
+  }, [status, session, callbackUrl]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -19,20 +26,30 @@ export default function LoginPage() {
     const res = await signIn("credentials", {
       name,
       redirect: false,
-      callbackUrl,
+      callbackUrl: callbackUrl.startsWith("/") ? callbackUrl : "/",
     });
     setLoading(false);
     if (res?.error) {
       setError("Something went wrong. Try again.");
       return;
     }
-    if (res?.ok) window.location.href = callbackUrl;
+    if (res?.ok) {
+      window.location.href = callbackUrl.startsWith("/") ? callbackUrl : "/";
+    }
+  }
+
+  if (status === "loading" || (status === "authenticated" && session)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 bg-netflix-black">
+        <p className="text-white/70">Redirecting…</p>
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 bg-netflix-black">
       <div className="w-full max-w-md">
-        <Link href="/" className="block text-center mb-8">
+        <Link href="/who-is-watching" className="block text-center mb-8">
           <span className="text-netflix-red text-4xl font-bold tracking-tight">STREAMY</span>
         </Link>
         <div className="bg-netflix-dark/80 rounded-lg p-8 border border-white/10">

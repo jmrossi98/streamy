@@ -6,10 +6,14 @@
     "node": ">=18.17.0"
   },
   "scripts": {
-    "dev": "prisma generate && prisma migrate deploy && npx next dev",
+    "dev": "prisma generate && prisma migrate deploy && next dev --turbo",
+    "dev:turbo": "next dev --turbo",
+    "dev:webpack": "next dev",
     "build": "prisma generate && npx next build",
-    "start": "npx next start",
+    "start": "npm run build && npx next start",
+    "start:watch": "nodemon --watch src --watch prisma --watch next.config.mjs --watch tailwind.config.* --watch postcss.config.* --ext ts,tsx,js,mjs,cjs,json,prisma --ignore node_modules --ignore .next --exec \"npm run build && npx next start\"",
     "lint": "npx next lint",
+    "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -27,6 +31,7 @@
     "eslint": "^8",
     "eslint-config-next": "14.2.18",
     "postcss": "^8.4.49",
+    "nodemon": "^3.1.0",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.15",
     "typescript": "^5"

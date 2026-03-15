@@ -24,19 +24,19 @@ const footerLinks = {
 export function Footer() {
   return (
     <footer className="bg-netflix-black border-t border-white/10 mt-16">
-      <div className="max-w-6xl mx-auto px-6 py-12">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8">
           {Object.entries(footerLinks).map(([heading, links]) => (
             <div key={heading}>
               <h3 className="text-white/60 text-sm font-medium uppercase tracking-wider mb-4">
                 {heading}
               </h3>
-              <ul className="space-y-2">
+              <ul className="space-y-1">
                 {links.map((link) => (
                   <li key={link.label}>
                     <Link
                       href={link.href}
-                      className="text-white/70 text-sm hover:underline"
+                      className="inline-block text-white/70 text-sm hover:underline py-2 min-h-[44px] flex items-center touch-manipulation"
                     >
                       {link.label}
                     </Link>

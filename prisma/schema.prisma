@@ -26,6 +26,7 @@ model WatchlistItem {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, movieId])
+  @@index([userId])
 }
 
 model WatchlistShowItem {
@@ -36,6 +37,7 @@ model WatchlistShowItem {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, showId])
+  @@index([userId])
 }
 
 model WatchProgress {
@@ -47,6 +49,7 @@ model WatchProgress {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, movieId])
+  @@index([userId, updatedAt])
 }
 
 model EpisodeProgress {
@@ -60,4 +63,5 @@ model EpisodeProgress {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, showId, seasonNumber, episodeNumber])
+  @@index([userId, updatedAt])
 }

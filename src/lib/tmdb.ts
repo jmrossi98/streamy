@@ -1,7 +1,29 @@
 /**
  * TMDB API client (server-side only). Set TMDB_API_KEY in env.
  * @see https://developer.themoviedb.org/reference
+ * Uses in-memory L1 cache (24h) + Next.js unstable_cache (24h) to avoid re-hitting the API.
+ * In development (npm run dev) uses mock responses; in production uses the real API.
  */
+
+import { cache } from "react";
+import { unstable_cache } from "next/cache";
+import * as mock from "./tmdb-mock";
+
+const USE_MOCK = process.env.NODE_ENV === "development";
+
+const ONE_DAY_SEC = 86400;
+const ONE_DAY_MS = ONE_DAY_SEC * 1000;
+
+const memoryCache = new Map<string, { value: unknown; expires: number }>();
+
+async function withMemoryCache<T>(keyParts: string[], ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const k = keyParts.join(":");
+  const entry = memoryCache.get(k);
+  if (entry && entry.expires > Date.now()) return entry.value as T;
+  const value = await fn();
+  memoryCache.set(k, { value, expires: Date.now() + ttlMs });
+  return value;
+}
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMAGE_BASE = "https://image.tmdb.org/t/p";
@@ -60,7 +82,7 @@ async function fetchTmdb<T>(path: string, params: Record<string, string> = {}): 
   url.searchParams.set("language", "en-US");
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-  const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
+  const res = await fetch(url.toString(), { next: { revalidate: ONE_DAY_SEC } });
   if (!res.ok) throw new Error(`TMDB API error: ${res.status}`);
   return res.json();
 }
@@ -91,43 +113,88 @@ function toMovie(r: TmdbMovieResult, genres: TmdbGenre[]): Movie {
   };
 }
 
-let genresCache: TmdbGenre[] | null = null;
+const CACHE_REVALIDATE = ONE_DAY_SEC; // 24 hours
 
-export async function getGenres(): Promise<TmdbGenre[]> {
-  if (genresCache) return genresCache;
+async function getGenresUncached(): Promise<TmdbGenre[]> {
   const data = await fetchTmdb<{ genres: TmdbGenre[] }>("genre/movie/list");
-  genresCache = data.genres;
   return data.genres;
 }
 
+export async function getGenres(): Promise<TmdbGenre[]> {
+  if (USE_MOCK) return mock.mockGetGenres();
+  return withMemoryCache(
+    ["tmdb-genres"],
+    ONE_DAY_MS,
+    () => unstable_cache(getGenresUncached, ["tmdb-genres"], { revalidate: CACHE_REVALIDATE })()
+  );
+}
+
 export async function getTrending(limit = 10): Promise<Movie[]> {
-  const [data, genres] = await Promise.all([
-    fetchTmdb<{ results: TmdbMovieResult[] }>("trending/movie/week"),
-    getGenres(),
-  ]);
-  return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+  return withMemoryCache(
+    ["tmdb-trending", String(limit)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbMovieResult[] }>("trending/movie/week"),
+            getGenresUncached(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+        },
+        ["tmdb-trending", String(limit)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
 }
 
 export async function getDiscoverByGenre(genreId: number, limit = 12): Promise<Movie[]> {
-  const [data, genres] = await Promise.all([
-    fetchTmdb<{ results: TmdbMovieResult[] }>("discover/movie", {
-      with_genres: String(genreId),
-      sort_by: "popularity.desc",
-    }),
-    getGenres(),
-  ]);
-  return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+  if (USE_MOCK) return mock.mockGetDiscoverByGenre(genreId, limit);
+  return withMemoryCache(
+    ["tmdb-discover-movie", String(genreId), String(limit)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbMovieResult[] }>("discover/movie", {
+              with_genres: String(genreId),
+              sort_by: "popularity.desc",
+            }),
+            getGenresUncached(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+        },
+        ["tmdb-discover-movie", String(genreId), String(limit)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
 }
 
-export async function searchMovies(query: string, limit = 12): Promise<Movie[]> {
-  if (!query.trim()) return [];
-  const [data, genres] = await Promise.all([
-    fetchTmdb<{ results: TmdbMovieResult[] }>("search/movie", {
-      query: query.trim(),
-    }),
-    getGenres(),
-  ]);
-  return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+const SEARCH_CACHE_REVALIDATE = 3600; // 1 hour for search
+
+export async function searchMovies(query: string, limit = 12, page = 1): Promise<Movie[]> {
+  const q = query.trim();
+  if (!q) return [];
+  return withMemoryCache(
+    ["tmdb-search-movies", q, String(limit), String(page)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbMovieResult[] }>("search/movie", {
+              query: q,
+              page: String(page),
+            }),
+            getGenres(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+        },
+        ["tmdb-search-movies", q, String(limit), String(page)],
+        { revalidate: SEARCH_CACHE_REVALIDATE }
+      )()
+  );
 }
 
 // --- TV types and helpers ---
@@ -172,13 +239,18 @@ type TmdbTVResult = {
 
 type TmdbGenreTV = { id: number; name: string };
 
-let tvGenresCache: TmdbGenreTV[] | null = null;
+async function getTVGenresUncached(): Promise<TmdbGenreTV[]> {
+  const data = await fetchTmdb<{ genres: TmdbGenreTV[] }>("genre/tv/list");
+  return data.genres;
+}
 
 export async function getTVGenres(): Promise<TmdbGenreTV[]> {
-  if (tvGenresCache) return tvGenresCache;
-  const data = await fetchTmdb<{ genres: TmdbGenreTV[] }>("genre/tv/list");
-  tvGenresCache = data.genres;
-  return data.genres;
+  if (USE_MOCK) return mock.mockGetTVGenres();
+  return withMemoryCache(
+    ["tmdb-tv-genres"],
+    ONE_DAY_MS,
+    () => unstable_cache(getTVGenresUncached, ["tmdb-tv-genres"], { revalidate: CACHE_REVALIDATE })()
+  );
 }
 
 function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
@@ -198,7 +270,7 @@ function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
   };
 }
 
-export async function getShowById(id: string): Promise<(TVShow & { numberOfSeasons: number }) | null> {
+async function getShowByIdUncached(id: string): Promise<(TVShow & { numberOfSeasons: number }) | null> {
   const data = await fetchTmdb<{
     id: number;
     name: string;
@@ -225,74 +297,136 @@ export async function getShowById(id: string): Promise<(TVShow & { numberOfSeaso
   };
 }
 
+export const getShowById = cache((id: string) =>
+  USE_MOCK
+    ? mock.mockGetShowById(id)
+    : withMemoryCache(
+        ["tmdb-show", id],
+        ONE_DAY_MS,
+        () => unstable_cache(() => getShowByIdUncached(id), ["tmdb-show", id], { revalidate: CACHE_REVALIDATE })()
+      )
+);
+
 export async function getSeason(showId: string, seasonNumber: number): Promise<TVSeason | null> {
-  const data = await fetchTmdb<{
-    name: string;
-    episodes: {
-      id: number;
-      name: string;
-      overview: string | null;
-      still_path: string | null;
-      season_number: number;
-      episode_number: number;
-      runtime: number | null;
-    }[];
-  }>(`tv/${showId}/season/${seasonNumber}`);
-  if (!data?.episodes) return null;
-  return {
-    seasonNumber,
-    name: data.name || `Season ${seasonNumber}`,
-    episodeCount: data.episodes.length,
-    episodes: data.episodes.map((ep) => ({
-      id: String(ep.id),
-      name: ep.name,
-      overview: ep.overview || "",
-      still: imageUrl(ep.still_path),
-      seasonNumber: ep.season_number,
-      episodeNumber: ep.episode_number,
-      runtime: ep.runtime ?? null,
-    })),
-  };
+  return withMemoryCache(
+    ["tmdb-season", showId, String(seasonNumber)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          try {
+            const data = await fetchTmdb<{
+              name: string;
+              episodes: {
+                id: number;
+                name: string;
+                overview: string | null;
+                still_path: string | null;
+                season_number: number;
+                episode_number: number;
+                runtime: number | null;
+              }[];
+            }>(`tv/${showId}/season/${seasonNumber}`);
+            if (!data?.episodes) return null;
+            return {
+              seasonNumber,
+              name: data.name || `Season ${seasonNumber}`,
+              episodeCount: data.episodes.length,
+              episodes: data.episodes.map((ep) => ({
+                id: String(ep.id),
+                name: ep.name,
+                overview: ep.overview || "",
+                still: imageUrl(ep.still_path),
+                seasonNumber: ep.season_number,
+                episodeNumber: ep.episode_number,
+                runtime: ep.runtime ?? null,
+              })),
+            };
+          } catch (err) {
+            if (err instanceof Error && err.message.includes("404")) return null;
+            throw err;
+          }
+        },
+        ["tmdb-season", showId, String(seasonNumber)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
 }
 
-export async function searchTVShows(query: string, limit = 12): Promise<TVShow[]> {
-  if (!query.trim()) return [];
-  const [data, genres] = await Promise.all([
-    fetchTmdb<{ results: TmdbTVResult[] }>("search/tv", { query: query.trim() }),
-    getTVGenres(),
-  ]);
-  return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+export async function searchTVShows(query: string, limit = 12, page = 1): Promise<TVShow[]> {
+  const q = query.trim();
+  if (!q) return [];
+  if (USE_MOCK) return mock.mockSearchTVShows(q, limit, page);
+  return withMemoryCache(
+    ["tmdb-search-tv", q, String(limit), String(page)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbTVResult[] }>("search/tv", { query: q, page: String(page) }),
+            getTVGenres(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+        },
+        ["tmdb-search-tv", q, String(limit), String(page)],
+        { revalidate: SEARCH_CACHE_REVALIDATE }
+      )()
+  );
 }
 
 export async function getTrendingTV(limit = 10): Promise<TVShow[]> {
-  const [data, genres] = await Promise.all([
-    fetchTmdb<{ results: TmdbTVResult[] }>("trending/tv/week"),
-    getTVGenres(),
-  ]);
-  return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+  if (USE_MOCK) return mock.mockGetTrendingTV(limit);
+  return withMemoryCache(
+    ["tmdb-trending-tv", String(limit)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbTVResult[] }>("trending/tv/week"),
+            getTVGenresUncached(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+        },
+        ["tmdb-trending-tv", String(limit)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
 }
 
 export async function getDiscoverTVByGenre(genreId: number, limit = 12): Promise<TVShow[]> {
-  const [data, genres] = await Promise.all([
-    fetchTmdb<{ results: TmdbTVResult[] }>("discover/tv", {
-      with_genres: String(genreId),
-      sort_by: "popularity.desc",
-    }),
-    getTVGenres(),
-  ]);
-  return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+  return withMemoryCache(
+    ["tmdb-discover-tv", String(genreId), String(limit)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbTVResult[] }>("discover/tv", {
+              with_genres: String(genreId),
+              sort_by: "popularity.desc",
+            }),
+            getTVGenresUncached(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+        },
+        ["tmdb-discover-tv", String(genreId), String(limit)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
 }
 
-export async function getMovieById(id: string): Promise<MovieDetail | null> {
+async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
   const key = getApiKey();
   const [movieRes, providersRes] = await Promise.all([
     fetch(
       `${TMDB_BASE}/movie/${id}?api_key=${key}&language=en-US`,
-      { next: { revalidate: 3600 } }
+      { next: { revalidate: CACHE_REVALIDATE } }
     ),
     fetch(
       `${TMDB_BASE}/movie/${id}/watch/providers?api_key=${key}`,
-      { next: { revalidate: 3600 } }
+      { next: { revalidate: CACHE_REVALIDATE } }
     ),
   ]);
 
@@ -336,3 +470,13 @@ export async function getMovieById(id: string): Promise<MovieDetail | null> {
     buy: buy.length ? buy : undefined,
   };
 }
+
+export const getMovieById = cache((id: string) =>
+  USE_MOCK
+    ? mock.mockGetMovieById(id)
+    : withMemoryCache(
+        ["tmdb-movie", id],
+        ONE_DAY_MS,
+        () => unstable_cache(() => getMovieByIdUncached(id), ["tmdb-movie", id], { revalidate: CACHE_REVALIDATE })()
+      )
+);

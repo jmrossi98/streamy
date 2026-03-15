@@ -1,48 +1,92 @@
-import Image from "next/image";
-import Link from "next/link";
 import { unstable_noStore } from "next/cache";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
-import { MovieRow } from "@/components/MovieRow";
 import { RecentlyWatchedRow } from "@/components/RecentlyWatchedRow";
-import type { MovieProgress } from "@/components/MovieRow";
-import { getTrending, getGenres, getDiscoverByGenre, getMovieById, getShowById, getTrendingTV } from "@/lib/tmdb";
+import { HomeMoviesSection } from "@/components/HomeMoviesSection";
+import { HomePrefetch } from "@/components/HomePrefetch";
+import { getTrending, getGenres, getDiscoverByGenre, getMovieById, getShowById, getTrendingTV, getTVGenres, getDiscoverTVByGenre } from "@/lib/tmdb";
 
 const HERO_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror, Sci-Fi
-const RECENT_LIMIT = 10;
+const RECENT_LIMIT = 3; // cap to keep server fast; progress bars for rows fetched client-side
+const RECENT_SHOWS_LIMIT = 3;
+const TV_CACHE_WARM_GENRES = 0; // skip on home to keep TTFB low; TV tab warms on first visit
+const EPISODE_PROGRESS_TAKE = 30;
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   unstable_noStore();
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
+  if (!session?.user?.id) {
+    redirect("/who-is-watching");
+  }
 
-  const [trending, genres, trendingTV, recentProgress, allProgress, recentEpisodeProgress] = await Promise.all([
-    getTrending(12),
+  // Single wave: all list data + hero genre rows (no second round-trip for genre discover)
+  const [
+    trending,
+    genres,
+    ...heroDiscoverResults
+  ] = await Promise.all([
+    getTrending(10),
     getGenres(),
+    ...HERO_GENRE_IDS.map((id) => getDiscoverByGenre(id, 8)),
     getTrendingTV(10),
-    session?.user?.id
-      ? prisma.watchProgress.findMany({
-          where: { userId: session.user.id },
-          orderBy: { updatedAt: "desc" },
-          take: RECENT_LIMIT,
-        })
-      : Promise.resolve([]),
-    session?.user?.id
-      ? prisma.watchProgress.findMany({
-          where: { userId: session.user.id },
-        })
-      : Promise.resolve([]),
-    session?.user?.id
-      ? prisma.episodeProgress.findMany({
-          where: { userId: session.user.id },
-          orderBy: { updatedAt: "desc" },
-          take: 50,
-        })
-      : Promise.resolve([]),
+    prisma.watchProgress.findMany({
+      where: { userId: session.user.id },
+      orderBy: { updatedAt: "desc" },
+    }),
+    prisma.episodeProgress.findMany({
+      where: { userId: session.user.id },
+      orderBy: { updatedAt: "desc" },
+      take: EPISODE_PROGRESS_TAKE,
+    }),
+    getTVGenres().then((tvGenres) =>
+      Promise.all(tvGenres.slice(0, TV_CACHE_WARM_GENRES).map((g) => getDiscoverTVByGenre(g.id, 8)))
+    ),
   ]);
+
+  const trendingTV = heroDiscoverResults[5] as Awaited<ReturnType<typeof getTrendingTV>>;
+  const allWatchProgress = heroDiscoverResults[6] as Awaited<ReturnType<typeof prisma.watchProgress.findMany>>;
+  const recentEpisodeProgress = heroDiscoverResults[7] as Awaited<ReturnType<typeof prisma.episodeProgress.findMany>>;
+
+  const genreRows = HERO_GENRE_IDS.slice(0, 5).map((id, i) => ({
+    title: genres.find((g) => g.id === id)?.name ?? "Genre",
+    movies: (heroDiscoverResults[i] as Awaited<ReturnType<typeof getDiscoverByGenre>>) ?? [],
+  }));
+
+  const recentProgress = allWatchProgress.slice(0, RECENT_LIMIT);
+  const recentShowIds = Array.from(new Map(recentEpisodeProgress.map((p) => [p.showId, p])).keys()).slice(0, RECENT_SHOWS_LIMIT);
+
+  // Only fetch details for recently-watched strip (3 movies + 3 shows); progress bars for rows = client-side
+  const [movieDetails, ...showDetails] = await Promise.all([
+    Promise.all(recentProgress.map((p) => getMovieById(String(p.movieId)))),
+    ...recentShowIds.map((id) => getShowById(id)),
+  ]);
+  const recentlyWatched = recentProgress
+    .map((p, i) => {
+      const movie = movieDetails[i];
+      if (!movie) return null;
+      return {
+        movie,
+        progressSeconds: p.progressSeconds,
+        runtimeMinutes: movie.runtime ?? null,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null);
+  const recentlyWatchedShows = showDetails.filter(
+    (s): s is NonNullable<Awaited<ReturnType<typeof getShowById>>> => s != null
+  );
+
+  const movieIdsOnPage = new Set([
+    ...trending.map((m) => m.id),
+    ...genreRows.flatMap((r) => r.movies.map((m) => m.id)),
+  ]);
+  const progressList = allWatchProgress
+    .filter((p) => movieIdsOnPage.has(String(p.movieId)))
+    .slice(0, 50)
+    .map((p) => ({ movieId: Number(p.movieId), progressSeconds: p.progressSeconds }));
 
   const featured = trending[0];
   if (!featured) {
@@ -55,105 +99,37 @@ export default async function HomePage() {
     );
   }
 
-  const heroGenres = genres.filter((g) => HERO_GENRE_IDS.includes(g.id));
-  const genreRows = await Promise.all(
-    heroGenres.map(async (genre) => ({
-      title: genre.name,
-      movies: await getDiscoverByGenre(genre.id, 10),
-    }))
+  const hasRecentProgress = recentlyWatched.length > 0 || recentlyWatchedShows.length > 0;
+  const featuredProgressSeconds =
+    allWatchProgress.find((p) => String(p.movieId) === String(featured.id))?.progressSeconds ?? 0;
+
+  const prefetchIds = Array.from(
+    new Set([
+      String(featured.id),
+      ...trending.slice(0, 5).map((m) => String(m.id)),
+      ...(genreRows[0]?.movies.slice(0, 4).map((m) => String(m.id)) ?? []),
+    ])
   );
-
-  let recentlyWatched: { movie: Awaited<ReturnType<typeof getMovieById>>; progressSeconds: number; runtimeMinutes: number | null }[] = [];
-  if (session?.user?.id && recentProgress.length > 0) {
-    const details = await Promise.all(
-      recentProgress.map((p) => getMovieById(p.movieId))
-    );
-    recentlyWatched = recentProgress
-      .map((p, i) => ({
-        movie: details[i],
-        progressSeconds: p.progressSeconds,
-        runtimeMinutes: details[i]?.runtime ?? null,
-      }))
-      .filter((item): item is typeof item & { movie: NonNullable<typeof item.movie> } => item.movie != null);
-  }
-
-  const recentShowIds = [...new Map(recentEpisodeProgress.map((p) => [p.showId, p])).keys()].slice(0, 6);
-  const recentlyWatchedShows = session?.user?.id && recentShowIds.length > 0
-    ? (await Promise.all(recentShowIds.map((id) => getShowById(id)))).filter(Boolean) as Awaited<ReturnType<typeof getShowById>>[]
-    : [];
-
-  const movieIdsOnPage = new Set([
-    ...trending.map((m) => m.id),
-    ...genreRows.flatMap((r) => r.movies.map((m) => m.id)),
-  ]);
-  const progressNeedingRuntime = allProgress.filter((p) => movieIdsOnPage.has(p.movieId));
-  const progressDetails = await Promise.all(
-    progressNeedingRuntime.map((p) => getMovieById(p.movieId))
-  );
-  const progressMap: Record<string, MovieProgress> = {};
-  progressNeedingRuntime.forEach((p, i) => {
-    const detail = progressDetails[i];
-    if (detail)
-      progressMap[p.movieId] = {
-        progressSeconds: p.progressSeconds,
-        runtimeMinutes: detail.runtime ?? null,
-      };
-  });
+  const prefetchShowIds = trendingTV.slice(0, 6).map((s) => String(s.id));
+  const runtimeIds = progressList.map((p) => String(p.movieId));
 
   return (
     <>
-      <Hero featured={featured} />
+      <HomePrefetch movieIds={prefetchIds} showIds={prefetchShowIds} runtimeIds={runtimeIds} />
+      <Hero featured={featured} progressSeconds={featuredProgressSeconds} />
       <div id="movies" className="space-y-2 [&>*:first-child]:pt-0">
-        {session?.user?.id && (
+        {hasRecentProgress && (
           <RecentlyWatchedRow
             items={recentlyWatched}
             showItems={recentlyWatchedShows.map((show) => ({ show }))}
           />
         )}
-        <MovieRow title="Trending Now" movies={trending} progressMap={progressMap} />
-        {trendingTV.length > 0 && (
-          <section className="px-6 pt-2 pb-2">
-            <h2 className="font-display text-2xl md:text-3xl font-bold text-white mb-2">
-              Trending TV
-            </h2>
-            <div className="movie-row">
-              {trendingTV.map((show) => (
-                <Link
-                  key={show.id}
-                  href={`/show/${show.id}`}
-                  className="movie-card block w-[180px] md:w-[240px] rounded overflow-hidden bg-netflix-dark"
-                >
-                  <div className="relative aspect-video w-full">
-                    <Image
-                      src={show.poster}
-                      alt={show.name}
-                      fill
-                      className="object-cover"
-                      sizes="(max-width: 768px) 180px, 240px"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <span className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center text-netflix-black">
-                        <svg className="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </span>
-                    </div>
-                  </div>
-                  <div className="p-2">
-                    <p className="text-white font-medium text-sm truncate">{show.name}</p>
-                    <p className="text-white/60 text-xs">{show.year} · {show.rating}</p>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </section>
-        )}
-        {genreRows.map(
-          (row) =>
-            row.movies.length > 0 && (
-              <MovieRow key={row.title} title={row.title} movies={row.movies} progressMap={progressMap} />
-            )
-        )}
+        <HomeMoviesSection
+          trending={trending}
+          genreRows={genreRows}
+          trendingTV={trendingTV}
+          progressList={progressList}
+        />
       </div>
     </>
   );

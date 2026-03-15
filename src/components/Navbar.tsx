@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { SearchModal } from "./SearchModal";
 
@@ -9,13 +10,25 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/movies", label: "Movies" },
   { href: "/tv", label: "TV Shows" },
+  { href: "/watchlist", label: "My List", authOnly: true },
 ];
 
 export function Navbar() {
+  const pathname = usePathname();
+  const router = useRouter();
   const { data: session, status } = useSession();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+
+  const isSignInScreen =
+    pathname === "/login" || pathname === "/who-is-watching";
+
+  const goHome = () => {
+    if (session) {
+      router.push("/");
+    }
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 50);
@@ -27,100 +40,109 @@ export function Navbar() {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${
         scrolled ? "bg-netflix-black/95 shadow-lg" : "bg-transparent"
       }`}
     >
-      <nav className="flex items-center justify-between px-6 py-4 max-w-[1920px] mx-auto">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
-          <span className="text-netflix-red text-3xl font-bold tracking-tight">
-            STREAMY
-          </span>
-        </Link>
-
-        <div className="hidden md:flex items-center gap-6">
-          {navLinks.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-sm text-white/90 hover:text-white transition-colors"
-            >
-              {link.label}
-            </Link>
-          ))}
-          {session && (
-            <Link
-              href="/watchlist"
-              className="text-sm text-white/90 hover:text-white transition-colors"
-            >
-              My List
-            </Link>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4">
+      <nav className="flex h-16 min-h-[4rem] items-center justify-between px-4 sm:px-6 max-w-[1920px] mx-auto">
+        {session ? (
           <button
             type="button"
-            onClick={() => setSearchOpen(true)}
-            className="p-2 text-white/90 hover:text-white transition-colors"
-            aria-label="Search"
+            onClick={goHome}
+            className="flex items-center gap-2 shrink-0 text-left bg-transparent border-0 p-0 cursor-pointer"
+            aria-label="Home"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+            <span className="text-netflix-red text-3xl font-bold tracking-tight">
+              STREAMY
+            </span>
           </button>
-          <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-          {status === "loading" ? (
-            <span className="w-8 h-8 rounded bg-white/20 animate-pulse" />
-          ) : session ? (
-            <div className="relative">
+        ) : (
+          <Link
+            href="/who-is-watching"
+            className="flex items-center gap-2 shrink-0"
+            aria-label={isSignInScreen ? "Back to Who is watching" : "Home"}
+          >
+            <span className="text-netflix-red text-3xl font-bold tracking-tight">
+              STREAMY
+            </span>
+          </Link>
+        )}
+
+        {!isSignInScreen && session && (
+          <>
+            <div className="hidden md:flex items-center gap-6">
+              {navLinks.map((link) => {
+                if ("authOnly" in link && link.authOnly && !session) return null;
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className="text-sm text-white/90 hover:text-white transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-4">
               <button
                 type="button"
-                className="w-8 h-8 rounded bg-netflix-red flex items-center justify-center text-white text-sm font-medium hover:opacity-90 transition-opacity"
-                onClick={() => setMenuOpen(!menuOpen)}
-                aria-expanded={menuOpen}
-                aria-label="Account menu"
+                onClick={() => setSearchOpen(true)}
+                className="min-w-[44px] min-h-[44px] p-2 flex items-center justify-center text-white/90 hover:text-white active:text-white transition-colors touch-manipulation"
+                aria-label="Search"
               >
-                {initial}
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
               </button>
-              {menuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    aria-hidden
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <div className="absolute right-0 top-full mt-2 w-48 py-2 bg-netflix-dark rounded shadow-xl z-50 border border-white/10">
-                    <div className="px-4 py-2 border-b border-white/10">
-                      <p className="text-white text-sm truncate">{session.user?.name}</p>
-                    </div>
-                    <Link
-                      href="/watchlist"
-                      className="block px-4 py-2 text-sm text-white/90 hover:bg-white/10"
-                      onClick={() => setMenuOpen(false)}
-                    >
-                      My List
-                    </Link>
-                    <button
-                      type="button"
-                      className="w-full text-left px-4 py-2 text-sm text-white/90 hover:bg-white/10"
-                      onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/" }); }}
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                </>
+              <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+              {status === "loading" ? (
+                <span className="w-8 h-8 rounded bg-white/20 animate-pulse" />
+              ) : (
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="min-w-[44px] min-h-[44px] w-10 h-10 rounded bg-netflix-red flex items-center justify-center text-white text-sm font-medium hover:opacity-90 active:opacity-90 transition-opacity touch-manipulation"
+                    onClick={() => setMenuOpen(!menuOpen)}
+                    aria-expanded={menuOpen}
+                    aria-label="Account menu"
+                  >
+                    {initial}
+                  </button>
+                  {menuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        aria-hidden
+                        onClick={() => setMenuOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full mt-2 w-48 py-2 bg-netflix-dark rounded shadow-xl z-50 border border-white/10">
+                        <div className="px-4 py-2 border-b border-white/10">
+                          <p className="text-white text-sm truncate">{session.user?.name}</p>
+                        </div>
+                        <Link
+                          href="/watchlist"
+                          className="block px-4 py-2 text-sm text-white/90 hover:bg-white/10"
+                          onClick={() => setMenuOpen(false)}
+                        >
+                          My List
+                        </Link>
+                        <button
+                          type="button"
+                          className="w-full text-left px-4 py-2 text-sm text-white/90 hover:bg-white/10"
+                          onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/who-is-watching" }); }}
+                        >
+                          Sign out
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               )}
             </div>
-          ) : (
-            <Link
-              href="/login"
-              className="px-4 py-2 bg-netflix-red text-white text-sm font-medium rounded hover:bg-netflix-red/90 transition-colors"
-            >
-              Get started
-            </Link>
-          )}
-        </div>
+          </>
+        )}
       </nav>
     </header>
   );

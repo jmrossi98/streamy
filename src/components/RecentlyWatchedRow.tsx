@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { Movie, TVShow } from "@/lib/tmdb";
+import { ScrollableRow } from "@/components/ScrollableRow";
 
 type MovieItem = { movie: Movie; progressSeconds: number; runtimeMinutes: number | null };
 type ShowItem = { show: TVShow };
@@ -21,22 +22,26 @@ function progressPercent(progressSeconds: number, runtimeMinutes: number | null)
 export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRowProps) {
   const hasAny = items.length > 0 || showItems.length > 0;
 
-  return (
-    <section className="px-6 pb-2 min-h-[4rem]" aria-label="Recently Watched">
-      <h2 className="font-display text-2xl md:text-3xl font-bold text-white mb-2 block">
-        Recently Watched
-      </h2>
-      {!hasAny ? (
+  if (!hasAny) {
+    return (
+      <section className="px-6 pb-2 min-h-[4rem]" aria-label="Recently Watched">
+        <h2 className="font-display text-2xl md:text-3xl font-bold text-white mb-2 block">
+          Recently Watched
+        </h2>
         <p className="text-white/60 text-sm">Start watching to see your progress here.</p>
-      ) : (
-      <div className="movie-row">
-        {items.map(({ movie, progressSeconds, runtimeMinutes }) => {
+      </section>
+    );
+  }
+
+  return (
+    <ScrollableRow title="Recently Watched">
+      {items.map(({ movie, progressSeconds, runtimeMinutes }) => {
           const pct = progressPercent(progressSeconds, runtimeMinutes);
           return (
             <Link
               key={movie.id}
               href={`/watch/${movie.id}`}
-              className="movie-card block w-[180px] md:w-[240px] rounded overflow-hidden bg-netflix-dark"
+              className="movie-card block w-[160px] sm:w-[180px] md:w-[240px] rounded overflow-hidden bg-netflix-dark touch-manipulation"
             >
               <div className="relative aspect-video w-full">
                 <Image
@@ -44,15 +49,9 @@ export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRow
                   alt={movie.title}
                   fill
                   className="object-cover"
-                  sizes="(max-width: 768px) 180px, 240px"
+                  sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
                 />
-                <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <span className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center text-netflix-black">
-                    <svg className="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  </span>
-                </div>
+                <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity" />
                 {progressSeconds > 0 && (
                   <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/30">
                     <div
@@ -73,11 +72,11 @@ export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRow
             </Link>
           );
         })}
-        {showItems.map(({ show }) => (
+      {showItems.map(({ show }) => (
           <Link
             key={show.id}
             href={`/show/${show.id}`}
-            className="movie-card block w-[180px] md:w-[240px] rounded overflow-hidden bg-netflix-dark"
+            className="movie-card block w-[160px] sm:w-[180px] md:w-[240px] rounded overflow-hidden bg-netflix-dark touch-manipulation"
           >
             <div className="relative aspect-video w-full">
               <Image
@@ -85,15 +84,9 @@ export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRow
                 alt={show.name}
                 fill
                 className="object-cover"
-                sizes="(max-width: 768px) 180px, 240px"
+                sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
               />
-              <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                <span className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center text-netflix-black">
-                  <svg className="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </span>
-              </div>
+              <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity" />
             </div>
             <div className="p-2">
               <p className="text-white font-medium text-sm truncate">{show.name}</p>
@@ -101,8 +94,6 @@ export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRow
             </div>
           </Link>
         ))}
-      </div>
-      )}
-    </section>
+    </ScrollableRow>
   );
 }

@@ -1,6 +1,11 @@
+import { cache } from "react";
 import type { NextAuthOptions } from "next-auth";
+import { getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "./db";
+
+/** Cached per request so multiple callers in the same render share one session fetch. */
+export const getSession = cache(() => getServerSession(authOptions));
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -30,7 +35,7 @@ export const authOptions: NextAuthOptions = {
     jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.name = user.name;
+        token.name = user.name ?? undefined;
       }
       return token;
     },

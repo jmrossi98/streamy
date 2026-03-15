@@ -46,12 +46,27 @@ Ensure `TMDB_API_KEY` is set in `.env.local` (see step 1).
 
 Requires **Node.js 18.17+**.
 
+**For development (auto-reload on code change):** use the **dev** server. Leave it running and save files to see updates.
+
 ```bash
 npm install
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Without `TMDB_API_KEY`, the app will show an error.
+
+**Production mode** (`npm run build` then `npm run start`) does **not** auto-rebuild when you edit code; use `npm run dev` while developing.
+
+### Seeing your changes (auto rebuild)
+
+**Leave `npm run dev` running** in a terminal. When you save a file, Next.js will rebuild and the browser will refresh (hot reload). You do **not** need to stop or rerun the command.
+
+- If you **stop** the dev server, you must run `npm run dev` again to see the app.
+- If you use **production mode** (`npm run build` then `npm run start`), changes do **not** auto-rebuild; run `npm run dev` for development.
+- If the browser doesn’t update, try a hard refresh: **Ctrl+Shift+R** (Windows/Linux) or **Cmd+Shift+R** (Mac).
+- If hot reload still doesn’t work with `npm run dev`, try the standard dev server: run `npm run dev:webpack` (same behavior, different bundler).
+- The **first time** you open a route (e.g. `/movies`, `/tv`, `/watch/…/play`), Next.js compiles it, which can take 10–80+ seconds on a slow disk or WSL. Later visits to that route are much faster. TMDB data is cached for 1 hour, so repeat navigations hit the cache instead of the API.
+- If **first-load compile is very slow** (e.g. 30+ seconds per route), try `npm run dev:webpack` instead of `npm run dev`; the webpack dev server can be faster than Turbopack on some setups (e.g. WSL).
 
 ### WSL
 
@@ -96,9 +111,12 @@ No extra Amplify config is required unless you change the build (e.g. different 
 
 ## Scripts
 
-- `npm run dev` – start dev server
+- **`npm run dev`** – **Use this for development.** Starts the dev server (Prisma + Next with Turbopack). Code changes auto-rebuild and the browser updates (hot reload). Do **not** use `npm run start` if you want auto-reload.
+- `npm run dev:turbo` – Next.js with Turbopack only (skip Prisma). Use after migrations when you want faster restarts.
+- `npm run dev:webpack` – Next.js with webpack dev server (hot reload). Use if `npm run dev` doesn’t rebuild on save.
 - `npm run build` – production build
-- `npm run start` – run production server
+- `npm run start` – **production server only** (no auto-reload; run `npm run build` first or use a script that builds then starts)
+- **`npm run start:watch`** – production build + server, and **rebuild + restart on file save** (watches `src/`, Prisma, config). Full build runs on each change; refresh the browser to see updates. Use when you want to test prod mode while editing.
 - `npm run lint` – run ESLint
 
 ## Data and attribution
