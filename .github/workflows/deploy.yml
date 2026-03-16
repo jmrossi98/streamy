@@ -79,9 +79,9 @@ jobs:
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
             export DOCKER_IMAGE=$(echo "${{ env.REGISTRY }}/${{ github.repository }}:latest" | tr '[:upper:]' '[:lower:]')
-            # Login to GHCR if image is private (use a PAT with read:packages in GHCR_PULL_TOKEN secret)
+            # GHCR requires login even for public images. Add repo secret GHCR_PULL_TOKEN (PAT with read:packages).
             if [ -n "${{ secrets.GHCR_PULL_TOKEN }}" ]; then
               echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             fi
             docker pull $DOCKER_IMAGE
-            docker compose -f docker-compose.prod.yml up -d
+            docker-compose -f docker-compose.prod.yml up -d
