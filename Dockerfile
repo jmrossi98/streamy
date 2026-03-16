@@ -58,6 +58,9 @@ COPY --from=builder /app/prisma ./prisma
 # Prisma CLI only for migrate (optional; skip for fastest startup)
 RUN npm install prisma --no-save --ignore-scripts
 
+# So nextjs can run prisma migrate deploy (writes to node_modules/@prisma/engines)
+RUN chown -R nextjs:nodejs /app
+
 USER nextjs
 
 EXPOSE 3000
