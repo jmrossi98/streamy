@@ -12,7 +12,8 @@ ENV NODE_OPTIONS=--max-old-space-size=2048
 # Copy prisma so postinstall (prisma generate) can find prisma/schema.prisma
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
-RUN npm install
+# Retry npm install to handle transient network errors (ECONNRESET) in CI
+RUN for i in 1 2 3; do npm install --no-audit --no-fund && break; sleep 20; done
 
 COPY . .
 

@@ -16,7 +16,7 @@ const navLinks = [
 export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -163,11 +163,8 @@ export function Navbar() {
                 )}
               </div>
 
-              {/* Desktop: profile dropdown only */}
-              {status === "loading" ? (
-                <span className="hidden md:block w-7 h-7 rounded bg-white/20 animate-pulse" />
-              ) : (
-                <div className="relative hidden md:block">
+              {/* Desktop: profile dropdown only (only rendered when session exists, so status is authenticated) */}
+              <div className="relative hidden md:block">
                   <button
                     type="button"
                     className="w-7 h-7 rounded bg-netflix-red flex items-center justify-center text-white text-sm font-medium hover:opacity-90 active:opacity-90 transition-opacity touch-manipulation"
@@ -206,7 +203,6 @@ export function Navbar() {
                     </>
                   )}
                 </div>
-              )}
             </div>
           </>
         )}
