@@ -16,6 +16,8 @@ COPY prisma ./prisma
 RUN for i in 1 2 3; do npm install --no-audit --no-fund && break; sleep 20; done
 
 COPY . .
+# Ensure public exists so runner COPY succeeds (Next.js may not have a public/ in repo)
+RUN mkdir -p public
 
 ARG DATABASE_URL
 ARG TMDB_API_KEY
@@ -30,7 +32,8 @@ ENV NODE_ENV=production
 RUN npx prisma generate && npm run build
 
 # ---- Runner (minimal: standalone, no npm ci) ----
-FROM node:20-alpine AS runner
+# Use Debian slim so we can install libssl1.1 for Prisma engine (Alpine 3.17+ has OpenSSL 3 only)
+FROM node:20-bullseye-slim AS runner
 
 WORKDIR /app
 
@@ -38,8 +41,13 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME="0.0.0.0"
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl1.1 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd --system --uid 1001 nextjs
 
 # Next.js standalone: server + traced deps (includes Prisma client from build)
 COPY --from=builder /app/.next/standalone ./
