@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-# Use BuildKit for cache mounts: DOCKER_BUILDKIT=1
 # ---- Builder ----
 FROM node:18-alpine AS builder
 
@@ -7,8 +5,7 @@ WORKDIR /app
 
 # Deps layer (cache bust only when package files change)
 COPY package.json package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+RUN npm ci
 
 COPY . .
 
