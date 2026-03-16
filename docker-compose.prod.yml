@@ -1,0 +1,21 @@
+# Use this on the server for pull-based deploy (no build).
+# Set DOCKER_IMAGE in .env or when running, e.g.:
+#   DOCKER_IMAGE=ghcr.io/your-username/streamy:latest
+version: '3.8'
+services:
+  app:
+    image: ${DOCKER_IMAGE:-streamy:latest}
+    ports:
+      - "80:3000"
+    restart: always
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-file:./data/dev.db}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
+    volumes:
+      - streamy-data:/app/data
+volumes:
+  streamy-data:

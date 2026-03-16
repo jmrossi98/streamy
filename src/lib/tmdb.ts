@@ -10,13 +10,13 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import * as mock from "./tmdb-mock";
 
-function useRealApiInDev(): boolean {
+function isRealApiEnabledInDev(): boolean {
   if (process.env.TMDB_API_KEY) return true;
   const v = process.env.TMDB_USE_REAL_API?.toLowerCase().trim();
   return v === "true" || v === "1" || v === "yes";
 }
 
-const USE_MOCK = process.env.NODE_ENV === "development" && !useRealApiInDev();
+const USE_MOCK = process.env.NODE_ENV === "development" && !isRealApiEnabledInDev();
 
 const ONE_DAY_SEC = 86400;
 const ONE_DAY_MS = ONE_DAY_SEC * 1000;
