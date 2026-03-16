@@ -44,6 +44,7 @@ ENV HOSTNAME="0.0.0.0"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl1.1 \
     ca-certificates \
+    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 nodejs && \
@@ -58,12 +59,8 @@ COPY --from=builder /app/prisma ./prisma
 # Prisma CLI only for migrate (optional; skip for fastest startup)
 RUN npm install prisma --no-save --ignore-scripts
 
-# So nextjs can run prisma migrate deploy (writes to node_modules/@prisma/engines)
-RUN chown -R nextjs:nodejs /app
-
-USER nextjs
-
+# Don't USER nextjs here: migrate runs as root (needs write to node_modules), then we run app as nextjs
 EXPOSE 3000
 
-# Fast: start only. Run migrations in CI or set RUN_MIGRATE=1 to run on boot.
-CMD ["sh", "-c", "if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && node server.js"]
+# Run migrate as root when RUN_MIGRATE=1, then start app as nextjs (runuser avoids permission errors)
+CMD ["sh", "-c", "if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && exec runuser -u nextjs -- node server.js"]
