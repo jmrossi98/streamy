@@ -9,7 +9,9 @@ ENV NODE_OPTIONS=--max-old-space-size=2048
 # Deps layer (cache bust only when package files change)
 # Use npm install so build works when lock file is missing or out of sync.
 # For reproducible builds: run "npm install" locally, commit package-lock.json, then use "npm ci" here.
+# Copy prisma so postinstall (prisma generate) can find prisma/schema.prisma
 COPY package.json package-lock.json* ./
+COPY prisma ./prisma
 RUN npm install
 
 COPY . .
