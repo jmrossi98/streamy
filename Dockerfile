@@ -4,8 +4,10 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Deps layer (cache bust only when package files change)
+# Use npm install so build works when lock file is missing or out of sync.
+# For reproducible builds: run "npm install" locally, commit package-lock.json, then use "npm ci" here.
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install
 
 COPY . .
 
