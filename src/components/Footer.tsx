@@ -48,7 +48,7 @@ export function Footer() {
         </div>
         <div className="mt-8 pt-8 border-t border-white/10">
           <p className="text-white/50 text-sm">
-            © {new Date().getFullYear()} Streamy. A demo Netflix-style clone. Not affiliated with Netflix.
+            © {new Date().getFullYear()} Streamy
           </p>
         </div>
       </div>

@@ -65,13 +65,13 @@ export function WatchlistButton({ movieId, showId, initialInList, variant = "def
   const circleClass =
     "w-12 h-12 rounded-full bg-white/20 text-white border border-white/40 hover:bg-white/30 flex items-center justify-center disabled:opacity-50 transition-colors";
   const defaultClass =
-    "inline-flex items-center gap-2 px-6 py-3 bg-white/20 text-white font-semibold rounded border border-white/40 hover:bg-white/30 disabled:opacity-50 transition-colors";
+    "inline-flex items-center justify-center gap-2 min-h-[44px] min-w-[140px] sm:min-w-[160px] px-6 py-3 bg-white/20 text-white font-semibold rounded border border-white/40 hover:bg-white/30 disabled:opacity-50 transition-colors";
 
   if (status !== "authenticated") {
     return (
       <Link
         href={`/who-is-watching?callbackUrl=${encodeURIComponent(callbackUrl)}`}
-        className={variant === "circle" ? circleClass : "inline-flex items-center gap-2 px-6 py-3 bg-white/20 text-white font-semibold rounded border border-white/40 hover:bg-white/30 transition-colors"}
+        className={variant === "circle" ? circleClass : "inline-flex items-center justify-center gap-2 min-h-[44px] min-w-[140px] sm:min-w-[160px] px-6 py-3 bg-white/20 text-white font-semibold rounded border border-white/40 hover:bg-white/30 transition-colors"}
       >
         {variant === "circle" ? (
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

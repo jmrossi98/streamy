@@ -57,7 +57,7 @@ export function ScrollableRow({ title, children }: ScrollableRowProps) {
           <button
             type="button"
             onClick={() => scrollByRow(-1)}
-            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 min-w-[44px] min-h-[44px] w-9 h-9 sm:w-9 sm:h-9 rounded-full bg-black/70 text-white/90 hover:bg-black/90 active:bg-black/90 hover:text-white flex items-center justify-center transition-colors shadow-lg border border-white/20 touch-manipulation"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 min-w-[44px] min-h-[44px] w-9 h-9 sm:w-9 sm:h-9 rounded-full bg-black/70 text-white/90 hover:bg-black/90 active:bg-black/90 hover:text-white hidden sm:flex items-center justify-center transition-colors shadow-lg border border-white/20"
             aria-label="Scroll row left"
           >
             <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 24 24">
@@ -72,7 +72,7 @@ export function ScrollableRow({ title, children }: ScrollableRowProps) {
           <button
             type="button"
             onClick={() => scrollByRow(1)}
-            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 min-w-[44px] min-h-[44px] w-9 h-9 sm:w-9 sm:h-9 rounded-full bg-black/70 text-white/90 hover:bg-black/90 active:bg-black/90 hover:text-white flex items-center justify-center transition-colors shadow-lg border border-white/20 touch-manipulation"
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 min-w-[44px] min-h-[44px] w-9 h-9 sm:w-9 sm:h-9 rounded-full bg-black/70 text-white/90 hover:bg-black/90 active:bg-black/90 hover:text-white hidden sm:flex items-center justify-center transition-colors shadow-lg border border-white/20"
             aria-label="Scroll row right"
           >
             <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 24 24">

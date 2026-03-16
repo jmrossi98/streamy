@@ -2,14 +2,21 @@
  * TMDB API client (server-side only). Set TMDB_API_KEY in env.
  * @see https://developer.themoviedb.org/reference
  * Uses in-memory L1 cache (24h) + Next.js unstable_cache (24h) to avoid re-hitting the API.
- * In development (npm run dev) uses mock responses; in production uses the real API.
+ * In development (npm run dev) uses mock responses by default; set TMDB_USE_REAL_API=true to use the real API.
+ * In production uses the real API.
  */
 
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import * as mock from "./tmdb-mock";
 
-const USE_MOCK = process.env.NODE_ENV === "development";
+function useRealApiInDev(): boolean {
+  if (process.env.TMDB_API_KEY) return true;
+  const v = process.env.TMDB_USE_REAL_API?.toLowerCase().trim();
+  return v === "true" || v === "1" || v === "yes";
+}
+
+const USE_MOCK = process.env.NODE_ENV === "development" && !useRealApiInDev();
 
 const ONE_DAY_SEC = 86400;
 const ONE_DAY_MS = ONE_DAY_SEC * 1000;
@@ -89,10 +96,18 @@ async function fetchTmdb<T>(path: string, params: Record<string, string> = {}): 
 
 const PLACEHOLDER_POSTER =
   "https://placehold.co/400x600/1a1a1a/666?text=No+Poster";
+const PLACEHOLDER_BACKDROP =
+  "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
 function imageUrl(path: string | null, size: "w92" | "w500" | "original" = "w500"): string {
   if (!path) return PLACEHOLDER_POSTER;
   return `${IMAGE_BASE}/${size}${path}`;
+}
+
+function backdropUrl(path: string | null): string {
+  if (!path) return PLACEHOLDER_BACKDROP;
+  const p = path.startsWith("/") ? path.slice(1) : path;
+  return `${IMAGE_BASE}/original/${p}`;
 }
 
 function toMovie(r: TmdbMovieResult, genres: TmdbGenre[]): Movie {
@@ -105,7 +120,7 @@ function toMovie(r: TmdbMovieResult, genres: TmdbGenre[]): Movie {
     title: r.title,
     overview: r.overview || "",
     poster: imageUrl(r.poster_path),
-    backdrop: imageUrl(r.backdrop_path, "original"),
+    backdrop: backdropUrl(r.backdrop_path),
     year,
     rating: Math.round(r.vote_average * 10) / 10,
     duration: "", // filled in detail
@@ -263,7 +278,7 @@ function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
     name: r.name,
     overview: r.overview || "",
     poster: imageUrl(r.poster_path),
-    backdrop: imageUrl(r.backdrop_path, "original"),
+    backdrop: backdropUrl(r.backdrop_path),
     year,
     rating: Math.round(r.vote_average * 10) / 10,
     genres: genreNames,
@@ -289,7 +304,7 @@ async function getShowByIdUncached(id: string): Promise<(TVShow & { numberOfSeas
     name: data.name,
     overview: data.overview || "",
     poster: imageUrl(data.poster_path),
-    backdrop: imageUrl(data.backdrop_path, "original"),
+    backdrop: backdropUrl(data.backdrop_path),
     year: data.first_air_date ? data.first_air_date.slice(0, 4) : "",
     rating: Math.round((data.vote_average || 0) * 10) / 10,
     genres,
@@ -456,10 +471,10 @@ async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
 
   return {
     id: String(movie.id),
-    title: movie.title,
+    title: movie.title ?? "Untitled",
     overview: movie.overview || "",
     poster: imageUrl(movie.poster_path),
-    backdrop: imageUrl(movie.backdrop_path, "original"),
+    backdrop: backdropUrl(movie.backdrop_path),
     year: movie.release_date ? movie.release_date.slice(0, 4) : "",
     rating: Math.round((movie.vote_average || 0) * 10) / 10,
     duration,

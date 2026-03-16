@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-/** GET /api/movies/[id] - returns movie details. In dev uses mock directly for speed; in prod uses TMDB. */
+/** GET /api/movies/[id] - returns movie details. In dev uses mock unless TMDB_USE_REAL_API=true. */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -8,7 +8,12 @@ export async function GET(
   const { id } = await params;
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  if (process.env.NODE_ENV === "development") {
+  const hasKey = !!process.env.TMDB_API_KEY;
+  const explicitReal = ["true", "1", "yes"].includes(
+    process.env.TMDB_USE_REAL_API?.toLowerCase().trim() ?? ""
+  );
+  const useRealApi = process.env.NODE_ENV !== "development" || hasKey || explicitReal;
+  if (!useRealApi) {
     const { mockGetMovieById } = await import("@/lib/tmdb-mock");
     const movie = await mockGetMovieById(id);
     return NextResponse.json(movie);

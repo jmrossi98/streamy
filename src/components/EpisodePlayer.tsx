@@ -5,8 +5,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+// Placeholder: Google sample bucket (Sintel, Blender Foundation). Replace with your own stream URL.
 const VIDEO_SRC =
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4";
 
 type EpisodePlayerProps = {
   showId: string;

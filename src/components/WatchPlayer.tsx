@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 
+// Placeholder: Google sample bucket (Sintel, Blender Foundation). Replace with your own stream URL.
 const VIDEO_SRC =
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4";
 
 type WatchPlayerProps = {
   movieId: string;
@@ -17,6 +18,12 @@ type WatchPlayerProps = {
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
 const TITLE_SHOW_MS = 3000;
+const MOBILE_BREAKPOINT = 768;
+
+function requestFullscreen(el: HTMLElement) {
+  const fn = el.requestFullscreen ?? (el as HTMLElement & { webkitRequestFullscreen?: () => void }).webkitRequestFullscreen;
+  if (typeof fn === "function") fn.call(el);
+}
 
 export function WatchPlayer({
   movieId,
@@ -31,6 +38,7 @@ export function WatchPlayer({
   const [showTitle, setShowTitle] = useState(true);
   const titleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const scheduleTitleHide = () => {
     if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
@@ -55,6 +63,9 @@ export function WatchPlayer({
       .then(() => {
         setVideoLoading(false);
         setShowOverlay(false);
+        if (typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT && containerRef.current) {
+          requestFullscreen(containerRef.current);
+        }
       })
       .catch(() => {
         setVideoLoading(false);
@@ -73,6 +84,9 @@ export function WatchPlayer({
           setVideoLoading(false);
           setPlaying(true);
           setShowOverlay(false);
+          if (typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT && containerRef.current) {
+            requestFullscreen(containerRef.current);
+          }
         })
         .catch(() => {
           setVideoLoading(false);
@@ -139,6 +153,7 @@ export function WatchPlayer({
 
   return (
     <div
+      ref={containerRef}
       className={`relative w-full bg-black ${containerClass}`}
       onMouseEnter={() => showVideo && showTitleTemporarily()}
       onMouseLeave={() => showVideo && scheduleTitleHide()}

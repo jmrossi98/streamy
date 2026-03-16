@@ -153,7 +153,6 @@ export function ShowContent({
           <WatchlistButton
             showId={show.id}
             initialInList={initialInList}
-            variant="circle"
           />
         }
         playHref={resumePlayHref}
@@ -162,7 +161,7 @@ export function ShowContent({
           <button
             type="button"
             onClick={openResumeOverlay}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-white text-netflix-black font-semibold rounded hover:bg-white/90 transition-colors"
+            className="inline-flex items-center justify-center gap-2 min-h-[44px] min-w-[140px] sm:min-w-[160px] px-6 py-3 bg-white text-netflix-black font-semibold rounded hover:bg-white/90 transition-colors touch-manipulation"
           >
             <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />

@@ -2,9 +2,11 @@
 
 import { useState, useEffect } from "react";
 import type { Movie, MovieDetail } from "@/lib/tmdb";
-import { getMovieFromCache } from "@/lib/movieCache";
+import { getMovieFromCache, setMovieInCache } from "@/lib/movieCache";
 import { InfoHero } from "@/components/InfoHero";
 import { WatchlistButton } from "@/components/WatchlistButton";
+
+const FALLBACK_BACKDROP = "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
 type Props = { id: string; initialInList: boolean; progressSeconds?: number };
 
@@ -18,7 +20,10 @@ export function WatchPageContent({ id, initialInList, progressSeconds = 0 }: Pro
     fetch(`/api/movies/${id}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((full: MovieDetail | null) => {
-        if (!cancelled && full) setMovie(full);
+        if (!cancelled && full) {
+          setMovie(full);
+          setMovieInCache(id, full);
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -48,28 +53,27 @@ export function WatchPageContent({ id, initialInList, progressSeconds = 0 }: Pro
   return (
     <div className="min-h-screen bg-netflix-black pt-16 pb-12">
       <InfoHero
-        backdropUrl={movie.backdrop}
-        title={movie.title}
+        backdropUrl={movie.backdrop || movie.poster || FALLBACK_BACKDROP}
+        title={movie.title || "Untitled"}
         addToMyListNode={
           <WatchlistButton
             movieId={movie.id}
             initialInList={initialInList}
-            variant="circle"
           />
         }
         playHref={`/watch/${id}/play`}
         playLabel={progressSeconds > 0 ? "Resume" : "Watch now"}
       />
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-10 text-center md:text-left">
         <p className="text-white/80 text-lg">{movie.overview}</p>
-        <div className="mt-4 flex flex-wrap gap-4 text-white/70">
+        <div className="mt-4 flex flex-wrap gap-4 text-white/70 justify-center md:justify-start">
           {movie.year && <span>{movie.year}</span>}
           {movie.duration && <span>{movie.duration}</span>}
           <span className="text-green-400 font-medium">{movie.rating} Rating</span>
         </div>
         {movie.genres.length > 0 && (
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4 flex gap-2 flex-wrap justify-center md:justify-start">
             {movie.genres.map((g) => (
               <span
                 key={g}
