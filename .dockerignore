@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build
+.next
+out
+dist
+build
+
+# Env and secrets (pass at build/run time)
+.env
+.env.*
+!.env.example
+
+# Git and IDE
+.git
+.gitignore
+.cursor
+.vscode
+*.md
+
+# Misc
+Dockerfile*
+.dockerignore
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+.nyc_output
+*.tsbuildinfo
+
+# Optional: keep image smaller
+terminals
+agent-transcripts
