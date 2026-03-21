@@ -23,7 +23,7 @@ export function Hero({ featured, progressSeconds = 0 }: HeroProps) {
         <div className="hero-overlay absolute inset-0" />
       </div>
       <PrefetchMovieOnHover movieId={featured.id} movie={featured}>
-        <div className="relative z-10 h-full px-4 sm:px-6 pt-[50vh] sm:pt-[55vh] pb-12 sm:pb-16 md:pb-24 max-w-[1920px] mx-auto text-center md:text-left">
+        <div className="relative z-10 h-full px-4 sm:px-6 pt-[50vh] sm:pt-[55vh] pb-14 sm:pb-20 md:pb-28 max-w-[1920px] mx-auto text-center md:text-left">
           <h1 className="font-display text-4xl sm:text-5xl md:text-7xl lg:text-8xl font-bold text-white drop-shadow-lg max-w-3xl mx-auto md:mx-0">
             {featured.title}
           </h1>
@@ -58,7 +58,7 @@ export function Hero({ featured, progressSeconds = 0 }: HeroProps) {
               More Info
             </Link>
           </div>
-          <div className="mt-3 sm:mt-4 flex items-center gap-4 text-sm text-white/80 justify-center md:justify-start">
+          <div className="mt-3 sm:mt-4 mb-2 sm:mb-4 flex items-center gap-4 text-sm text-white/80 justify-center md:justify-start">
             <span className="font-medium text-green-400">{featured.rating} Rating</span>
             {featured.year && <span>{featured.year}</span>}
             {featured.duration && <span>{featured.duration}</span>}

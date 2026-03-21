@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { getSession } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 export async function GET(request: Request) {
@@ -25,7 +25,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getValidSessionUserId(session);
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const body = await request.json();
@@ -39,9 +40,9 @@ export async function POST(request: Request) {
     : 0;
   await prisma.watchProgress.upsert({
     where: {
-      userId_movieId: { userId: session.user.id, movieId: movieId.trim() },
+      userId_movieId: { userId, movieId: movieId.trim() },
     },
-    create: { userId: session.user.id, movieId: movieId.trim(), progressSeconds: seconds },
+    create: { userId, movieId: movieId.trim(), progressSeconds: seconds },
     update: { progressSeconds: seconds },
   });
   revalidatePath("/");

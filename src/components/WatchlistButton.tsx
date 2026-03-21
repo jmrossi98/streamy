@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import { signOutIfStaleSession } from "@/lib/staleSession";
 
 export type WatchlistButtonProps = {
   movieId?: string;
@@ -35,14 +36,18 @@ export function WatchlistButton({ movieId, showId, initialInList, variant = "def
     try {
       if (inList) {
         const param = movieId ? `movieId=${encodeURIComponent(movieId)}` : `showId=${encodeURIComponent(showId!)}`;
-        await fetch(`/api/watchlist?${param}`, { method: "DELETE" });
+        const res = await fetch(`/api/watchlist?${param}`, { method: "DELETE" });
+        if (await signOutIfStaleSession(res)) return;
+        if (!res.ok) return;
         setInList(false);
       } else {
-        await fetch("/api/watchlist", {
+        const res = await fetch("/api/watchlist", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(movieId ? { movieId } : { showId }),
         });
+        if (await signOutIfStaleSession(res)) return;
+        if (!res.ok) return;
         setInList(true);
       }
     } finally {

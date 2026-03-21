@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
 import type { Movie, TVShow } from "@/lib/tmdb";
@@ -8,6 +9,7 @@ import type { Movie, TVShow } from "@/lib/tmdb";
 type SearchModalProps = { open: boolean; onClose: () => void };
 
 export function SearchModal({ open, onClose }: SearchModalProps) {
+  const [mounted, setMounted] = useState(false);
   const [query, setQuery] = useState("");
   const [movies, setMovies] = useState<Movie[]>([]);
   const [shows, setShows] = useState<TVShow[]>([]);
@@ -88,18 +90,32 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
     return () => window.removeEventListener("keydown", onEscape);
   }, [open, onClose]);
 
-  if (!open) return null;
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
 
   const hasResults = movies.length > 0 || shows.length > 0;
 
-  return (
+  /* Portal to body: modal was inside <header class="z-50">, so z-[100] was trapped and painted under <main>. */
+  return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[100] bg-black/80"
+        className="fixed inset-0 z-[200] bg-black/80"
         aria-hidden
         onClick={onClose}
       />
-      <div className="fixed left-1/2 top-[calc(5rem+env(safe-area-inset-top,0px))] z-[101] w-full max-w-2xl -translate-x-1/2 px-4">
+      <div className="fixed left-1/2 top-[calc(5rem+env(safe-area-inset-top,0px))] z-[201] w-full max-w-2xl -translate-x-1/2 px-4">
         <div className="rounded-lg bg-netflix-dark border border-white/20 shadow-xl overflow-hidden">
           <div className="flex items-center gap-2 p-3 border-b border-white/10">
             <svg className="w-5 h-5 text-white/60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -177,6 +193,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }

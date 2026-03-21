@@ -71,7 +71,8 @@ body {
 
 .movie-card:hover {
   transform: scale(1.05);
-  z-index: 10;
+  /* Stay below row scroll controls (.z-30) so arrows stay clickable */
+  z-index: 5;
 }
 
 /* Hero gradient overlay */

@@ -1,5 +1,6 @@
 import { cache } from "react";
 import type { NextAuthOptions } from "next-auth";
+import type { Session } from "next-auth";
 import { getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "./db";
@@ -51,6 +52,19 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
   },
 };
+
+/**
+ * JWT sessions can outlive the User row (db reset, switched DATABASE_URL, deleted user).
+ * Use before Prisma writes that reference `userId` to avoid P2003 foreign key errors.
+ */
+export async function getValidSessionUserId(session: Session | null): Promise<string | null> {
+  if (!session?.user?.id) return null;
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
 
 declare module "next-auth" {
   interface Session {

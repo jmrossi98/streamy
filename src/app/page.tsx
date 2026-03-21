@@ -117,7 +117,7 @@ export default async function HomePage() {
     <>
       <HomePrefetch movieIds={prefetchIds} showIds={prefetchShowIds} runtimeIds={runtimeIds} />
       <Hero featured={featured} progressSeconds={featuredProgressSeconds} />
-      <div id="movies" className="space-y-2 [&>*:first-child]:pt-0">
+      <div id="movies" className="space-y-2 pt-6 sm:pt-8 md:pt-10">
         {hasRecentProgress && (
           <RecentlyWatchedRow
             items={recentlyWatched}

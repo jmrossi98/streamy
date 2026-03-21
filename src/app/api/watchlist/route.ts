@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 export async function GET() {
   const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getValidSessionUserId(session);
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const [movies, shows] = await Promise.all([
     prisma.watchlistItem.findMany({
-      where: { userId: session.user.id },
+      where: { userId },
       orderBy: { addedAt: "desc" },
     }),
     prisma.watchlistShowItem.findMany({
-      where: { userId: session.user.id },
+      where: { userId },
       orderBy: { addedAt: "desc" },
     }),
   ]);
@@ -25,7 +26,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getValidSessionUserId(session);
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const body = await request.json();
@@ -34,9 +36,9 @@ export async function POST(request: Request) {
   if (movieId) {
     await prisma.watchlistItem.upsert({
       where: {
-        userId_movieId: { userId: session.user.id, movieId },
+        userId_movieId: { userId, movieId },
       },
-      create: { userId: session.user.id, movieId },
+      create: { userId, movieId },
       update: {},
     });
     return NextResponse.json({ added: true, type: "movie" });
@@ -44,9 +46,9 @@ export async function POST(request: Request) {
   if (showId) {
     await prisma.watchlistShowItem.upsert({
       where: {
-        userId_showId: { userId: session.user.id, showId },
+        userId_showId: { userId, showId },
       },
-      create: { userId: session.user.id, showId },
+      create: { userId, showId },
       update: {},
     });
     return NextResponse.json({ added: true, type: "show" });
@@ -56,7 +58,8 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   const session = await getSession();
-  if (!session?.user?.id) {
+  const userId = await getValidSessionUserId(session);
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { searchParams } = new URL(request.url);
@@ -64,13 +67,13 @@ export async function DELETE(request: Request) {
   const showId = searchParams.get("showId");
   if (movieId) {
     await prisma.watchlistItem.deleteMany({
-      where: { userId: session.user.id, movieId },
+      where: { userId, movieId },
     });
     return NextResponse.json({ removed: true });
   }
   if (showId) {
     await prisma.watchlistShowItem.deleteMany({
-      where: { userId: session.user.id, showId },
+      where: { userId, showId },
     });
     return NextResponse.json({ removed: true });
   }
