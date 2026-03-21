@@ -63,4 +63,5 @@ RUN npm install prisma --no-save --ignore-scripts
 EXPOSE 3000
 
 # Run migrate as root when RUN_MIGRATE=1, then start app as nextjs (runuser avoids permission errors)
-CMD ["sh", "-c", "if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && exec runuser -u nextjs -- node server.js"]
+# Migrate as root; SQLite file must be writable by nextjs (Prisma at runtime)
+CMD ["sh", "-c", "mkdir -p /app/data && if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && chown -R nextjs:nodejs /app/data && exec runuser -u nextjs -- node server.js"]

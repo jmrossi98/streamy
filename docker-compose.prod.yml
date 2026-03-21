@@ -1,6 +1,5 @@
-# Use this on the server for pull-based deploy (no build).
-# Set DOCKER_IMAGE in .env or when running, e.g.:
-#   DOCKER_IMAGE=ghcr.io/your-username/streamy:latest
+# Server: copy this file + a .env next to it (see docs/deploy-env.md).
+# DOCKER_IMAGE must match your GHCR image (lowercase).
 version: '3.8'
 services:
   app:
@@ -11,7 +10,10 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-file:./data/dev.db}
+      # Migrations on startup (idempotent). Set RUN_MIGRATE=0 only if you run migrate separately.
+      - RUN_MIGRATE=${RUN_MIGRATE:-1}
+      # SQLite path inside container; volume streamy-data is mounted at /app/data
+      - DATABASE_URL=${DATABASE_URL:-file:/app/data/prod.db}
       - TMDB_API_KEY=${TMDB_API_KEY}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL}
