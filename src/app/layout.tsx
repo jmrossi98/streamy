@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Bebas_Neue } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "@/components/SessionProvider";
+import { WatchlistProvider } from "@/contexts/WatchlistContext";
 import { HomeRefresh } from "@/components/HomeRefresh";
 import { NavigationSync } from "@/components/NavigationSync";
 import { LayoutShell } from "@/components/LayoutShell";
@@ -37,9 +38,11 @@ export default function RootLayout({
     <html lang="en" className={bebas.variable}>
       <body className="min-h-screen bg-netflix-black font-sans antialiased">
         <SessionProvider>
-          <HomeRefresh />
-          <NavigationSync />
-          <LayoutShell>{children}</LayoutShell>
+          <WatchlistProvider>
+            <HomeRefresh />
+            <NavigationSync />
+            <LayoutShell>{children}</LayoutShell>
+          </WatchlistProvider>
         </SessionProvider>
       </body>
     </html>
