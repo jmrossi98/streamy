@@ -78,7 +78,19 @@ jobs:
           script: |
             set -e
             if ! docker compose version >/dev/null 2>&1; then
-              echo "ERROR: Docker Compose v2 plugin missing. Install: sudo apt-get install -y docker-compose-plugin"
+              echo "Docker Compose v2 not found — installing docker-compose-plugin (needs passwordless sudo)..."
+              if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update -qq
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+              elif command -v yum >/dev/null 2>&1; then
+                sudo yum install -y docker-compose-plugin
+              else
+                echo "ERROR: Install docker-compose-plugin manually, then redeploy."
+                exit 1
+              fi
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "ERROR: docker compose still unavailable after install attempt."
               exit 1
             fi
             cd ${{ secrets.DEPLOY_PATH }}
