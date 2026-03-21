@@ -4,8 +4,8 @@ import { prisma } from "@/lib/db";
 
 /**
  * Delete a profile (User row). Cascades watchlist + progress.
- * - Signed in as that user: no name confirmation.
- * - Not signed in (who-is-watching): must send confirmName matching profile name.
+ * - Signed in as that user: no name confirmation (Profile page).
+ * - Not signed in: must send confirmName matching profile name (e.g. API clients).
  */
 export async function POST(request: Request) {
   let body: { userId?: unknown; confirmName?: unknown };

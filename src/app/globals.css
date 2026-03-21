@@ -56,7 +56,8 @@ body {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  touch-action: pan-x pinch-zoom;
+  /* Allow vertical page scroll when gesture starts on the row (e.g. movie titles); still pan horizontally */
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .movie-row::-webkit-scrollbar {

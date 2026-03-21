@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { avatarColorOrFallback } from "@/lib/userAvatarColors";
 
@@ -15,9 +14,7 @@ export function WhoIsWatching({
   users: User[];
   callbackUrl?: string;
 }) {
-  const router = useRouter();
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const destination = callbackUrl || "/";
 
   const handleSelectUser = async (user: User) => {
@@ -38,34 +35,6 @@ export function WhoIsWatching({
     }
   };
 
-  const handleDeleteProfile = async (user: User, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const msg = `Delete profile "${user.name}"?\n\nThis removes watchlist and progress for this profile.\n\nType the profile name exactly to confirm:`;
-    const typed = window.prompt(msg, "");
-    if (typed === null) return;
-    if (typed.trim() !== user.name.trim()) {
-      window.alert("Name did not match. Nothing was deleted.");
-      return;
-    }
-    setDeletingId(user.id);
-    try {
-      const res = await fetch("/api/profile/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id, confirmName: typed.trim() }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        window.alert(data.error ?? "Could not delete profile.");
-        return;
-      }
-      router.refresh();
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
       <h1 className="font-display text-4xl md:text-5xl font-bold text-white text-center mb-12">
@@ -73,11 +42,11 @@ export function WhoIsWatching({
       </h1>
       <div className="flex flex-wrap justify-center gap-6 md:gap-8 max-w-4xl">
         {users.map((user) => (
-          <div key={user.id} className="relative flex flex-col items-center gap-2">
+          <div key={user.id} className="flex flex-col items-center gap-2">
             <button
               type="button"
               onClick={() => handleSelectUser(user)}
-              disabled={loadingId !== null || deletingId !== null}
+              disabled={loadingId !== null}
               className="group flex flex-col items-center gap-3 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
             >
               <span
@@ -93,15 +62,6 @@ export function WhoIsWatching({
               {loadingId === user.id && (
                 <span className="text-white/60 text-sm">Signing in…</span>
               )}
-            </button>
-            <button
-              type="button"
-              onClick={(e) => void handleDeleteProfile(user, e)}
-              disabled={deletingId !== null || loadingId !== null}
-              className="text-white/50 hover:text-red-400 text-xs underline underline-offset-2 disabled:opacity-40 touch-manipulation"
-              aria-label={`Delete profile ${user.name}`}
-            >
-              {deletingId === user.id ? "Removing…" : "Remove profile"}
             </button>
           </div>
         ))}

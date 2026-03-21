@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
 
 // Placeholder: Google sample bucket (Sintel, Blender Foundation). Replace with your own stream URL.
 const VIDEO_SRC =
@@ -26,7 +27,6 @@ type EpisodePlayerProps = {
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
 const NEXT_EPISODE_COUNTDOWN_SEC = 15;
 const TITLE_SHOW_MS = 3000;
-
 export function EpisodePlayer({
   showId,
   showName,
@@ -72,6 +72,7 @@ export function EpisodePlayer({
       .then(() => {
         setVideoLoading(false);
         setShowOverlay(false);
+        tryMobileNativeVideoFullscreen(v);
       })
       .catch(() => {
         setVideoLoading(false);
@@ -90,6 +91,7 @@ export function EpisodePlayer({
           setVideoLoading(false);
           setPlaying(true);
           setShowOverlay(false);
+          tryMobileNativeVideoFullscreen(v);
         })
         .catch(() => {
           setVideoLoading(false);
@@ -164,11 +166,12 @@ export function EpisodePlayer({
     }
   }, [showNextOverlay, nextEpisodeHref, nextCountdown, router]);
 
-  const containerClass =
-    playing && !showOverlay
-      ? "fixed inset-0 z-30 w-screen h-screen"
-      : "min-h-[400px] h-[60vh]";
   const showVideo = playing && !showOverlay && !showNextOverlay;
+  const containerClass = showNextOverlay
+    ? "fixed inset-0 z-30 w-screen h-screen"
+    : showVideo
+      ? "relative w-full aspect-video bg-black md:fixed md:inset-0 md:z-30 md:h-screen md:w-screen md:aspect-auto"
+      : "min-h-[400px] h-[60vh]";
 
   return (
     <div

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
+import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
 
 // Placeholder: Google sample bucket (Sintel, Blender Foundation). Replace with your own stream URL.
 const VIDEO_SRC =
@@ -18,13 +19,6 @@ type WatchPlayerProps = {
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
 const TITLE_SHOW_MS = 3000;
-const MOBILE_BREAKPOINT = 768;
-
-function requestFullscreen(el: HTMLElement) {
-  const fn = el.requestFullscreen ?? (el as HTMLElement & { webkitRequestFullscreen?: () => void }).webkitRequestFullscreen;
-  if (typeof fn === "function") fn.call(el);
-}
-
 export function WatchPlayer({
   movieId,
   movieTitle,
@@ -38,7 +32,6 @@ export function WatchPlayer({
   const [showTitle, setShowTitle] = useState(true);
   const titleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const scheduleTitleHide = () => {
     if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
@@ -63,9 +56,7 @@ export function WatchPlayer({
       .then(() => {
         setVideoLoading(false);
         setShowOverlay(false);
-        if (typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT && containerRef.current) {
-          requestFullscreen(containerRef.current);
-        }
+        tryMobileNativeVideoFullscreen(v);
       })
       .catch(() => {
         setVideoLoading(false);
@@ -84,9 +75,7 @@ export function WatchPlayer({
           setVideoLoading(false);
           setPlaying(true);
           setShowOverlay(false);
-          if (typeof window !== "undefined" && window.innerWidth < MOBILE_BREAKPOINT && containerRef.current) {
-            requestFullscreen(containerRef.current);
-          }
+          tryMobileNativeVideoFullscreen(v);
         })
         .catch(() => {
           setVideoLoading(false);
@@ -145,15 +134,14 @@ export function WatchPlayer({
     };
   }, [movieId]);
 
-  const containerClass =
-    playing && !showOverlay
-      ? "fixed inset-0 z-30 w-screen h-screen"
-      : "min-h-[400px] h-[60vh]";
   const showVideo = playing && !showOverlay;
+  /** Mobile: inline slot + native video fullscreen (iOS webkitEnterFullscreen, etc.). Desktop: faux fullscreen. */
+  const containerClass = showVideo
+    ? "relative w-full aspect-video bg-black md:fixed md:inset-0 md:z-30 md:h-screen md:w-screen md:aspect-auto"
+    : "min-h-[400px] h-[60vh]";
 
   return (
     <div
-      ref={containerRef}
       className={`relative w-full bg-black ${containerClass}`}
       onMouseEnter={() => showVideo && showTitleTemporarily()}
       onMouseLeave={() => showVideo && scheduleTitleHide()}
