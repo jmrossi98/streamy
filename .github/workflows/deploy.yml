@@ -77,6 +77,10 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "ERROR: Docker Compose v2 plugin missing. Install: sudo apt-get install -y docker-compose-plugin"
+              exit 1
+            fi
             cd ${{ secrets.DEPLOY_PATH }}
             export DOCKER_IMAGE=$(echo "${{ env.REGISTRY }}/${{ github.repository }}:latest" | tr '[:upper:]' '[:lower:]')
             # GHCR requires login even for public images. Add repo secret GHCR_PULL_TOKEN (PAT with read:packages).
