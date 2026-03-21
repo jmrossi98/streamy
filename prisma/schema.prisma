@@ -12,7 +12,7 @@ datasource db {
 model User {
   id           String   @id @default(cuid())
   name         String
-  /** Hex background for profile avatar (e.g. #e50914). Assigned when created; unique per new user when possible. */
+  // Hex avatar background (e.g. #e50914); assigned on create / backfill on login.
   avatarColor  String?
   createdAt    DateTime @default(now())
 
