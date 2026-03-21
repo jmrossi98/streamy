@@ -20,7 +20,8 @@ export default function Error({
         A server error occurred. Check the server logs (e.g. <code className="bg-white/10 px-1 rounded">docker logs</code>) for details.
       </p>
       <p className="text-white/60 text-xs max-w-md mb-6">
-        Common causes: database not migrated (set <code className="bg-white/10 px-1 rounded">RUN_MIGRATE=1</code> in server .env and restart), wrong <code className="bg-white/10 px-1 rounded">NEXTAUTH_URL</code> or <code className="bg-white/10 px-1 rounded">DATABASE_URL</code>, or missing <code className="bg-white/10 px-1 rounded">TMDB_API_KEY</code>.
+        Common causes: database not migrated (<code className="bg-white/10 px-1 rounded">RUN_MIGRATE=1</code>), wrong <code className="bg-white/10 px-1 rounded">NEXTAUTH_URL</code> / <code className="bg-white/10 px-1 rounded">DATABASE_URL</code>, missing <code className="bg-white/10 px-1 rounded">TMDB_API_KEY</code>, or NextAuth secrets not baked at Docker build. Open{" "}
+        <code className="bg-white/10 px-1 rounded">/api/health</code> on the server for a JSON check.
       </p>
       <button
         type="button"

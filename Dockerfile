@@ -19,13 +19,17 @@ COPY . .
 # Ensure public exists so runner COPY succeeds (Next.js may not have a public/ in repo)
 RUN mkdir -p public
 
-# Placeholders for `next build` / Prisma generate only — never put real secrets in the image.
-# Production reads TMDB, DB, NextAuth from env at runtime (see docker-compose.prod.yml + deploy workflow).
+# Prisma generate + DB URL for build only (no real data).
 ENV DATABASE_URL="file:./build.db"
 ENV TMDB_API_KEY="build-placeholder"
-ENV NEXTAUTH_SECRET="build-placeholder"
-ENV NEXTAUTH_URL="http://localhost:3000"
 ENV NODE_ENV=production
+
+# Edge Middleware inlines these at `next build`. They MUST match runtime (.env on server) or JWT / getToken breaks.
+# Pass from CI: --build-arg NEXTAUTH_SECRET=... --build-arg NEXTAUTH_URL=... (same values as production secrets).
+ARG NEXTAUTH_SECRET
+ARG NEXTAUTH_URL
+ENV NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+ENV NEXTAUTH_URL=${NEXTAUTH_URL}
 
 RUN npx prisma generate && npm run build
 

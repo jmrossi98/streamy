@@ -34,6 +34,13 @@ NEXTAUTH_SECRET=...
 NEXTAUTH_URL=...
 ```
 
+## Build vs runtime (NextAuth + middleware)
+
+**`NEXTAUTH_SECRET` and `NEXTAUTH_URL` are also passed as Docker build-args** in GitHub Actions so **Edge middleware** (inlined at `next build`) matches what the container uses at runtime. If the image was built with wrong/empty values, sessions and `getToken` break. Change secrets → **rebuild the image** and redeploy.
+
 ## Troubleshooting
 
-See the in-app error message or **`docker compose logs`**. Typical issues: wrong `NEXTAUTH_URL`, missing `TMDB_API_KEY`, or DB not migrated (`RUN_MIGRATE=1`).
+1. **`GET /api/health`** — returns JSON: DB check, whether `TMDB_API_KEY` / `NEXTAUTH_SECRET` are set, and `NEXTAUTH_URL`. Use `curl -s https://YOUR_SITE/api/health`.
+2. **`docker compose logs`** — stack traces for Prisma / TMDB errors.
+
+Typical issues: wrong `NEXTAUTH_URL`, missing `TMDB_API_KEY`, DB not migrated (`RUN_MIGRATE=1`), or **stale image** built before NextAuth build-args were added.
