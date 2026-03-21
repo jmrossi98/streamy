@@ -122,6 +122,7 @@ jobs:
               "TMDB_API_KEY=${TMDB_API_KEY}" \
               "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" \
               "NEXTAUTH_URL=${NEXTAUTH_URL}" \
+              "AUTH_TRUST_HOST=true" \
               "RUN_MIGRATE=1" \
               > .env
             # GHCR requires login even for public images. Add repo secret GHCR_PULL_TOKEN (PAT with read:packages).

@@ -8,8 +8,6 @@ import { prisma } from "./db";
 export const getSession = cache(() => getServerSession(authOptions));
 
 export const authOptions: NextAuthOptions = {
-  // Required behind Docker / reverse proxy so NextAuth accepts the public host
-  trustHost: true,
   providers: [
     Credentials({
       name: "credentials",

@@ -17,6 +17,8 @@ services:
       - TMDB_API_KEY=${TMDB_API_KEY}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL}
+      # Same as trustHost: true (not on NextAuthOptions type in next-auth v4 typings)
+      - AUTH_TRUST_HOST=true
     volumes:
       - streamy-data:/app/data
 volumes:
