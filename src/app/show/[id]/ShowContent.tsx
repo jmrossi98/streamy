@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter, usePathname } from "next/navigation";
 import type { TVShow, TVSeason, TVEpisode } from "@/lib/tmdb";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { InfoHero } from "@/components/InfoHero";
@@ -60,6 +61,9 @@ export function ShowContent({
   resumeEpisodeName,
   resumeProgressSeconds,
 }: ShowContentProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+
   const [seasonNum, setSeasonNum] = useState(initialSeasonNum);
   const [season, setSeason] = useState<TVSeason | null>(
     initialSeasonNum === 1 ? initialSeason : initialSeasonData
@@ -67,12 +71,18 @@ export function ShowContent({
   const [seasonLoading, setSeasonLoading] = useState(false);
   const [overlayEpisode, setOverlayEpisode] = useState<OverlayEpisode | null>(null);
 
+  useEffect(() => {
+    setSeasonNum(initialSeasonNum);
+  }, [initialSeasonNum]);
+
   const closeOverlay = useCallback(() => {
-    setOverlayEpisode(null);
-    if (typeof window !== "undefined" && (window.history.state as { overlay?: boolean } | null)?.overlay) {
-      window.history.back();
-    }
-  }, []);
+    setOverlayEpisode((prev) => {
+      if (prev) {
+        router.replace(`${pathname}?season=${prev.seasonNumber}`, { scroll: false });
+      }
+      return null;
+    });
+  }, [pathname, router]);
 
   useEffect(() => {
     if (!overlayEpisode) return;
@@ -84,6 +94,7 @@ export function ShowContent({
   }, [overlayEpisode != null, overlayEpisode?.seasonNumber, overlayEpisode?.episodeNumber, show.id]);
 
   const openResumeOverlay = useCallback(() => {
+    router.replace(`${pathname}?season=${resumeSeason}`, { scroll: false });
     setOverlayEpisode({
       seasonNumber: resumeSeason,
       episodeNumber: resumeEpisode,
@@ -92,7 +103,7 @@ export function ShowContent({
       nextHref: null,
       nextLabel: null,
     });
-  }, [resumeSeason, resumeEpisode, resumeEpisodeName, resumeProgressSeconds]);
+  }, [resumeSeason, resumeEpisode, resumeEpisodeName, resumeProgressSeconds, pathname, router]);
 
   useEffect(() => {
     if (seasonNum === 1) {
@@ -179,7 +190,11 @@ export function ShowContent({
           <label className="text-white/80 text-sm">Season</label>
           <select
             value={seasonNum}
-            onChange={(e) => setSeasonNum(parseInt(e.target.value, 10))}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              setSeasonNum(n);
+              router.replace(`${pathname}?season=${n}`, { scroll: false });
+            }}
             className="bg-netflix-black text-white border border-white/20 rounded px-3 py-2 focus:outline-none focus:border-netflix-red appearance-none cursor-pointer [&>option]:bg-netflix-black [&>option]:text-white"
           >
             {Array.from({ length: show.numberOfSeasons }, (_, i) => i + 1).map((n) => (
@@ -206,6 +221,7 @@ export function ShowContent({
               const pct = progressPct(progressSeconds, ep.runtime);
               const nextEp = index + 1 < season.episodes.length ? season.episodes[index + 1] : null;
               const openEpisode = () => {
+                router.replace(`${pathname}?season=${ep.seasonNumber}`, { scroll: false });
                 setOverlayEpisode({
                   seasonNumber: ep.seasonNumber,
                   episodeNumber: ep.episodeNumber,

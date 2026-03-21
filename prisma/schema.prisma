@@ -10,9 +10,11 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  name         String
+  /** Hex background for profile avatar (e.g. #e50914). Assigned when created; unique per new user when possible. */
+  avatarColor  String?
+  createdAt    DateTime @default(now())
 
   watchlist       WatchlistItem[]
   watchlistShows  WatchlistShowItem[]

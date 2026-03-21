@@ -60,8 +60,6 @@ export default async function EpisodeWatchPage({ params }: Props) {
     <div className="min-h-screen bg-netflix-black relative">
       <div className="absolute top-4 right-4 z-[100] w-10 h-10 rounded-full bg-black/60 text-white hover:bg-black/80 flex items-center justify-center transition-colors">
         <EpisodeCloseButton
-          showId={showId}
-          seasonNum={seasonNum}
           fallbackHref={backHref}
           className="w-full h-full flex items-center justify-center text-white"
         />

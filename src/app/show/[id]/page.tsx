@@ -15,15 +15,17 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const resolvedSearch = (typeof rawSearch === "object" && rawSearch !== null ? rawSearch : {}) as {
     season?: string;
   };
-  const initialSeasonNum = Math.min(
-    Math.max(1, parseInt(resolvedSearch.season ?? "1", 10) || 1),
-    999
-  );
+  const requestedSeason = Math.max(1, parseInt(resolvedSearch.season ?? "1", 10) || 1);
 
   const session = await getSession();
-  const [show, season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem] =
+  const show = await getShowById(id);
+  if (!show) notFound();
+
+  const maxSeason = Math.max(1, show.numberOfSeasons);
+  const initialSeasonNum = Math.min(requestedSeason, maxSeason);
+
+  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem] =
     await Promise.all([
-      getShowById(id),
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
       session?.user?.id
@@ -44,7 +46,6 @@ export default async function ShowPage({ params, searchParams }: Props) {
           })
         : null,
     ]);
-  if (!show) notFound();
   if (!season1) notFound();
 
   let resumeSeason = 1;

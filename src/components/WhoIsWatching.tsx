@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useState } from "react";
+import { avatarColorOrFallback } from "@/lib/userAvatarColors";
 
-type User = { id: string; name: string };
+type User = { id: string; name: string; avatarColor: string | null };
 
 export function WhoIsWatching({
   users,
@@ -49,7 +50,8 @@ export function WhoIsWatching({
             className="group flex flex-col items-center gap-3 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
           >
             <span
-              className="w-24 h-24 md:w-32 md:h-32 rounded-lg bg-netflix-dark border-2 border-transparent group-hover:border-white flex items-center justify-center text-4xl md:text-5xl font-bold text-white transition-colors"
+              style={{ backgroundColor: avatarColorOrFallback(user.avatarColor) }}
+              className="w-24 h-24 md:w-32 md:h-32 rounded-lg border-2 border-transparent group-hover:border-white flex items-center justify-center text-4xl md:text-5xl font-bold text-white transition-colors"
               aria-hidden
             >
               {user.name.slice(0, 1).toUpperCase()}

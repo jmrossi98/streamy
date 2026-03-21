@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { SearchModal } from "./SearchModal";
+import { avatarColorOrFallback } from "@/lib/userAvatarColors";
 
 const navLinks = [
   { href: "/", label: "Home" },
@@ -38,6 +39,7 @@ export function Navbar() {
   }, []);
 
   const initial = session?.user?.name?.slice(0, 1).toUpperCase() ?? "?";
+  const profileBg = avatarColorOrFallback(session?.user?.avatarColor);
 
   return (
     <header
@@ -167,7 +169,8 @@ export function Navbar() {
               <div className="relative hidden md:block">
                   <button
                     type="button"
-                    className="w-7 h-7 rounded bg-netflix-red flex items-center justify-center text-white text-sm font-medium hover:opacity-90 active:opacity-90 transition-opacity touch-manipulation"
+                    style={{ backgroundColor: profileBg }}
+                    className="w-7 h-7 rounded flex items-center justify-center text-white text-sm font-medium hover:opacity-90 active:opacity-90 transition-opacity touch-manipulation"
                     onClick={() => setMenuOpen(!menuOpen)}
                     aria-expanded={menuOpen}
                     aria-label="Account menu"

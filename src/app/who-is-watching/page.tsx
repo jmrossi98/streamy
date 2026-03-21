@@ -14,7 +14,7 @@ export default async function WhoIsWatchingPage({ searchParams }: Props) {
 
   const users = await prisma.user.findMany({
     orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, avatarColor: true },
   });
 
   const { callbackUrl } = await searchParams;

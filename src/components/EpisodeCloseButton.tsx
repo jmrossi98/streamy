@@ -3,23 +3,18 @@
 import { useRouter } from "next/navigation";
 
 type Props = {
-  showId: string;
-  seasonNum: number;
-  /** Fallback when history is empty (e.g. opened in new tab). */
+  /** Target show URL including `?season=` so the season list matches where the user played from. */
   fallbackHref: string;
   className?: string;
 };
 
-export function EpisodeCloseButton({ showId, seasonNum, fallbackHref, className }: Props) {
+export function EpisodeCloseButton({ fallbackHref, className }: Props) {
   const router = useRouter();
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      router.push(fallbackHref);
-    }
+    // Always navigate to /show/[id]?season=N — router.back() often lands on /show/[id] without ?season= and resets the list to season 1.
+    router.push(fallbackHref);
   };
 
   return (

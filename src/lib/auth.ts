@@ -4,6 +4,7 @@ import type { Session } from "next-auth";
 import { getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "./db";
+import { pickNextAvatarColor } from "./userAvatarColors";
 
 /** Cached per request so multiple callers in the same render share one session fetch. */
 export const getSession = cache(() => getServerSession(authOptions));
@@ -20,14 +21,24 @@ export const authOptions: NextAuthOptions = {
         if (!name) return null;
         const existing = await prisma.user.findFirst({
           where: { name },
+          select: { id: true, name: true, avatarColor: true },
         });
         if (existing) {
-          return { id: existing.id, name: existing.name };
+          let avatarColor = existing.avatarColor;
+          if (!avatarColor) {
+            avatarColor = await pickNextAvatarColor();
+            await prisma.user.update({
+              where: { id: existing.id },
+              data: { avatarColor },
+            });
+          }
+          return { id: existing.id, name: existing.name, avatarColor };
         }
+        const avatarColor = await pickNextAvatarColor();
         const user = await prisma.user.create({
-          data: { name },
+          data: { name, avatarColor },
         });
-        return { id: user.id, name: user.name };
+        return { id: user.id, name: user.name, avatarColor: user.avatarColor };
       },
     }),
   ],
@@ -37,6 +48,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.name = user.name ?? undefined;
+        token.avatarColor = (user as { avatarColor?: string | null }).avatarColor ?? undefined;
       }
       return token;
     },
@@ -44,6 +56,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.id as string;
         session.user.name = token.name as string;
+        session.user.avatarColor = token.avatarColor as string | undefined;
       }
       return session;
     },
@@ -68,7 +81,7 @@ export async function getValidSessionUserId(session: Session | null): Promise<st
 
 declare module "next-auth" {
   interface Session {
-    user: { id: string; name: string };
+    user: { id: string; name: string; avatarColor?: string | null };
   }
 }
 
@@ -76,5 +89,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     id?: string;
     name?: string;
+    avatarColor?: string;
   }
 }
