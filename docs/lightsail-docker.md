@@ -16,6 +16,19 @@ sudo apt-get install -y docker-compose-plugin
 docker compose version
 ```
 
+### Error: `E: Unable to locate package docker-compose-plugin`
+
+That package lives in **Docker’s official apt repo**, not always in Ubuntu’s default repos. Either [add Docker’s apt repository](https://docs.docker.com/engine/install/ubuntu/) and install `docker-compose-plugin`, or install the Compose v2 **binary** (same as the GitHub Action fallback):
+
+```bash
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -fsSL "https://github.com/docker/compose/releases/download/v2.32.2/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+```
+
+On **ARM** (aarch64), replace `docker-compose-linux-x86_64` with `docker-compose-linux-aarch64`.
+
 ### Amazon Linux 2
 
 ```bash

@@ -77,20 +77,34 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
+            # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
+            install_compose_v2_binary() {
+              ARCH=$(uname -m)
+              case "$ARCH" in
+                x86_64) CARCH="x86_64" ;;
+                aarch64|arm64) CARCH="aarch64" ;;
+                *) echo "ERROR: Unsupported arch for Compose binary: $ARCH"; exit 1 ;;
+              esac
+              COMPOSE_VER="v2.32.2"
+              echo "Installing Docker Compose ${COMPOSE_VER} CLI plugin from GitHub..."
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins
+              sudo curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-${CARCH}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            }
             if ! docker compose version >/dev/null 2>&1; then
-              echo "Docker Compose v2 not found — installing docker-compose-plugin (needs passwordless sudo)..."
+              echo "Docker Compose v2 not found — trying apt/yum, then GitHub binary..."
               if command -v apt-get >/dev/null 2>&1; then
                 sudo apt-get update -qq
-                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin || true
               elif command -v yum >/dev/null 2>&1; then
-                sudo yum install -y docker-compose-plugin
-              else
-                echo "ERROR: Install docker-compose-plugin manually, then redeploy."
-                exit 1
+                sudo yum install -y docker-compose-plugin || true
               fi
             fi
             if ! docker compose version >/dev/null 2>&1; then
-              echo "ERROR: docker compose still unavailable after install attempt."
+              install_compose_v2_binary
+            fi
+            if ! docker compose version >/dev/null 2>&1; then
+              echo "ERROR: docker compose still unavailable."
               exit 1
             fi
             cd ${{ secrets.DEPLOY_PATH }}
