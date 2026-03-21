@@ -14,6 +14,11 @@ function useRowScrollState(scrollRef: React.RefObject<HTMLDivElement | null>) {
   const check = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    // Content shrank (e.g. removed from My List) — clamp scroll so arrow state matches overflow.
+    if (el.scrollLeft > maxScroll) {
+      el.scrollLeft = maxScroll;
+    }
     const atStart = el.scrollLeft <= 1;
     const remaining = el.scrollWidth - el.clientWidth - el.scrollLeft;
     setCanScrollLeft(!atStart);
@@ -24,11 +29,19 @@ function useRowScrollState(scrollRef: React.RefObject<HTMLDivElement | null>) {
     check();
     const el = scrollRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(check);
+    const ro = new ResizeObserver(() => {
+      requestAnimationFrame(check);
+    });
     ro.observe(el);
-    el.addEventListener("scroll", check);
+    // scrollWidth changes when children are removed; ResizeObserver often does not fire for that.
+    const mo = new MutationObserver(() => {
+      requestAnimationFrame(check);
+    });
+    mo.observe(el, { childList: true, subtree: true });
+    el.addEventListener("scroll", check, { passive: true });
     return () => {
       ro.disconnect();
+      mo.disconnect();
       el.removeEventListener("scroll", check);
     };
   }, [check]);
