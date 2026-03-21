@@ -19,14 +19,12 @@ COPY . .
 # Ensure public exists so runner COPY succeeds (Next.js may not have a public/ in repo)
 RUN mkdir -p public
 
-ARG DATABASE_URL
-ARG TMDB_API_KEY
-ARG NEXTAUTH_SECRET
-ARG NEXTAUTH_URL
-ENV DATABASE_URL="${DATABASE_URL}"
-ENV TMDB_API_KEY="${TMDB_API_KEY}"
-ENV NEXTAUTH_SECRET="${NEXTAUTH_SECRET}"
-ENV NEXTAUTH_URL="${NEXTAUTH_URL}"
+# Placeholders for `next build` / Prisma generate only — never put real secrets in the image.
+# Production reads TMDB, DB, NextAuth from env at runtime (see docker-compose.prod.yml + deploy workflow).
+ENV DATABASE_URL="file:./build.db"
+ENV TMDB_API_KEY="build-placeholder"
+ENV NEXTAUTH_SECRET="build-placeholder"
+ENV NEXTAUTH_URL="http://localhost:3000"
 ENV NODE_ENV=production
 
 RUN npx prisma generate && npm run build

@@ -1,4 +1,5 @@
-# Auto-deploy on push to main: build image, push to GHCR, then pull and restart on your server.
+# Auto-deploy on push to main: build image, push to GHCR, write .env from Actions secrets, pull + up on server.
+# Secrets DATABASE_URL, TMDB_API_KEY, NEXTAUTH_SECRET, NEXTAUTH_URL must be set in the repo — they sync to the server each deploy.
 name: Build and Deploy
 
 on:
@@ -47,11 +48,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            DATABASE_URL=${{ secrets.DATABASE_URL }}
-            TMDB_API_KEY=${{ secrets.TMDB_API_KEY }}
-            NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
-            NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
 
   deploy:
     needs: build-and-push
@@ -71,10 +67,16 @@ jobs:
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -109,6 +111,15 @@ jobs:
             fi
             cd ${{ secrets.DEPLOY_PATH }}
             export DOCKER_IMAGE=$(echo "${{ env.REGISTRY }}/${{ github.repository }}:latest" | tr '[:upper:]' '[:lower:]')
+            umask 077
+            printf '%s\n' \
+              "DOCKER_IMAGE=${DOCKER_IMAGE}" \
+              "DATABASE_URL=${DATABASE_URL}" \
+              "TMDB_API_KEY=${TMDB_API_KEY}" \
+              "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" \
+              "NEXTAUTH_URL=${NEXTAUTH_URL}" \
+              "RUN_MIGRATE=1" \
+              > .env
             # GHCR requires login even for public images. Add repo secret GHCR_PULL_TOKEN (PAT with read:packages).
             if [ -n "${{ secrets.GHCR_PULL_TOKEN }}" ]; then
               echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
