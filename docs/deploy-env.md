@@ -44,3 +44,7 @@ NEXTAUTH_URL=...
 2. **`docker compose logs`** — stack traces for Prisma / TMDB errors.
 
 Typical issues: wrong `NEXTAUTH_URL`, missing `TMDB_API_KEY`, DB not migrated (`RUN_MIGRATE=1`), or **stale image** built before NextAuth build-args were added.
+
+### Disk space after many deploys
+
+Old `ghcr.io/.../streamy:latest` images become untagged when you pull a new `latest`. The GitHub Actions deploy runs **`docker image prune -f`** after each deploy to remove those dangling images. If the server is still low on space: `docker image prune -af` and check `docker system df`.

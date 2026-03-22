@@ -121,7 +121,7 @@ export default async function HomePage() {
         <HomeFeedHeader />
         <Hero featured={featured} progressSeconds={featuredProgressSeconds} />
       </div>
-      <div id="movies" className="space-y-4 pt-6 sm:space-y-5 md:space-y-2 md:pt-10">
+      <div id="movies" className="space-y-4 pt-6 sm:space-y-5 md:space-y-2 md:pt-7">
         {hasRecentProgress && (
           <RecentlyWatchedRow
             items={recentlyWatched}

@@ -130,4 +130,6 @@ jobs:
               echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             fi
             docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # Old :latest becomes untagged (<none>) after each pull — prune frees disk (layers still shared).
+            docker image prune -f

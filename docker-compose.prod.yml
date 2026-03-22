@@ -1,6 +1,6 @@
 # Server: copy this file + a .env next to it (see docs/deploy-env.md).
 # DOCKER_IMAGE must match your GHCR image (lowercase).
-version: '3.8'
+# (Compose v2+ — no top-level `version` key; it is obsolete.)
 services:
   app:
     image: ${DOCKER_IMAGE:-streamy:latest}

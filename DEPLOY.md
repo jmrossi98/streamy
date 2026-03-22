@@ -44,6 +44,17 @@ Optional (for **private** repos so the server can pull the image):
 
 After this, every push to `main` will build, push, and deploy. The workflow file is in `.github/workflows/deploy.yml`.
 
+### Disk space on the server
+
+Each deploy pulls a new `latest` image. The **previous** image loses its `latest` tag and shows as `<none>` in `docker image ls` until removed. The deploy script runs **`docker image prune -f`** after `up` to delete those **dangling** layers (Docker still **reuses** shared layers when pulling — prune only removes unreferenced images).
+
+If the disk is still full, run manually (SSH):
+
+```bash
+docker image prune -af   # all unused images (not just dangling)
+docker system df
+```
+
 ---
 
 ## 1. Env variables on the server
