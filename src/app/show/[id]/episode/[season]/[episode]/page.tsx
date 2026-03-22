@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
+import { getVideoUrl } from "@/lib/s3";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { EpisodeCloseButton } from "@/components/EpisodeCloseButton";
 
@@ -16,7 +17,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
   if (Number.isNaN(seasonNum) || Number.isNaN(episodeNum)) notFound();
 
   const session = await getSession();
-  const [show, season, nextSeason, progressRow] = await Promise.all([
+  const [show, season, nextSeason, progressRow, videoUrl] = await Promise.all([
     getShowById(showId),
     getSeason(showId, seasonNum),
     getSeason(showId, seasonNum + 1),
@@ -32,6 +33,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
           },
         })
       : null,
+    getVideoUrl(showId),
   ]);
 
   if (!show || !season) notFound();
@@ -76,6 +78,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
         autoPlay
         nextEpisodeHref={nextEpisodeHref}
         nextEpisodeLabel={nextEpisodeLabel ?? undefined}
+        videoUrl={videoUrl}
       />
       </div>
     </div>

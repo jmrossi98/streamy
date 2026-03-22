@@ -4,8 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
 
-// Placeholder: Google sample bucket (Sintel, Blender Foundation). Replace with your own stream URL.
-const VIDEO_SRC =
+const PLACEHOLDER_SRC =
   "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4";
 
 type WatchPlayerProps = {
@@ -15,6 +14,7 @@ type WatchPlayerProps = {
   initialProgressSeconds: number;
   runtimeMinutes: number | null;
   autoPlay?: boolean;
+  videoUrl?: string | null;
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
@@ -25,7 +25,9 @@ export function WatchPlayer({
   backdropUrl,
   initialProgressSeconds,
   autoPlay = false,
+  videoUrl,
 }: WatchPlayerProps) {
+  const videoSrc = videoUrl || PLACEHOLDER_SRC;
   const [playing, setPlaying] = useState(autoPlay);
   const [showOverlay, setShowOverlay] = useState(!autoPlay);
   const [videoLoading, setVideoLoading] = useState(false);
@@ -157,7 +159,7 @@ export function WatchPlayer({
       )}
       <video
         ref={videoRef}
-        src={VIDEO_SRC}
+        src={videoSrc}
         controls
         autoPlay
         playsInline

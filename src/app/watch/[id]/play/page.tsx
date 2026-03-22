@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getMovieById } from "@/lib/tmdb";
+import { getVideoUrl } from "@/lib/s3";
 import { PrefetchBack } from "./PrefetchBack";
 
 const WatchPlayer = dynamic(
@@ -16,13 +17,14 @@ type Props = { params: Promise<{ id: string }> };
 export default async function WatchPlayPage({ params }: Props) {
   const { id } = await params;
   const session = await getSession();
-  const [movie, progressRow] = await Promise.all([
+  const [movie, progressRow, videoUrl] = await Promise.all([
     getMovieById(id),
     session?.user?.id
       ? prisma.watchProgress.findUnique({
           where: { userId_movieId: { userId: session.user.id, movieId: id } },
         })
       : null,
+    getVideoUrl(id),
   ]);
   if (!movie) notFound();
 
@@ -48,6 +50,7 @@ export default async function WatchPlayPage({ params }: Props) {
         initialProgressSeconds={initialProgressSeconds}
         runtimeMinutes={movie.runtime ?? null}
         autoPlay
+        videoUrl={videoUrl}
       />
     </div>
   );

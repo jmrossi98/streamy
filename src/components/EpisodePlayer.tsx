@@ -6,8 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
 
-// Placeholder: Google sample bucket (Sintel, Blender Foundation). Replace with your own stream URL.
-const VIDEO_SRC =
+const PLACEHOLDER_SRC =
   "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4";
 
 type EpisodePlayerProps = {
@@ -22,6 +21,7 @@ type EpisodePlayerProps = {
   /** When set, show "Next episode" overlay when video ends and link to this href. */
   nextEpisodeHref?: string | null;
   nextEpisodeLabel?: string;
+  videoUrl?: string | null;
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
@@ -38,7 +38,9 @@ export function EpisodePlayer({
   autoPlay = true,
   nextEpisodeHref,
   nextEpisodeLabel,
+  videoUrl,
 }: EpisodePlayerProps) {
+  const videoSrc = videoUrl || PLACEHOLDER_SRC;
   const [playing, setPlaying] = useState(autoPlay);
   const [showOverlay, setShowOverlay] = useState(!autoPlay);
   const [videoLoading, setVideoLoading] = useState(false);
@@ -192,7 +194,7 @@ export function EpisodePlayer({
       )}
       <video
         ref={videoRef}
-        src={VIDEO_SRC}
+        src={videoSrc}
         controls
         autoPlay
         playsInline
