@@ -115,9 +115,20 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
         aria-hidden
         onClick={onClose}
       />
-      <div className="fixed left-1/2 top-[calc(5rem+env(safe-area-inset-top,0px))] z-[201] w-full max-w-2xl -translate-x-1/2 px-4">
-        <div className="rounded-lg bg-netflix-dark border border-white/20 shadow-xl overflow-hidden">
-          <div className="flex items-center gap-2 p-3 border-b border-white/10">
+      {/*
+        Height: top + bottom on fixed = real viewport box. Flex + min-h-0 so the results
+        pane scrolls inside the screen (header + 70vh used to overflow past 100vh on mobile,
+        hiding “Load more” below the fold).
+      */}
+      <div
+        className="
+          fixed left-1/2 z-[201] flex w-full max-w-2xl -translate-x-1/2 flex-col px-4
+          top-[calc(4rem+env(safe-area-inset-top,0px))]
+          bottom-[max(0.75rem,env(safe-area-inset-bottom,0px))]
+        "
+      >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-white/20 bg-netflix-dark shadow-xl">
+          <div className="flex shrink-0 items-center gap-2 border-b border-white/10 p-3">
             <svg className="w-5 h-5 text-white/60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
@@ -127,11 +138,11 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search movies and shows..."
-              className="flex-1 min-w-0 bg-transparent text-base text-white placeholder-white/50 outline-none"
+              className="min-w-0 flex-1 bg-transparent text-base text-white placeholder-white/50 outline-none"
               autoComplete="off"
             />
           </div>
-          <div className="max-h-[70vh] overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]">
             {loading && (
               <div className="p-6 text-center text-white/60">Searching…</div>
             )}

@@ -20,12 +20,21 @@
 html {
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+  max-width: 100%;
 }
 
 body {
   background-color: var(--netflix-black);
   color: #fff;
   padding-bottom: var(--safe-area-inset-bottom);
+  max-width: 100%;
+}
+
+/* Avoid accidental horizontal scroll / faux side “borders” on narrow viewports */
+@media (max-width: 767px) {
+  body {
+    overflow-x: clip;
+  }
 }
 
 /* Custom scrollbar */

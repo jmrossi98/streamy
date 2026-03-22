@@ -20,7 +20,7 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
 
   if (!hasAny) {
     return (
-      <p className="text-white/70">
+      <p className="px-4 text-white/70 md:px-0">
         Your watchlist is empty. Add movies and TV shows from their pages using &quot;Add to My List&quot;.
       </p>
     );

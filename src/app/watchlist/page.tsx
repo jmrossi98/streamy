@@ -10,8 +10,8 @@ export default async function WatchlistPage() {
   const data = await getWatchlist(session.user.id);
 
   return (
-    <div className="pt-24 pb-12 px-6">
-      <h1 className="font-display text-4xl font-bold text-white mb-6">My List</h1>
+    <div className="pt-24 pb-12 max-md:px-0 md:px-6">
+      <h1 className="px-4 font-display text-4xl font-bold text-white mb-6 md:px-0">My List</h1>
       <WatchlistContent data={data} />
     </div>
   );
