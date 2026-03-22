@@ -12,9 +12,17 @@ export type WatchlistButtonProps = {
   initialInList?: boolean;
   /** Circle-only icon button for hero (no text). */
   variant?: "default" | "circle";
+  /** When `variant` is circle: fixed size (no hover expand) — for info page icon row. */
+  compact?: boolean;
 };
 
-export function WatchlistButton({ movieId, showId, initialInList, variant = "default" }: WatchlistButtonProps) {
+export function WatchlistButton({
+  movieId,
+  showId,
+  initialInList,
+  variant = "default",
+  compact = false,
+}: WatchlistButtonProps) {
   const id = movieId ?? showId ?? "";
   const type = movieId ? "movie" : "show";
   const { data: session, status } = useSession();
@@ -95,6 +103,23 @@ export function WatchlistButton({ movieId, showId, initialInList, variant = "def
   }
 
   if (variant === "circle") {
+    if (compact) {
+      return (
+        <button
+          type="button"
+          onClick={toggle}
+          disabled={loading}
+          className={`${circleClass} h-12 w-12 shrink-0`}
+          aria-label={inList ? "In My List" : "Add to My List"}
+        >
+          {loading ? (
+            <span className="h-5 w-5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          ) : (
+            icon
+          )}
+        </button>
+      );
+    }
     return (
       <button
         type="button"
@@ -103,9 +128,9 @@ export function WatchlistButton({ movieId, showId, initialInList, variant = "def
         className={`group relative z-10 flex items-center justify-center overflow-hidden transition-[width] duration-200 ease-out ${circleClass} w-12 min-w-[3rem] hover:w-[7.5rem] hover:rounded-lg hover:pr-4 hover:justify-start`}
         aria-label={inList ? "In My List" : "Add to My List"}
       >
-        <span className="flex shrink-0 items-center justify-center w-12 h-12">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center">
           {loading ? (
-            <span className="w-5 h-5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+            <span className="h-5 w-5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
           ) : (
             icon
           )}

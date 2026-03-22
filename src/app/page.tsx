@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
+import { HomeFeedHeader } from "@/components/HomeFeedHeader";
 import { RecentlyWatchedRow } from "@/components/RecentlyWatchedRow";
 import { HomeMoviesSection } from "@/components/HomeMoviesSection";
 import { HomePrefetch } from "@/components/HomePrefetch";
@@ -116,8 +117,11 @@ export default async function HomePage() {
   return (
     <>
       <HomePrefetch movieIds={prefetchIds} showIds={prefetchShowIds} runtimeIds={runtimeIds} />
-      <Hero featured={featured} progressSeconds={featuredProgressSeconds} />
-      <div id="movies" className="space-y-2 pt-6 sm:pt-8 md:pt-10">
+      <div className="max-md:pt-[calc(4rem+env(safe-area-inset-top,0px))]">
+        <HomeFeedHeader />
+        <Hero featured={featured} progressSeconds={featuredProgressSeconds} />
+      </div>
+      <div id="movies" className="space-y-4 pt-6 sm:space-y-5 md:space-y-2 md:pt-10">
         {hasRecentProgress && (
           <RecentlyWatchedRow
             items={recentlyWatched}

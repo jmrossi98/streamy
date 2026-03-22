@@ -130,7 +130,7 @@ export function ShowContent({
   }, [seasonNum, show.id, initialSeason, initialSeasonNum, initialSeasonData]);
 
   return (
-    <div className="min-h-screen bg-netflix-black pt-16 pb-12">
+    <div className="min-h-screen bg-black pb-16 pt-16 md:bg-netflix-black md:pb-12">
       {overlayEpisode && (
         <div className="fixed inset-0 z-[100] bg-netflix-black">
           <button
@@ -160,21 +160,36 @@ export function ShowContent({
       <InfoHero
         backdropUrl={show.backdrop}
         title={show.name}
-        addToMyListNode={
-          <WatchlistButton
-            showId={show.id}
-            initialInList={initialInList}
-          />
+        metaLine={[
+          show.year,
+          show.numberOfSeasons > 0 ? `${show.numberOfSeasons} Season${show.numberOfSeasons === 1 ? "" : "s"}` : null,
+          show.genres.slice(0, 2).join(", ") || null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        badgeNodes={
+          <>
+            <span className="rounded-md border border-white/30 bg-white/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white/90">
+              HD
+            </span>
+            <span className="rounded-md border border-white/30 bg-white/10 px-2.5 py-1 text-xs font-semibold text-white/90">
+              {show.rating.toFixed(1)} ★
+            </span>
+          </>
         }
+        addToMyListMobile={
+          <WatchlistButton showId={show.id} initialInList={initialInList} variant="circle" compact />
+        }
+        addToMyListDesktop={<WatchlistButton showId={show.id} initialInList={initialInList} />}
         playHref={resumePlayHref}
         playLabel={resumePlayLabel}
         playNode={
           <button
             type="button"
             onClick={openResumeOverlay}
-            className="inline-flex items-center justify-center gap-2 min-h-[44px] min-w-[140px] sm:min-w-[160px] px-6 py-3 bg-white text-netflix-black font-semibold rounded hover:bg-white/90 transition-colors touch-manipulation"
+            className="inline-flex w-full min-h-[52px] items-center justify-center gap-2 rounded-2xl bg-white px-6 py-4 text-sm font-bold uppercase tracking-[0.14em] text-netflix-black shadow-lg hover:bg-white/90 active:bg-white/85 touch-manipulation md:w-auto md:min-h-[44px] md:rounded md:px-6 md:py-3 md:text-base md:font-semibold md:normal-case md:tracking-normal md:shadow-none"
           >
-            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+            <svg className="h-6 w-6 shrink-0" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
             {resumePlayLabel}
@@ -182,11 +197,20 @@ export function ShowContent({
         }
       />
 
-      <div className="max-w-4xl mx-auto px-6 py-10">
-        <p className="text-white/70 text-sm mb-2">{show.year} · {show.rating}</p>
-        <p className="text-white/80 text-lg">{show.overview}</p>
+      <div id="details" className="mx-auto max-w-4xl scroll-mt-28 px-4 py-10 text-left sm:px-6 md:px-10">
+        <div className="hidden md:block">
+          <p className="mb-2 text-sm text-white/70">
+            {show.year} · {show.rating}
+          </p>
+          <p className="text-lg text-white/80">{show.overview}</p>
+        </div>
 
-        <div className="flex items-center gap-4 mt-8 mb-4">
+        <div className="md:hidden">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/45">Synopsis</h2>
+          <p className="text-base leading-relaxed text-white/85 sm:text-lg">{show.overview}</p>
+        </div>
+
+        <div className="mt-8 flex items-center gap-4 mb-4 md:mt-10">
           <label className="text-white/80 text-sm">Season</label>
           <select
             value={seasonNum}

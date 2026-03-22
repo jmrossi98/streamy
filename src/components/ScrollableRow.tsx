@@ -61,8 +61,8 @@ export function ScrollableRow({ title, children }: ScrollableRowProps) {
   }
 
   return (
-    <section className="px-4 sm:px-6 pt-2 pb-2 relative">
-      <h2 className="font-display text-xl sm:text-2xl md:text-3xl font-bold text-white mb-2">
+    <section className="relative px-4 pb-2 pt-2 sm:px-6">
+      <h2 className="mb-2 font-display text-xl font-bold text-white sm:mb-3 sm:text-2xl md:text-3xl">
         {title}
       </h2>
       <div className="relative isolate flex items-center">

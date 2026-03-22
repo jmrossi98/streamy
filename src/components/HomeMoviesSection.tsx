@@ -49,7 +49,7 @@ export function HomeMoviesSection({ trending, genreRows, trendingTV, progressLis
           {trendingTV.map((show) => (
             <div
               key={show.id}
-              className="movie-card group relative block w-[160px] sm:w-[180px] md:w-[240px] rounded overflow-hidden bg-netflix-dark touch-manipulation"
+              className="movie-card group relative block w-[160px] sm:w-[180px] md:w-[240px] overflow-hidden rounded bg-netflix-dark touch-manipulation max-md:rounded-2xl max-md:shadow-lg max-md:shadow-black/40 max-md:ring-1 max-md:ring-white/5"
             >
               <div className="relative aspect-video w-full">
                 <Link href={`/show/${show.id}`} className="absolute inset-0 z-0 block">

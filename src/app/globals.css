@@ -60,6 +60,12 @@ body {
   touch-action: pan-x pan-y pinch-zoom;
 }
 
+@media (max-width: 767px) {
+  .movie-row {
+    gap: 0.75rem;
+  }
+}
+
 .movie-row::-webkit-scrollbar {
   display: none;
 }
@@ -95,4 +101,13 @@ body {
 select option {
   background: var(--netflix-black);
   color: #fff;
+}
+
+/* Horizontal chip rows (home filters) */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

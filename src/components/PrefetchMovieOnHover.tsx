@@ -18,5 +18,9 @@ export function PrefetchMovieOnHover({ movieId, movie, children }: Props) {
     router.prefetch(`/watch/${movieId}`);
     router.prefetch(`/watch/${movieId}/play`);
   };
-  return <div onMouseEnter={onEnter}>{children}</div>;
+  return (
+    <div className="h-full" onMouseEnter={onEnter}>
+      {children}
+    </div>
+  );
 }

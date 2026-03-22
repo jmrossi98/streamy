@@ -36,8 +36,14 @@ export function WhoIsWatching({
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
-      <h1 className="font-display text-4xl md:text-5xl font-bold text-white text-center mb-12">
+    <div
+      className="
+        flex min-h-[100dvh] flex-col items-center justify-center px-6
+        pt-[calc(4rem+env(safe-area-inset-top,0px))]
+        pb-[max(1.5rem,env(safe-area-inset-bottom,0px))]
+      "
+    >
+      <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-white text-center mb-8 md:mb-10">
         Who is watching?
       </h1>
       <div className="flex flex-wrap justify-center gap-6 md:gap-8 max-w-4xl">
