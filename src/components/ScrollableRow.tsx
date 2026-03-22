@@ -61,8 +61,8 @@ export function ScrollableRow({ title, children }: ScrollableRowProps) {
   }
 
   return (
-    <section className="relative pb-2 pt-2 max-md:px-0 md:px-6">
-      <h2 className="mb-2 px-4 font-display text-xl font-bold text-white sm:mb-3 sm:text-2xl md:px-0 md:text-3xl">
+    <section className="relative pb-2 pt-2 max-md:px-4 md:px-6">
+      <h2 className="mb-2 font-display text-xl font-bold text-white sm:mb-3 sm:text-2xl md:text-3xl">
         {title}
       </h2>
       <div className="relative isolate flex items-center">
@@ -81,10 +81,7 @@ export function ScrollableRow({ title, children }: ScrollableRowProps) {
             <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z" />
           </svg>
         </button>
-        <div
-          ref={scrollRef}
-          className="movie-row flex-1 min-w-0 max-md:pl-4 max-md:pr-0 md:pl-0 md:pr-0"
-        >
+        <div ref={scrollRef} className="movie-row min-w-0 flex-1">
           {children}
         </div>
         <button

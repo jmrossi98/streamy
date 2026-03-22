@@ -9,16 +9,17 @@ export function Hero({ featured, progressSeconds = 0 }: HeroProps) {
   const showResume = progressSeconds > 0;
 
   return (
-    <section className="w-full px-0">
+    {/* Mobile: horizontal inset + rounded “card” hero; desktop: full-bleed */}
+    <section className="w-full px-4 md:px-0">
       <div
         className="
           relative mx-auto w-full max-w-[1920px] max-md:overflow-hidden md:overflow-visible
-          max-md:min-h-[360px] max-md:h-[min(72svh,720px)] max-md:rounded-none
-          max-md:shadow-none max-md:ring-0
+          max-md:min-h-[360px] max-md:h-[min(72svh,720px)] max-md:rounded-3xl
+          max-md:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.55)] max-md:ring-1 max-md:ring-white/10
           md:relative md:h-[88vh] md:min-h-[560px] md:rounded-none md:shadow-none md:ring-0
         "
       >
-        <div className="absolute inset-0 overflow-hidden md:rounded-none">
+        <div className="absolute inset-0 overflow-hidden max-md:rounded-3xl md:rounded-none">
           <Image
             src={featured.backdrop}
             alt=""

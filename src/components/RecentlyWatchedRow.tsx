@@ -25,11 +25,11 @@ export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRow
 
   if (!hasAny) {
     return (
-      <section className="min-h-[4rem] pb-2 max-md:px-0 md:px-6" aria-label="Recently Watched">
-        <h2 className="px-4 font-display text-2xl font-bold text-white mb-2 block md:px-0 md:text-3xl">
+      <section className="min-h-[4rem] pb-2 max-md:px-4 md:px-6" aria-label="Recently Watched">
+        <h2 className="mb-2 block font-display text-2xl font-bold text-white md:text-3xl">
           Recently Watched
         </h2>
-        <p className="px-4 text-sm text-white/60 md:px-0">Start watching to see your progress here.</p>
+        <p className="text-sm text-white/60">Start watching to see your progress here.</p>
       </section>
     );
   }
