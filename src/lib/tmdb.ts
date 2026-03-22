@@ -8,7 +8,13 @@
 
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
-import * as mock from "./tmdb-mock";
+// Lazy-load mock module only when needed (dev without API key) — avoids
+// compiling 200 lines of mock data on every page in dev when using real API.
+let _mock: typeof import("./tmdb-mock") | null = null;
+async function getMock() {
+  if (!_mock) _mock = await import("./tmdb-mock");
+  return _mock;
+}
 
 function isRealApiEnabledInDev(): boolean {
   if (process.env.TMDB_API_KEY) return true;
@@ -136,7 +142,7 @@ async function getGenresUncached(): Promise<TmdbGenre[]> {
 }
 
 export async function getGenres(): Promise<TmdbGenre[]> {
-  if (USE_MOCK) return mock.mockGetGenres();
+  if (USE_MOCK) return (await getMock()).mockGetGenres();
   return withMemoryCache(
     ["tmdb-genres"],
     ONE_DAY_MS,
@@ -164,7 +170,7 @@ export async function getTrending(limit = 10): Promise<Movie[]> {
 }
 
 export async function getDiscoverByGenre(genreId: number, limit = 12): Promise<Movie[]> {
-  if (USE_MOCK) return mock.mockGetDiscoverByGenre(genreId, limit);
+  if (USE_MOCK) return (await getMock()).mockGetDiscoverByGenre(genreId, limit);
   return withMemoryCache(
     ["tmdb-discover-movie", String(genreId), String(limit)],
     ONE_DAY_MS,
@@ -260,7 +266,7 @@ async function getTVGenresUncached(): Promise<TmdbGenreTV[]> {
 }
 
 export async function getTVGenres(): Promise<TmdbGenreTV[]> {
-  if (USE_MOCK) return mock.mockGetTVGenres();
+  if (USE_MOCK) return (await getMock()).mockGetTVGenres();
   return withMemoryCache(
     ["tmdb-tv-genres"],
     ONE_DAY_MS,
@@ -312,9 +318,9 @@ async function getShowByIdUncached(id: string): Promise<(TVShow & { numberOfSeas
   };
 }
 
-export const getShowById = cache((id: string) =>
+export const getShowById = cache(async (id: string) =>
   USE_MOCK
-    ? mock.mockGetShowById(id)
+    ? (await getMock()).mockGetShowById(id)
     : withMemoryCache(
         ["tmdb-show", id],
         ONE_DAY_MS,
@@ -371,7 +377,7 @@ export async function getSeason(showId: string, seasonNumber: number): Promise<T
 export async function searchTVShows(query: string, limit = 12, page = 1): Promise<TVShow[]> {
   const q = query.trim();
   if (!q) return [];
-  if (USE_MOCK) return mock.mockSearchTVShows(q, limit, page);
+  if (USE_MOCK) return (await getMock()).mockSearchTVShows(q, limit, page);
   return withMemoryCache(
     ["tmdb-search-tv", q, String(limit), String(page)],
     ONE_DAY_MS,
@@ -391,7 +397,7 @@ export async function searchTVShows(query: string, limit = 12, page = 1): Promis
 }
 
 export async function getTrendingTV(limit = 10): Promise<TVShow[]> {
-  if (USE_MOCK) return mock.mockGetTrendingTV(limit);
+  if (USE_MOCK) return (await getMock()).mockGetTrendingTV(limit);
   return withMemoryCache(
     ["tmdb-trending-tv", String(limit)],
     ONE_DAY_MS,
@@ -486,9 +492,9 @@ async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
   };
 }
 
-export const getMovieById = cache((id: string) =>
+export const getMovieById = cache(async (id: string) =>
   USE_MOCK
-    ? mock.mockGetMovieById(id)
+    ? (await getMock()).mockGetMovieById(id)
     : withMemoryCache(
         ["tmdb-movie", id],
         ONE_DAY_MS,

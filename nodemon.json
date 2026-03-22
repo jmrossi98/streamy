@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/nodemon.json",
+  "watch": [
+    "src",
+    "public",
+    "prisma",
+    "next.config.mjs",
+    "tailwind.config.ts",
+    "postcss.config.mjs",
+    "tsconfig.json",
+    "package.json"
+  ],
+  "ext": "ts,tsx,js,mjs,cjs,json,prisma,css,mdx",
+  "ignore": [
+    ".next",
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "prisma/migrations"
+  ],
+  "delay": 2000,
+  "legacyWatch": true,
+  "exec": "npm run build && npx next start",
+  "signal": "SIGTERM",
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

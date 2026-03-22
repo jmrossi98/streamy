@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getTrending, getGenres, getDiscoverByGenre } from "@/lib/tmdb";
 import { MoviesContent } from "@/components/MoviesContent";
+import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 export const dynamic = "force-dynamic";
 
@@ -38,8 +39,8 @@ export default async function MoviesPage() {
     .map((p) => ({ movieId: Number(p.movieId), progressSeconds: p.progressSeconds }));
 
   return (
-    <main className="min-h-screen pt-24 pb-12">
+    <div className={BROWSE_PAGE_CLASS}>
       <MoviesContent trending={trending} genreRows={genreRows} progressList={progressList} />
-    </main>
+    </div>
   );
 }

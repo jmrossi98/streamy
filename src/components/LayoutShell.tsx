@@ -16,7 +16,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       {!fullscreen && <Navbar />}
-      <main className="min-h-screen">{children}</main>
+      <main className="min-h-screen w-full min-w-0 bg-netflix-black">{children}</main>
       {!fullscreen && <Footer />}
     </>
   );

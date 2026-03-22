@@ -46,7 +46,7 @@ export function Hero({ featured, progressSeconds = 0 }: HeroProps) {
               relative z-10 mx-auto flex h-full max-w-[1920px] flex-col justify-end
               max-md:touch-pan-y max-md:items-center max-md:px-5
               max-md:pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] max-md:pt-8 max-md:text-center
-              md:items-start md:px-6 md:pb-20 md:pt-24 md:text-left
+              md:items-start md:px-6 md:pb-16 md:pt-24 md:text-left
             "
           >
             <p className="mb-2 inline-flex items-center justify-center gap-2 self-center rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/95 backdrop-blur-sm md:hidden">

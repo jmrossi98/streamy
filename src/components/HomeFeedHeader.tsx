@@ -14,12 +14,10 @@ export function HomeFeedHeader() {
   const pathname = usePathname();
 
   return (
-    <div className="mb-4 md:hidden">
-      <h1 className="px-4 font-display text-2xl font-bold tracking-tight text-white md:text-3xl">
-        For You
-      </h1>
+    <section className="mb-4 w-full max-md:px-4 md:hidden" aria-label="Home feed">
+      <h1 className="font-display text-2xl font-bold tracking-tight text-white">For You</h1>
       <div
-        className="no-scrollbar mt-4 flex gap-2 overflow-x-auto px-4 pb-1 pt-0.5 [-webkit-overflow-scrolling:touch]"
+        className="no-scrollbar -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1 pt-0.5 [-webkit-overflow-scrolling:touch]"
         role="navigation"
         aria-label="Browse categories"
       >
@@ -42,7 +40,8 @@ export function HomeFeedHeader() {
             </Link>
           );
         })}
+        <div aria-hidden className="shrink-0 w-4 min-w-4 md:hidden" />
       </div>
-    </div>
+    </section>
   );
 }

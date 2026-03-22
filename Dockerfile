@@ -1,5 +1,4 @@
 # ---- Builder (must match runner OS for Prisma: both Debian bullseye) ----
-# Alpine + Debian runtime = wrong Query Engine in standalone trace; use Debian for both.
 FROM node:20-bullseye-slim AS builder
 
 WORKDIR /app
@@ -9,12 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_OPTIONS=--max-old-space-size=2048
+ENV NODE_OPTIONS=--max-old-space-size=4096
+ENV NEXT_TELEMETRY_DISABLED=1
 
+# --- Dependency layer (cached unless package*.json changes) ---
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 RUN for i in 1 2 3; do npm install --no-audit --no-fund && break; sleep 20; done
 
+# --- Source layer ---
 COPY . .
 RUN mkdir -p public
 
@@ -52,7 +54,6 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 
-# Standalone trace can miss Prisma engine files — copy full client from builder (Debian engine).
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 

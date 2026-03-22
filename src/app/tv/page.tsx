@@ -1,5 +1,6 @@
 import { getTrendingTV, getTVGenres, getDiscoverTVByGenre } from "@/lib/tmdb";
 import { TVRow } from "@/components/TVRow";
+import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 export const dynamic = "force-dynamic";
 
@@ -23,13 +24,13 @@ export default async function TVPage() {
   );
 
   return (
-    <main className="min-h-screen pt-24 pb-12">
+    <div className={BROWSE_PAGE_CLASS}>
       <div className="space-y-2">
         <TVRow title="Trending TV" shows={trending} />
         {genreRows.map((row) => (
           <TVRow key={row.title} title={row.title} shows={row.shows} />
         ))}
       </div>
-    </main>
+    </div>
   );
 }

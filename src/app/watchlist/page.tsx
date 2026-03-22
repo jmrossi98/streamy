@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getWatchlist } from "@/lib/watchlist";
 import { WatchlistContent } from "./WatchlistContent";
+import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 export default async function WatchlistPage() {
   const session = await getSession();
@@ -10,8 +11,10 @@ export default async function WatchlistPage() {
   const data = await getWatchlist(session.user.id);
 
   return (
-    <div className="pt-24 pb-12 max-md:px-4 md:px-6">
-      <h1 className="mb-6 font-display text-4xl font-bold text-white">My List</h1>
+    <div className={BROWSE_PAGE_CLASS}>
+      <h1 className="streamy-page-title-x mb-6 font-display text-4xl font-bold text-white">
+        My List
+      </h1>
       <WatchlistContent data={data} />
     </div>
   );

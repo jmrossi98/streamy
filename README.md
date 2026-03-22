@@ -57,6 +57,20 @@ Open [http://localhost:3000](http://localhost:3000). Without `TMDB_API_KEY`, the
 
 **Production mode** (`npm run build` then `npm run start`) does **not** auto-rebuild when you edit code; use `npm run dev` while developing.
 
+### Production server + rebuild on save (`npm run start:watch`)
+
+Next.js **does not** support Fast Refresh / HMR when using **`next start`** (production). That’s a framework limitation—not something we can turn on for `npm start`.
+
+What you can do instead:
+
+| Command | What it does |
+|--------|----------------|
+| **`npm run dev`** | **Best for daily work.** Dev server with **Fast Refresh** (instant updates, no full production build). |
+| **`npm run start:watch`** | Runs **`next start`**, but **nodemon** watches `src/`, config files, etc. Each save triggers a **full `npm run build`** then restarts the server. **Slow** (often 15s–2m per save) but matches “production” output. |
+| **`npm start`** | Same as **`npm run start:prod`**: one **`build`** + **`next start`** (no file watching). Use for CI-style checks. |
+
+`nodemon.json` enables **`legacyWatch: true`** and a **2s debounce** so file watching works more reliably on **Windows**, **OneDrive**, and **WSL** (native watchers often fail on synced folders). If changes still don’t trigger, try moving the repo to a local non-synced path or set polling env vars your tooling supports.
+
 ### Seeing your changes (auto rebuild)
 
 **Leave `npm run dev` running** in a terminal. When you save a file, Next.js will rebuild and the browser will refresh (hot reload). You do **not** need to stop or rerun the command.

@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterWatchlistButton } from "@/components/PosterWatchlistButton";
+import { ROW_H2_CLASS, ROW_INLINE_TEXT_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
 type MovieItem = { movie: Movie; progressSeconds: number; runtimeMinutes: number | null };
 type ShowItem = { show: TVShow };
@@ -25,11 +26,11 @@ export function RecentlyWatchedRow({ items, showItems = [] }: RecentlyWatchedRow
 
   if (!hasAny) {
     return (
-      <section className="min-h-[4rem] pb-2 max-md:px-4 md:px-6" aria-label="Recently Watched">
-        <h2 className="mb-2 block font-display text-2xl font-bold text-white md:text-3xl">
-          Recently Watched
-        </h2>
-        <p className="text-sm text-white/60">Start watching to see your progress here.</p>
+      <section className={`${ROW_SECTION_CLASS} min-h-[4rem]`} aria-label="Recently Watched">
+        <h2 className={`${ROW_H2_CLASS} block`}>Recently Watched</h2>
+        <p className={ROW_INLINE_TEXT_CLASS}>
+          Start watching to see your progress here.
+        </p>
       </section>
     );
   }
