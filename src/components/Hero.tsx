@@ -9,8 +9,8 @@ export function Hero({ featured, progressSeconds = 0 }: HeroProps) {
   const showResume = progressSeconds > 0;
 
   return (
-    {/* Mobile: horizontal inset + rounded “card” hero; desktop: full-bleed */}
     <section className="w-full px-4 md:px-0">
+      {/* Mobile: horizontal inset + rounded card hero; desktop: full-bleed */}
       <div
         className="
           relative mx-auto w-full max-w-[1920px] max-md:overflow-hidden md:overflow-visible
