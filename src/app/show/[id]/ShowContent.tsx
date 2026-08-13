@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import type { TVShow, TVSeason, TVEpisode } from "@/lib/tmdb";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { RequestButton } from "@/components/RequestButton";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 
@@ -22,6 +23,9 @@ type ShowContentProps = {
   resumeEpisode: number;
   resumeEpisodeName: string;
   resumeProgressSeconds: number;
+  hasVideo?: boolean;
+  requestConfigured?: boolean;
+  initialRequestStatus?: string | null;
 };
 
 type OverlayEpisode = {
@@ -60,6 +64,9 @@ export function ShowContent({
   resumeEpisode,
   resumeEpisodeName,
   resumeProgressSeconds,
+  hasVideo = true,
+  requestConfigured = false,
+  initialRequestStatus = null,
 }: ShowContentProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -104,6 +111,8 @@ export function ShowContent({
       nextLabel: null,
     });
   }, [resumeSeason, resumeEpisode, resumeEpisodeName, resumeProgressSeconds, pathname, router]);
+
+  const showRequestFlow = !hasVideo && requestConfigured;
 
   useEffect(() => {
     if (seasonNum === 1) {
@@ -184,16 +193,20 @@ export function ShowContent({
         playHref={resumePlayHref}
         playLabel={resumePlayLabel}
         playNode={
-          <button
-            type="button"
-            onClick={openResumeOverlay}
-            className="inline-flex w-full min-h-[52px] items-center justify-center gap-2 rounded-2xl bg-white px-6 py-4 text-sm font-bold uppercase tracking-[0.14em] text-netflix-black shadow-lg hover:bg-white/90 active:bg-white/85 touch-manipulation md:w-auto md:min-h-[44px] md:rounded md:px-6 md:py-3 md:text-base md:font-semibold md:normal-case md:tracking-normal md:shadow-none"
-          >
-            <svg className="h-6 w-6 shrink-0" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-            {resumePlayLabel}
-          </button>
+          showRequestFlow ? (
+            <RequestButton showId={show.id} initialStatus={initialRequestStatus} />
+          ) : (
+            <button
+              type="button"
+              onClick={openResumeOverlay}
+              className="inline-flex w-full min-h-[52px] items-center justify-center gap-2 rounded-2xl bg-white px-6 py-4 text-sm font-bold uppercase tracking-[0.14em] text-netflix-black shadow-lg hover:bg-white/90 active:bg-white/85 touch-manipulation md:w-auto md:min-h-[44px] md:rounded md:px-6 md:py-3 md:text-base md:font-semibold md:normal-case md:tracking-normal md:shadow-none"
+            >
+              <svg className="h-6 w-6 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              {resumePlayLabel}
+            </button>
+          )
         }
       />
 

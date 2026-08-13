@@ -5,10 +5,18 @@ import type { Movie, MovieDetail } from "@/lib/tmdb";
 import { getMovieFromCache, setMovieInCache } from "@/lib/movieCache";
 import { InfoHero } from "@/components/InfoHero";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { RequestButton } from "@/components/RequestButton";
 
 const FALLBACK_BACKDROP = "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
-type Props = { id: string; initialInList: boolean; progressSeconds?: number };
+type Props = {
+  id: string;
+  initialInList: boolean;
+  progressSeconds?: number;
+  hasVideo?: boolean;
+  requestConfigured?: boolean;
+  initialRequestStatus?: string | null;
+};
 
 function buildMetaLine(movie: Movie | MovieDetail): string {
   const parts: string[] = [];
@@ -20,7 +28,14 @@ function buildMetaLine(movie: Movie | MovieDetail): string {
   return parts.join(" · ");
 }
 
-export function WatchPageContent({ id, initialInList, progressSeconds = 0 }: Props) {
+export function WatchPageContent({
+  id,
+  initialInList,
+  progressSeconds = 0,
+  hasVideo = true,
+  requestConfigured = false,
+  initialRequestStatus = null,
+}: Props) {
   const cached = getMovieFromCache(id);
   const [movie, setMovie] = useState<MovieDetail | Movie | null>(cached ?? null);
   const [loading, setLoading] = useState(!cached);
@@ -78,6 +93,8 @@ export function WatchPageContent({ id, initialInList, progressSeconds = 0 }: Pro
   );
   const listDesktop = <WatchlistButton movieId={movie.id} initialInList={initialInList} />;
 
+  const showRequestFlow = !hasVideo && requestConfigured;
+
   return (
     <div className="min-h-screen bg-black pb-16 pt-16 md:bg-netflix-black md:pb-12">
       <InfoHero
@@ -89,6 +106,11 @@ export function WatchPageContent({ id, initialInList, progressSeconds = 0 }: Pro
         addToMyListDesktop={listDesktop}
         playHref={`/watch/${id}/play`}
         playLabel={progressSeconds > 0 ? "Resume" : "Watch now"}
+        playNode={
+          showRequestFlow ? (
+            <RequestButton movieId={id} initialStatus={initialRequestStatus} />
+          ) : undefined
+        }
       />
 
       {/* Desktop: original body (no streaming-style synopsis header) */}
