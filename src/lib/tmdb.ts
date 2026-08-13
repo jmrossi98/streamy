@@ -328,6 +328,12 @@ export const getShowById = cache(async (id: string) =>
       )
 );
 
+/** Resolves a TMDB TV show id to its TVDB id (Sonarr is keyed by TVDB, not TMDB). */
+export async function getTvExternalIds(tmdbId: string): Promise<{ tvdbId: number | null }> {
+  const data = await fetchTmdb<{ tvdb_id: number | null }>(`tv/${tmdbId}/external_ids`);
+  return { tvdbId: data.tvdb_id ?? null };
+}
+
 export async function getSeason(showId: string, seasonNumber: number): Promise<TVSeason | null> {
   return withMemoryCache(
     ["tmdb-season", showId, String(seasonNumber)],

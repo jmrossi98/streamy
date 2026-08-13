@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
+import { getVideoUrl } from "@/lib/s3";
+import { isSonarrConfigured } from "@/lib/sonarr";
 import { ShowContent } from "./ShowContent";
 
 type Props = {
@@ -24,7 +26,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const maxSeason = Math.max(1, show.numberOfSeasons);
   const initialSeasonNum = Math.min(requestedSeason, maxSeason);
 
-  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem] =
+  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem, videoUrl, mediaRequest] =
     await Promise.all([
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
@@ -43,6 +45,12 @@ export default async function ShowPage({ params, searchParams }: Props) {
       session?.user?.id
         ? prisma.watchlistShowItem.findUnique({
             where: { userId_showId: { userId: session.user.id, showId: id } },
+          })
+        : null,
+      getVideoUrl(id),
+      session?.user?.id
+        ? prisma.mediaRequest.findUnique({
+            where: { userId_tmdbId_mediaType: { userId: session.user.id, tmdbId: id, mediaType: "show" } },
           })
         : null,
     ]);
@@ -103,6 +111,9 @@ export default async function ShowPage({ params, searchParams }: Props) {
       resumeEpisode={resumeEpisode}
       resumeEpisodeName={resumeEpisodeName ?? ""}
       resumeProgressSeconds={resumeProgressSeconds}
+      hasVideo={!!videoUrl}
+      requestConfigured={isSonarrConfigured()}
+      initialRequestStatus={mediaRequest?.status ?? null}
     />
   );
 }

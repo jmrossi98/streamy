@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { isRadarrConfigured } from "@/lib/radarr";
+import { isSonarrConfigured } from "@/lib/sonarr";
 
 /**
  * Diagnostic endpoint (no auth). Use: curl -s https://your-site/api/health | jq
@@ -14,6 +16,10 @@ export async function GET() {
     hasNextAuthSecret: !!process.env.NEXTAUTH_SECRET,
     nextAuthUrl: process.env.NEXTAUTH_URL || "(missing)",
     databaseUrlPrefix: process.env.DATABASE_URL?.slice(0, 18) ?? "(missing)",
+    // Optional homelab features — informational only, never affect `ok`.
+    hasRadarrConfig: isRadarrConfigured(),
+    hasSonarrConfig: isSonarrConfigured(),
+    hasWebhookSecret: !!process.env.MEDIA_WEBHOOK_SECRET,
   };
 
   let dbOk = false;
