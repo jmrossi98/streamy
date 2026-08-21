@@ -50,6 +50,20 @@ async function resolveSonarrStatus(series: {
   return queue.records.some((r) => r.seriesId === series.id) ? "downloading" : "requested";
 }
 
+/** Total size on disk across every episode file Sonarr is tracking. */
+export async function getSonarrTvSize(): Promise<number | null> {
+  if (!isSonarrConfigured()) return null;
+  try {
+    const series = await sonarrFetch<{ statistics?: { sizeOnDisk?: number } }[]>(
+      "/api/v3/series"
+    );
+    return series.reduce((sum, s) => sum + (s.statistics?.sizeOnDisk ?? 0), 0);
+  } catch (err) {
+    console.error("[sonarr] getSonarrTvSize failed:", err);
+    return null;
+  }
+}
+
 export type SonarrRequestResult =
   | { ok: true; sonarrId: number; tvdbId: number; status: MediaRequestStatus }
   | { ok: false; error: string };

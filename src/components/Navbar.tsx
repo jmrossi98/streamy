@@ -182,13 +182,13 @@ export function Navbar() {
                         </Link>
                         {session.user?.isAdmin && (
                           <Link
-                            href="/admin/approvals"
+                            href="/admin"
                             onClick={() => setHamburgerOpen(false)}
                             className={`block px-4 py-3 text-base font-medium transition-colors ${
-                              pathname === "/admin/approvals" ? "text-white bg-white/10" : "text-white/90 hover:bg-white/10 hover:text-white"
+                              pathname === "/admin" ? "text-white bg-white/10" : "text-white/90 hover:bg-white/10 hover:text-white"
                             }`}
                           >
-                            Admin approvals
+                            Admin Features
                           </Link>
                         )}
                       </nav>
@@ -246,11 +246,11 @@ export function Navbar() {
                         </Link>
                         {session.user?.isAdmin && (
                           <Link
-                            href="/admin/approvals"
+                            href="/admin"
                             className="block px-4 py-2 text-sm text-white/90 hover:bg-white/10"
                             onClick={() => setMenuOpen(false)}
                           >
-                            Admin approvals
+                            Admin Features
                           </Link>
                         )}
                         <button
