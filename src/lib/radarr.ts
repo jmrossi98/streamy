@@ -82,7 +82,10 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
   }
 }
 
-export type ActiveDownload = { title: string; progress: number };
+// progress is null while the torrent's metadata (and therefore its real
+// size) hasn't resolved yet -- distinct from 0%, which would wrongly imply
+// data transfer has actually started.
+export type ActiveDownload = { title: string; progress: number | null };
 
 /** Every movie currently in Radarr's active download queue, with live progress. */
 export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
@@ -91,12 +94,10 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
     const queue = await radarrFetch<{ records: { title: string; size: number; sizeleft: number }[] }>(
       `/api/v3/queue`
     );
-    return queue.records
-      .filter((r) => r.size > 0)
-      .map((r) => ({
-        title: r.title,
-        progress: Math.round(((r.size - r.sizeleft) / r.size) * 100),
-      }));
+    return queue.records.map((r) => ({
+      title: r.title,
+      progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
+    }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
     return [];

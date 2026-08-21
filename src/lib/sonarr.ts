@@ -87,12 +87,10 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
     const queue = await sonarrFetch<{ records: { title: string; size: number; sizeleft: number }[] }>(
       `/api/v3/queue`
     );
-    return queue.records
-      .filter((r) => r.size > 0)
-      .map((r) => ({
-        title: r.title,
-        progress: Math.round(((r.size - r.sizeleft) / r.size) * 100),
-      }));
+    return queue.records.map((r) => ({
+      title: r.title,
+      progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
+    }));
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);
     return [];

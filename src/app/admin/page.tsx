@@ -28,7 +28,7 @@ export default async function AdminFeaturesPage() {
   const downloads: DownloadRow[] = [
     ...radarrDownloads.map((d) => ({ ...d, mediaType: "movie" as const })),
     ...sonarrDownloads.map((d) => ({ ...d, mediaType: "show" as const })),
-  ].sort((a, b) => b.progress - a.progress);
+  ].sort((a, b) => (b.progress ?? -1) - (a.progress ?? -1));
 
   return (
     <div className="min-h-screen px-4 sm:px-6 pt-24 pb-16 max-w-2xl mx-auto space-y-10">
