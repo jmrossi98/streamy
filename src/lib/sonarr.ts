@@ -7,6 +7,7 @@
  */
 
 import { getTvExternalIds } from "./tmdb";
+import type { MediaRequestStatus } from "./radarr";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -39,17 +40,41 @@ async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** Any episode file on disk means "available"; otherwise check the active queue. */
+async function resolveSonarrStatus(series: {
+  id: number;
+  statistics?: { episodeFileCount?: number };
+}): Promise<MediaRequestStatus> {
+  if ((series.statistics?.episodeFileCount ?? 0) > 0) return "available";
+  const queue = await sonarrFetch<{ records: { seriesId: number }[] }>(`/api/v3/queue`);
+  return queue.records.some((r) => r.seriesId === series.id) ? "downloading" : "requested";
+}
+
 export type SonarrRequestResult =
-  | { ok: true; sonarrId: number; tvdbId: number }
+  | { ok: true; sonarrId: number; tvdbId: number; status: MediaRequestStatus }
   | { ok: false; error: string };
 
-/** Resolves TMDB id -> TVDB id, looks the show up in Sonarr, adds it, and triggers a search. */
+/**
+ * Resolves TMDB id -> TVDB id, looks the show up in Sonarr, adds it, and
+ * triggers a search. If it's already in Sonarr (e.g. added directly in
+ * Sonarr's own UI, or a prior request Streamy lost track of), skips
+ * straight to reporting its real current status instead of erroring on
+ * Sonarr's duplicate-add rejection.
+ */
 export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
 
   try {
     const { tvdbId } = await getTvExternalIds(tmdbId);
     if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+
+    const existing = await sonarrFetch<
+      { id: number; statistics?: { episodeFileCount?: number } }[]
+    >(`/api/v3/series?tvdbId=${tvdbId}`);
+    if (existing[0]) {
+      const status = await resolveSonarrStatus(existing[0]);
+      return { ok: true, sonarrId: existing[0].id, tvdbId, status };
+    }
 
     const lookup = await sonarrFetch<Record<string, unknown>[]>(
       `/api/v3/series/lookup?term=tvdb:${tvdbId}`
@@ -76,7 +101,7 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
         seasons,
       }),
     });
-    return { ok: true, sonarrId: created.id, tvdbId };
+    return { ok: true, sonarrId: created.id, tvdbId, status: "requested" };
   } catch (err) {
     console.error(`[sonarr] requestShow failed for tmdbId ${tmdbId}:`, err);
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
