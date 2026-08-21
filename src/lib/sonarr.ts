@@ -32,7 +32,10 @@ async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) throw new Error(`Sonarr API error: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Sonarr API error: ${res.status} ${body}`.trim());
+  }
   return res.json();
 }
 
