@@ -36,6 +36,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
       - caddy-config:/config
+      # Host-mounted (not a named volume) so the CloudWatch agent on the
+      # host can tail this file directly for shipping access logs.
+      - ./logs:/var/log/caddy
 
 volumes:
   streamy-data:
