@@ -13,6 +13,8 @@ export type RequestButtonProps = {
   showId?: string;
   /** Server-computed initial status ("requested" | "downloading" | "available" | null). */
   initialStatus: string | null;
+  /** Server-computed initial download percent (0-100), only meaningful while downloading. */
+  initialProgress?: number | null;
 };
 
 const PRIMARY_CLASS =
@@ -23,13 +25,17 @@ const BADGE_CLASS =
 
 const BADGE_CLICKABLE_CLASS = `${BADGE_CLASS} hover:bg-white/20 transition-colors touch-manipulation`;
 
-export function RequestButton({ movieId, showId, initialStatus }: RequestButtonProps) {
+const DOWNLOADING_BADGE_CLASS =
+  "flex w-full flex-col gap-2 rounded-2xl border border-white/30 bg-white/10 px-6 py-4 text-white/90 md:w-auto md:min-w-[220px] md:rounded md:px-6 md:py-3";
+
+export function RequestButton({ movieId, showId, initialStatus, initialProgress = null }: RequestButtonProps) {
   const id = movieId ?? showId ?? "";
   const mediaType = movieId ? "movie" : "show";
   const { data: session, status: authStatus } = useSession();
   const router = useRouter();
 
   const [status, setStatus] = useState<string | null>(initialStatus);
+  const [progress, setProgress] = useState<number | null>(initialProgress);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const refreshedRef = useRef(false);
@@ -68,7 +74,9 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
   }, [session?.user, id, mediaType]);
 
   // Poll our own status endpoint while a request is in flight — Radarr/Sonarr
-  // update it server-side via webhook, this just picks the change up.
+  // update it server-side via webhook, this just picks the change (and live
+  // download progress) up. Shared/global status, so this also picks up
+  // downloads started by a different user.
   useEffect(() => {
     if (status !== "requested" && status !== "downloading") return;
     const interval = setInterval(() => {
@@ -76,6 +84,7 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
         .then((r) => r.json())
         .then((data) => {
           if (data.status) setStatus(data.status);
+          setProgress(typeof data.progress === "number" ? data.progress : null);
         })
         .catch(() => {});
     }, POLL_INTERVAL_MS);
@@ -92,21 +101,27 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
     }
   }, [status, router]);
 
-  if (authStatus !== "authenticated") {
-    return (
-      <Link href={`/who-is-watching?callbackUrl=${encodeURIComponent(callbackUrl)}`} className={PRIMARY_CLASS}>
-        <DownloadIcon />
-        Request
-      </Link>
-    );
-  }
-
+  // Status is shared/global library state — show it to anyone viewing the
+  // page, logged in or not. Only the idle "nothing requested yet" case needs
+  // to branch on auth (sign-in prompt vs. an actual clickable Download button).
   if (status === "requested" || status === "downloading") {
     return (
-      <span className={BADGE_CLASS}>
-        <span className="h-4 w-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-        {status === "downloading" ? "Downloading…" : "Requested — searching…"}
-      </span>
+      <div className={DOWNLOADING_BADGE_CLASS}>
+        <span className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal">
+          <span className="h-4 w-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          {status === "downloading"
+            ? `Downloading${typeof progress === "number" ? ` — ${progress}%` : "…"}`
+            : "Queued — searching…"}
+        </span>
+        {status === "downloading" && (
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
+              style={{ width: `${progress ?? 0}%` }}
+            />
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -118,6 +133,15 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
     );
   }
 
+  if (authStatus !== "authenticated") {
+    return (
+      <Link href={`/who-is-watching?callbackUrl=${encodeURIComponent(callbackUrl)}`} className={PRIMARY_CLASS}>
+        <DownloadIcon />
+        Download
+      </Link>
+    );
+  }
+
   return (
     <button type="button" onClick={request} disabled={loading} className={PRIMARY_CLASS}>
       {loading ? (
@@ -125,7 +149,7 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
       ) : (
         <DownloadIcon />
       )}
-      {error ? "Couldn't request — try again" : "Request"}
+      {error ? "Couldn't download — try again" : "Download"}
     </button>
   );
 }

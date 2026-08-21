@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { signIn, useSession } from "next-auth/react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
@@ -60,9 +59,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 bg-netflix-black">
       <div className="w-full max-w-md">
-        <Link href="/who-is-watching" className="block text-center mb-8">
-          <span className="text-netflix-red text-4xl font-bold tracking-tight">STREAMY</span>
-        </Link>
         <div className="bg-netflix-dark/80 rounded-lg p-8 border border-white/10">
           <h1 className="font-display text-3xl font-bold text-white mb-6">Get started</h1>
           <p className="text-white/70 text-sm mb-6">

@@ -26,6 +26,7 @@ type ShowContentProps = {
   hasVideo?: boolean;
   requestConfigured?: boolean;
   initialRequestStatus?: string | null;
+  initialProgress?: number | null;
 };
 
 type OverlayEpisode = {
@@ -67,6 +68,7 @@ export function ShowContent({
   hasVideo = true,
   requestConfigured = false,
   initialRequestStatus = null,
+  initialProgress = null,
 }: ShowContentProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -194,7 +196,7 @@ export function ShowContent({
         playLabel={resumePlayLabel}
         playNode={
           showRequestFlow ? (
-            <RequestButton showId={show.id} initialStatus={initialRequestStatus} />
+            <RequestButton showId={show.id} initialStatus={initialRequestStatus} initialProgress={initialProgress} />
           ) : (
             <button
               type="button"

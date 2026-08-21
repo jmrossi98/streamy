@@ -16,6 +16,7 @@ type Props = {
   hasVideo?: boolean;
   requestConfigured?: boolean;
   initialRequestStatus?: string | null;
+  initialProgress?: number | null;
 };
 
 function buildMetaLine(movie: Movie | MovieDetail): string {
@@ -35,6 +36,7 @@ export function WatchPageContent({
   hasVideo = true,
   requestConfigured = false,
   initialRequestStatus = null,
+  initialProgress = null,
 }: Props) {
   const cached = getMovieFromCache(id);
   const [movie, setMovie] = useState<MovieDetail | Movie | null>(cached ?? null);
@@ -108,7 +110,7 @@ export function WatchPageContent({
         playLabel={progressSeconds > 0 ? "Resume" : "Watch now"}
         playNode={
           showRequestFlow ? (
-            <RequestButton movieId={id} initialStatus={initialRequestStatus} />
+            <RequestButton movieId={id} initialStatus={initialRequestStatus} initialProgress={initialProgress} />
           ) : undefined
         }
       />

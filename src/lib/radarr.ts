@@ -66,6 +66,22 @@ export async function getRadarrStorageInfo(): Promise<RadarrStorageInfo | null> 
   }
 }
 
+/** Live download percent (0-100) for a movie currently in Radarr's active queue. */
+export async function getRadarrDownloadProgress(radarrId: number): Promise<number | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const queue = await radarrFetch<{ records: { movieId: number; size: number; sizeleft: number }[] }>(
+      `/api/v3/queue`
+    );
+    const entry = queue.records.find((r) => r.movieId === radarrId);
+    if (!entry || !entry.size) return null;
+    return Math.round(((entry.size - entry.sizeleft) / entry.size) * 100);
+  } catch (err) {
+    console.error("[radarr] getRadarrDownloadProgress failed:", err);
+    return null;
+  }
+}
+
 export type RadarrRequestResult =
   | { ok: true; radarrId: number; status: MediaRequestStatus }
   | { ok: false; error: string };

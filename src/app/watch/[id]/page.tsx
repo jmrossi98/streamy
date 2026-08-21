@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getVideoUrl } from "@/lib/s3";
-import { isRadarrConfigured } from "@/lib/radarr";
+import { isRadarrConfigured, getRadarrDownloadProgress } from "@/lib/radarr";
 import { WatchPageContent } from "./WatchPageContent";
 
 type Props = { params: Promise<{ id: string }> };
@@ -21,14 +21,18 @@ export default async function WatchPage({ params }: Props) {
         })
       : null,
     getVideoUrl(id),
-    session?.user?.id
-      ? prisma.mediaRequest.findUnique({
-          where: { userId_tmdbId_mediaType: { userId: session.user.id, tmdbId: id, mediaType: "movie" } },
-        })
-      : null,
+    // Shared/global library state -- not gated behind a session, since it's
+    // the same for every viewer regardless of who requested it.
+    prisma.mediaRequest.findUnique({
+      where: { tmdbId_mediaType: { tmdbId: id, mediaType: "movie" } },
+    }),
   ]);
 
   const progressSeconds = progressRow?.progressSeconds ?? 0;
+  const initialProgress =
+    mediaRequest?.status === "downloading" && mediaRequest.externalId
+      ? await getRadarrDownloadProgress(mediaRequest.externalId)
+      : null;
 
   return (
     <WatchPageContent
@@ -38,6 +42,7 @@ export default async function WatchPage({ params }: Props) {
       hasVideo={!!videoUrl}
       requestConfigured={isRadarrConfigured()}
       initialRequestStatus={mediaRequest?.status ?? null}
+      initialProgress={initialProgress}
     />
   );
 }
