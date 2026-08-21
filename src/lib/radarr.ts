@@ -36,15 +36,38 @@ async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export type MediaRequestStatus = "requested" | "downloading" | "available";
+
+/** hasFile means Radarr already imported a file; otherwise check the active queue. */
+async function resolveRadarrStatus(movie: { id: number; hasFile: boolean }): Promise<MediaRequestStatus> {
+  if (movie.hasFile) return "available";
+  const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue`);
+  return queue.records.some((r) => r.movieId === movie.id) ? "downloading" : "requested";
+}
+
 export type RadarrRequestResult =
-  | { ok: true; radarrId: number }
+  | { ok: true; radarrId: number; status: MediaRequestStatus }
   | { ok: false; error: string };
 
-/** Looks up a movie by TMDB id, adds it to Radarr, and triggers a search. */
+/**
+ * Looks up a movie by TMDB id and adds it to Radarr, triggering a search.
+ * If it's already in Radarr (e.g. added directly in Radarr's own UI, or a
+ * prior request that Streamy lost track of), skips straight to reporting
+ * its real current status instead of erroring on Radarr's duplicate-add
+ * rejection.
+ */
 export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult> {
   if (!isRadarrConfigured()) return { ok: false, error: "Radarr is not configured" };
 
   try {
+    const existing = await radarrFetch<{ id: number; hasFile: boolean }[]>(
+      `/api/v3/movie?tmdbId=${tmdbId}`
+    );
+    if (existing[0]) {
+      const status = await resolveRadarrStatus(existing[0]);
+      return { ok: true, radarrId: existing[0].id, status };
+    }
+
     const lookup = await radarrFetch<Record<string, unknown>[]>(
       `/api/v3/movie/lookup?term=tmdb:${tmdbId}`
     );
@@ -62,7 +85,7 @@ export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult>
         addOptions: { searchForMovie: true },
       }),
     });
-    return { ok: true, radarrId: created.id };
+    return { ok: true, radarrId: created.id, status: "requested" };
   } catch (err) {
     console.error(`[radarr] requestMovie failed for tmdbId ${tmdbId}:`, err);
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Radarr error" };

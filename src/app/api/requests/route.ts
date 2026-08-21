@@ -26,6 +26,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: existing.status });
   }
 
+  let status: string;
+
   if (mediaType === "movie") {
     if (!isRadarrConfigured()) {
       return NextResponse.json({ error: "Radarr is not configured" }, { status: 503 });
@@ -34,8 +36,9 @@ export async function POST(request: Request) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 502 });
     }
+    status = result.status;
     await prisma.mediaRequest.create({
-      data: { userId, tmdbId, mediaType, externalId: result.radarrId },
+      data: { userId, tmdbId, mediaType, externalId: result.radarrId, status },
     });
   } else {
     if (!isSonarrConfigured()) {
@@ -45,10 +48,11 @@ export async function POST(request: Request) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 502 });
     }
+    status = result.status;
     await prisma.mediaRequest.create({
-      data: { userId, tmdbId, mediaType, tvdbId: String(result.tvdbId), externalId: result.sonarrId },
+      data: { userId, tmdbId, mediaType, tvdbId: String(result.tvdbId), externalId: result.sonarrId, status },
     });
   }
 
-  return NextResponse.json({ status: "requested" });
+  return NextResponse.json({ status });
 }
