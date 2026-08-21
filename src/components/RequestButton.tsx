@@ -33,11 +33,17 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const refreshedRef = useRef(false);
+  // setLoading(true) doesn't disable the button until the next render commits,
+  // leaving a window where a fast double-click fires two concurrent POSTs
+  // (both then race Radarr/Sonarr's own duplicate-add check). This ref is
+  // checked/set synchronously in the click handler, so it closes that window.
+  const inFlightRef = useRef(false);
 
   const callbackUrl = mediaType === "movie" ? `/watch/${id}` : `/show/${id}`;
 
   const request = useCallback(async () => {
-    if (!session?.user || loading || !id) return;
+    if (!session?.user || inFlightRef.current || !id) return;
+    inFlightRef.current = true;
     setLoading(true);
     setError(false);
     try {
@@ -56,9 +62,10 @@ export function RequestButton({ movieId, showId, initialStatus }: RequestButtonP
     } catch {
       setError(true);
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
-  }, [session?.user, loading, id, mediaType]);
+  }, [session?.user, id, mediaType]);
 
   // Poll our own status endpoint while a request is in flight — Radarr/Sonarr
   // update it server-side via webhook, this just picks the change up.
