@@ -82,6 +82,27 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
   }
 }
 
+export type ActiveDownload = { title: string; progress: number };
+
+/** Every movie currently in Radarr's active download queue, with live progress. */
+export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    const queue = await radarrFetch<{ records: { title: string; size: number; sizeleft: number }[] }>(
+      `/api/v3/queue`
+    );
+    return queue.records
+      .filter((r) => r.size > 0)
+      .map((r) => ({
+        title: r.title,
+        progress: Math.round(((r.size - r.sizeleft) / r.size) * 100),
+      }));
+  } catch (err) {
+    console.error("[radarr] getRadarrActiveDownloads failed:", err);
+    return [];
+  }
+}
+
 export type RadarrRequestResult =
   | { ok: true; radarrId: number; status: MediaRequestStatus }
   | { ok: false; error: string };

@@ -7,7 +7,7 @@
  */
 
 import { getTvExternalIds } from "./tmdb";
-import type { MediaRequestStatus } from "./radarr";
+import type { MediaRequestStatus, ActiveDownload } from "./radarr";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -77,6 +77,25 @@ export async function getSonarrDownloadProgress(sonarrId: number): Promise<numbe
   } catch (err) {
     console.error("[sonarr] getSonarrDownloadProgress failed:", err);
     return null;
+  }
+}
+
+/** Every episode currently in Sonarr's active download queue, with live progress. */
+export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const queue = await sonarrFetch<{ records: { title: string; size: number; sizeleft: number }[] }>(
+      `/api/v3/queue`
+    );
+    return queue.records
+      .filter((r) => r.size > 0)
+      .map((r) => ({
+        title: r.title,
+        progress: Math.round(((r.size - r.sizeleft) / r.size) * 100),
+      }));
+  } catch (err) {
+    console.error("[sonarr] getSonarrActiveDownloads failed:", err);
+    return [];
   }
 }
 
