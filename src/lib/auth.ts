@@ -3,6 +3,7 @@ import type { NextAuthOptions } from "next-auth";
 import type { Session } from "next-auth";
 import { getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import bcrypt from "bcryptjs";
 import { prisma } from "./db";
 import { pickNextAvatarColor } from "./userAvatarColors";
 
@@ -15,30 +16,42 @@ export const authOptions: NextAuthOptions = {
       name: "credentials",
       credentials: {
         name: { label: "Name", type: "text" },
+        password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
         const name = credentials?.name?.trim();
-        if (!name) return null;
+        const password = credentials?.password ?? "";
+        if (!name || !password) {
+          throw new Error("Name and password are required.");
+        }
+
         const existing = await prisma.user.findFirst({
           where: { name },
-          select: { id: true, name: true, avatarColor: true },
+          select: { id: true, name: true, avatarColor: true, password: true, approved: true },
         });
-        if (existing) {
-          let avatarColor = existing.avatarColor;
-          if (!avatarColor) {
-            avatarColor = await pickNextAvatarColor();
-            await prisma.user.update({
-              where: { id: existing.id },
-              data: { avatarColor },
-            });
+
+        if (!existing) {
+          const isAdmin = name === process.env.ADMIN_NAME;
+          const hashed = await bcrypt.hash(password, 10);
+          const avatarColor = await pickNextAvatarColor();
+          const user = await prisma.user.create({
+            data: { name, password: hashed, approved: isAdmin, avatarColor },
+          });
+          if (!isAdmin) {
+            throw new Error("Your account is pending approval.");
           }
-          return { id: existing.id, name: existing.name, avatarColor };
+          return { id: user.id, name: user.name, avatarColor: user.avatarColor };
         }
-        const avatarColor = await pickNextAvatarColor();
-        const user = await prisma.user.create({
-          data: { name, avatarColor },
-        });
-        return { id: user.id, name: user.name, avatarColor: user.avatarColor };
+
+        const valid = await bcrypt.compare(password, existing.password);
+        if (!valid) {
+          throw new Error("Incorrect password.");
+        }
+        if (!existing.approved) {
+          throw new Error("Your account is pending approval.");
+        }
+
+        return { id: existing.id, name: existing.name, avatarColor: existing.avatarColor };
       },
     }),
   ],
@@ -50,6 +63,9 @@ export const authOptions: NextAuthOptions = {
         token.name = user.name ?? undefined;
         token.avatarColor = (user as { avatarColor?: string | null }).avatarColor ?? undefined;
       }
+      // Recomputed every request (not just at sign-in) so an ADMIN_NAME
+      // change takes effect on the admin's next request, not just next login.
+      token.isAdmin = token.name === process.env.ADMIN_NAME;
       return token;
     },
     session({ session, token }) {
@@ -57,6 +73,7 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.id as string;
         session.user.name = token.name as string;
         session.user.avatarColor = token.avatarColor as string | undefined;
+        session.user.isAdmin = token.isAdmin as boolean;
       }
       return session;
     },
@@ -81,7 +98,7 @@ export async function getValidSessionUserId(session: Session | null): Promise<st
 
 declare module "next-auth" {
   interface Session {
-    user: { id: string; name: string; avatarColor?: string | null };
+    user: { id: string; name: string; avatarColor?: string | null; isAdmin?: boolean };
   }
 }
 
@@ -90,5 +107,6 @@ declare module "next-auth/jwt" {
     id?: string;
     name?: string;
     avatarColor?: string;
+    isAdmin?: boolean;
   }
 }
