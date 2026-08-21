@@ -64,6 +64,22 @@ export async function getSonarrTvSize(): Promise<number | null> {
   }
 }
 
+/** Live download percent (0-100) for a series currently in Sonarr's active queue. */
+export async function getSonarrDownloadProgress(sonarrId: number): Promise<number | null> {
+  if (!isSonarrConfigured()) return null;
+  try {
+    const queue = await sonarrFetch<{ records: { seriesId: number; size: number; sizeleft: number }[] }>(
+      `/api/v3/queue`
+    );
+    const entry = queue.records.find((r) => r.seriesId === sonarrId);
+    if (!entry || !entry.size) return null;
+    return Math.round(((entry.size - entry.sizeleft) / entry.size) * 100);
+  } catch (err) {
+    console.error("[sonarr] getSonarrDownloadProgress failed:", err);
+    return null;
+  }
+}
+
 export type SonarrRequestResult =
   | { ok: true; sonarrId: number; tvdbId: number; status: MediaRequestStatus }
   | { ok: false; error: string };

@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
 import { getVideoUrl } from "@/lib/s3";
-import { isSonarrConfigured } from "@/lib/sonarr";
+import { isSonarrConfigured, getSonarrDownloadProgress } from "@/lib/sonarr";
 import { ShowContent } from "./ShowContent";
 
 type Props = {
@@ -48,13 +48,18 @@ export default async function ShowPage({ params, searchParams }: Props) {
           })
         : null,
       getVideoUrl(id),
-      session?.user?.id
-        ? prisma.mediaRequest.findUnique({
-            where: { userId_tmdbId_mediaType: { userId: session.user.id, tmdbId: id, mediaType: "show" } },
-          })
-        : null,
+      // Shared/global library state -- not gated behind a session, since it's
+      // the same for every viewer regardless of who requested it.
+      prisma.mediaRequest.findUnique({
+        where: { tmdbId_mediaType: { tmdbId: id, mediaType: "show" } },
+      }),
     ]);
   if (!season1) notFound();
+
+  const initialProgress =
+    mediaRequest?.status === "downloading" && mediaRequest.externalId
+      ? await getSonarrDownloadProgress(mediaRequest.externalId)
+      : null;
 
   let resumeSeason = 1;
   let resumeEpisode = 1;
@@ -114,6 +119,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
       hasVideo={!!videoUrl}
       requestConfigured={isSonarrConfigured()}
       initialRequestStatus={mediaRequest?.status ?? null}
+      initialProgress={initialProgress}
     />
   );
 }

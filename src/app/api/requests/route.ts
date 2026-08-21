@@ -18,9 +18,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "tmdbId and mediaType required" }, { status: 400 });
   }
 
-  // Idempotent: repeated clicks / re-mounts don't re-hit Radarr/Sonarr.
+  // Idempotent and shared across every user: repeated clicks / re-mounts / a
+  // different user clicking the same title all just return the current state
+  // instead of re-hitting Radarr/Sonarr.
   const existing = await prisma.mediaRequest.findUnique({
-    where: { userId_tmdbId_mediaType: { userId, tmdbId, mediaType } },
+    where: { tmdbId_mediaType: { tmdbId, mediaType } },
   });
   if (existing) {
     return NextResponse.json({ status: existing.status });
@@ -38,7 +40,7 @@ export async function POST(request: Request) {
     }
     status = result.status;
     await prisma.mediaRequest.create({
-      data: { userId, tmdbId, mediaType, externalId: result.radarrId, status },
+      data: { tmdbId, mediaType, externalId: result.radarrId, status },
     });
   } else {
     if (!isSonarrConfigured()) {
@@ -50,7 +52,7 @@ export async function POST(request: Request) {
     }
     status = result.status;
     await prisma.mediaRequest.create({
-      data: { userId, tmdbId, mediaType, tvdbId: String(result.tvdbId), externalId: result.sonarrId, status },
+      data: { tmdbId, mediaType, tvdbId: String(result.tvdbId), externalId: result.sonarrId, status },
     });
   }
 
