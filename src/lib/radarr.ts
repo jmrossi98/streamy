@@ -45,6 +45,27 @@ async function resolveRadarrStatus(movie: { id: number; hasFile: boolean }): Pro
   return queue.records.some((r) => r.movieId === movie.id) ? "downloading" : "requested";
 }
 
+export type RadarrStorageInfo = { totalSpace: number; freeSpace: number; moviesSize: number };
+
+/** Disk usage for the mount backing RADARR_ROOT_FOLDER, plus total size of movies on disk. */
+export async function getRadarrStorageInfo(): Promise<RadarrStorageInfo | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const [diskspace, movies] = await Promise.all([
+      radarrFetch<{ path: string; freeSpace: number; totalSpace: number }[]>("/api/v3/diskspace"),
+      radarrFetch<{ sizeOnDisk?: number }[]>("/api/v3/movie"),
+    ]);
+    const mount =
+      diskspace.find((d) => RADARR_ROOT_FOLDER?.startsWith(d.path)) ?? diskspace[0];
+    if (!mount) return null;
+    const moviesSize = movies.reduce((sum, m) => sum + (m.sizeOnDisk ?? 0), 0);
+    return { totalSpace: mount.totalSpace, freeSpace: mount.freeSpace, moviesSize };
+  } catch (err) {
+    console.error("[radarr] getRadarrStorageInfo failed:", err);
+    return null;
+  }
+}
+
 export type RadarrRequestResult =
   | { ok: true; radarrId: number; status: MediaRequestStatus }
   | { ok: false; error: string };
