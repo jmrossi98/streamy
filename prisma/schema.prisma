@@ -12,6 +12,9 @@ datasource db {
 model User {
   id           String   @id @default(cuid())
   name         String
+  password     String
+  // Gates login until an admin (see ADMIN_NAME) approves the account.
+  approved     Boolean  @default(false)
   // Hex avatar background (e.g. #e50914); assigned on create / backfill on login.
   avatarColor  String?
   createdAt    DateTime @default(now())

@@ -13,6 +13,7 @@ export default async function WhoIsWatchingPage({ searchParams }: Props) {
   }
 
   const users = await prisma.user.findMany({
+    where: { approved: true },
     orderBy: { name: "asc" },
     select: { id: true, name: true, avatarColor: true },
   });

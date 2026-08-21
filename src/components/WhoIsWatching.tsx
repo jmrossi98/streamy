@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { signIn } from "next-auth/react";
-import { useState } from "react";
 import { avatarColorOrFallback } from "@/lib/userAvatarColors";
 
 type User = { id: string; name: string; avatarColor: string | null };
@@ -14,25 +12,12 @@ export function WhoIsWatching({
   users: User[];
   callbackUrl?: string;
 }) {
-  const [loadingId, setLoadingId] = useState<string | null>(null);
-  const destination = callbackUrl || "/";
-
-  const handleSelectUser = async (user: User) => {
-    setLoadingId(user.id);
-    try {
-      const res = await signIn("credentials", {
-        name: user.name,
-        redirect: false,
-        callbackUrl: destination,
-      });
-      if (res?.ok) {
-        setTimeout(() => {
-          window.location.href = destination;
-        }, 400);
-      }
-    } finally {
-      setLoadingId(null);
-    }
+  const loginHref = (name?: string) => {
+    const params = new URLSearchParams();
+    if (name) params.set("name", name);
+    if (callbackUrl) params.set("callbackUrl", callbackUrl);
+    const qs = params.toString();
+    return qs ? `/login?${qs}` : "/login";
   };
 
   return (
@@ -49,10 +34,8 @@ export function WhoIsWatching({
       <div className="flex flex-wrap justify-center gap-6 md:gap-8 max-w-4xl">
         {users.map((user) => (
           <div key={user.id} className="flex flex-col items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleSelectUser(user)}
-              disabled={loadingId !== null}
+            <Link
+              href={loginHref(user.name)}
               className="group flex flex-col items-center gap-3 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
             >
               <span
@@ -65,14 +48,11 @@ export function WhoIsWatching({
               <span className="text-white/80 group-hover:text-white text-lg transition-colors">
                 {user.name}
               </span>
-              {loadingId === user.id && (
-                <span className="text-white/60 text-sm">Signing in…</span>
-              )}
-            </button>
+            </Link>
           </div>
         ))}
         <Link
-          href={callbackUrl ? `/login?callbackUrl=${encodeURIComponent(callbackUrl)}` : "/login"}
+          href={loginHref()}
           className="group flex flex-col items-center gap-3 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white rounded"
         >
           <span

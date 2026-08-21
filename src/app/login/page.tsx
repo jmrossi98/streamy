@@ -8,9 +8,12 @@ import { useSearchParams } from "next/navigation";
 export default function LoginPage() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
+  const prefillName = searchParams.get("name") ?? "";
   const { data: session, status } = useSession();
-  const [name, setName] = useState("");
+  const [name, setName] = useState(prefillName);
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -22,15 +25,23 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setInfo("");
     setLoading(true);
     const res = await signIn("credentials", {
       name,
+      password,
       redirect: false,
       callbackUrl: callbackUrl.startsWith("/") ? callbackUrl : "/",
     });
     setLoading(false);
     if (res?.error) {
-      setError("Something went wrong. Try again.");
+      if (res.error === "Your account is pending approval.") {
+        setInfo("Thanks for signing up! Your account needs admin approval before you can log in. Check back soon.");
+      } else if (res.error === "Incorrect password." || res.error === "Name and password are required.") {
+        setError(res.error);
+      } else {
+        setError("Something went wrong. Try again.");
+      }
       return;
     }
     if (res?.ok) {
@@ -55,12 +66,17 @@ export default function LoginPage() {
         <div className="bg-netflix-dark/80 rounded-lg p-8 border border-white/10">
           <h1 className="font-display text-3xl font-bold text-white mb-6">Get started</h1>
           <p className="text-white/70 text-sm mb-6">
-            Enter your name to track your watchlist and progress.
+            Enter your name and password. New here? Choose a name and password to get started.
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <p className="text-netflix-red text-sm bg-netflix-red/10 rounded px-3 py-2">
                 {error}
+              </p>
+            )}
+            {info && (
+              <p className="text-white text-sm bg-white/10 rounded px-3 py-2">
+                {info}
               </p>
             )}
             <div>
@@ -75,6 +91,21 @@ export default function LoginPage() {
                 required
                 autoComplete="name"
                 placeholder="e.g. Alex"
+                className="w-full px-4 py-3 rounded bg-white/10 text-white placeholder-white/40 border border-white/20 focus:border-netflix-red focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="block text-sm text-white/70 mb-1">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                placeholder="••••••••"
                 className="w-full px-4 py-3 rounded bg-white/10 text-white placeholder-white/40 border border-white/20 focus:border-netflix-red focus:outline-none"
               />
             </div>
