@@ -142,6 +142,16 @@ export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult>
     );
     if (existing[0]) {
       const status = await resolveRadarrStatus(existing[0]);
+      if (status === "requested") {
+        // Already in Radarr but neither downloading nor available -- e.g. a
+        // prior download was cancelled outside Streamy. resolveRadarrStatus
+        // alone would silently report "requested" with nothing actually
+        // searching, so kick off a fresh search here.
+        await radarrFetch(`/api/v3/command`, {
+          method: "POST",
+          body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
+        });
+      }
       return { ok: true, radarrId: existing[0].id, status };
     }
 
