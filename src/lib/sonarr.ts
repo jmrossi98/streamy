@@ -64,6 +64,26 @@ export async function getSonarrTvSize(): Promise<number | null> {
   }
 }
 
+/**
+ * Re-derives a show's live status straight from Sonarr, bypassing whatever
+ * Streamy's own MediaRequest row currently says. Used to catch downloads that
+ * were cancelled or removed directly in Sonarr/qBittorrent (outside
+ * Streamy's request flow), since the webhook that would normally flip status
+ * never fires for that.
+ */
+export async function getSonarrLiveStatus(sonarrId: number): Promise<MediaRequestStatus | null> {
+  if (!isSonarrConfigured()) return null;
+  try {
+    const series = await sonarrFetch<{ id: number; statistics?: { episodeFileCount?: number } }>(
+      `/api/v3/series/${sonarrId}`
+    );
+    return resolveSonarrStatus(series);
+  } catch (err) {
+    console.error(`[sonarr] getSonarrLiveStatus failed for ${sonarrId}:`, err);
+    return null;
+  }
+}
+
 /** Live download percent (0-100) for a series currently in Sonarr's active queue. */
 export async function getSonarrDownloadProgress(sonarrId: number): Promise<number | null> {
   if (!isSonarrConfigured()) return null;

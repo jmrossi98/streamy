@@ -66,6 +66,24 @@ export async function getRadarrStorageInfo(): Promise<RadarrStorageInfo | null> 
   }
 }
 
+/**
+ * Re-derives a movie's live status straight from Radarr, bypassing whatever
+ * Streamy's own MediaRequest row currently says. Used to catch downloads that
+ * were cancelled or removed directly in Radarr/qBittorrent (outside
+ * Streamy's request flow), since the webhook that would normally flip status
+ * never fires for that.
+ */
+export async function getRadarrLiveStatus(radarrId: number): Promise<MediaRequestStatus | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const movie = await radarrFetch<{ id: number; hasFile: boolean }>(`/api/v3/movie/${radarrId}`);
+    return resolveRadarrStatus(movie);
+  } catch (err) {
+    console.error(`[radarr] getRadarrLiveStatus failed for ${radarrId}:`, err);
+    return null;
+  }
+}
+
 /** Live download percent (0-100) for a movie currently in Radarr's active queue. */
 export async function getRadarrDownloadProgress(radarrId: number): Promise<number | null> {
   if (!isRadarrConfigured()) return null;
