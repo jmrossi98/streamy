@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getMovieById } from "@/lib/tmdb";
-import { getJellyfinMovieUrl } from "@/lib/jellyfin";
+import { findJellyfinMovieItemId } from "@/lib/jellyfin";
 import { PrefetchBack } from "./PrefetchBack";
 
 const WatchPlayer = dynamic(
@@ -17,16 +17,19 @@ type Props = { params: Promise<{ id: string }> };
 export default async function WatchPlayPage({ params }: Props) {
   const { id } = await params;
   const session = await getSession();
-  const [movie, progressRow, videoUrl] = await Promise.all([
+  const [movie, progressRow, jellyfinItemId] = await Promise.all([
     getMovieById(id),
     session?.user?.id
       ? prisma.watchProgress.findUnique({
           where: { userId_movieId: { userId: session.user.id, movieId: id } },
         })
       : null,
-    getJellyfinMovieUrl(id),
+    findJellyfinMovieItemId(id),
   ]);
   if (!movie) notFound();
+
+  // Proxied through our own origin -- see the note in lib/jellyfin.ts.
+  const videoUrl = jellyfinItemId ? `/api/stream/movie/${id}` : null;
 
   const initialProgressSeconds = progressRow?.progressSeconds ?? 0;
 

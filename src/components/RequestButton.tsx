@@ -6,7 +6,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOutIfStaleSession } from "@/lib/staleSession";
 
-const POLL_INTERVAL_MS = 20000;
+// Actively downloading: refresh often enough that the percentage visibly
+// climbs. Queued/searching: nothing moves second-to-second, so back off.
+const POLL_INTERVAL_DOWNLOADING_MS = 5000;
+const POLL_INTERVAL_QUEUED_MS = 15000;
 
 export type RequestButtonProps = {
   movieId?: string;
@@ -113,15 +116,19 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   // downloads started by a different user.
   useEffect(() => {
     if (status !== "requested" && status !== "downloading") return;
+    const intervalMs =
+      status === "downloading" ? POLL_INTERVAL_DOWNLOADING_MS : POLL_INTERVAL_QUEUED_MS;
     const interval = setInterval(() => {
       fetch(`/api/requests/check?tmdbId=${encodeURIComponent(id)}&mediaType=${mediaType}`)
         .then((r) => r.json())
         .then((data) => {
-          if (data.status) setStatus(data.status);
+          // A cleared row (cancelled, or auto-healed and re-searching) comes
+          // back as null -- reset rather than freezing on the old status.
+          setStatus(data.status ?? null);
           setProgress(typeof data.progress === "number" ? data.progress : null);
         })
         .catch(() => {});
-    }, POLL_INTERVAL_MS);
+    }, intervalMs);
     return () => clearInterval(interval);
   }, [status, id, mediaType]);
 

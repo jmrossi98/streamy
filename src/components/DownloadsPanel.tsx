@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export type DownloadRow = {
   id: number;
@@ -11,6 +11,7 @@ export type DownloadRow = {
   completed: boolean;
 };
 
+const REFRESH_INTERVAL_MS = 5000;
 const VISIBLE_ROWS = 5;
 // ~52px per row (text line + progress bar + gaps) + list gaps, tuned so a
 // sixth row is visibly cut off rather than the panel just guessing.
@@ -19,6 +20,15 @@ const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
 export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const router = useRouter();
   const [managingKey, setManagingKey] = useState<string | null>(null);
+
+  // Keep progress live without a manual reload, but only while something is
+  // actually downloading -- a list of finished titles doesn't change on its own.
+  const hasActive = downloads.some((d) => !d.completed);
+  useEffect(() => {
+    if (!hasActive) return;
+    const interval = setInterval(() => router.refresh(), REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [hasActive, router]);
 
   if (downloads.length === 0) {
     return <p className="text-white/50 text-sm">Nothing downloading right now.</p>;

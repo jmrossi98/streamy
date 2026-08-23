@@ -139,20 +139,86 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   }
 }
 
-/** Cancels a movie's active download in Radarr and removes it (and any partial data) from the client. */
-export async function cancelRadarrDownload(radarrId: number): Promise<boolean> {
+/**
+ * Cancels a movie's active download in Radarr and removes it (and any partial
+ * data) from the client. `blocklist` marks the specific release as bad so
+ * Radarr won't immediately re-grab it -- used when auto-healing a stalled or
+ * errored download, but not for a plain user-initiated cancel.
+ */
+export async function cancelRadarrDownload(radarrId: number, blocklist = false): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
     const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(`/api/v3/queue`);
     const entry = queue.records.find((r) => r.movieId === radarrId);
     if (!entry) return false;
-    await radarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=false`, {
-      method: "DELETE",
-    });
+    await radarrFetch(
+      `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
+      { method: "DELETE" }
+    );
     return true;
   } catch (err) {
     console.error(`[radarr] cancelRadarrDownload failed for ${radarrId}:`, err);
     return false;
+  }
+}
+
+/** Kicks off a fresh release search for a movie already in Radarr. */
+export async function searchRadarrMovie(radarrId: number): Promise<void> {
+  if (!isRadarrConfigured()) return;
+  await radarrFetch(`/api/v3/command`, {
+    method: "POST",
+    body: JSON.stringify({ name: "MoviesSearch", movieIds: [radarrId] }),
+  });
+}
+
+export type QueueHealth = {
+  /** Radarr movieId / Sonarr seriesId. */
+  externalId: number;
+  title: string;
+  /** Radarr/Sonarr's own diagnosis, e.g. "The download is stalled with no connections". */
+  errorMessage: string | null;
+  /** How long this entry has been sitting in the queue. */
+  ageMinutes: number;
+  hasProgress: boolean;
+};
+
+function toQueueHealth(r: {
+  title: string;
+  size: number;
+  sizeleft: number;
+  added?: string;
+  errorMessage?: string;
+  status?: string;
+}, externalId: number): QueueHealth {
+  const added = r.added ? Date.parse(r.added) : Date.now();
+  return {
+    externalId,
+    title: r.title,
+    errorMessage: r.errorMessage ?? (r.status === "warning" || r.status === "failed" ? r.status : null),
+    ageMinutes: (Date.now() - added) / 60000,
+    hasProgress: r.size > 0 && r.sizeleft < r.size,
+  };
+}
+
+/** Health snapshot of every entry in Radarr's queue, for the stall auto-healer. */
+export async function getRadarrQueueHealth(): Promise<QueueHealth[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    const queue = await radarrFetch<{
+      records: {
+        movieId: number;
+        title: string;
+        size: number;
+        sizeleft: number;
+        added?: string;
+        errorMessage?: string;
+        status?: string;
+      }[];
+    }>(`/api/v3/queue`);
+    return queue.records.map((r) => toQueueHealth(r, r.movieId));
+  } catch (err) {
+    console.error("[radarr] getRadarrQueueHealth failed:", err);
+    return [];
   }
 }
 

@@ -1,9 +1,15 @@
 /**
  * Jellyfin API client (server-side only). Set JELLYFIN_URL/JELLYFIN_API_KEY
- * in env to enable. Streamy streams directly from Jellyfin (which already
- * scans Radarr/Sonarr's output folders) rather than staging a copy in S3 --
- * titles become playable the moment Jellyfin finishes scanning them in,
- * with no separate upload step.
+ * in env to enable. Streamy streams from Jellyfin (which already scans
+ * Radarr/Sonarr's output folders) rather than staging a copy in S3 --
+ * titles become playable as soon as Jellyfin scans them in, no upload step.
+ *
+ * Playback is proxied through Streamy's own origin (/api/stream/*) rather
+ * than pointing the browser straight at JELLYFIN_URL, because that URL is a
+ * Tailscale-only address on plain HTTP: a viewer's browser can't route to it,
+ * and an HTTPS page can't load HTTP media anyway (mixed content). Proxying
+ * also keeps JELLYFIN_API_KEY server-side instead of embedding it in a URL
+ * handed to the client.
  */
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
@@ -16,6 +22,9 @@ export function isJellyfinConfigured(): boolean {
 async function jellyfinFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${JELLYFIN_URL}${path}`, {
     headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    // Library contents change as downloads land; never serve a stale "not
+    // available yet" answer from Next's fetch cache.
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`Jellyfin API error: ${res.status}`);
@@ -23,34 +32,55 @@ async function jellyfinFetch<T>(path: string): Promise<T> {
   return res.json();
 }
 
-function streamUrl(itemId: string): string {
-  return `${JELLYFIN_URL}/Videos/${itemId}/stream?static=true&api_key=${JELLYFIN_API_KEY}`;
+type JellyfinItem = {
+  Id: string;
+  ProviderIds?: Record<string, string>;
+  LocationType?: string;
+  IndexNumber?: number;
+};
+
+/**
+ * Jellyfin's `AnyProviderIdEquals` filter is silently ignored on this server
+ * version -- it returns the whole library regardless of the id passed, which
+ * made every title resolve to whichever movie happened to be present. So we
+ * pull ProviderIds and match here instead. Personal-library sized, so listing
+ * is cheap.
+ */
+function matchesTmdbId(item: JellyfinItem, tmdbId: string): boolean {
+  const ids = item.ProviderIds ?? {};
+  const value = ids.Tmdb ?? ids.tmdb ?? ids.TMDB;
+  return value === tmdbId;
 }
 
-/** A movie's direct-play stream URL, found by its TMDB id. Null if not yet scanned into Jellyfin. */
-export async function getJellyfinMovieUrl(tmdbId: string): Promise<string | null> {
+/** A real file on disk -- not a metadata-only stub Jellyfin created for a folder with no media yet. */
+function isPlayable(item: JellyfinItem): boolean {
+  return item.LocationType === "FileSystem";
+}
+
+/** Jellyfin item id for a movie, by TMDB id. Null until it's actually scanned in with a real file. */
+export async function findJellyfinMovieItemId(tmdbId: string): Promise<string | null> {
   if (!isJellyfinConfigured()) return null;
   try {
-    const result = await jellyfinFetch<{ Items: { Id: string }[] }>(
-      `/Items?AnyProviderIdEquals=Tmdb.${tmdbId}&IncludeItemTypes=Movie&Recursive=true`
+    const result = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+      `/Items?IncludeItemTypes=Movie&Recursive=true&fields=ProviderIds`
     );
-    const item = result.Items[0];
-    return item ? streamUrl(item.Id) : null;
+    const item = result.Items.find((i) => matchesTmdbId(i, tmdbId) && isPlayable(i));
+    return item?.Id ?? null;
   } catch (err) {
-    console.error(`[jellyfin] getJellyfinMovieUrl failed for tmdbId ${tmdbId}:`, err);
+    console.error(`[jellyfin] findJellyfinMovieItemId failed for tmdbId ${tmdbId}:`, err);
     return null;
   }
 }
 
 async function findJellyfinSeriesId(showTmdbId: string): Promise<string | null> {
-  const result = await jellyfinFetch<{ Items: { Id: string }[] }>(
-    `/Items?AnyProviderIdEquals=Tmdb.${showTmdbId}&IncludeItemTypes=Series&Recursive=true`
+  const result = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+    `/Items?IncludeItemTypes=Series&Recursive=true&fields=ProviderIds`
   );
-  return result.Items[0]?.Id ?? null;
+  return result.Items.find((i) => matchesTmdbId(i, showTmdbId))?.Id ?? null;
 }
 
-/** A specific episode's direct-play stream URL. Null if the show or that episode isn't scanned in yet. */
-export async function getJellyfinEpisodeUrl(
+/** Jellyfin item id for one episode. Null if the show or that specific episode isn't scanned in yet. */
+export async function findJellyfinEpisodeItemId(
   showTmdbId: string,
   seasonNumber: number,
   episodeNumber: number
@@ -60,32 +90,41 @@ export async function getJellyfinEpisodeUrl(
     const seriesId = await findJellyfinSeriesId(showTmdbId);
     if (!seriesId) return null;
 
-    const episodes = await jellyfinFetch<{ Items: { Id: string; IndexNumber?: number }[] }>(
-      `/Shows/${seriesId}/Episodes?seasonNumber=${seasonNumber}`
+    const episodes = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+      `/Shows/${seriesId}/Episodes?seasonNumber=${seasonNumber}&fields=ProviderIds`
     );
-    const episode = episodes.Items.find((e) => e.IndexNumber === episodeNumber);
-    return episode ? streamUrl(episode.Id) : null;
+    const episode = episodes.Items.find((e) => e.IndexNumber === episodeNumber && isPlayable(e));
+    return episode?.Id ?? null;
   } catch (err) {
     console.error(
-      `[jellyfin] getJellyfinEpisodeUrl failed for show ${showTmdbId} S${seasonNumber}E${episodeNumber}:`,
+      `[jellyfin] findJellyfinEpisodeItemId failed for show ${showTmdbId} S${seasonNumber}E${episodeNumber}:`,
       err
     );
     return null;
   }
 }
 
-/** Whether a show has at least one episode scanned into Jellyfin -- used to gate the Play/Download choice. */
+/** Whether a show has at least one real episode file scanned in -- gates Play vs. Download. */
 export async function isJellyfinShowAvailable(showTmdbId: string): Promise<boolean> {
   if (!isJellyfinConfigured()) return false;
   try {
     const seriesId = await findJellyfinSeriesId(showTmdbId);
     if (!seriesId) return false;
-    const episodes = await jellyfinFetch<{ TotalRecordCount: number }>(
-      `/Shows/${seriesId}/Episodes?limit=1`
+    const episodes = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+      `/Shows/${seriesId}/Episodes?fields=ProviderIds`
     );
-    return episodes.TotalRecordCount > 0;
+    return episodes.Items.some(isPlayable);
   } catch (err) {
     console.error(`[jellyfin] isJellyfinShowAvailable failed for tmdbId ${showTmdbId}:`, err);
     return false;
   }
+}
+
+/**
+ * Upstream Jellyfin URL for an item's raw file. Server-side only -- this
+ * carries the API key, so it must never be handed to the browser; the
+ * /api/stream/* proxy routes fetch it and pipe the bytes back instead.
+ */
+export function jellyfinUpstreamStreamUrl(itemId: string): string {
+  return `${JELLYFIN_URL}/Videos/${itemId}/stream?static=true&api_key=${JELLYFIN_API_KEY}`;
 }
