@@ -140,6 +140,16 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
     >(`/api/v3/series?tvdbId=${tvdbId}`);
     if (existing[0]) {
       const status = await resolveSonarrStatus(existing[0]);
+      if (status === "requested") {
+        // Already in Sonarr but neither downloading nor available -- e.g. a
+        // prior download was cancelled outside Streamy. resolveSonarrStatus
+        // alone would silently report "requested" with nothing actually
+        // searching, so kick off a fresh search here.
+        await sonarrFetch(`/api/v3/command`, {
+          method: "POST",
+          body: JSON.stringify({ name: "SeriesSearch", seriesId: existing[0].id }),
+        });
+      }
       return { ok: true, sonarrId: existing[0].id, tvdbId, status };
     }
 
