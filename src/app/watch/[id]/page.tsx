@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { getVideoUrl } from "@/lib/s3";
+import { getJellyfinMovieUrl } from "@/lib/jellyfin";
 import { isRadarrConfigured } from "@/lib/radarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { WatchPageContent } from "./WatchPageContent";
@@ -21,7 +21,7 @@ export default async function WatchPage({ params }: Props) {
           where: { userId_movieId: { userId: session.user.id, movieId: id } },
         })
       : null,
-    getVideoUrl(id),
+    getJellyfinMovieUrl(id),
     // Shared/global library state -- not gated behind a session, since it's
     // the same for every viewer regardless of who requested it.
     resolveMediaRequestStatus(id, "movie"),

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
-import { getVideoUrl } from "@/lib/s3";
+import { getJellyfinEpisodeUrl } from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { EpisodeCloseButton } from "@/components/EpisodeCloseButton";
 
@@ -33,7 +33,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
           },
         })
       : null,
-    getVideoUrl(showId),
+    getJellyfinEpisodeUrl(showId, seasonNum, episodeNum),
   ]);
 
   if (!show || !season) notFound();
