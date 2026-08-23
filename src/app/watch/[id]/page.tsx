@@ -1,7 +1,8 @@
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getVideoUrl } from "@/lib/s3";
-import { isRadarrConfigured, getRadarrDownloadProgress } from "@/lib/radarr";
+import { isRadarrConfigured } from "@/lib/radarr";
+import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { WatchPageContent } from "./WatchPageContent";
 
 type Props = { params: Promise<{ id: string }> };
@@ -9,7 +10,7 @@ type Props = { params: Promise<{ id: string }> };
 export default async function WatchPage({ params }: Props) {
   const { id } = await params;
   const session = await getSession();
-  const [watchlistItem, progressRow, videoUrl, mediaRequest] = await Promise.all([
+  const [watchlistItem, progressRow, videoUrl, requestStatus] = await Promise.all([
     session?.user?.id
       ? prisma.watchlistItem.findUnique({
           where: { userId_movieId: { userId: session.user.id, movieId: id } },
@@ -23,16 +24,10 @@ export default async function WatchPage({ params }: Props) {
     getVideoUrl(id),
     // Shared/global library state -- not gated behind a session, since it's
     // the same for every viewer regardless of who requested it.
-    prisma.mediaRequest.findUnique({
-      where: { tmdbId_mediaType: { tmdbId: id, mediaType: "movie" } },
-    }),
+    resolveMediaRequestStatus(id, "movie"),
   ]);
 
   const progressSeconds = progressRow?.progressSeconds ?? 0;
-  const initialProgress =
-    mediaRequest?.status === "downloading" && mediaRequest.externalId
-      ? await getRadarrDownloadProgress(mediaRequest.externalId)
-      : null;
 
   return (
     <WatchPageContent
@@ -41,8 +36,8 @@ export default async function WatchPage({ params }: Props) {
       progressSeconds={progressSeconds}
       hasVideo={!!videoUrl}
       requestConfigured={isRadarrConfigured()}
-      initialRequestStatus={mediaRequest?.status ?? null}
-      initialProgress={initialProgress}
+      initialRequestStatus={requestStatus.status}
+      initialProgress={requestStatus.progress}
     />
   );
 }

@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getRadarrDownloadProgress } from "@/lib/radarr";
-import { getSonarrDownloadProgress } from "@/lib/sonarr";
+import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 
 // Status is shared/public library state (same as the rest of the movie/show
 // detail page), so this doesn't require a session -- anyone can see whether a
@@ -14,20 +12,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ status: null, progress: null });
   }
 
-  const row = await prisma.mediaRequest.findUnique({
-    where: { tmdbId_mediaType: { tmdbId, mediaType } },
-  });
-  if (!row) {
-    return NextResponse.json({ status: null, progress: null });
-  }
-
-  let progress: number | null = null;
-  if (row.status === "downloading" && row.externalId) {
-    progress =
-      mediaType === "movie"
-        ? await getRadarrDownloadProgress(row.externalId)
-        : await getSonarrDownloadProgress(row.externalId);
-  }
-
-  return NextResponse.json({ status: row.status, progress });
+  const result = await resolveMediaRequestStatus(tmdbId, mediaType);
+  return NextResponse.json(result);
 }

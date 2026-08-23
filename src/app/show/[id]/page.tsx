@@ -3,7 +3,8 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
 import { getVideoUrl } from "@/lib/s3";
-import { isSonarrConfigured, getSonarrDownloadProgress } from "@/lib/sonarr";
+import { isSonarrConfigured } from "@/lib/sonarr";
+import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { ShowContent } from "./ShowContent";
 
 type Props = {
@@ -26,7 +27,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const maxSeason = Math.max(1, show.numberOfSeasons);
   const initialSeasonNum = Math.min(requestedSeason, maxSeason);
 
-  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem, videoUrl, mediaRequest] =
+  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem, videoUrl, requestStatus] =
     await Promise.all([
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
@@ -50,16 +51,9 @@ export default async function ShowPage({ params, searchParams }: Props) {
       getVideoUrl(id),
       // Shared/global library state -- not gated behind a session, since it's
       // the same for every viewer regardless of who requested it.
-      prisma.mediaRequest.findUnique({
-        where: { tmdbId_mediaType: { tmdbId: id, mediaType: "show" } },
-      }),
+      resolveMediaRequestStatus(id, "show"),
     ]);
   if (!season1) notFound();
-
-  const initialProgress =
-    mediaRequest?.status === "downloading" && mediaRequest.externalId
-      ? await getSonarrDownloadProgress(mediaRequest.externalId)
-      : null;
 
   let resumeSeason = 1;
   let resumeEpisode = 1;
@@ -118,8 +112,8 @@ export default async function ShowPage({ params, searchParams }: Props) {
       resumeProgressSeconds={resumeProgressSeconds}
       hasVideo={!!videoUrl}
       requestConfigured={isSonarrConfigured()}
-      initialRequestStatus={mediaRequest?.status ?? null}
-      initialProgress={initialProgress}
+      initialRequestStatus={requestStatus.status}
+      initialProgress={requestStatus.progress}
     />
   );
 }
