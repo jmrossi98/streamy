@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
-import { getVideoUrl } from "@/lib/s3";
+import { isJellyfinShowAvailable } from "@/lib/jellyfin";
 import { isSonarrConfigured } from "@/lib/sonarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { ShowContent } from "./ShowContent";
@@ -27,7 +27,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const maxSeason = Math.max(1, show.numberOfSeasons);
   const initialSeasonNum = Math.min(requestedSeason, maxSeason);
 
-  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem, videoUrl, requestStatus] =
+  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem, hasVideo, requestStatus] =
     await Promise.all([
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
@@ -48,7 +48,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
             where: { userId_showId: { userId: session.user.id, showId: id } },
           })
         : null,
-      getVideoUrl(id),
+      isJellyfinShowAvailable(id),
       // Shared/global library state -- not gated behind a session, since it's
       // the same for every viewer regardless of who requested it.
       resolveMediaRequestStatus(id, "show"),
@@ -110,7 +110,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
       resumeEpisode={resumeEpisode}
       resumeEpisodeName={resumeEpisodeName ?? ""}
       resumeProgressSeconds={resumeProgressSeconds}
-      hasVideo={!!videoUrl}
+      hasVideo={hasVideo}
       requestConfigured={isSonarrConfigured()}
       initialRequestStatus={requestStatus.status}
       initialProgress={requestStatus.progress}

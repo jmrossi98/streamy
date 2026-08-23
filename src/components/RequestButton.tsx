@@ -38,6 +38,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   const [progress, setProgress] = useState<number | null>(initialProgress);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [managing, setManaging] = useState<"cancel" | "delete" | null>(null);
   const refreshedRef = useRef(false);
   // setLoading(true) doesn't disable the button until the next render commits,
   // leaving a window where a fast double-click fires two concurrent POSTs
@@ -73,6 +74,39 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
     }
   }, [session?.user, id, mediaType]);
 
+  // Any signed-in user can cancel an in-progress download or delete a
+  // finished one, right from the title page -- so a stuck or unwanted
+  // download never has to wait on the admin to step in.
+  const manage = useCallback(
+    async (action: "cancel" | "delete") => {
+      if (!session?.user || managing) return;
+      const label = action === "cancel" ? "cancel" : "delete";
+      if (!window.confirm(`Are you sure you want to ${label} this?`)) return;
+      setManaging(action);
+      setError(false);
+      try {
+        const res = await fetch("/api/requests/manage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tmdbId: id, mediaType, action }),
+        });
+        if (await signOutIfStaleSession(res)) return;
+        if (!res.ok) {
+          setError(true);
+          return;
+        }
+        setStatus(null);
+        setProgress(null);
+        router.refresh();
+      } catch {
+        setError(true);
+      } finally {
+        setManaging(null);
+      }
+    },
+    [session?.user, managing, id, mediaType, router]
+  );
+
   // Poll our own status endpoint while a request is in flight — Radarr/Sonarr
   // update it server-side via webhook, this just picks the change (and live
   // download progress) up. Shared/global status, so this also picks up
@@ -107,12 +141,24 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   if (status === "requested" || status === "downloading") {
     return (
       <div className={DOWNLOADING_BADGE_CLASS}>
-        <span className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal">
-          <span className="h-4 w-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-          {status === "downloading"
-            ? `Downloading${typeof progress === "number" ? ` — ${progress}%` : "…"}`
-            : "Queued — searching…"}
-        </span>
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal">
+            <span className="h-4 w-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+            {status === "downloading"
+              ? `Downloading${typeof progress === "number" ? ` — ${progress}%` : "…"}`
+              : "Queued — searching…"}
+          </span>
+          {authStatus === "authenticated" && (
+            <button
+              type="button"
+              onClick={() => manage("cancel")}
+              disabled={managing === "cancel"}
+              className="shrink-0 text-xs font-medium normal-case tracking-normal text-white/50 hover:text-netflix-red disabled:opacity-50"
+            >
+              {managing === "cancel" ? "Cancelling…" : "Cancel"}
+            </button>
+          )}
+        </div>
         {status === "downloading" && (
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
             <div
@@ -121,15 +167,35 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
             />
           </div>
         )}
+        {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t cancel — try again</p>}
       </div>
     );
   }
 
   if (status === "available") {
     return (
-      <button type="button" onClick={() => router.refresh()} className={BADGE_CLICKABLE_CLASS}>
-        Downloaded — tap to refresh
-      </button>
+      <div className={DOWNLOADING_BADGE_CLASS}>
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => router.refresh()}
+            className="text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal hover:text-white"
+          >
+            Downloaded — tap to refresh
+          </button>
+          {authStatus === "authenticated" && (
+            <button
+              type="button"
+              onClick={() => manage("delete")}
+              disabled={managing === "delete"}
+              className="shrink-0 text-xs font-medium normal-case tracking-normal text-white/50 hover:text-netflix-red disabled:opacity-50"
+            >
+              {managing === "delete" ? "Deleting…" : "Delete"}
+            </button>
+          )}
+        </div>
+        {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t delete — try again</p>}
+      </div>
     );
   }
 

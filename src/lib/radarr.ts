@@ -125,6 +125,20 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   }
 }
 
+export type CompletedDownload = { id: number; title: string };
+
+/** Every movie Radarr has fully downloaded, for the admin panel's completed section. */
+export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    const movies = await radarrFetch<{ id: number; title: string; hasFile: boolean }[]>("/api/v3/movie");
+    return movies.filter((m) => m.hasFile).map((m) => ({ id: m.id, title: m.title }));
+  } catch (err) {
+    console.error("[radarr] getRadarrCompletedMovies failed:", err);
+    return [];
+  }
+}
+
 /** Cancels a movie's active download in Radarr and removes it (and any partial data) from the client. */
 export async function cancelRadarrDownload(radarrId: number): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
@@ -138,6 +152,20 @@ export async function cancelRadarrDownload(radarrId: number): Promise<boolean> {
     return true;
   } catch (err) {
     console.error(`[radarr] cancelRadarrDownload failed for ${radarrId}:`, err);
+    return false;
+  }
+}
+
+/** Removes a movie (and its downloaded file, if any) from Radarr entirely. */
+export async function deleteRadarrMovie(radarrId: number): Promise<boolean> {
+  if (!isRadarrConfigured()) return false;
+  try {
+    await radarrFetch(`/api/v3/movie/${radarrId}?deleteFiles=true&addImportExclusion=false`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[radarr] deleteRadarrMovie failed for ${radarrId}:`, err);
     return false;
   }
 }

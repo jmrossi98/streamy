@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getMovieById } from "@/lib/tmdb";
-import { getVideoUrl } from "@/lib/s3";
+import { getJellyfinMovieUrl } from "@/lib/jellyfin";
 import { PrefetchBack } from "./PrefetchBack";
 
 const WatchPlayer = dynamic(
@@ -24,7 +24,7 @@ export default async function WatchPlayPage({ params }: Props) {
           where: { userId_movieId: { userId: session.user.id, movieId: id } },
         })
       : null,
-    getVideoUrl(id),
+    getJellyfinMovieUrl(id),
   ]);
   if (!movie) notFound();
 

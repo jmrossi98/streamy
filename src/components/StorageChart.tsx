@@ -27,6 +27,11 @@ const RADIUS = 70;
 const STROKE = 32;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const GAP = 4; // surface-color gap between segments, per the dataviz skill's spacer rule
+// A segment representing real, nonzero data can round down to an
+// imperceptible sliver against a mostly-empty disk (e.g. 1.5% of the ring).
+// Floor its rendered arc length so it stays visible; the legend/tooltip
+// still show the real byte count and percent, only the arc's pixels shift.
+const MIN_ARC_LENGTH = 6;
 
 export function StorageChart({ totalSpace, freeSpace, moviesSize, tvSize }: StorageChartProps) {
   if (!totalSpace) {
@@ -41,10 +46,20 @@ export function StorageChart({ totalSpace, freeSpace, moviesSize, tvSize }: Stor
     { key: "free", label: "Free space", value: freeSpace, color: COLORS.free },
   ].filter((s) => s.value > 0);
 
+  const rawLengths = segments.map((s) => (s.value / totalSpace) * CIRCUMFERENCE);
+  const deficit = rawLengths.reduce(
+    (sum, len, i) => (segments[i].key !== "free" && len < MIN_ARC_LENGTH + GAP ? sum + (MIN_ARC_LENGTH + GAP - len) : sum),
+    0
+  );
+  const freeIndex = segments.findIndex((s) => s.key === "free");
+  if (freeIndex !== -1 && deficit > 0) {
+    rawLengths[freeIndex] = Math.max(rawLengths[freeIndex] - deficit, MIN_ARC_LENGTH + GAP);
+  }
+
   let cumulative = 0;
-  const arcs = segments.map((s) => {
+  const arcs = segments.map((s, i) => {
     const fraction = s.value / totalSpace;
-    const rawLength = fraction * CIRCUMFERENCE;
+    const rawLength = s.key !== "free" ? Math.max(rawLengths[i], MIN_ARC_LENGTH + GAP) : rawLengths[i];
     const length = Math.max(rawLength - GAP, 0);
     const offset = -cumulative;
     cumulative += rawLength;

@@ -7,7 +7,7 @@
  */
 
 import { getTvExternalIds } from "./tmdb";
-import type { MediaRequestStatus, ActiveDownload } from "./radarr";
+import type { MediaRequestStatus, ActiveDownload, CompletedDownload } from "./radarr";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -119,6 +119,22 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   }
 }
 
+/** Every series Sonarr has at least one downloaded episode for, for the admin panel's completed section. */
+export async function getSonarrCompletedSeries(): Promise<CompletedDownload[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const series = await sonarrFetch<
+      { id: number; title: string; statistics?: { episodeFileCount?: number } }[]
+    >("/api/v3/series");
+    return series
+      .filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0)
+      .map((s) => ({ id: s.id, title: s.title }));
+  } catch (err) {
+    console.error("[sonarr] getSonarrCompletedSeries failed:", err);
+    return [];
+  }
+}
+
 /** Cancels a series' active download in Sonarr and removes it (and any partial data) from the client. */
 export async function cancelSonarrDownload(sonarrId: number): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
@@ -132,6 +148,20 @@ export async function cancelSonarrDownload(sonarrId: number): Promise<boolean> {
     return true;
   } catch (err) {
     console.error(`[sonarr] cancelSonarrDownload failed for ${sonarrId}:`, err);
+    return false;
+  }
+}
+
+/** Removes a series (and its downloaded episode files, if any) from Sonarr entirely. */
+export async function deleteSonarrSeries(sonarrId: number): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  try {
+    await sonarrFetch(`/api/v3/series/${sonarrId}?deleteFiles=true&addImportExclusion=false`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[sonarr] deleteSonarrSeries failed for ${sonarrId}:`, err);
     return false;
   }
 }

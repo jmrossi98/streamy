@@ -1,7 +1,7 @@
 # Auto-deploy on push to main: build image, push to GHCR, write .env from Actions secrets, pull + up on server.
 # Secrets DATABASE_URL, TMDB_API_KEY, NEXTAUTH_SECRET, NEXTAUTH_URL, ADMIN_NAME,
-# RADARR_URL, RADARR_API_KEY, SONARR_URL, SONARR_API_KEY, MEDIA_WEBHOOK_SECRET
-# must be set in the repo — they sync to the server each deploy.
+# RADARR_URL, RADARR_API_KEY, SONARR_URL, SONARR_API_KEY, MEDIA_WEBHOOK_SECRET,
+# JELLYFIN_URL, JELLYFIN_API_KEY must be set in the repo — they sync to the server each deploy.
 name: Build and Deploy
 
 on:
@@ -88,15 +88,13 @@ jobs:
           SONARR_ROOT_FOLDER: ${{ secrets.SONARR_ROOT_FOLDER }}
           SONARR_QUALITY_PROFILE_ID: ${{ secrets.SONARR_QUALITY_PROFILE_ID }}
           MEDIA_WEBHOOK_SECRET: ${{ secrets.MEDIA_WEBHOOK_SECRET }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-          S3_REGION: ${{ secrets.S3_REGION }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          JELLYFIN_URL: ${{ secrets.JELLYFIN_URL }}
+          JELLYFIN_API_KEY: ${{ secrets.JELLYFIN_API_KEY }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,MEDIA_WEBHOOK_SECRET,S3_BUCKET_NAME,S3_REGION,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -150,10 +148,8 @@ jobs:
               "MEDIA_WEBHOOK_SECRET=${MEDIA_WEBHOOK_SECRET}" \
               "AUTH_TRUST_HOST=true" \
               "RUN_MIGRATE=1" \
-              "S3_BUCKET_NAME=${S3_BUCKET_NAME}" \
-              "S3_REGION=${S3_REGION}" \
-              "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" \
-              "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" \
+              "JELLYFIN_URL=${JELLYFIN_URL}" \
+              "JELLYFIN_API_KEY=${JELLYFIN_API_KEY}" \
               > .env
             # GHCR requires login even for public images. Add repo secret GHCR_PULL_TOKEN (PAT with read:packages).
             if [ -n "${{ secrets.GHCR_PULL_TOKEN }}" ]; then
