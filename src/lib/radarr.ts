@@ -33,7 +33,8 @@ async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.text().catch(() => "");
     throw new Error(`Radarr API error: ${res.status} ${body}`.trim());
   }
-  return res.json();
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export type MediaRequestStatus = "requested" | "downloading" | "available";
@@ -102,23 +103,42 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
 
 // progress is null while the torrent's metadata (and therefore its real
 // size) hasn't resolved yet -- distinct from 0%, which would wrongly imply
-// data transfer has actually started.
-export type ActiveDownload = { title: string; progress: number | null };
+// data transfer has actually started. id is Radarr/Sonarr's own internal
+// movie/series id, used to target a cancel action at this specific download.
+export type ActiveDownload = { id: number; title: string; progress: number | null };
 
 /** Every movie currently in Radarr's active download queue, with live progress. */
 export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
-    const queue = await radarrFetch<{ records: { title: string; size: number; sizeleft: number }[] }>(
-      `/api/v3/queue`
-    );
+    const queue = await radarrFetch<{
+      records: { movieId: number; title: string; size: number; sizeleft: number }[];
+    }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
+      id: r.movieId,
       title: r.title,
       progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
     }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
     return [];
+  }
+}
+
+/** Cancels a movie's active download in Radarr and removes it (and any partial data) from the client. */
+export async function cancelRadarrDownload(radarrId: number): Promise<boolean> {
+  if (!isRadarrConfigured()) return false;
+  try {
+    const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(`/api/v3/queue`);
+    const entry = queue.records.find((r) => r.movieId === radarrId);
+    if (!entry) return false;
+    await radarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=false`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[radarr] cancelRadarrDownload failed for ${radarrId}:`, err);
+    return false;
   }
 }
 

@@ -37,7 +37,8 @@ async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.text().catch(() => "");
     throw new Error(`Sonarr API error: ${res.status} ${body}`.trim());
   }
-  return res.json();
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 /** Any episode file on disk means "available"; otherwise check the active queue. */
@@ -104,16 +105,34 @@ export async function getSonarrDownloadProgress(sonarrId: number): Promise<numbe
 export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isSonarrConfigured()) return [];
   try {
-    const queue = await sonarrFetch<{ records: { title: string; size: number; sizeleft: number }[] }>(
-      `/api/v3/queue`
-    );
+    const queue = await sonarrFetch<{
+      records: { seriesId: number; title: string; size: number; sizeleft: number }[];
+    }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
+      id: r.seriesId,
       title: r.title,
       progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
     }));
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);
     return [];
+  }
+}
+
+/** Cancels a series' active download in Sonarr and removes it (and any partial data) from the client. */
+export async function cancelSonarrDownload(sonarrId: number): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  try {
+    const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue`);
+    const entry = queue.records.find((r) => r.seriesId === sonarrId);
+    if (!entry) return false;
+    await sonarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=false`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[sonarr] cancelSonarrDownload failed for ${sonarrId}:`, err);
+    return false;
   }
 }
 
