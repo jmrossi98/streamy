@@ -4,14 +4,18 @@ import { getSonarrLiveStatus, getSonarrDownloadProgress } from "./sonarr";
 
 export type ResolvedRequestStatus = { status: MediaRequestStatus | null; progress: number | null };
 
+// How long a title may sit in "searching" (in Radarr/Sonarr, not queued, no
+// file) before we treat it as genuinely gone rather than mid-re-grab. Long
+// enough to cover an auto-heal's cancel -> re-search -> grab round trip.
+const STALE_REQUEST_MS = 20 * 60 * 1000;
+
 /**
- * Loads a title's shared MediaRequest row and, if it's marked "downloading",
- * re-verifies that against Radarr/Sonarr's live queue. A download can be
- * cancelled or cleared directly in Radarr/Sonarr/qBittorrent (outside
- * Streamy's own request flow), and the webhook that would normally update
- * status never fires for that -- so a stale "downloading" row is cleared
- * entirely here, putting the title back in its original, un-requested state
- * rather than showing a download that isn't actually happening.
+ * Loads a title's shared MediaRequest row and re-verifies it against
+ * Radarr/Sonarr's live state. A download can be cancelled, cleared, or
+ * completed directly in Radarr/Sonarr/qBittorrent (outside Streamy's own
+ * request flow) without the webhook that would normally update status ever
+ * firing -- so the stored status is treated as a hint and the live state
+ * wins, keeping the Download button honest in every direction.
  */
 export async function resolveMediaRequestStatus(
   tmdbId: string,
@@ -22,8 +26,9 @@ export async function resolveMediaRequestStatus(
   });
   if (!row) return { status: null, progress: null };
 
-  if (row.status !== "downloading" || !row.externalId) {
-    return { status: row.status as MediaRequestStatus, progress: null };
+  const storedStatus = row.status as MediaRequestStatus;
+  if (!row.externalId) {
+    return { status: storedStatus, progress: null };
   }
 
   const liveStatus =
@@ -32,20 +37,28 @@ export async function resolveMediaRequestStatus(
       : await getSonarrLiveStatus(row.externalId);
 
   if (liveStatus === null) {
-    // Radarr/Sonarr unreachable -- don't wipe a real request over a
+    // Radarr/Sonarr unreachable -- don't rewrite a real request over a
     // transient error, just report the last known status.
-    return { status: "downloading", progress: null };
+    return { status: storedStatus, progress: null };
   }
 
   if (liveStatus === "available") {
-    await prisma.mediaRequest.update({
-      where: { tmdbId_mediaType: { tmdbId, mediaType } },
-      data: { status: "available" },
-    });
+    if (storedStatus !== "available") {
+      await prisma.mediaRequest.update({
+        where: { tmdbId_mediaType: { tmdbId, mediaType } },
+        data: { status: "available" },
+      });
+    }
     return { status: "available", progress: null };
   }
 
   if (liveStatus === "downloading") {
+    if (storedStatus !== "downloading") {
+      await prisma.mediaRequest.update({
+        where: { tmdbId_mediaType: { tmdbId, mediaType } },
+        data: { status: "downloading" },
+      });
+    }
     const progress =
       mediaType === "movie"
         ? await getRadarrDownloadProgress(row.externalId)
@@ -53,9 +66,28 @@ export async function resolveMediaRequestStatus(
     return { status: "downloading", progress };
   }
 
-  // liveStatus is "requested": Radarr/Sonarr confirmed the item isn't in the
-  // active queue and isn't available, meaning it was cancelled/removed
-  // outside Streamy's own request flow. Clear the stale row.
+  // liveStatus is "requested": in Radarr/Sonarr, but neither downloading nor
+  // available. Two very different situations share this shape -- a download
+  // that was just dropped and re-searched (by the auto-healer or a manual
+  // re-grab), which is about to become a real download again, and one that
+  // was cancelled outside Streamy and is never coming back.
+  //
+  // Treat it as "searching" first and only clear the row once it has stayed
+  // that way past the grace window. Clearing immediately would bounce the
+  // user back to an idle Download button mid-heal.
+  if (storedStatus !== "requested") {
+    await prisma.mediaRequest.update({
+      where: { tmdbId_mediaType: { tmdbId, mediaType } },
+      data: { status: "requested" },
+    });
+    return { status: "requested", progress: null };
+  }
+
+  const searchingForMs = Date.now() - row.updatedAt.getTime();
+  if (searchingForMs < STALE_REQUEST_MS) {
+    return { status: "requested", progress: null };
+  }
+
   await prisma.mediaRequest.delete({ where: { tmdbId_mediaType: { tmdbId, mediaType } } });
   return { status: null, progress: null };
 }

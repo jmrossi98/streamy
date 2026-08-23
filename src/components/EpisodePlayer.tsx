@@ -44,6 +44,7 @@ export function EpisodePlayer({
   const [playing, setPlaying] = useState(autoPlay);
   const [showOverlay, setShowOverlay] = useState(!autoPlay);
   const [videoLoading, setVideoLoading] = useState(false);
+  const [playbackError, setPlaybackError] = useState(false);
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
   const [showTitle, setShowTitle] = useState(true);
@@ -80,6 +81,7 @@ export function EpisodePlayer({
         setVideoLoading(false);
         setPlaying(false);
         setShowOverlay(true);
+        setPlaybackError(true);
       });
   }, [playing, initialProgressSeconds]);
 
@@ -87,6 +89,11 @@ export function EpisodePlayer({
     const v = videoRef.current;
     if (v) {
       setVideoLoading(true);
+      setPlaybackError(false);
+      // A previous attempt can leave the element in a failed state that
+      // won't retry on play() alone -- reload it so a retry is a real retry
+      // rather than an unresponsive-looking no-op.
+      if (v.error) v.load();
       if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
       v.play()
         .then(() => {
@@ -97,6 +104,7 @@ export function EpisodePlayer({
         })
         .catch(() => {
           setVideoLoading(false);
+          setPlaybackError(true);
         });
     } else {
       setPlaying(true);
@@ -198,15 +206,18 @@ export function EpisodePlayer({
         controls
         autoPlay
         playsInline
-        className={`absolute inset-0 w-full h-full object-cover ${showOverlay || showNextOverlay ? "invisible" : ""}`}
+        className={`absolute inset-0 w-full h-full object-contain ${showOverlay || showNextOverlay ? "invisible" : ""}`}
         aria-label={`${showName} - ${episodeName}`}
         onError={() => {
           setPlaying(false);
           setShowOverlay(true);
+          setVideoLoading(false);
+          setPlaybackError(true);
         }}
         onPlay={() => {
           setShowOverlay(false);
           setShowTitle(true);
+          setPlaybackError(false);
           scheduleTitleHide();
         }}
         onEnded={() => {
@@ -252,7 +263,7 @@ export function EpisodePlayer({
             sizes="100vw"
           />
           <div className="hero-overlay absolute inset-0" />
-          <div className="absolute inset-0 flex items-center justify-center">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             {videoLoading ? (
               <div
                 className="w-20 h-20 rounded-full bg-white/90 flex items-center justify-center shadow-xl z-10"
@@ -265,12 +276,17 @@ export function EpisodePlayer({
                 type="button"
                 onClick={handlePlayClick}
                 className="w-20 h-20 rounded-full bg-white/90 flex items-center justify-center text-netflix-black hover:bg-white transition-colors shadow-xl z-10"
-                aria-label={`Play ${showName} S${seasonNumber} E${episodeNumber}`}
+                aria-label={`${playbackError ? "Retry" : "Play"} ${showName} S${seasonNumber} E${episodeNumber}`}
               >
                 <svg className="w-10 h-10 ml-1" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               </button>
+            )}
+            {playbackError && !videoLoading && (
+              <p className="z-10 max-w-xs text-center text-sm text-white/80 drop-shadow">
+                Couldn&apos;t start playback. Tap to try again.
+              </p>
             )}
           </div>
         </>

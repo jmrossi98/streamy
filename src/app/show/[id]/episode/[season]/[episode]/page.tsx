@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
-import { getJellyfinEpisodeUrl } from "@/lib/jellyfin";
+import { findJellyfinEpisodeItemId } from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { EpisodeCloseButton } from "@/components/EpisodeCloseButton";
 
@@ -17,7 +17,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
   if (Number.isNaN(seasonNum) || Number.isNaN(episodeNum)) notFound();
 
   const session = await getSession();
-  const [show, season, nextSeason, progressRow, videoUrl] = await Promise.all([
+  const [show, season, nextSeason, progressRow, jellyfinItemId] = await Promise.all([
     getShowById(showId),
     getSeason(showId, seasonNum),
     getSeason(showId, seasonNum + 1),
@@ -33,12 +33,17 @@ export default async function EpisodeWatchPage({ params }: Props) {
           },
         })
       : null,
-    getJellyfinEpisodeUrl(showId, seasonNum, episodeNum),
+    findJellyfinEpisodeItemId(showId, seasonNum, episodeNum),
   ]);
 
   if (!show || !season) notFound();
   const ep = season.episodes.find((e) => e.episodeNumber === episodeNum);
   if (!ep) notFound();
+
+  // Proxied through our own origin -- see the note in lib/jellyfin.ts.
+  const videoUrl = jellyfinItemId
+    ? `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}`
+    : null;
 
   const initialProgressSeconds = progressRow?.progressSeconds ?? 0;
 

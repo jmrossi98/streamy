@@ -7,7 +7,7 @@
  */
 
 import { getTvExternalIds } from "./tmdb";
-import type { MediaRequestStatus, ActiveDownload, CompletedDownload } from "./radarr";
+import type { MediaRequestStatus, ActiveDownload, CompletedDownload, QueueHealth } from "./radarr";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -135,20 +135,67 @@ export async function getSonarrCompletedSeries(): Promise<CompletedDownload[]> {
   }
 }
 
-/** Cancels a series' active download in Sonarr and removes it (and any partial data) from the client. */
-export async function cancelSonarrDownload(sonarrId: number): Promise<boolean> {
+/**
+ * Cancels a series' active download in Sonarr and removes it (and any partial
+ * data) from the client. `blocklist` marks the specific release as bad so
+ * Sonarr won't immediately re-grab it -- used when auto-healing a stalled or
+ * errored download, but not for a plain user-initiated cancel.
+ */
+export async function cancelSonarrDownload(sonarrId: number, blocklist = false): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
     const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue`);
     const entry = queue.records.find((r) => r.seriesId === sonarrId);
     if (!entry) return false;
-    await sonarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=false`, {
-      method: "DELETE",
-    });
+    await sonarrFetch(
+      `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
+      { method: "DELETE" }
+    );
     return true;
   } catch (err) {
     console.error(`[sonarr] cancelSonarrDownload failed for ${sonarrId}:`, err);
     return false;
+  }
+}
+
+/** Kicks off a fresh release search for a series already in Sonarr. */
+export async function searchSonarrSeries(sonarrId: number): Promise<void> {
+  if (!isSonarrConfigured()) return;
+  await sonarrFetch(`/api/v3/command`, {
+    method: "POST",
+    body: JSON.stringify({ name: "SeriesSearch", seriesId: sonarrId }),
+  });
+}
+
+/** Health snapshot of every entry in Sonarr's queue, for the stall auto-healer. */
+export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const queue = await sonarrFetch<{
+      records: {
+        seriesId: number;
+        title: string;
+        size: number;
+        sizeleft: number;
+        added?: string;
+        errorMessage?: string;
+        status?: string;
+      }[];
+    }>(`/api/v3/queue`);
+    return queue.records.map((r) => {
+      const added = r.added ? Date.parse(r.added) : Date.now();
+      return {
+        externalId: r.seriesId,
+        title: r.title,
+        errorMessage:
+          r.errorMessage ?? (r.status === "warning" || r.status === "failed" ? r.status : null),
+        ageMinutes: (Date.now() - added) / 60000,
+        hasProgress: r.size > 0 && r.sizeleft < r.size,
+      };
+    });
+  } catch (err) {
+    console.error("[sonarr] getSonarrQueueHealth failed:", err);
+    return [];
   }
 }
 
