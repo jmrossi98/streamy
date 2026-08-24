@@ -473,6 +473,17 @@ export async function requestEpisode(
 async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
   for (const id of episodeIds) {
     try {
+      // Re-check before each search rather than trusting the list we started
+      // with. This chain runs for minutes after the request that began it, so
+      // an episode can be cancelled part-way through -- and an explicit
+      // EpisodeSearch grabs regardless of monitoring, so without this the
+      // cancelled episode would simply start downloading again when its turn
+      // came round. Unmonitored means cancelled: skip it.
+      const episode = await sonarrFetch<{ monitored: boolean; hasFile: boolean }>(
+        `/api/v3/episode/${id}`
+      );
+      if (!episode.monitored || episode.hasFile) continue;
+
       const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
         method: "POST",
         body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [id] }),
