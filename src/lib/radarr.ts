@@ -71,6 +71,38 @@ export async function getRadarrStorageInfo(): Promise<RadarrStorageInfo | null> 
 export type LiveStatus = MediaRequestStatus | "cancelled";
 
 /**
+ * Live status for a movie looked up by TMDB id, without needing a local
+ * MediaRequest row. Radarr can be downloading something Streamy has no row
+ * for -- the auto-healer starts searches on its own, and rows get cleared
+ * when a title looks idle -- so the button has to be able to read Radarr
+ * directly rather than treating "no row" as "not requested".
+ */
+export async function getRadarrStatusByTmdbId(tmdbId: string): Promise<{
+  status: MediaRequestStatus;
+  radarrId: number;
+} | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const movies = await radarrFetch<{ id: number; hasFile: boolean; monitored: boolean }[]>(
+      `/api/v3/movie?tmdbId=${tmdbId}`
+    );
+    const movie = movies[0];
+    if (!movie) return null;
+    if (movie.hasFile) return { status: "available", radarrId: movie.id };
+
+    const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue`);
+    if (queue.records.some((r) => r.movieId === movie.id)) {
+      return { status: "downloading", radarrId: movie.id };
+    }
+    // In Radarr but idle: only "requested" if it's actually still wanted.
+    return movie.monitored ? { status: "requested", radarrId: movie.id } : null;
+  } catch (err) {
+    console.error(`[radarr] getRadarrStatusByTmdbId failed for ${tmdbId}:`, err);
+    return null;
+  }
+}
+
+/**
  * Re-derives a movie's live status straight from Radarr, bypassing whatever
  * Streamy's own MediaRequest row currently says. Used to catch downloads that
  * were cancelled or removed outside Streamy's request flow, since the webhook
@@ -114,25 +146,49 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
 
 // progress is null while the torrent's metadata (and therefore its real
 // size) hasn't resolved yet -- distinct from 0%, which would wrongly imply
-// data transfer has actually started. id is Radarr/Sonarr's own internal
-// movie/series id, used to target a cancel action at this specific download.
-export type ActiveDownload = { id: number; title: string; progress: number | null };
+// data transfer has actually started.
+//
+// `queueId` identifies this specific download; `externalId` is the
+// movie/series it belongs to. They have to be separate: a series can have
+// several episodes downloading at once, so keying rows by the series id
+// alone collapsed every episode of a show into a single row.
+export type ActiveDownload = {
+  queueId: number;
+  externalId: number;
+  title: string;
+  progress: number | null;
+};
 
 /** Every movie currently in Radarr's active download queue, with live progress. */
 export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const queue = await radarrFetch<{
-      records: { movieId: number; title: string; size: number; sizeleft: number }[];
+      records: { id: number; movieId: number; title: string; size: number; sizeleft: number }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
-      id: r.movieId,
+      queueId: r.id,
+      externalId: r.movieId,
       title: r.title,
       progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
     }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
     return [];
+  }
+}
+
+/** Cancels one specific queued download, leaving a series' other episodes alone. */
+export async function cancelRadarrQueueItem(queueId: number): Promise<boolean> {
+  if (!isRadarrConfigured()) return false;
+  try {
+    await radarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=false`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[radarr] cancelRadarrQueueItem failed for ${queueId}:`, err);
+    return false;
   }
 }
 

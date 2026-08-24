@@ -46,8 +46,22 @@ export default async function AdminFeaturesPage() {
   ].sort((a, b) => (b.progress ?? -1) - (a.progress ?? -1));
 
   downloads.push(
-    ...radarrCompleted.map((d) => ({ ...d, progress: null, mediaType: "movie" as const, completed: true })),
-    ...sonarrCompleted.map((d) => ({ ...d, progress: null, mediaType: "show" as const, completed: true }))
+    ...radarrCompleted.map((d) => ({
+      queueId: null,
+      externalId: d.id,
+      title: d.title,
+      progress: null,
+      mediaType: "movie" as const,
+      completed: true,
+    })),
+    ...sonarrCompleted.map((d) => ({
+      queueId: null,
+      externalId: d.id,
+      title: d.title,
+      progress: null,
+      mediaType: "show" as const,
+      completed: true,
+    }))
   );
 
   return (

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { cancelRadarrDownload, deleteRadarrMovie } from "@/lib/radarr";
-import { cancelSonarrDownload, deleteSonarrSeries } from "@/lib/sonarr";
+import { cancelRadarrDownload, cancelRadarrQueueItem, deleteRadarrMovie } from "@/lib/radarr";
+import { cancelSonarrDownload, cancelSonarrQueueItem, deleteSonarrSeries } from "@/lib/sonarr";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -11,20 +11,31 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const id = typeof body?.id === "number" ? body.id : null;
+  const externalId = typeof body?.externalId === "number" ? body.externalId : null;
+  const queueId = typeof body?.queueId === "number" ? body.queueId : null;
   const mediaType = body?.mediaType === "movie" || body?.mediaType === "show" ? body.mediaType : null;
   const action = body?.action === "cancel" || body?.action === "delete" ? body.action : null;
-  if (id === null || !mediaType || !action) {
-    return NextResponse.json({ error: "id, mediaType, and action required" }, { status: 400 });
+  if (externalId === null || !mediaType || !action) {
+    return NextResponse.json(
+      { error: "externalId, mediaType, and action required" },
+      { status: 400 }
+    );
   }
 
+  const id = externalId;
   const ok =
     action === "cancel"
-      ? mediaType === "movie"
-        ? // unmonitor as well, so a cancel from the admin panel sticks rather
-          // than being re-grabbed by the idle-title healer
-          await cancelRadarrDownload(id, { unmonitor: true })
-        : await cancelSonarrDownload(id)
+      ? queueId != null
+        ? // Target the exact queue entry, so cancelling one episode doesn't
+          // take down the rest of the series' downloads with it.
+          mediaType === "movie"
+          ? await cancelRadarrQueueItem(queueId)
+          : await cancelSonarrQueueItem(queueId)
+        : mediaType === "movie"
+          ? // unmonitor as well, so a cancel from the admin panel sticks
+            // rather than being re-grabbed by the idle-title healer
+            await cancelRadarrDownload(id, { unmonitor: true })
+          : await cancelSonarrDownload(id)
       : mediaType === "movie"
         ? await deleteRadarrMovie(id)
         : await deleteSonarrSeries(id);

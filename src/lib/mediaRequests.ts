@@ -1,5 +1,10 @@
 import { prisma } from "./db";
-import { getRadarrLiveStatus, getRadarrDownloadProgress, type MediaRequestStatus } from "./radarr";
+import {
+  getRadarrLiveStatus,
+  getRadarrDownloadProgress,
+  getRadarrStatusByTmdbId,
+  type MediaRequestStatus,
+} from "./radarr";
 import { getSonarrLiveStatus, getSonarrDownloadProgress } from "./sonarr";
 
 export type ResolvedRequestStatus = { status: MediaRequestStatus | null; progress: number | null };
@@ -24,7 +29,22 @@ export async function resolveMediaRequestStatus(
   const row = await prisma.mediaRequest.findUnique({
     where: { tmdbId_mediaType: { tmdbId, mediaType } },
   });
-  if (!row) return { status: null, progress: null };
+
+  if (!row) {
+    // No local row doesn't mean nothing is happening. Rows get cleared when a
+    // title looks idle, and the auto-healer starts searches on its own, so
+    // Radarr can be mid-download for something Streamy has no record of --
+    // which showed an idle Download button while the file was on its way.
+    // Radarr is the source of truth here, so ask it directly.
+    if (mediaType === "movie") {
+      const live = await getRadarrStatusByTmdbId(tmdbId);
+      if (!live || live.status === "requested") return { status: null, progress: null };
+      const progress =
+        live.status === "downloading" ? await getRadarrDownloadProgress(live.radarrId) : null;
+      return { status: live.status, progress };
+    }
+    return { status: null, progress: null };
+  }
 
   const storedStatus = row.status as MediaRequestStatus;
   if (!row.externalId) {
