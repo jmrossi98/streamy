@@ -487,6 +487,17 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
       return sa - sb || a.episodeNumber - b.episodeNumber;
     });
   if (wanted.length === 0) return;
+
+  // Monitor before searching. An explicit EpisodeSearch grabs regardless of
+  // monitoring, so downloads would still start -- but an unmonitored episode
+  // reads as "not wanted" everywhere else: it shows an idle Download button
+  // while it waits its turn, and the idle-title healer skips it entirely, so
+  // anything the search fails to find would never be retried.
+  await sonarrFetch(`/api/v3/episode/monitor`, {
+    method: "PUT",
+    body: JSON.stringify({ episodeIds: wanted.map((e) => e.id), monitored: true }),
+  });
+
   void searchEpisodesInOrder(wanted.map((e) => e.id));
 }
 

@@ -61,7 +61,26 @@ export function useSeasonStatuses(showId: string, seasonNumber: number, enabled:
     });
   }, []);
 
-  return { statuses, refresh, setLocalState };
+  /**
+   * Same, for a whole season at once. Requesting a season monitors every
+   * episode before the searches start, so all of them are genuinely pending
+   * from the moment the click lands -- they should look that way immediately
+   * rather than one at a time as each search gets around to running.
+   * Episodes already downloading or on disk keep their real state.
+   */
+  const setLocalStates = useCallback((episodeNumbers: number[], next: EpisodeState | null) => {
+    setStatuses((prev) => {
+      const updated = { ...prev };
+      for (const n of episodeNumbers) {
+        if (prev[n]?.status === "downloading" || prev[n]?.status === "available") continue;
+        if (next) updated[n] = next;
+        else delete updated[n];
+      }
+      return updated;
+    });
+  }, []);
+
+  return { statuses, refresh, setLocalState, setLocalStates };
 }
 
 type Props = {
@@ -146,11 +165,11 @@ export function EpisodeDownloadButton({
       <div className={`flex w-28 shrink-0 flex-col gap-1 ${className}`}>
         <div className="flex items-center justify-end gap-2">
           <span className="text-xs font-medium tabular-nums text-white/70">
-            {downloading
-              ? state.progress != null
-                ? `${state.progress}%`
-                : "Starting…"
-              : "Searching…"}
+            {/* Anything pending reads as "Starting…": once a season is
+                requested every episode is queued for search, so an episode
+                that hasn't reached the download client yet is still on its
+                way, not idle. */}
+            {downloading && state.progress != null ? `${state.progress}%` : "Starting…"}
           </span>
           {authStatus === "authenticated" && manageButton}
         </div>
