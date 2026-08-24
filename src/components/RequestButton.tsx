@@ -56,6 +56,11 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
     inFlightRef.current = true;
     setLoading(true);
     setError(false);
+    // Show the queued state immediately. The POST behind it does a
+    // Radarr/Sonarr lookup plus a search and can take seconds; leaving the
+    // button idle that whole time reads as an unregistered click and invites
+    // a second one. Rolled back below if the request actually fails.
+    setStatus("requested");
     try {
       const res = await fetch("/api/requests", {
         method: "POST",
@@ -64,12 +69,14 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
       });
       if (await signOutIfStaleSession(res)) return;
       if (!res.ok) {
+        setStatus(null);
         setError(true);
         return;
       }
       const data = await res.json();
       setStatus(data.status ?? "requested");
     } catch {
+      setStatus(null);
       setError(true);
     } finally {
       inFlightRef.current = false;
@@ -83,8 +90,12 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   const manage = useCallback(
     async (action: "cancel" | "delete") => {
       if (!session?.user || managing) return;
-      const label = action === "cancel" ? "cancel" : "delete";
-      if (!window.confirm(`Are you sure you want to ${label} this?`)) return;
+      // Cancel goes through without a prompt -- it only stops an in-flight
+      // download and can simply be started again. Delete removes files
+      // already on disk, so that one still confirms.
+      if (action === "delete" && !window.confirm("Delete the downloaded file for this title?")) {
+        return;
+      }
       setManaging(action);
       setError(false);
       try {

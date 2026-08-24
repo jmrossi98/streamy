@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getRadarrStorageInfo, getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
 import { getSonarrTvSize, getSonarrActiveDownloads, getSonarrCompletedSeries } from "@/lib/sonarr";
+import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
 import { AdminApprovals } from "@/components/AdminApprovals";
 import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
@@ -12,6 +13,10 @@ export default async function AdminFeaturesPage() {
   if (!session?.user?.isAdmin) {
     redirect("/");
   }
+
+  // The panel auto-refreshes while anything is downloading, so this doubles
+  // as a heal loop that doesn't depend on someone sitting on a title page.
+  maybeHealStalledDownloads();
 
   const [
     pendingUsers,

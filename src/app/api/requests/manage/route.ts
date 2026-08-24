@@ -32,7 +32,9 @@ export async function POST(request: Request) {
   const ok =
     action === "cancel"
       ? mediaType === "movie"
-        ? await cancelRadarrDownload(row.externalId)
+        ? // unmonitor too, so Radarr stops wanting it and the idle-title
+          // healer doesn't turn round and re-grab what was just cancelled
+          await cancelRadarrDownload(row.externalId, { unmonitor: true })
         : await cancelSonarrDownload(row.externalId)
       : mediaType === "movie"
         ? await deleteRadarrMovie(row.externalId)

@@ -1,10 +1,17 @@
 import {
   getRadarrQueueHealth,
+  getIdleWantedMovies,
   cancelRadarrDownload,
   searchRadarrMovie,
   type QueueHealth,
 } from "./radarr";
-import { getSonarrQueueHealth, cancelSonarrDownload, searchSonarrSeries } from "./sonarr";
+import {
+  getSonarrQueueHealth,
+  getIdleWantedEpisodes,
+  searchSonarrEpisodes,
+  cancelSonarrDownload,
+  searchSonarrSeries,
+} from "./sonarr";
 
 /**
  * Auto-recovery for downloads that will never finish on their own.
@@ -62,7 +69,7 @@ async function healOne(
   try {
     const cancelled =
       mediaType === "movie"
-        ? await cancelRadarrDownload(entry.externalId, true)
+        ? await cancelRadarrDownload(entry.externalId, { blocklist: true })
         : await cancelSonarrDownload(entry.externalId, true);
     if (!cancelled) return null;
 
@@ -79,7 +86,59 @@ async function healOne(
   }
 }
 
-/** Scans both queues and re-grabs anything that's stalled or errored. */
+/**
+ * Re-searches titles Radarr still wants but has nothing in flight for.
+ *
+ * The queue-based healing above can only see downloads that exist. A title
+ * whose search came up empty -- or whose grab was cleared without a new one
+ * starting -- has nothing in the queue at all, so it stays "searching"
+ * indefinitely with no search actually running. Kicking a fresh search is
+ * what gets it moving again.
+ */
+async function healIdleWantedTitles(): Promise<HealedDownload[]> {
+  const [movies, episodes] = await Promise.all([
+    getIdleWantedMovies(),
+    getIdleWantedEpisodes(),
+  ]);
+  const healed: HealedDownload[] = [];
+
+  for (const movie of movies) {
+    const key = `idle:movie:${movie.externalId}`;
+    if (onCooldown(key)) continue;
+    lastHealedAt.set(key, Date.now());
+    try {
+      await searchRadarrMovie(movie.externalId);
+      console.log(`[healer] re-searching idle "${movie.title}"`);
+      healed.push({ title: movie.title, reason: "wanted but nothing in flight" });
+    } catch (err) {
+      console.error(`[healer] idle re-search failed for "${movie.title}":`, err);
+    }
+  }
+
+  // Batch the episode search: one command for everything due, rather than a
+  // request per episode, so a large backlog doesn't hammer Sonarr.
+  const dueEpisodes = episodes.filter((e) => {
+    const key = `idle:episode:${e.episodeId}`;
+    if (onCooldown(key)) return false;
+    lastHealedAt.set(key, Date.now());
+    return true;
+  });
+  if (dueEpisodes.length > 0) {
+    try {
+      await searchSonarrEpisodes(dueEpisodes.map((e) => e.episodeId));
+      console.log(`[healer] re-searching ${dueEpisodes.length} idle episode(s)`);
+      for (const e of dueEpisodes) {
+        healed.push({ title: e.title, reason: "wanted but nothing in flight" });
+      }
+    } catch (err) {
+      console.error("[healer] idle episode re-search failed:", err);
+    }
+  }
+
+  return healed;
+}
+
+/** Re-grabs anything stalled or errored, and re-searches anything wanted but idle. */
 export async function healStalledDownloads(): Promise<HealedDownload[]> {
   const [radarrQueue, sonarrQueue] = await Promise.all([
     getRadarrQueueHealth(),
@@ -90,7 +149,8 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     ...radarrQueue.filter(isUnhealthy).map((e) => healOne("movie", e)),
     ...sonarrQueue.filter(isUnhealthy).map((e) => healOne("show", e)),
   ]);
-  return healed.filter((h): h is HealedDownload => h !== null);
+  const idleHealed = await healIdleWantedTitles();
+  return [...healed.filter((h): h is HealedDownload => h !== null), ...idleHealed];
 }
 
 // The status endpoint is polled by every viewer on every open title, so the

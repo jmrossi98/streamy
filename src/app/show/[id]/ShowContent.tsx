@@ -118,11 +118,11 @@ export function ShowContent({
   const showRequestFlow = !hasVideo && requestConfigured;
   // Per-episode download controls are driven by Sonarr's live view of the
   // season, independent of whether the show as a whole is playable yet.
-  const { statuses: episodeStatuses, refresh: refreshEpisodeStatuses } = useSeasonStatuses(
-    show.id,
-    seasonNum,
-    requestConfigured
-  );
+  const {
+    statuses: episodeStatuses,
+    refresh: refreshEpisodeStatuses,
+    setLocalState: setEpisodeState,
+  } = useSeasonStatuses(show.id, seasonNum, requestConfigured);
 
   // Roll the season's episodes up into one state so the season-level control
   // can show overall progress and offer cancel/delete for the whole season.
@@ -374,6 +374,7 @@ export function ShowContent({
                         episodeNumber={ep.episodeNumber}
                         state={episodeStatuses[ep.episodeNumber]}
                         onRequested={refreshEpisodeStatuses}
+                        onOptimistic={(next) => setEpisodeState(ep.episodeNumber, next)}
                       />
                     </div>
                   )}

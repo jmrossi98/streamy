@@ -145,12 +145,17 @@ export async function cancelSonarrDownload(sonarrId: number, blocklist = false):
   if (!isSonarrConfigured()) return false;
   try {
     const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue`);
-    const entry = queue.records.find((r) => r.seriesId === sonarrId);
-    if (!entry) return false;
-    await sonarrFetch(
-      `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
-      { method: "DELETE" }
-    );
+    // A series can legitimately have several episodes in flight at once.
+    const entries = queue.records.filter((r) => r.seriesId === sonarrId);
+    for (const entry of entries) {
+      await sonarrFetch(
+        `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
+        { method: "DELETE" }
+      );
+    }
+    // Idempotent: nothing queued means it already isn't downloading, which is
+    // what a cancel is asking for -- reporting failure there produced a bogus
+    // "couldn't cancel" for downloads that had just finished.
     return true;
   } catch (err) {
     console.error(`[sonarr] cancelSonarrDownload failed for ${sonarrId}:`, err);
@@ -193,6 +198,42 @@ async function waitForSonarrCommand(commandId: number): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_MS));
   }
+}
+
+/**
+ * Episodes Sonarr still wants but has nothing in flight for: monitored, no
+ * file, aired, and absent from the queue. Same failure shape as the Radarr
+ * side -- a search that found nothing leaves the episode sitting in
+ * "searching" forever with no search actually running.
+ */
+export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; title: string }[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const [wanted, queue] = await Promise.all([
+      sonarrFetch<{
+        records: { id: number; title: string; seriesId: number; monitored: boolean }[];
+      }>(`/api/v3/wanted/missing?pageSize=50&sortKey=airDateUtc&sortDirection=descending`),
+      sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue`),
+    ]);
+    const queued = new Set(
+      queue.records.map((r) => r.episodeId).filter((id): id is number => id != null)
+    );
+    return wanted.records
+      .filter((e) => e.monitored && !queued.has(e.id))
+      .map((e) => ({ episodeId: e.id, title: e.title }));
+  } catch (err) {
+    console.error("[sonarr] getIdleWantedEpisodes failed:", err);
+    return [];
+  }
+}
+
+/** Kicks off a search for specific episodes. */
+export async function searchSonarrEpisodes(episodeIds: number[]): Promise<void> {
+  if (!isSonarrConfigured() || episodeIds.length === 0) return;
+  await sonarrFetch(`/api/v3/command`, {
+    method: "POST",
+    body: JSON.stringify({ name: "EpisodeSearch", episodeIds }),
+  });
 }
 
 /** Health snapshot of every entry in Sonarr's queue, for the stall auto-healer. */

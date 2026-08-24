@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 
-const POLL_INTERVAL_MS = 8000;
+// Match the movie button: tight enough that a percentage visibly climbs
+// while downloading, backed off when only a search is pending.
+const POLL_INTERVAL_DOWNLOADING_MS = 5000;
+const POLL_INTERVAL_QUEUED_MS = 12000;
 
 export type EpisodeStatus = "requested" | "downloading" | "available";
 export type EpisodeState = { status: EpisodeStatus; progress: number | null };
@@ -37,15 +40,28 @@ export function useSeasonStatuses(showId: string, seasonNumber: number, enabled:
 
   useEffect(() => {
     if (!enabled) return;
-    const anyActive = Object.values(statuses).some(
-      (s) => s.status === "requested" || s.status === "downloading"
-    );
+    const values = Object.values(statuses);
+    const anyDownloading = values.some((s) => s.status === "downloading");
+    const anyActive = anyDownloading || values.some((s) => s.status === "requested");
     if (!anyActive) return;
-    const interval = setInterval(refresh, POLL_INTERVAL_MS);
+    const interval = setInterval(
+      refresh,
+      anyDownloading ? POLL_INTERVAL_DOWNLOADING_MS : POLL_INTERVAL_QUEUED_MS
+    );
     return () => clearInterval(interval);
   }, [statuses, refresh, enabled]);
 
-  return { statuses, refresh };
+  /** Paints one episode's state locally so a click registers before the server answers. */
+  const setLocalState = useCallback((episodeNumber: number, next: EpisodeState | null) => {
+    setStatuses((prev) => {
+      const updated = { ...prev };
+      if (next) updated[episodeNumber] = next;
+      else delete updated[episodeNumber];
+      return updated;
+    });
+  }, []);
+
+  return { statuses, refresh, setLocalState };
 }
 
 type Props = {
@@ -55,6 +71,8 @@ type Props = {
   episodeNumber?: number;
   state?: EpisodeState;
   onRequested: () => void;
+  /** Paints the new state immediately, before the server round trip lands. */
+  onOptimistic?: (next: EpisodeState | null) => void;
   className?: string;
 };
 
@@ -64,6 +82,7 @@ export function EpisodeDownloadButton({
   episodeNumber,
   state,
   onRequested,
+  onOptimistic,
   className = "",
 }: Props) {
   const { status: authStatus } = useSession();
@@ -76,10 +95,15 @@ export function EpisodeDownloadButton({
     e.stopPropagation();
     e.preventDefault();
     if (loading) return;
-    const verb = state?.status === "available" ? "Delete" : "Cancel";
-    if (!window.confirm(`${verb} this ${scope}?`)) return;
+    // Cancel is unprompted -- it only stops an in-flight download and can be
+    // restarted. Delete removes a file already on disk, so it confirms.
+    if (state?.status === "available" && !window.confirm(`Delete this ${scope}'s downloaded file?`)) {
+      return;
+    }
     setLoading(true);
     setError(false);
+    const previous = state ?? null;
+    onOptimistic?.(null);
     try {
       const res = await fetch("/api/requests/tv", {
         method: "DELETE",
@@ -87,11 +111,13 @@ export function EpisodeDownloadButton({
         body: JSON.stringify({ tmdbId: showId, seasonNumber, episodeNumber }),
       });
       if (!res.ok) {
+        onOptimistic?.(previous);
         setError(true);
         return;
       }
       onRequested();
     } catch {
+      onOptimistic?.(previous);
       setError(true);
     } finally {
       setLoading(false);
@@ -156,6 +182,9 @@ export function EpisodeDownloadButton({
     if (loading) return;
     setLoading(true);
     setError(false);
+    // Searching a season walks episode by episode and can take a while, so
+    // reflect the click straight away rather than leaving the row idle.
+    onOptimistic?.({ status: "requested", progress: null });
     try {
       const res = await fetch("/api/requests/tv", {
         method: "POST",
@@ -163,11 +192,13 @@ export function EpisodeDownloadButton({
         body: JSON.stringify({ tmdbId: showId, seasonNumber, episodeNumber }),
       });
       if (!res.ok) {
+        onOptimistic?.(null);
         setError(true);
         return;
       }
       onRequested();
     } catch {
+      onOptimistic?.(null);
       setError(true);
     } finally {
       setLoading(false);
