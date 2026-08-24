@@ -37,11 +37,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   async function handleManage(d: DownloadRow) {
     const key = d.mediaType + d.id;
     const action = d.completed ? "delete" : "cancel";
-    // Cancel is unprompted -- it only stops an in-flight download and can be
-    // restarted. Delete removes a file already on disk, so it confirms.
-    if (action === "delete" && !window.confirm(`Delete the downloaded file for "${d.title}"?`)) {
-      return;
-    }
+    // No confirm prompt: anything removed here can be downloaded again.
     setManagingKey(key);
     try {
       await fetch("/api/admin/downloads/manage", {

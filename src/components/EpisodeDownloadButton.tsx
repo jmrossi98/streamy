@@ -95,11 +95,8 @@ export function EpisodeDownloadButton({
     e.stopPropagation();
     e.preventDefault();
     if (loading) return;
-    // Cancel is unprompted -- it only stops an in-flight download and can be
-    // restarted. Delete removes a file already on disk, so it confirms.
-    if (state?.status === "available" && !window.confirm(`Delete this ${scope}'s downloaded file?`)) {
-      return;
-    }
+    // No confirm prompt: anything removed here can be downloaded again from
+    // this same control.
     setLoading(true);
     setError(false);
     const previous = state ?? null;

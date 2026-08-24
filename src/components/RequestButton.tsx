@@ -90,12 +90,8 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   const manage = useCallback(
     async (action: "cancel" | "delete") => {
       if (!session?.user || managing) return;
-      // Cancel goes through without a prompt -- it only stops an in-flight
-      // download and can simply be started again. Delete removes files
-      // already on disk, so that one still confirms.
-      if (action === "delete" && !window.confirm("Delete the downloaded file for this title?")) {
-        return;
-      }
+      // No confirm prompt on either action: anything removed here can be
+      // downloaded again from this same button.
       setManaging(action);
       setError(false);
       try {
