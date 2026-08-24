@@ -122,6 +122,7 @@ export function ShowContent({
     statuses: episodeStatuses,
     refresh: refreshEpisodeStatuses,
     setLocalState: setEpisodeState,
+    setLocalStates: setSeasonEpisodeStates,
   } = useSeasonStatuses(show.id, seasonNum, requestConfigured);
 
   // Roll the season's episodes up into one state so the season-level control
@@ -284,6 +285,12 @@ export function ShowContent({
               seasonNumber={seasonNum}
               state={seasonState}
               onRequested={refreshEpisodeStatuses}
+              onOptimistic={(next) =>
+                setSeasonEpisodeStates(
+                  (season?.episodes ?? []).map((e) => e.episodeNumber),
+                  next
+                )
+              }
               className="ml-auto"
             />
           )}

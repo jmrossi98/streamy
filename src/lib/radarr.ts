@@ -67,17 +67,28 @@ export async function getRadarrStorageInfo(): Promise<RadarrStorageInfo | null> 
   }
 }
 
+/** "cancelled" = Radarr no longer wants it, which is distinct from still searching. */
+export type LiveStatus = MediaRequestStatus | "cancelled";
+
 /**
  * Re-derives a movie's live status straight from Radarr, bypassing whatever
  * Streamy's own MediaRequest row currently says. Used to catch downloads that
- * were cancelled or removed directly in Radarr/qBittorrent (outside
- * Streamy's request flow), since the webhook that would normally flip status
- * never fires for that.
+ * were cancelled or removed outside Streamy's request flow, since the webhook
+ * that would normally flip status never fires for that.
+ *
+ * An unmonitored movie with no file is reported as "cancelled" rather than
+ * "requested": Radarr never searches for something it isn't monitoring, so
+ * calling that state "searching" leaves the button spinning on a search that
+ * will never happen.
  */
-export async function getRadarrLiveStatus(radarrId: number): Promise<MediaRequestStatus | null> {
+export async function getRadarrLiveStatus(radarrId: number): Promise<LiveStatus | null> {
   if (!isRadarrConfigured()) return null;
   try {
-    const movie = await radarrFetch<{ id: number; hasFile: boolean }>(`/api/v3/movie/${radarrId}`);
+    const movie = await radarrFetch<{ id: number; hasFile: boolean; monitored: boolean }>(
+      `/api/v3/movie/${radarrId}`
+    );
+    if (movie.hasFile) return "available";
+    if (!movie.monitored) return "cancelled";
     return resolveRadarrStatus(movie);
   } catch (err) {
     console.error(`[radarr] getRadarrLiveStatus failed for ${radarrId}:`, err);

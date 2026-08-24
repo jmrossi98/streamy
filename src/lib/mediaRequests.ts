@@ -42,6 +42,14 @@ export async function resolveMediaRequestStatus(
     return { status: storedStatus, progress: null };
   }
 
+  if (liveStatus === "cancelled") {
+    // Radarr/Sonarr has stopped wanting this (cancelled here, from the admin
+    // panel, or directly in Radarr). No search will ever run, so clear the
+    // row immediately rather than leaving the button on "searching".
+    await prisma.mediaRequest.delete({ where: { tmdbId_mediaType: { tmdbId, mediaType } } });
+    return { status: null, progress: null };
+  }
+
   if (liveStatus === "available") {
     if (storedStatus !== "available") {
       await prisma.mediaRequest.update({
