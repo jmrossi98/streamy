@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 
 // Match the movie button: tight enough that a percentage visibly climbs
@@ -16,8 +16,17 @@ export type EpisodeState = { status: EpisodeStatus; progress: number | null };
  * truth (it already knows what's on disk and what's queued), so this reads
  * through to it rather than keeping per-episode rows in Streamy.
  */
-export function useSeasonStatuses(showId: string, seasonNumber: number, enabled: boolean) {
-  const [statuses, setStatuses] = useState<Record<number, EpisodeState>>({});
+export function useSeasonStatuses(
+  showId: string,
+  seasonNumber: number,
+  enabled: boolean,
+  /** Server-rendered statuses for `seedSeason`, so the first paint is already correct. */
+  seed?: Record<number, EpisodeState>,
+  seedSeason?: number
+) {
+  const [statuses, setStatuses] = useState<Record<number, EpisodeState>>(
+    seedSeason === seasonNumber && seed ? seed : {}
+  );
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -33,10 +42,19 @@ export function useSeasonStatuses(showId: string, seasonNumber: number, enabled:
     }
   }, [showId, seasonNumber, enabled]);
 
+  // Switching seasons must clear the old season's rows, but the seeded season
+  // already has correct data -- wiping it would reintroduce the blank flash
+  // this seed exists to remove.
+  const seededSeasonRef = useRef(seedSeason === seasonNumber ? seasonNumber : null);
   useEffect(() => {
+    if (seededSeasonRef.current === seasonNumber) {
+      seededSeasonRef.current = null; // only skip the very first pass
+      refresh();
+      return;
+    }
     setStatuses({});
     refresh();
-  }, [refresh]);
+  }, [refresh, seasonNumber]);
 
   useEffect(() => {
     if (!enabled) return;

@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
 import { isJellyfinShowAvailable } from "@/lib/jellyfin";
-import { isSonarrConfigured } from "@/lib/sonarr";
+import { isSonarrConfigured, getSonarrSeasonStatuses } from "@/lib/sonarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { ShowContent } from "./ShowContent";
 
@@ -27,8 +27,16 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const maxSeason = Math.max(1, show.numberOfSeasons);
   const initialSeasonNum = Math.min(requestedSeason, maxSeason);
 
-  const [season1, initialSeasonDataRaw, episodeProgressList, latestProgress, watchlistShowItem, hasVideo, requestStatus] =
-    await Promise.all([
+  const [
+    season1,
+    initialSeasonDataRaw,
+    episodeProgressList,
+    latestProgress,
+    watchlistShowItem,
+    hasVideo,
+    requestStatus,
+    initialEpisodeStatuses,
+  ] = await Promise.all([
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
       session?.user?.id
@@ -52,6 +60,10 @@ export default async function ShowPage({ params, searchParams }: Props) {
       // Shared/global library state -- not gated behind a session, since it's
       // the same for every viewer regardless of who requested it.
       resolveMediaRequestStatus(id, "show"),
+      // Seeded so the episode list renders with real per-episode state on
+      // first paint, instead of every row briefly looking un-downloaded
+      // until the client's first poll lands.
+      getSonarrSeasonStatuses(id, initialSeasonNum),
     ]);
   if (!season1) notFound();
 
@@ -114,6 +126,8 @@ export default async function ShowPage({ params, searchParams }: Props) {
       requestConfigured={isSonarrConfigured()}
       initialRequestStatus={requestStatus.status}
       initialProgress={requestStatus.progress}
+      initialEpisodeStatuses={initialEpisodeStatuses}
+      initialEpisodeStatusSeason={initialSeasonNum}
     />
   );
 }
