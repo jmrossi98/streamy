@@ -124,6 +124,26 @@ export function ShowContent({
     requestConfigured
   );
 
+  // Roll the season's episodes up into one state so the season-level control
+  // can show overall progress and offer cancel/delete for the whole season.
+  const seasonState = (() => {
+    const values = Object.values(episodeStatuses);
+    if (values.length === 0) return undefined;
+    const downloading = values.filter((v) => v.status === "downloading");
+    if (downloading.length > 0) {
+      const known = downloading.filter((v) => v.progress != null);
+      const progress =
+        known.length > 0
+          ? Math.round(known.reduce((sum, v) => sum + (v.progress ?? 0), 0) / known.length)
+          : null;
+      return { status: "downloading" as const, progress };
+    }
+    if (values.some((v) => v.status === "requested")) {
+      return { status: "requested" as const, progress: null };
+    }
+    return { status: "available" as const, progress: null };
+  })();
+
   useEffect(() => {
     if (seasonNum === 1) {
       setSeason(initialSeason);
@@ -262,6 +282,7 @@ export function ShowContent({
             <EpisodeDownloadButton
               showId={show.id}
               seasonNumber={seasonNum}
+              state={seasonState}
               onRequested={refreshEpisodeStatuses}
               className="ml-auto"
             />

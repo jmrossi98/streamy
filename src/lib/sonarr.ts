@@ -424,6 +424,83 @@ export async function requestSeason(
   }
 }
 
+/**
+ * Cancels in-flight downloads and/or removes downloaded files for a single
+ * episode, or for a whole season when `episodeNumber` is omitted. Also
+ * unmonitors what it clears, so Sonarr doesn't immediately re-grab it on the
+ * next RSS pass -- "cancel" should mean cancelled, not "retry shortly".
+ */
+export async function manageSonarrEpisodes(
+  tmdbId: string,
+  seasonNumber: number,
+  episodeNumber: number | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
+  try {
+    const { tvdbId } = await getTvExternalIds(tmdbId);
+    if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+    const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
+    if (!series[0]) return { ok: false, error: "Show is not in Sonarr" };
+    const seriesId = series[0].id;
+
+    const allEpisodes = await sonarrFetch<(SonarrEpisode & { episodeFileId?: number })[]>(
+      `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
+    );
+    const targets =
+      episodeNumber == null
+        ? allEpisodes
+        : allEpisodes.filter((e) => e.episodeNumber === episodeNumber);
+    if (targets.length === 0) return { ok: false, error: "Episode not found in Sonarr" };
+    const targetIds = new Set(targets.map((e) => e.id));
+
+    // Drop anything currently downloading for these episodes.
+    const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
+      `/api/v3/queue`
+    );
+    for (const record of queue.records) {
+      if (record.episodeId != null && targetIds.has(record.episodeId)) {
+        await sonarrFetch(
+          `/api/v3/queue/${record.id}?removeFromClient=true&blocklist=false`,
+          { method: "DELETE" }
+        );
+      }
+    }
+
+    // Remove any already-imported files.
+    for (const ep of targets) {
+      if (ep.episodeFileId) {
+        await sonarrFetch(`/api/v3/episodefile/${ep.episodeFileId}`, { method: "DELETE" });
+      }
+    }
+
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: targets.map((e) => e.id), monitored: false }),
+    });
+
+    // Unmonitor the season too, otherwise Sonarr treats it as still wanted.
+    if (episodeNumber == null) {
+      const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
+        `/api/v3/series/${seriesId}`
+      );
+      await sonarrFetch(`/api/v3/series/${seriesId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          ...full,
+          seasons: full.seasons.map((s) =>
+            s.seasonNumber === seasonNumber ? { ...s, monitored: false } : s
+          ),
+        }),
+      });
+    }
+
+    return { ok: true };
+  } catch (err) {
+    console.error(`[sonarr] manageSonarrEpisodes failed for ${tmdbId} S${seasonNumber}:`, err);
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
 export type SonarrRequestResult =
   | { ok: true; sonarrId: number; tvdbId: number; status: MediaRequestStatus }
   | { ok: false; error: string };

@@ -70,24 +70,67 @@ export function EpisodeDownloadButton({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
+  const scope = episodeNumber == null ? "season" : "episode";
+
+  async function handleManage(e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (loading) return;
+    const verb = state?.status === "available" ? "Delete" : "Cancel";
+    if (!window.confirm(`${verb} this ${scope}?`)) return;
+    setLoading(true);
+    setError(false);
+    try {
+      const res = await fetch("/api/requests/tv", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tmdbId: showId, seasonNumber, episodeNumber }),
+      });
+      if (!res.ok) {
+        setError(true);
+        return;
+      }
+      onRequested();
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const manageButton = (
+    <button
+      type="button"
+      onClick={handleManage}
+      disabled={loading}
+      className="text-xs font-medium text-white/40 hover:text-netflix-red disabled:opacity-50"
+    >
+      {loading ? "…" : state?.status === "available" ? "Delete" : "Cancel"}
+    </button>
+  );
+
   if (state) {
     if (state.status === "available") {
       return (
-        <span className={`shrink-0 text-xs font-medium text-white/40 ${className}`}>
-          Downloaded
-        </span>
+        <div className={`flex shrink-0 items-center gap-3 ${className}`}>
+          <span className="text-xs font-medium text-white/40">Downloaded</span>
+          {authStatus === "authenticated" && manageButton}
+        </div>
       );
     }
     const downloading = state.status === "downloading";
     return (
-      <div className={`flex w-24 shrink-0 flex-col gap-1 ${className}`}>
-        <span className="text-right text-xs font-medium tabular-nums text-white/70">
-          {downloading
-            ? state.progress != null
-              ? `${state.progress}%`
-              : "Starting…"
-            : "Searching…"}
-        </span>
+      <div className={`flex w-28 shrink-0 flex-col gap-1 ${className}`}>
+        <div className="flex items-center justify-end gap-2">
+          <span className="text-xs font-medium tabular-nums text-white/70">
+            {downloading
+              ? state.progress != null
+                ? `${state.progress}%`
+                : "Starting…"
+              : "Searching…"}
+          </span>
+          {authStatus === "authenticated" && manageButton}
+        </div>
         <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
           {downloading && state.progress != null ? (
             <div
