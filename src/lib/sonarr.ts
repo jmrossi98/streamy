@@ -145,12 +145,17 @@ export async function cancelSonarrDownload(sonarrId: number, blocklist = false):
   if (!isSonarrConfigured()) return false;
   try {
     const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue`);
-    const entry = queue.records.find((r) => r.seriesId === sonarrId);
-    if (!entry) return false;
-    await sonarrFetch(
-      `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
-      { method: "DELETE" }
-    );
+    // A series can legitimately have several episodes in flight at once.
+    const entries = queue.records.filter((r) => r.seriesId === sonarrId);
+    for (const entry of entries) {
+      await sonarrFetch(
+        `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
+        { method: "DELETE" }
+      );
+    }
+    // Idempotent: nothing queued means it already isn't downloading, which is
+    // what a cancel is asking for -- reporting failure there produced a bogus
+    // "couldn't cancel" for downloads that had just finished.
     return true;
   } catch (err) {
     console.error(`[sonarr] cancelSonarrDownload failed for ${sonarrId}:`, err);
@@ -164,6 +169,70 @@ export async function searchSonarrSeries(sonarrId: number): Promise<void> {
   await sonarrFetch(`/api/v3/command`, {
     method: "POST",
     body: JSON.stringify({ name: "SeriesSearch", seriesId: sonarrId }),
+  });
+}
+
+const COMMAND_POLL_MS = 2000;
+const COMMAND_TIMEOUT_MS = 90_000;
+
+/**
+ * Waits for a Sonarr command to finish.
+ *
+ * Sonarr's search commands are asynchronous -- POSTing one returns as soon
+ * as it's queued, not when the release has been grabbed. Firing a season's
+ * searches back to back therefore says nothing about the order the grabs
+ * land in. Waiting for each one is what actually makes the sequence
+ * deterministic. Gives up after a timeout so one unfindable episode can't
+ * wedge the rest of the season behind it.
+ */
+async function waitForSonarrCommand(commandId: number): Promise<void> {
+  const deadline = Date.now() + COMMAND_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const cmd = await sonarrFetch<{ status: string }>(`/api/v3/command/${commandId}`);
+      if (cmd.status === "completed" || cmd.status === "failed" || cmd.status === "aborted") {
+        return;
+      }
+    } catch {
+      return; // treat an unreadable command as done rather than stalling the chain
+    }
+    await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_MS));
+  }
+}
+
+/**
+ * Episodes Sonarr still wants but has nothing in flight for: monitored, no
+ * file, aired, and absent from the queue. Same failure shape as the Radarr
+ * side -- a search that found nothing leaves the episode sitting in
+ * "searching" forever with no search actually running.
+ */
+export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; title: string }[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const [wanted, queue] = await Promise.all([
+      sonarrFetch<{
+        records: { id: number; title: string; seriesId: number; monitored: boolean }[];
+      }>(`/api/v3/wanted/missing?pageSize=50&sortKey=airDateUtc&sortDirection=descending`),
+      sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue`),
+    ]);
+    const queued = new Set(
+      queue.records.map((r) => r.episodeId).filter((id): id is number => id != null)
+    );
+    return wanted.records
+      .filter((e) => e.monitored && !queued.has(e.id))
+      .map((e) => ({ episodeId: e.id, title: e.title }));
+  } catch (err) {
+    console.error("[sonarr] getIdleWantedEpisodes failed:", err);
+    return [];
+  }
+}
+
+/** Kicks off a search for specific episodes. */
+export async function searchSonarrEpisodes(episodeIds: number[]): Promise<void> {
+  if (!isSonarrConfigured() || episodeIds.length === 0) return;
+  await sonarrFetch(`/api/v3/command`, {
+    method: "POST",
+    body: JSON.stringify({ name: "EpisodeSearch", episodeIds }),
   });
 }
 
@@ -213,6 +282,334 @@ export async function deleteSonarrSeries(sonarrId: number): Promise<boolean> {
   }
 }
 
+export type SonarrEpisode = {
+  id: number;
+  episodeNumber: number;
+  seasonNumber: number;
+  hasFile: boolean;
+  monitored: boolean;
+};
+
+/**
+ * Finds the series in Sonarr, adding it first if it isn't there yet.
+ *
+ * When adding for a season/episode request the series is created with
+ * nothing monitored and no search kicked off -- otherwise Sonarr would
+ * immediately start grabbing the entire show, which is the opposite of
+ * asking for one episode. The caller then monitors and searches exactly
+ * what was requested.
+ */
+async function ensureSeriesInSonarr(tmdbId: string): Promise<
+  { ok: true; sonarrId: number } | { ok: false; error: string }
+> {
+  const { tvdbId } = await getTvExternalIds(tmdbId);
+  if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+
+  const existing = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
+  if (existing[0]) return { ok: true, sonarrId: existing[0].id };
+
+  const lookup = await sonarrFetch<Record<string, unknown>[]>(
+    `/api/v3/series/lookup?term=tvdb:${tvdbId}`
+  );
+  const match = lookup[0];
+  if (!match) return { ok: false, error: "Show not found via Sonarr lookup" };
+
+  const seasons = Array.isArray(match.seasons)
+    ? (match.seasons as { seasonNumber: number }[]).map((s) => ({
+        seasonNumber: s.seasonNumber,
+        monitored: false,
+      }))
+    : [];
+
+  const created = await sonarrFetch<{ id: number }>(`/api/v3/series`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...match,
+      tvdbId,
+      qualityProfileId: Number(SONARR_QUALITY_PROFILE_ID),
+      rootFolderPath: SONARR_ROOT_FOLDER,
+      monitored: true,
+      addOptions: { searchForMissingEpisodes: false },
+      seasons,
+    }),
+  });
+  return { ok: true, sonarrId: created.id };
+}
+
+/** Every episode Sonarr knows about for one season. */
+export async function getSonarrSeasonEpisodes(
+  tmdbId: string,
+  seasonNumber: number
+): Promise<SonarrEpisode[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const { tvdbId } = await getTvExternalIds(tmdbId);
+    if (!tvdbId) return [];
+    const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
+    if (!series[0]) return [];
+    return await sonarrFetch<SonarrEpisode[]>(
+      `/api/v3/episode?seriesId=${series[0].id}&seasonNumber=${seasonNumber}`
+    );
+  } catch (err) {
+    console.error(`[sonarr] getSonarrSeasonEpisodes failed for ${tmdbId} S${seasonNumber}:`, err);
+    return [];
+  }
+}
+
+export type EpisodeState = {
+  status: MediaRequestStatus;
+  /** 0-100 while downloading; null when not started or metadata unresolved. */
+  progress: number | null;
+};
+export type EpisodeStatusMap = Record<number, EpisodeState>;
+
+/**
+ * Per-episode status and live progress for one season, derived from Sonarr
+ * rather than stored in Streamy -- Sonarr already knows what's on disk and
+ * what's queued, and a per-episode table would just drift out of sync.
+ */
+export async function getSonarrSeasonStatuses(
+  tmdbId: string,
+  seasonNumber: number
+): Promise<EpisodeStatusMap> {
+  if (!isSonarrConfigured()) return {};
+  try {
+    const episodes = await getSonarrSeasonEpisodes(tmdbId, seasonNumber);
+    if (episodes.length === 0) return {};
+
+    const queue = await sonarrFetch<{
+      records: { episodeId?: number; size: number; sizeleft: number }[];
+    }>(`/api/v3/queue`);
+    const queued = new Map<number, { size: number; sizeleft: number }>();
+    for (const r of queue.records) {
+      if (r.episodeId != null) queued.set(r.episodeId, { size: r.size, sizeleft: r.sizeleft });
+    }
+
+    const statuses: EpisodeStatusMap = {};
+    for (const ep of episodes) {
+      const q = queued.get(ep.id);
+      if (ep.hasFile) {
+        statuses[ep.episodeNumber] = { status: "available", progress: null };
+      } else if (q) {
+        statuses[ep.episodeNumber] = {
+          status: "downloading",
+          progress: q.size > 0 ? Math.round(((q.size - q.sizeleft) / q.size) * 100) : null,
+        };
+      } else if (ep.monitored) {
+        statuses[ep.episodeNumber] = { status: "requested", progress: null };
+      }
+    }
+    return statuses;
+  } catch (err) {
+    console.error(`[sonarr] getSonarrSeasonStatuses failed for ${tmdbId} S${seasonNumber}:`, err);
+    return {};
+  }
+}
+
+/** Monitors and searches a single episode. */
+export async function requestEpisode(
+  tmdbId: string,
+  seasonNumber: number,
+  episodeNumber: number
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
+  try {
+    const series = await ensureSeriesInSonarr(tmdbId);
+    if (!series.ok) return series;
+
+    const episodes = await sonarrFetch<SonarrEpisode[]>(
+      `/api/v3/episode?seriesId=${series.sonarrId}&seasonNumber=${seasonNumber}`
+    );
+    const episode = episodes.find((e) => e.episodeNumber === episodeNumber);
+    if (!episode) return { ok: false, error: "Episode not found in Sonarr" };
+
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: [episode.id], monitored: true }),
+    });
+    await sonarrFetch(`/api/v3/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [episode.id] }),
+    });
+    return { ok: true };
+  } catch (err) {
+    console.error(`[sonarr] requestEpisode failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err);
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
+/**
+ * Searches the given episodes one at a time, in the order supplied, waiting
+ * for each grab to finish before starting the next so downloads queue up in
+ * episode order. Runs detached from the request that started it.
+ */
+async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
+  for (const id of episodeIds) {
+    try {
+      const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [id] }),
+      });
+      await waitForSonarrCommand(cmd.id);
+    } catch (err) {
+      // One episode failing shouldn't strand the rest of the season.
+      console.error(`[sonarr] ordered search failed for episode ${id}:`, err);
+    }
+  }
+}
+
+/**
+ * Searches a whole series in broadcast order -- season 1 episode 1 first,
+ * then 2, 3, and on through later seasons -- so the show becomes watchable
+ * from the beginning rather than from whichever episode happened to grab
+ * first. Specials (season 0) go last; they're rarely what someone means by
+ * "start watching this show".
+ */
+async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
+  const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+  const wanted = episodes
+    .filter((e) => !e.hasFile)
+    .sort((a, b) => {
+      const sa = a.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : a.seasonNumber;
+      const sb = b.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : b.seasonNumber;
+      return sa - sb || a.episodeNumber - b.episodeNumber;
+    });
+  if (wanted.length === 0) return;
+  void searchEpisodesInOrder(wanted.map((e) => e.id));
+}
+
+/** Monitors and searches every episode in one season. */
+export async function requestSeason(
+  tmdbId: string,
+  seasonNumber: number
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
+  try {
+    const series = await ensureSeriesInSonarr(tmdbId);
+    if (!series.ok) return series;
+
+    // Monitor the season itself so future episodes are picked up too.
+    const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
+      `/api/v3/series/${series.sonarrId}`
+    );
+    const updated = {
+      ...full,
+      seasons: full.seasons.map((s) =>
+        s.seasonNumber === seasonNumber ? { ...s, monitored: true } : s
+      ),
+    };
+    await sonarrFetch(`/api/v3/series/${series.sonarrId}`, {
+      method: "PUT",
+      body: JSON.stringify(updated),
+    });
+
+    const episodes = await sonarrFetch<SonarrEpisode[]>(
+      `/api/v3/episode?seriesId=${series.sonarrId}&seasonNumber=${seasonNumber}`
+    );
+    const inOrder = [...episodes].sort((a, b) => a.episodeNumber - b.episodeNumber);
+    const ids = inOrder.map((e) => e.id);
+    if (ids.length === 0) return { ok: true };
+
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: ids, monitored: true }),
+    });
+
+    // Deliberately not SeasonSearch: that grabs the whole season at once and
+    // the download client starts them in whatever order the grabs land, so
+    // episode 1 can finish last. Instead each episode is searched in
+    // ascending order and we wait for each grab before starting the next, so
+    // torrents enter the download client in episode order and the season
+    // becomes watchable from episode 1 onward.
+    //
+    // Not awaited: a full season is minutes of sequential searching, far
+    // longer than a request should block. The chain runs in the background
+    // and the UI picks up each episode as it appears via status polling.
+    void searchEpisodesInOrder(ids);
+    return { ok: true };
+  } catch (err) {
+    console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
+/**
+ * Cancels in-flight downloads and/or removes downloaded files for a single
+ * episode, or for a whole season when `episodeNumber` is omitted. Also
+ * unmonitors what it clears, so Sonarr doesn't immediately re-grab it on the
+ * next RSS pass -- "cancel" should mean cancelled, not "retry shortly".
+ */
+export async function manageSonarrEpisodes(
+  tmdbId: string,
+  seasonNumber: number,
+  episodeNumber: number | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
+  try {
+    const { tvdbId } = await getTvExternalIds(tmdbId);
+    if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+    const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
+    if (!series[0]) return { ok: false, error: "Show is not in Sonarr" };
+    const seriesId = series[0].id;
+
+    const allEpisodes = await sonarrFetch<(SonarrEpisode & { episodeFileId?: number })[]>(
+      `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
+    );
+    const targets =
+      episodeNumber == null
+        ? allEpisodes
+        : allEpisodes.filter((e) => e.episodeNumber === episodeNumber);
+    if (targets.length === 0) return { ok: false, error: "Episode not found in Sonarr" };
+    const targetIds = new Set(targets.map((e) => e.id));
+
+    // Drop anything currently downloading for these episodes.
+    const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
+      `/api/v3/queue`
+    );
+    for (const record of queue.records) {
+      if (record.episodeId != null && targetIds.has(record.episodeId)) {
+        await sonarrFetch(
+          `/api/v3/queue/${record.id}?removeFromClient=true&blocklist=false`,
+          { method: "DELETE" }
+        );
+      }
+    }
+
+    // Remove any already-imported files.
+    for (const ep of targets) {
+      if (ep.episodeFileId) {
+        await sonarrFetch(`/api/v3/episodefile/${ep.episodeFileId}`, { method: "DELETE" });
+      }
+    }
+
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: targets.map((e) => e.id), monitored: false }),
+    });
+
+    // Unmonitor the season too, otherwise Sonarr treats it as still wanted.
+    if (episodeNumber == null) {
+      const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
+        `/api/v3/series/${seriesId}`
+      );
+      await sonarrFetch(`/api/v3/series/${seriesId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          ...full,
+          seasons: full.seasons.map((s) =>
+            s.seasonNumber === seasonNumber ? { ...s, monitored: false } : s
+          ),
+        }),
+      });
+    }
+
+    return { ok: true };
+  } catch (err) {
+    console.error(`[sonarr] manageSonarrEpisodes failed for ${tmdbId} S${seasonNumber}:`, err);
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
 export type SonarrRequestResult =
   | { ok: true; sonarrId: number; tvdbId: number; status: MediaRequestStatus }
   | { ok: false; error: string };
@@ -241,10 +638,7 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
         // prior download was cancelled outside Streamy. resolveSonarrStatus
         // alone would silently report "requested" with nothing actually
         // searching, so kick off a fresh search here.
-        await sonarrFetch(`/api/v3/command`, {
-          method: "POST",
-          body: JSON.stringify({ name: "SeriesSearch", seriesId: existing[0].id }),
-        });
+        await searchSeriesInEpisodeOrder(existing[0].id);
       }
       return { ok: true, sonarrId: existing[0].id, tvdbId, status };
     }
@@ -270,10 +664,13 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
         qualityProfileId: Number(SONARR_QUALITY_PROFILE_ID),
         rootFolderPath: SONARR_ROOT_FOLDER,
         monitored: true,
-        addOptions: { searchForMissingEpisodes: true },
+        // Sonarr's own bulk search grabs the whole show at once, in no
+        // particular order; we drive an ordered search instead.
+        addOptions: { searchForMissingEpisodes: false },
         seasons,
       }),
     });
+    await searchSeriesInEpisodeOrder(created.id);
     return { ok: true, sonarrId: created.id, tvdbId, status: "requested" };
   } catch (err) {
     console.error(`[sonarr] requestShow failed for tmdbId ${tmdbId}:`, err);

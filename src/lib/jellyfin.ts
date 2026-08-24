@@ -57,6 +57,25 @@ function isPlayable(item: JellyfinItem): boolean {
   return item.LocationType === "FileSystem";
 }
 
+// Radarr/Sonarr are supposed to poke Jellyfin to rescan on import, but that
+// notification doesn't always land -- a finished movie then sits on disk,
+// invisible to Jellyfin, and the title shows "Downloaded" with no way to
+// play it. Asking Jellyfin to rescan when we come up empty closes that gap
+// on its own. Rate-limited because scans are not free and every viewer polls.
+const SCAN_COOLDOWN_MS = 60 * 1000;
+let lastScanRequestedAt = 0;
+
+function requestJellyfinLibraryScan(): void {
+  if (!isJellyfinConfigured()) return;
+  if (Date.now() - lastScanRequestedAt < SCAN_COOLDOWN_MS) return;
+  lastScanRequestedAt = Date.now();
+  fetch(`${JELLYFIN_URL}/Library/Refresh`, {
+    method: "POST",
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    cache: "no-store",
+  }).catch((err) => console.error("[jellyfin] library refresh failed:", err));
+}
+
 /** Jellyfin item id for a movie, by TMDB id. Null until it's actually scanned in with a real file. */
 export async function findJellyfinMovieItemId(tmdbId: string): Promise<string | null> {
   if (!isJellyfinConfigured()) return null;
@@ -65,6 +84,7 @@ export async function findJellyfinMovieItemId(tmdbId: string): Promise<string | 
       `/Items?IncludeItemTypes=Movie&Recursive=true&fields=ProviderIds`
     );
     const item = result.Items.find((i) => matchesTmdbId(i, tmdbId) && isPlayable(i));
+    if (!item) requestJellyfinLibraryScan();
     return item?.Id ?? null;
   } catch (err) {
     console.error(`[jellyfin] findJellyfinMovieItemId failed for tmdbId ${tmdbId}:`, err);
@@ -94,6 +114,7 @@ export async function findJellyfinEpisodeItemId(
       `/Shows/${seriesId}/Episodes?seasonNumber=${seasonNumber}&fields=ProviderIds`
     );
     const episode = episodes.Items.find((e) => e.IndexNumber === episodeNumber && isPlayable(e));
+    if (!episode) requestJellyfinLibraryScan();
     return episode?.Id ?? null;
   } catch (err) {
     console.error(
@@ -109,11 +130,16 @@ export async function isJellyfinShowAvailable(showTmdbId: string): Promise<boole
   if (!isJellyfinConfigured()) return false;
   try {
     const seriesId = await findJellyfinSeriesId(showTmdbId);
-    if (!seriesId) return false;
+    if (!seriesId) {
+      requestJellyfinLibraryScan();
+      return false;
+    }
     const episodes = await jellyfinFetch<{ Items: JellyfinItem[] }>(
       `/Shows/${seriesId}/Episodes?fields=ProviderIds`
     );
-    return episodes.Items.some(isPlayable);
+    const available = episodes.Items.some(isPlayable);
+    if (!available) requestJellyfinLibraryScan();
+    return available;
   } catch (err) {
     console.error(`[jellyfin] isJellyfinShowAvailable failed for tmdbId ${showTmdbId}:`, err);
     return false;

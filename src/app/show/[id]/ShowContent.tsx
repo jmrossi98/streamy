@@ -9,6 +9,7 @@ import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
+import { EpisodeDownloadButton, useSeasonStatuses } from "@/components/EpisodeDownloadButton";
 
 type ShowContentProps = {
   show: TVShow & { numberOfSeasons: number };
@@ -115,6 +116,33 @@ export function ShowContent({
   }, [resumeSeason, resumeEpisode, resumeEpisodeName, resumeProgressSeconds, pathname, router]);
 
   const showRequestFlow = !hasVideo && requestConfigured;
+  // Per-episode download controls are driven by Sonarr's live view of the
+  // season, independent of whether the show as a whole is playable yet.
+  const {
+    statuses: episodeStatuses,
+    refresh: refreshEpisodeStatuses,
+    setLocalState: setEpisodeState,
+  } = useSeasonStatuses(show.id, seasonNum, requestConfigured);
+
+  // Roll the season's episodes up into one state so the season-level control
+  // can show overall progress and offer cancel/delete for the whole season.
+  const seasonState = (() => {
+    const values = Object.values(episodeStatuses);
+    if (values.length === 0) return undefined;
+    const downloading = values.filter((v) => v.status === "downloading");
+    if (downloading.length > 0) {
+      const known = downloading.filter((v) => v.progress != null);
+      const progress =
+        known.length > 0
+          ? Math.round(known.reduce((sum, v) => sum + (v.progress ?? 0), 0) / known.length)
+          : null;
+      return { status: "downloading" as const, progress };
+    }
+    if (values.some((v) => v.status === "requested")) {
+      return { status: "requested" as const, progress: null };
+    }
+    return { status: "available" as const, progress: null };
+  })();
 
   useEffect(() => {
     if (seasonNum === 1) {
@@ -165,6 +193,14 @@ export function ShowContent({
             autoPlay
             nextEpisodeHref={overlayEpisode.nextHref}
             nextEpisodeLabel={overlayEpisode.nextLabel ?? undefined}
+            // Only hand the player a source once Sonarr says the file is on
+            // disk; otherwise it shows its "not downloaded yet" state rather
+            // than trying (and failing) to stream something that isn't there.
+            videoUrl={
+              episodeStatuses[overlayEpisode.episodeNumber]?.status === "available"
+                ? `/api/stream/episode/${show.id}/${overlayEpisode.seasonNumber}/${overlayEpisode.episodeNumber}`
+                : null
+            }
           />
         </div>
       )}
@@ -242,6 +278,15 @@ export function ShowContent({
               </option>
             ))}
           </select>
+          {requestConfigured && (
+            <EpisodeDownloadButton
+              showId={show.id}
+              seasonNumber={seasonNum}
+              state={seasonState}
+              onRequested={refreshEpisodeStatuses}
+              className="ml-auto"
+            />
+          )}
         </div>
 
         {seasonLoading && (
@@ -321,6 +366,18 @@ export function ShowContent({
                       )}
                     </div>
                   </button>
+                  {requestConfigured && (
+                    <div className="flex shrink-0 items-center">
+                      <EpisodeDownloadButton
+                        showId={show.id}
+                        seasonNumber={ep.seasonNumber}
+                        episodeNumber={ep.episodeNumber}
+                        state={episodeStatuses[ep.episodeNumber]}
+                        onRequested={refreshEpisodeStatuses}
+                        onOptimistic={(next) => setEpisodeState(ep.episodeNumber, next)}
+                      />
+                    </div>
+                  )}
                 </li>
               );
             })}

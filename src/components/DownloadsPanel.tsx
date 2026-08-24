@@ -37,7 +37,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   async function handleManage(d: DownloadRow) {
     const key = d.mediaType + d.id;
     const action = d.completed ? "delete" : "cancel";
-    if (!window.confirm(`${action === "delete" ? "Delete" : "Cancel"} "${d.title}"?`)) return;
+    // No confirm prompt: anything removed here can be downloaded again.
     setManagingKey(key);
     try {
       await fetch("/api/admin/downloads/manage", {

@@ -20,7 +20,9 @@ export async function POST(request: Request) {
   const ok =
     action === "cancel"
       ? mediaType === "movie"
-        ? await cancelRadarrDownload(id)
+        ? // unmonitor as well, so a cancel from the admin panel sticks rather
+          // than being re-grabbed by the idle-title healer
+          await cancelRadarrDownload(id, { unmonitor: true })
         : await cancelSonarrDownload(id)
       : mediaType === "movie"
         ? await deleteRadarrMovie(id)

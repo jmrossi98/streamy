@@ -145,20 +145,73 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
  * Radarr won't immediately re-grab it -- used when auto-healing a stalled or
  * errored download, but not for a plain user-initiated cancel.
  */
-export async function cancelRadarrDownload(radarrId: number, blocklist = false): Promise<boolean> {
+export async function cancelRadarrDownload(
+  radarrId: number,
+  { blocklist = false, unmonitor = false }: { blocklist?: boolean; unmonitor?: boolean } = {}
+): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
     const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(`/api/v3/queue`);
     const entry = queue.records.find((r) => r.movieId === radarrId);
-    if (!entry) return false;
-    await radarrFetch(
-      `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
-      { method: "DELETE" }
-    );
+    if (entry) {
+      await radarrFetch(
+        `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
+        { method: "DELETE" }
+      );
+    }
+    // A user-initiated cancel must also stop Radarr wanting the movie,
+    // otherwise it stays monitored and the idle-title healer re-grabs it.
+    // The healer's own cancels deliberately stay monitored so they re-search.
+    if (unmonitor) await setRadarrMovieMonitored(radarrId, false);
+    // Idempotent: nothing queued means the movie already isn't downloading,
+    // which is exactly what a cancel is asking for. Reporting failure there
+    // surfaced a bogus "couldn't cancel" for downloads that had just
+    // finished or were never grabbed.
     return true;
   } catch (err) {
     console.error(`[radarr] cancelRadarrDownload failed for ${radarrId}:`, err);
     return false;
+  }
+}
+
+/** Flips a movie's monitored flag -- Radarr's own notion of "do I still want this". */
+export async function setRadarrMovieMonitored(
+  radarrId: number,
+  monitored: boolean
+): Promise<void> {
+  if (!isRadarrConfigured()) return;
+  const movie = await radarrFetch<Record<string, unknown>>(`/api/v3/movie/${radarrId}`);
+  await radarrFetch(`/api/v3/movie/${radarrId}`, {
+    method: "PUT",
+    body: JSON.stringify({ ...movie, monitored }),
+  });
+}
+
+export type IdleWantedMovie = { externalId: number; title: string };
+
+/**
+ * Movies Radarr still wants but has nothing in flight for: monitored, no
+ * file, and absent from the queue. This is the state a title lands in when a
+ * search finds nothing, or when a grab is cleared without a new one starting
+ * -- the Download button sits on "searching" forever with no search actually
+ * running, which is exactly what it looked like for Grizzly Man.
+ */
+export async function getIdleWantedMovies(): Promise<IdleWantedMovie[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    const [movies, queue] = await Promise.all([
+      radarrFetch<{ id: number; title: string; hasFile: boolean; monitored: boolean }[]>(
+        "/api/v3/movie"
+      ),
+      radarrFetch<{ records: { movieId: number }[] }>("/api/v3/queue"),
+    ]);
+    const queued = new Set(queue.records.map((r) => r.movieId));
+    return movies
+      .filter((m) => m.monitored && !m.hasFile && !queued.has(m.id))
+      .map((m) => ({ externalId: m.id, title: m.title }));
+  } catch (err) {
+    console.error("[radarr] getIdleWantedMovies failed:", err);
+    return [];
   }
 }
 
@@ -258,9 +311,10 @@ export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult>
       const status = await resolveRadarrStatus(existing[0]);
       if (status === "requested") {
         // Already in Radarr but neither downloading nor available -- e.g. a
-        // prior download was cancelled outside Streamy. resolveRadarrStatus
-        // alone would silently report "requested" with nothing actually
-        // searching, so kick off a fresh search here.
+        // prior download was cancelled. Cancelling unmonitors the movie, and
+        // Radarr won't grab anything it isn't monitoring, so re-monitor
+        // before searching or the request would quietly do nothing.
+        await setRadarrMovieMonitored(existing[0].id, true);
         await radarrFetch(`/api/v3/command`, {
           method: "POST",
           body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
