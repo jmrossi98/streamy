@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { cancelRadarrDownload, deleteRadarrMovie } from "@/lib/radarr";
 import { cancelSonarrDownload, deleteSonarrSeries } from "@/lib/sonarr";
 
@@ -31,6 +32,12 @@ export async function POST(request: Request) {
   if (!ok) {
     return NextResponse.json({ error: `Couldn't ${action}` }, { status: 404 });
   }
+
+  // Clear Streamy's own row as well, keyed by the Radarr/Sonarr id this
+  // route works in. Without this the title page keeps reporting the old
+  // status until status reconciliation catches up, so cancelling from the
+  // admin panel looked like it hadn't taken effect.
+  await prisma.mediaRequest.deleteMany({ where: { mediaType, externalId: id } });
 
   return NextResponse.json({ ok: true });
 }

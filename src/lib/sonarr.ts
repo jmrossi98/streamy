@@ -7,7 +7,13 @@
  */
 
 import { getTvExternalIds } from "./tmdb";
-import type { MediaRequestStatus, ActiveDownload, CompletedDownload, QueueHealth } from "./radarr";
+import type {
+  MediaRequestStatus,
+  LiveStatus,
+  ActiveDownload,
+  CompletedDownload,
+  QueueHealth,
+} from "./radarr";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -72,12 +78,18 @@ export async function getSonarrTvSize(): Promise<number | null> {
  * Streamy's request flow), since the webhook that would normally flip status
  * never fires for that.
  */
-export async function getSonarrLiveStatus(sonarrId: number): Promise<MediaRequestStatus | null> {
+export async function getSonarrLiveStatus(sonarrId: number): Promise<LiveStatus | null> {
   if (!isSonarrConfigured()) return null;
   try {
-    const series = await sonarrFetch<{ id: number; statistics?: { episodeFileCount?: number } }>(
-      `/api/v3/series/${sonarrId}`
-    );
+    const series = await sonarrFetch<{
+      id: number;
+      monitored: boolean;
+      statistics?: { episodeFileCount?: number };
+    }>(`/api/v3/series/${sonarrId}`);
+    if ((series.statistics?.episodeFileCount ?? 0) > 0) return "available";
+    // Nothing monitored means Sonarr will never search -- reporting that as
+    // "searching" leaves the button spinning forever. See the Radarr twin.
+    if (!series.monitored) return "cancelled";
     return resolveSonarrStatus(series);
   } catch (err) {
     console.error(`[sonarr] getSonarrLiveStatus failed for ${sonarrId}:`, err);
