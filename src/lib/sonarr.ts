@@ -118,10 +118,11 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isSonarrConfigured()) return [];
   try {
     const queue = await sonarrFetch<{
-      records: { seriesId: number; title: string; size: number; sizeleft: number }[];
+      records: { id: number; seriesId: number; title: string; size: number; sizeleft: number }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
-      id: r.seriesId,
+      queueId: r.id,
+      externalId: r.seriesId,
       title: r.title,
       progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
     }));
@@ -236,6 +237,20 @@ export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; titl
   } catch (err) {
     console.error("[sonarr] getIdleWantedEpisodes failed:", err);
     return [];
+  }
+}
+
+/** Cancels one specific queued download, leaving the series' other episodes alone. */
+export async function cancelSonarrQueueItem(queueId: number): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  try {
+    await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=false`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[sonarr] cancelSonarrQueueItem failed for ${queueId}:`, err);
+    return false;
   }
 }
 

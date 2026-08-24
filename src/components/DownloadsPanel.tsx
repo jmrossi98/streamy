@@ -4,12 +4,21 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 export type DownloadRow = {
-  id: number;
+  /** Unique per row. A show can have several episodes downloading at once,
+   *  so this is the queue entry, not the series. */
+  queueId: number | null;
+  /** The movie/series itself -- what a delete acts on. */
+  externalId: number;
   title: string;
   progress: number | null;
   mediaType: "movie" | "show";
   completed: boolean;
 };
+
+/** Stable and unique per row -- queue entries and completed titles can't collide. */
+function rowKey(d: DownloadRow): string {
+  return d.queueId != null ? `q${d.queueId}` : `${d.mediaType}-done-${d.externalId}`;
+}
 
 const REFRESH_INTERVAL_MS = 5000;
 const VISIBLE_ROWS = 5;
@@ -35,7 +44,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   }
 
   async function handleManage(d: DownloadRow) {
-    const key = d.mediaType + d.id;
+    const key = rowKey(d);
     const action = d.completed ? "delete" : "cancel";
     // No confirm prompt: anything removed here can be downloaded again.
     setManagingKey(key);
@@ -43,7 +52,12 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
       await fetch("/api/admin/downloads/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: d.id, mediaType: d.mediaType, action }),
+        body: JSON.stringify({
+          externalId: d.externalId,
+          queueId: d.queueId,
+          mediaType: d.mediaType,
+          action,
+        }),
       });
       router.refresh();
     } finally {
@@ -57,7 +71,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
       style={{ maxHeight: downloads.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
     >
       {downloads.map((d) => {
-        const key = d.mediaType + d.id;
+        const key = rowKey(d);
         const isManaging = managingKey === key;
         return (
           <li key={key} className="flex flex-col gap-1.5">
