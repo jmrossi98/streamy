@@ -167,6 +167,34 @@ export async function searchSonarrSeries(sonarrId: number): Promise<void> {
   });
 }
 
+const COMMAND_POLL_MS = 2000;
+const COMMAND_TIMEOUT_MS = 90_000;
+
+/**
+ * Waits for a Sonarr command to finish.
+ *
+ * Sonarr's search commands are asynchronous -- POSTing one returns as soon
+ * as it's queued, not when the release has been grabbed. Firing a season's
+ * searches back to back therefore says nothing about the order the grabs
+ * land in. Waiting for each one is what actually makes the sequence
+ * deterministic. Gives up after a timeout so one unfindable episode can't
+ * wedge the rest of the season behind it.
+ */
+async function waitForSonarrCommand(commandId: number): Promise<void> {
+  const deadline = Date.now() + COMMAND_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const cmd = await sonarrFetch<{ status: string }>(`/api/v3/command/${commandId}`);
+      if (cmd.status === "completed" || cmd.status === "failed" || cmd.status === "aborted") {
+        return;
+      }
+    } catch {
+      return; // treat an unreadable command as done rather than stalling the chain
+    }
+    await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_MS));
+  }
+}
+
 /** Health snapshot of every entry in Sonarr's queue, for the stall auto-healer. */
 export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
   if (!isSonarrConfigured()) return [];
@@ -369,6 +397,46 @@ export async function requestEpisode(
   }
 }
 
+/**
+ * Searches the given episodes one at a time, in the order supplied, waiting
+ * for each grab to finish before starting the next so downloads queue up in
+ * episode order. Runs detached from the request that started it.
+ */
+async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
+  for (const id of episodeIds) {
+    try {
+      const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [id] }),
+      });
+      await waitForSonarrCommand(cmd.id);
+    } catch (err) {
+      // One episode failing shouldn't strand the rest of the season.
+      console.error(`[sonarr] ordered search failed for episode ${id}:`, err);
+    }
+  }
+}
+
+/**
+ * Searches a whole series in broadcast order -- season 1 episode 1 first,
+ * then 2, 3, and on through later seasons -- so the show becomes watchable
+ * from the beginning rather than from whichever episode happened to grab
+ * first. Specials (season 0) go last; they're rarely what someone means by
+ * "start watching this show".
+ */
+async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
+  const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+  const wanted = episodes
+    .filter((e) => !e.hasFile)
+    .sort((a, b) => {
+      const sa = a.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : a.seasonNumber;
+      const sb = b.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : b.seasonNumber;
+      return sa - sb || a.episodeNumber - b.episodeNumber;
+    });
+  if (wanted.length === 0) return;
+  void searchEpisodesInOrder(wanted.map((e) => e.id));
+}
+
 /** Monitors and searches every episode in one season. */
 export async function requestSeason(
   tmdbId: string,
@@ -408,15 +476,15 @@ export async function requestSeason(
 
     // Deliberately not SeasonSearch: that grabs the whole season at once and
     // the download client starts them in whatever order the grabs land, so
-    // episode 1 can finish last. Searching episode-by-episode in ascending
-    // order makes the grabs (and therefore the downloads) queue up in
-    // episode order, so the season becomes watchable from the start.
-    for (const id of ids) {
-      await sonarrFetch(`/api/v3/command`, {
-        method: "POST",
-        body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [id] }),
-      });
-    }
+    // episode 1 can finish last. Instead each episode is searched in
+    // ascending order and we wait for each grab before starting the next, so
+    // torrents enter the download client in episode order and the season
+    // becomes watchable from episode 1 onward.
+    //
+    // Not awaited: a full season is minutes of sequential searching, far
+    // longer than a request should block. The chain runs in the background
+    // and the UI picks up each episode as it appears via status polling.
+    void searchEpisodesInOrder(ids);
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
@@ -529,10 +597,7 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
         // prior download was cancelled outside Streamy. resolveSonarrStatus
         // alone would silently report "requested" with nothing actually
         // searching, so kick off a fresh search here.
-        await sonarrFetch(`/api/v3/command`, {
-          method: "POST",
-          body: JSON.stringify({ name: "SeriesSearch", seriesId: existing[0].id }),
-        });
+        await searchSeriesInEpisodeOrder(existing[0].id);
       }
       return { ok: true, sonarrId: existing[0].id, tvdbId, status };
     }
@@ -558,10 +623,13 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
         qualityProfileId: Number(SONARR_QUALITY_PROFILE_ID),
         rootFolderPath: SONARR_ROOT_FOLDER,
         monitored: true,
-        addOptions: { searchForMissingEpisodes: true },
+        // Sonarr's own bulk search grabs the whole show at once, in no
+        // particular order; we drive an ordered search instead.
+        addOptions: { searchForMissingEpisodes: false },
         seasons,
       }),
     });
+    await searchSeriesInEpisodeOrder(created.id);
     return { ok: true, sonarrId: created.id, tvdbId, status: "requested" };
   } catch (err) {
     console.error(`[sonarr] requestShow failed for tmdbId ${tmdbId}:`, err);
