@@ -9,6 +9,8 @@ export type DownloadRow = {
   queueId: number | null;
   /** The movie/series itself -- what a delete acts on. */
   externalId: number;
+  /** Set for a completed TV episode, so delete removes just that episode. */
+  episodeId?: number;
   title: string;
   progress: number | null;
   mediaType: "movie" | "show";
@@ -17,7 +19,9 @@ export type DownloadRow = {
 
 /** Stable and unique per row -- queue entries and completed titles can't collide. */
 function rowKey(d: DownloadRow): string {
-  return d.queueId != null ? `q${d.queueId}` : `${d.mediaType}-done-${d.externalId}`;
+  if (d.queueId != null) return `q${d.queueId}`;
+  if (d.episodeId != null) return `ep-done-${d.episodeId}`;
+  return `${d.mediaType}-done-${d.externalId}`;
 }
 
 const REFRESH_INTERVAL_MS = 5000;
@@ -55,6 +59,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
         body: JSON.stringify({
           externalId: d.externalId,
           queueId: d.queueId,
+          episodeId: d.episodeId,
           mediaType: d.mediaType,
           action,
         }),

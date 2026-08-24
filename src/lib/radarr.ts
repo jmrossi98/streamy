@@ -5,6 +5,8 @@
  * no title matching involved.
  */
 
+import { deleteTorrents } from "./qbittorrent";
+
 const RADARR_URL = process.env.RADARR_URL?.replace(/\/$/, "");
 const RADARR_API_KEY = process.env.RADARR_API_KEY;
 const RADARR_ROOT_FOLDER = process.env.RADARR_ROOT_FOLDER;
@@ -254,6 +256,50 @@ export async function setRadarrMovieMonitored(
   });
 }
 
+/**
+ * Drops blocklist entries older than `maxAgeHours`.
+ *
+ * Blocklisting is permanent, but most of what gets blocklisted here stalled
+ * for reasons that had nothing to do with the release -- a VPN reconnect, a
+ * momentary peer drought. Left alone, the healthiest releases accumulate on
+ * the blocklist and searches degrade to worse-seeded ones over time
+ * (Severance S01E01's 104-seeder release was blocked while a 12-seeder one
+ * downloaded). Expiring entries lets a good release become eligible again
+ * once whatever was actually wrong has passed.
+ */
+export async function expireRadarrBlocklist(maxAgeHours: number): Promise<number> {
+  if (!isRadarrConfigured()) return 0;
+  return expireBlocklist(radarrFetch, maxAgeHours, "radarr");
+}
+
+type Fetcher = <T>(path: string, init?: RequestInit) => Promise<T>;
+
+export async function expireBlocklist(
+  fetcher: Fetcher,
+  maxAgeHours: number,
+  label: string
+): Promise<number> {
+  try {
+    const list = await fetcher<{ records: { id: number; date?: string }[] }>(
+      `/api/v3/blocklist?pageSize=200`
+    );
+    const cutoff = Date.now() - maxAgeHours * 3600_000;
+    const stale = list.records
+      .filter((r) => !r.date || Date.parse(r.date) < cutoff)
+      .map((r) => r.id);
+    if (stale.length === 0) return 0;
+    await fetcher(`/api/v3/blocklist/bulk`, {
+      method: "DELETE",
+      body: JSON.stringify({ ids: stale }),
+    });
+    console.log(`[healer] expired ${stale.length} ${label} blocklist entries`);
+    return stale.length;
+  } catch (err) {
+    console.error(`[${label}] expireBlocklist failed:`, err);
+    return 0;
+  }
+}
+
 export type IdleWantedMovie = { externalId: number; title: string };
 
 /**
@@ -342,13 +388,45 @@ export async function getRadarrQueueHealth(): Promise<QueueHealth[]> {
   }
 }
 
+/**
+ * Torrent infohashes Radarr grabbed for this movie.
+ *
+ * Radarr forgets a torrent once it's imported, so this is the only way back
+ * to the thing still seeding in the download client after a delete.
+ */
+export async function getRadarrDownloadIds(radarrId: number): Promise<string[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    // This endpoint returns a bare array, unlike the paged /api/v3/history.
+    const history = await radarrFetch<{ eventType?: string; downloadId?: string }[]>(
+      `/api/v3/history/movie?movieId=${radarrId}`
+    );
+    const hashes = new Set<string>();
+    for (const r of history ?? []) {
+      if (r.downloadId && (r.eventType === "downloadFolderImported" || r.eventType === "grabbed")) {
+        hashes.add(r.downloadId);
+      }
+    }
+    return Array.from(hashes);
+  } catch (err) {
+    console.error(`[radarr] getRadarrDownloadIds failed for ${radarrId}:`, err);
+    return [];
+  }
+}
+
 /** Removes a movie (and its downloaded file, if any) from Radarr entirely. */
 export async function deleteRadarrMovie(radarrId: number): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
+    // Gather torrent hashes before the delete wipes the history trail.
+    const downloadIds = await getRadarrDownloadIds(radarrId);
+
     await radarrFetch(`/api/v3/movie/${radarrId}?deleteFiles=true&addImportExclusion=false`, {
       method: "DELETE",
     });
+    // Radarr stops tracking a torrent once imported, so without this the
+    // movie vanishes from Streamy but keeps seeding in qBittorrent.
+    if (downloadIds.length > 0) await deleteTorrents(downloadIds);
     return true;
   } catch (err) {
     console.error(`[radarr] deleteRadarrMovie failed for ${radarrId}:`, err);

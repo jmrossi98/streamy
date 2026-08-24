@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cancelRadarrDownload, cancelRadarrQueueItem, deleteRadarrMovie } from "@/lib/radarr";
-import { cancelSonarrDownload, cancelSonarrQueueItem, deleteSonarrSeries } from "@/lib/sonarr";
+import {
+  cancelSonarrDownload,
+  cancelSonarrQueueItem,
+  deleteSonarrSeries,
+  deleteSonarrEpisode,
+} from "@/lib/sonarr";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -13,6 +18,7 @@ export async function POST(request: Request) {
   const body = await request.json();
   const externalId = typeof body?.externalId === "number" ? body.externalId : null;
   const queueId = typeof body?.queueId === "number" ? body.queueId : null;
+  const episodeId = typeof body?.episodeId === "number" ? body.episodeId : null;
   const mediaType = body?.mediaType === "movie" || body?.mediaType === "show" ? body.mediaType : null;
   const action = body?.action === "cancel" || body?.action === "delete" ? body.action : null;
   if (externalId === null || !mediaType || !action) {
@@ -38,7 +44,11 @@ export async function POST(request: Request) {
           : await cancelSonarrDownload(id)
       : mediaType === "movie"
         ? await deleteRadarrMovie(id)
-        : await deleteSonarrSeries(id);
+        : episodeId != null
+          ? // Completed TV is listed per episode, so delete just that one
+            // rather than taking the whole series down with it.
+            await deleteSonarrEpisode(episodeId)
+          : await deleteSonarrSeries(id);
 
   if (!ok) {
     return NextResponse.json({ error: `Couldn't ${action}` }, { status: 404 });
