@@ -4,8 +4,9 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
 
-const PLACEHOLDER_SRC =
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4";
+// No placeholder fallback on purpose: without a real file this used to play
+// an unrelated sample video, which reads as "the movie is here" when it
+// isn't. A title with no source now refuses to play and says why.
 
 type WatchPlayerProps = {
   movieId: string;
@@ -27,9 +28,10 @@ export function WatchPlayer({
   autoPlay = false,
   videoUrl,
 }: WatchPlayerProps) {
-  const videoSrc = videoUrl || PLACEHOLDER_SRC;
-  const [playing, setPlaying] = useState(autoPlay);
-  const [showOverlay, setShowOverlay] = useState(!autoPlay);
+  const videoSrc = videoUrl ?? "";
+  const hasSource = !!videoUrl;
+  const [playing, setPlaying] = useState(autoPlay && hasSource);
+  const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const [showTitle, setShowTitle] = useState(true);
@@ -51,7 +53,7 @@ export function WatchPlayer({
   }, []);
 
   useEffect(() => {
-    if (!playing || !videoRef.current) return;
+    if (!hasSource || !playing || !videoRef.current) return;
     const v = videoRef.current;
     if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
     setVideoLoading(true);
@@ -67,7 +69,7 @@ export function WatchPlayer({
         setShowOverlay(true);
         setPlaybackError(true);
       });
-  }, [playing, initialProgressSeconds]);
+  }, [hasSource, playing, initialProgressSeconds]);
 
   const handlePlayClick = () => {
     const v = videoRef.current;
@@ -197,7 +199,28 @@ export function WatchPlayer({
           />
           <div className="hero-overlay absolute inset-0" />
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-            {videoLoading ? (
+            {!hasSource ? (
+              <div className="z-10 flex max-w-sm flex-col items-center gap-2 px-6 text-center">
+                <svg
+                  className="h-10 w-10 text-white/50"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                  />
+                </svg>
+                <p className="text-white font-medium">Not downloaded yet</p>
+                <p className="text-sm text-white/60">
+                  {movieTitle} isn&apos;t on the server yet. Download it first, then play it here.
+                </p>
+              </div>
+            ) : videoLoading ? (
               <div
                 className="w-20 h-20 rounded-full bg-white/90 flex items-center justify-center shadow-xl z-10"
                 aria-label="Loading"
