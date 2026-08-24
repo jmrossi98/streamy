@@ -7,6 +7,8 @@
  */
 
 import { getTvExternalIds } from "./tmdb";
+import { deleteTorrents } from "./qbittorrent";
+import { expireBlocklist } from "./radarr";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -132,19 +134,70 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   }
 }
 
-/** Every series Sonarr has at least one downloaded episode for, for the admin panel's completed section. */
-export async function getSonarrCompletedSeries(): Promise<CompletedDownload[]> {
+export type CompletedEpisode = {
+  /** Sonarr's episode id -- what a per-episode delete targets. */
+  episodeId: number;
+  seriesId: number;
+  title: string;
+};
+
+/**
+ * Every downloaded episode, listed individually.
+ *
+ * Deliberately per-episode rather than per-series: movies appear one row per
+ * film, so collapsing a whole show into a single "Severance" row made TV look
+ * like it was missing from the panel, and left no way to delete one episode
+ * without taking the entire series with it.
+ */
+export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> {
   if (!isSonarrConfigured()) return [];
   try {
     const series = await sonarrFetch<
       { id: number; title: string; statistics?: { episodeFileCount?: number } }[]
     >("/api/v3/series");
-    return series
-      .filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0)
-      .map((s) => ({ id: s.id, title: s.title }));
+
+    const withFiles = series.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0);
+    const perSeries = await Promise.all(
+      withFiles.map(async (s) => {
+        const episodes = await sonarrFetch<
+          { id: number; seasonNumber: number; episodeNumber: number; title: string; hasFile: boolean }[]
+        >(`/api/v3/episode?seriesId=${s.id}`);
+        return episodes
+          .filter((e) => e.hasFile)
+          .map((e) => ({
+            episodeId: e.id,
+            seriesId: s.id,
+            title: `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
+          }));
+      })
+    );
+    return perSeries.flat();
   } catch (err) {
-    console.error("[sonarr] getSonarrCompletedSeries failed:", err);
+    console.error("[sonarr] getSonarrCompletedEpisodes failed:", err);
     return [];
+  }
+}
+
+/** Deletes one episode's file (and the torrent still seeding it), leaving the series intact. */
+export async function deleteSonarrEpisode(episodeId: number): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  try {
+    // Grab the hash before deleting -- the history trail goes with the file.
+    const downloadIds = await getSonarrDownloadIds([episodeId]);
+
+    const episode = await sonarrFetch<{ episodeFileId?: number }>(`/api/v3/episode/${episodeId}`);
+    if (episode.episodeFileId) {
+      await sonarrFetch(`/api/v3/episodefile/${episode.episodeFileId}`, { method: "DELETE" });
+    }
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: [episodeId], monitored: false }),
+    });
+    if (downloadIds.length > 0) await deleteTorrents(downloadIds);
+    return true;
+  } catch (err) {
+    console.error(`[sonarr] deleteSonarrEpisode failed for ${episodeId}:`, err);
+    return false;
   }
 }
 
@@ -240,6 +293,40 @@ export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; titl
   }
 }
 
+/**
+ * Torrent infohashes Sonarr grabbed for these episodes.
+ *
+ * Sonarr forgets a torrent once it's imported, so this is the only way back
+ * to the thing still seeding in the download client after a delete.
+ */
+export async function getSonarrDownloadIds(episodeIds: number[]): Promise<string[]> {
+  if (!isSonarrConfigured() || episodeIds.length === 0) return [];
+  const hashes = new Set<string>();
+  for (const episodeId of episodeIds) {
+    try {
+      const history = await sonarrFetch<{
+        records: { eventType?: string; downloadId?: string }[];
+      }>(`/api/v3/history?pageSize=50&episodeId=${episodeId}`);
+      for (const r of history.records) {
+        // Only releases that actually landed -- ignore failed grabs, whose
+        // torrents were already cleaned up.
+        if (r.downloadId && (r.eventType === "downloadFolderImported" || r.eventType === "grabbed")) {
+          hashes.add(r.downloadId);
+        }
+      }
+    } catch (err) {
+      console.error(`[sonarr] getSonarrDownloadIds failed for episode ${episodeId}:`, err);
+    }
+  }
+  return Array.from(hashes);
+}
+
+/** Sonarr twin of expireRadarrBlocklist -- see that function for why this exists. */
+export async function expireSonarrBlocklist(maxAgeHours: number): Promise<number> {
+  if (!isSonarrConfigured()) return 0;
+  return expireBlocklist(sonarrFetch, maxAgeHours, "sonarr");
+}
+
 /** Cancels one specific queued download, leaving the series' other episodes alone. */
 export async function cancelSonarrQueueItem(queueId: number): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
@@ -299,9 +386,14 @@ export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
 export async function deleteSonarrSeries(sonarrId: number): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
+    // Gather torrent hashes before the delete wipes the history trail.
+    const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${sonarrId}`);
+    const downloadIds = await getSonarrDownloadIds(episodes.map((e) => e.id));
+
     await sonarrFetch(`/api/v3/series/${sonarrId}?deleteFiles=true&addImportExclusion=false`, {
       method: "DELETE",
     });
+    if (downloadIds.length > 0) await deleteTorrents(downloadIds);
     return true;
   } catch (err) {
     console.error(`[sonarr] deleteSonarrSeries failed for ${sonarrId}:`, err);
@@ -611,6 +703,10 @@ export async function manageSonarrEpisodes(
     if (targets.length === 0) return { ok: false, error: "Episode not found in Sonarr" };
     const targetIds = new Set(targets.map((e) => e.id));
 
+    // Collected before the files go, since deleting clears the history trail
+    // we need to find the still-seeding torrent.
+    const downloadIds = await getSonarrDownloadIds(targets.map((e) => e.id));
+
     // Drop anything currently downloading for these episodes.
     const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
       `/api/v3/queue`
@@ -651,6 +747,11 @@ export async function manageSonarrEpisodes(
         }),
       });
     }
+
+    // Sonarr stops tracking a torrent once it's imported, so removing the
+    // episode leaves it seeding in the download client -- gone from Streamy
+    // but still listed in qBittorrent. Finish the job here.
+    if (downloadIds.length > 0) await deleteTorrents(downloadIds);
 
     return { ok: true };
   } catch (err) {

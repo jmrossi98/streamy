@@ -3,6 +3,7 @@ import {
   getIdleWantedMovies,
   cancelRadarrDownload,
   searchRadarrMovie,
+  expireRadarrBlocklist,
   type QueueHealth,
 } from "./radarr";
 import {
@@ -11,6 +12,7 @@ import {
   searchSonarrEpisodes,
   cancelSonarrDownload,
   searchSonarrSeries,
+  expireSonarrBlocklist,
 } from "./sonarr";
 
 /**
@@ -66,11 +68,17 @@ async function healOne(
   lastHealedAt.set(key, Date.now());
 
   const reason = entry.errorMessage ?? "no progress";
+  // Blocklisting is permanent, so reserve it for releases that genuinely
+  // failed -- a corrupt or unusable download the client rejected. A stall is
+  // usually about conditions, not the release: a VPN reconnect or a brief
+  // peer drought. Blocklisting those poisoned the best-seeded releases and
+  // pushed later searches onto steadily worse ones.
+  const failed = /error|failed|corrupt/i.test(entry.errorMessage ?? "");
   try {
     const cancelled =
       mediaType === "movie"
-        ? await cancelRadarrDownload(entry.externalId, { blocklist: true })
-        : await cancelSonarrDownload(entry.externalId, true);
+        ? await cancelRadarrDownload(entry.externalId, { blocklist: failed })
+        : await cancelSonarrDownload(entry.externalId, failed);
     if (!cancelled) return null;
 
     if (mediaType === "movie") {
@@ -138,8 +146,20 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   return healed;
 }
 
+// How long a blocklisted release stays blocked. Long enough that a genuinely
+// bad release isn't re-grabbed immediately, short enough that a good one
+// blocked by a transient stall becomes eligible again on its own.
+const BLOCKLIST_TTL_HOURS = 6;
+
 /** Re-grabs anything stalled or errored, and re-searches anything wanted but idle. */
 export async function healStalledDownloads(): Promise<HealedDownload[]> {
+  // Do this first so the searches below can see releases whose block has aged
+  // out, rather than settling for a worse-seeded alternative.
+  await Promise.all([
+    expireRadarrBlocklist(BLOCKLIST_TTL_HOURS),
+    expireSonarrBlocklist(BLOCKLIST_TTL_HOURS),
+  ]);
+
   const [radarrQueue, sonarrQueue] = await Promise.all([
     getRadarrQueueHealth(),
     getSonarrQueueHealth(),

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getRadarrStorageInfo, getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
-import { getSonarrTvSize, getSonarrActiveDownloads, getSonarrCompletedSeries } from "@/lib/sonarr";
+import { getSonarrTvSize, getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sonarr";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
 import { AdminApprovals } from "@/components/AdminApprovals";
 import { StorageChart } from "@/components/StorageChart";
@@ -37,7 +37,7 @@ export default async function AdminFeaturesPage() {
     getRadarrActiveDownloads(),
     getSonarrActiveDownloads(),
     getRadarrCompletedMovies(),
-    getSonarrCompletedSeries(),
+    getSonarrCompletedEpisodes(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -56,7 +56,8 @@ export default async function AdminFeaturesPage() {
     })),
     ...sonarrCompleted.map((d) => ({
       queueId: null,
-      externalId: d.id,
+      externalId: d.seriesId,
+      episodeId: d.episodeId,
       title: d.title,
       progress: null,
       mediaType: "show" as const,
