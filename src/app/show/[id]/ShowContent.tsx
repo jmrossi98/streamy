@@ -9,7 +9,11 @@ import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
-import { EpisodeDownloadButton, useSeasonStatuses } from "@/components/EpisodeDownloadButton";
+import {
+  EpisodeDownloadButton,
+  useSeasonStatuses,
+  type EpisodeState,
+} from "@/components/EpisodeDownloadButton";
 
 type ShowContentProps = {
   show: TVShow & { numberOfSeasons: number };
@@ -28,6 +32,8 @@ type ShowContentProps = {
   requestConfigured?: boolean;
   initialRequestStatus?: string | null;
   initialProgress?: number | null;
+  initialEpisodeStatuses?: Record<number, EpisodeState>;
+  initialEpisodeStatusSeason?: number;
 };
 
 type OverlayEpisode = {
@@ -70,6 +76,8 @@ export function ShowContent({
   requestConfigured = false,
   initialRequestStatus = null,
   initialProgress = null,
+  initialEpisodeStatuses,
+  initialEpisodeStatusSeason,
 }: ShowContentProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -123,7 +131,13 @@ export function ShowContent({
     refresh: refreshEpisodeStatuses,
     setLocalState: setEpisodeState,
     setLocalStates: setSeasonEpisodeStates,
-  } = useSeasonStatuses(show.id, seasonNum, requestConfigured);
+  } = useSeasonStatuses(
+    show.id,
+    seasonNum,
+    requestConfigured,
+    initialEpisodeStatuses,
+    initialEpisodeStatusSeason
+  );
 
   // Roll the season's episodes up into one state so the season-level control
   // can show overall progress and offer cancel/delete for the whole season.
@@ -311,7 +325,14 @@ export function ShowContent({
               );
               const pct = progressPct(progressSeconds, ep.runtime);
               const nextEp = index + 1 < season.episodes.length ? season.episodes[index + 1] : null;
+              // An episode is only playable once Sonarr reports a file on
+              // disk. When downloads aren't wired up at all, fall back to the
+              // show-level flag so this doesn't disable playback for
+              // libraries that never used the request flow.
+              const epState = episodeStatuses[ep.episodeNumber];
+              const playable = requestConfigured ? epState?.status === "available" : hasVideo;
               const openEpisode = () => {
+                if (!playable) return;
                 router.replace(`${pathname}?season=${ep.seasonNumber}`, { scroll: false });
                 setOverlayEpisode({
                   seasonNumber: ep.seasonNumber,
@@ -334,23 +355,48 @@ export function ShowContent({
                   <button
                     type="button"
                     onClick={openEpisode}
-                    className="flex gap-4 flex-1 min-w-0 text-left"
+                    disabled={!playable}
+                    aria-label={
+                      playable
+                        ? `Play ${ep.name}`
+                        : `${ep.name} — not downloaded yet`
+                    }
+                    className={`flex gap-4 flex-1 min-w-0 text-left ${
+                      playable ? "" : "cursor-default"
+                    }`}
                   >
                     <div className="relative w-40 h-24 shrink-0 rounded overflow-hidden bg-white/10">
                       <Image
                         src={ep.still}
                         alt=""
                         fill
-                        className="object-cover"
+                        className={`object-cover ${playable ? "" : "opacity-40"}`}
                         sizes="160px"
                       />
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
-                        <span className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center text-netflix-black">
-                          <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
-                        </span>
-                      </div>
+                      {/* Only offer Play when there's actually something to
+                          play -- a play button on an unfinished episode just
+                          dead-ends at "not downloaded yet". */}
+                      {playable ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
+                          <span className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center text-netflix-black">
+                            <svg className="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <span className="rounded bg-black/70 px-2 py-1 text-[11px] font-medium text-white/80">
+                            {epState?.status === "downloading"
+                              ? epState.progress != null
+                                ? `${epState.progress}%`
+                                : "Starting…"
+                              : epState
+                                ? "Starting…"
+                                : "Not downloaded"}
+                          </span>
+                        </div>
+                      )}
                       {progressSeconds > 0 && (
                         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/30">
                           <div
