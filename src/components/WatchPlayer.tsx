@@ -2,7 +2,12 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
+import { useRouter } from "next/navigation";
+import {
+  tryMobileNativeVideoFullscreen,
+  isMobileViewport,
+  onFullscreenExit,
+} from "@/lib/videoFullscreen";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the movie is here" when it
@@ -32,6 +37,8 @@ export function WatchPlayer({
   const hasSource = !!videoUrl;
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
+  const [isMobile, setIsMobile] = useState(false);
+  const router = useRouter();
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const [showTitle, setShowTitle] = useState(true);
@@ -52,8 +59,32 @@ export function WatchPlayer({
     };
   }, []);
 
+  // On mobile, hold at the play button instead of autoplaying. Fullscreen can
+  // only be entered from a real user gesture, and arriving on this page isn't
+  // one -- so autoplaying there guarantees an inline video that never
+  // maximises. Making the tap the trigger is what lets it open fullscreen.
   useEffect(() => {
-    if (!hasSource || !playing || !videoRef.current) return;
+    if (!isMobileViewport()) return;
+    setIsMobile(true);
+    setPlaying(false);
+    setShowOverlay(true);
+  }, []);
+
+  // Leaving fullscreen should leave the player, rather than stranding the
+  // viewer on a bare inline video with no obvious way back.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !isMobile) return;
+    return onFullscreenExit(v, () => {
+      v.pause();
+      router.back();
+    });
+  }, [isMobile, router]);
+
+  useEffect(() => {
+    // Mobile plays from the tap handler instead, which is the only place
+    // fullscreen can actually be requested.
+    if (!hasSource || !playing || !videoRef.current || isMobile) return;
     const v = videoRef.current;
     if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
     setVideoLoading(true);
@@ -61,7 +92,6 @@ export function WatchPlayer({
       .then(() => {
         setVideoLoading(false);
         setShowOverlay(false);
-        tryMobileNativeVideoFullscreen(v);
       })
       .catch(() => {
         setVideoLoading(false);
@@ -69,7 +99,7 @@ export function WatchPlayer({
         setShowOverlay(true);
         setPlaybackError(true);
       });
-  }, [hasSource, playing, initialProgressSeconds]);
+  }, [hasSource, playing, initialProgressSeconds, isMobile]);
 
   const handlePlayClick = () => {
     const v = videoRef.current;
@@ -81,12 +111,18 @@ export function WatchPlayer({
       // rather than an unresponsive-looking no-op.
       if (v.error) v.load();
       if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
+
+      // Fullscreen must be requested here, synchronously inside the tap, not
+      // after play() resolves: iOS only honours it while the user gesture is
+      // still active, so doing it in a .then() silently no-ops and leaves the
+      // video playing inline under our own chrome.
+      tryMobileNativeVideoFullscreen(v);
+
       v.play()
         .then(() => {
           setVideoLoading(false);
           setPlaying(true);
           setShowOverlay(false);
-          tryMobileNativeVideoFullscreen(v);
         })
         .catch(() => {
           setVideoLoading(false);
@@ -158,7 +194,10 @@ export function WatchPlayer({
       onMouseEnter={() => showVideo && showTitleTemporarily()}
       onMouseLeave={() => showVideo && scheduleTitleHide()}
     >
-      {showVideo && (
+      {/* Our own title bar is desktop-only. In native fullscreen the OS draws
+          its own controls and title, and layering ours on top is what made
+          mobile feel cluttered. */}
+      {showVideo && !isMobile && (
         <div
           className={`absolute top-0 left-0 right-0 z-10 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
             showTitle ? "opacity-100" : "opacity-0"
