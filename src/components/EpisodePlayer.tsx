@@ -4,7 +4,11 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { tryMobileNativeVideoFullscreen } from "@/lib/videoFullscreen";
+import {
+  tryMobileNativeVideoFullscreen,
+  isMobileViewport,
+  onFullscreenExit,
+} from "@/lib/videoFullscreen";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -47,6 +51,7 @@ export function EpisodePlayer({
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
   const [showTitle, setShowTitle] = useState(true);
@@ -68,8 +73,30 @@ export function EpisodePlayer({
     };
   }, []);
 
+  // On mobile, hold at the play button rather than autoplaying. Fullscreen can
+  // only be entered from a real user gesture, and opening this page isn't one,
+  // so autoplaying guarantees an inline video that never maximises. Making the
+  // tap the trigger is what lets it open fullscreen.
   useEffect(() => {
-    if (!hasSource || !playing || !videoRef.current) return;
+    if (!isMobileViewport()) return;
+    setIsMobile(true);
+    setPlaying(false);
+    setShowOverlay(true);
+  }, []);
+
+  // Leaving fullscreen should leave the episode, not strand the viewer on a
+  // bare inline video with no obvious way back.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !isMobile) return;
+    return onFullscreenExit(v, () => {
+      v.pause();
+      router.back();
+    });
+  }, [isMobile, router]);
+
+  useEffect(() => {
+    if (!hasSource || !playing || !videoRef.current || isMobile) return;
     const v = videoRef.current;
     if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
     setVideoLoading(true);
@@ -77,7 +104,6 @@ export function EpisodePlayer({
       .then(() => {
         setVideoLoading(false);
         setShowOverlay(false);
-        tryMobileNativeVideoFullscreen(v);
       })
       .catch(() => {
         setVideoLoading(false);
@@ -85,7 +111,7 @@ export function EpisodePlayer({
         setShowOverlay(true);
         setPlaybackError(true);
       });
-  }, [hasSource, playing, initialProgressSeconds]);
+  }, [hasSource, playing, initialProgressSeconds, isMobile]);
 
   const handlePlayClick = () => {
     const v = videoRef.current;
@@ -97,12 +123,17 @@ export function EpisodePlayer({
       // rather than an unresponsive-looking no-op.
       if (v.error) v.load();
       if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
+
+      // Requested synchronously inside the tap: iOS only honours fullscreen
+      // while the user gesture is live, so calling it from .then() silently
+      // no-ops and leaves the episode playing inline under our own chrome.
+      tryMobileNativeVideoFullscreen(v);
+
       v.play()
         .then(() => {
           setVideoLoading(false);
           setPlaying(true);
           setShowOverlay(false);
-          tryMobileNativeVideoFullscreen(v);
         })
         .catch(() => {
           setVideoLoading(false);
@@ -191,7 +222,9 @@ export function EpisodePlayer({
       onMouseEnter={() => showVideo && showTitleTemporarily()}
       onMouseLeave={() => showVideo && scheduleTitleHide()}
     >
-      {showVideo && (
+      {/* Desktop only: in native fullscreen the OS draws its own controls
+          and title, so layering ours on top is what made mobile feel busy. */}
+      {showVideo && !isMobile && (
         <div
           className={`absolute top-0 left-0 right-0 z-10 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
             showTitle ? "opacity-100" : "opacity-0"
