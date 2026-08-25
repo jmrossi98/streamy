@@ -1,0 +1,53 @@
+# Integration health check for the media stack.
+#
+# Runs on a schedule and on demand, never as a gate: these checks depend on
+# the homelab being up, and a torrent swarm going quiet should never be able
+# to block a deploy. Use it to answer "what is actually broken right now"
+# instead of rediscovering it by hand.
+#
+# The homelab is only reachable over Tailscale, which GitHub's runners are
+# not on -- so the check runs on the Lightsail box, which is. It talks to
+# Radarr, Sonarr, Jellyfin and qBittorrent read-only and changes nothing.
+name: Integration Check
+
+on:
+  schedule:
+    # Every 6 hours. Frequent enough to catch a VPN drop or a dead indexer
+    # the same day, rare enough not to be noise.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy check script to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "scripts/integration-check.mjs"
+          target: /tmp/streamy-check
+
+      - name: Run checks against the live stack
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # The app container already has Node and every service credential
+          # in its environment, so the script runs there rather than
+          # duplicating secrets into this workflow.
+          script: |
+            set -e
+            CID=$(docker ps --filter name=app -q | head -1)
+            if [ -z "$CID" ]; then
+              echo "app container is not running -- nothing to check against"
+              exit 1
+            fi
+            docker cp /tmp/streamy-check/scripts/integration-check.mjs "$CID":/tmp/integration-check.mjs
+            docker exec "$CID" node /tmp/integration-check.mjs
