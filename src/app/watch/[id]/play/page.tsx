@@ -1,4 +1,3 @@
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
@@ -6,11 +5,11 @@ import { prisma } from "@/lib/db";
 import { getMovieById } from "@/lib/tmdb";
 import { findJellyfinMovieItemId } from "@/lib/jellyfin";
 import { PrefetchBack } from "./PrefetchBack";
-
-const WatchPlayer = dynamic(
-  () => import("@/components/WatchPlayer").then((m) => ({ default: m.WatchPlayer })),
-  { ssr: false }
-);
+// Imported directly rather than via next/dynamic with `ssr: false`, which
+// Next 16 no longer allows from a Server Component. WatchPlayer is already a
+// client component, so Next handles the boundary and the browser-only work
+// (video element, fullscreen APIs) still never runs during SSR.
+import { WatchPlayer } from "@/components/WatchPlayer";
 
 type Props = { params: Promise<{ id: string }> };
 

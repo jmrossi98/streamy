@@ -8,9 +8,6 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
 
-  // SWC is the default minifier in Next 14 — ensure no fallback to Terser
-  swcMinify: true,
-
   // Don't emit browser source maps in production (saves ~30% of build I/O)
   productionBrowserSourceMaps: false,
 
