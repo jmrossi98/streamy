@@ -321,13 +321,31 @@ async function main() {
       `${counts.FAIL ?? 0} failed, ${counts.SKIP ?? 0} skipped`
   );
 
-  if (counts.FAIL) {
+  const failures = results.filter((x) => x.status === "FAIL");
+  if (failures.length > 0) {
     console.log("\nFAILURES:");
-    for (const r of results.filter((x) => x.status === "FAIL")) {
-      console.log(`  - ${r.name}: ${r.detail}`);
-    }
-    process.exit(1);
+    for (const r of failures) console.log(`  - ${r.name}: ${r.detail}`);
   }
+
+  // Email on state change. Kept separate from the exit code: a send failure
+  // must not disguise a healthy run as a broken one, or vice versa.
+  const summary =
+    `${counts.PASS ?? 0} passed, ${counts.WARN ?? 0} warnings, ` +
+    `${counts.FAIL ?? 0} failed, ${counts.SKIP ?? 0} skipped`;
+  try {
+    const { alertOnStateChange } = await import("./alert.mjs");
+    const outcome = await alertOnStateChange({
+      statePath: process.env.HEALTH_STATE_FILE ?? "/app/data/.health-state.json",
+      failures: failures.map((f) => ({ name: f.name, detail: f.detail })),
+      summary,
+      host: process.env.ALERT_HOST ?? "streamy",
+    });
+    console.log(`\nalerting: ${outcome}`);
+  } catch (err) {
+    console.error(`\nalerting failed (checks above are still valid): ${err.message}`);
+  }
+
+  if (failures.length > 0) process.exit(1);
 }
 
 main().catch((err) => {
