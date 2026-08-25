@@ -13,7 +13,31 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  # Gate: nothing is built or deployed unless the unit tests pass. Pure logic
+  # only, no DOM or network, so this stays a few seconds rather than becoming
+  # a reason to skip CI.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        # Skips postinstall (prisma generate) -- the unit tests are pure and
+        # don't touch the database, so generating the client would only add time.
+        run: npm ci --ignore-scripts
+
+      - name: Run unit tests
+        run: npm test
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

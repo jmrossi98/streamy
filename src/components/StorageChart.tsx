@@ -28,26 +28,60 @@ function formatBytes(bytes: number): string {
 // width; the labels still carry the true bytes and percentage.
 const MIN_SEGMENT_PCT = 1.5;
 
+export type StorageBar = {
+  key: string;
+  label: string;
+  value: number;
+  color: string;
+  /** True share of the disk. */
+  pct: number;
+  /** Rendered width, floored so a real segment can't vanish. */
+  width: number;
+};
+
+/**
+ * Splits the disk into the segments the meter draws.
+ *
+ * "Other" is whatever the disk holds that Radarr and Sonarr don't account
+ * for -- the OS, Docker, and any torrent data not shared with an imported
+ * file -- so it's derived rather than reported.
+ */
+export function buildStorageSegments(
+  totalSpace: number,
+  freeSpace: number,
+  moviesSize: number,
+  tvSize: number
+): { bars: StorageBar[]; used: number; usedPercent: number; usedWidth: number } {
+  const other = Math.max(totalSpace - freeSpace - moviesSize - tvSize, 0);
+  const used = Math.max(totalSpace - freeSpace, 0);
+  const usedPercent = totalSpace > 0 ? (used / totalSpace) * 100 : 0;
+
+  const bars = [
+    { key: "movies", label: "Movies", value: moviesSize, color: COLORS.movies },
+    { key: "tv", label: "TV Shows", value: tvSize, color: COLORS.tv },
+    { key: "other", label: "Other", value: other, color: COLORS.other },
+  ]
+    .filter((s) => s.value > 0)
+    .map((s) => {
+      const pct = totalSpace > 0 ? (s.value / totalSpace) * 100 : 0;
+      return { ...s, pct, width: Math.max(pct, MIN_SEGMENT_PCT) };
+    });
+
+  const usedWidth = bars.reduce((sum, b) => sum + b.width, 0);
+  return { bars, used, usedPercent, usedWidth };
+}
+
 export function StorageChart({ totalSpace, freeSpace, moviesSize, tvSize }: StorageChartProps) {
   if (!totalSpace) {
     return <p className="text-white/50 text-sm">Storage info unavailable.</p>;
   }
 
-  const other = Math.max(totalSpace - freeSpace - moviesSize - tvSize, 0);
-  const used = Math.max(totalSpace - freeSpace, 0);
-  const usedPercent = (used / totalSpace) * 100;
-
-  const segments = [
-    { key: "movies", label: "Movies", value: moviesSize, color: COLORS.movies },
-    { key: "tv", label: "TV Shows", value: tvSize, color: COLORS.tv },
-    { key: "other", label: "Other", value: other, color: COLORS.other },
-  ].filter((s) => s.value > 0);
-
-  const bars = segments.map((s) => {
-    const pct = (s.value / totalSpace) * 100;
-    return { ...s, pct, width: Math.max(pct, MIN_SEGMENT_PCT) };
-  });
-  const usedWidth = bars.reduce((sum, b) => sum + b.width, 0);
+  const { bars, used, usedPercent, usedWidth } = buildStorageSegments(
+    totalSpace,
+    freeSpace,
+    moviesSize,
+    tvSize
+  );
 
   return (
     <div className="flex flex-col gap-5">

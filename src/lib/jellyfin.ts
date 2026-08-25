@@ -32,7 +32,7 @@ async function jellyfinFetch<T>(path: string): Promise<T> {
   return res.json();
 }
 
-type JellyfinItem = {
+export type JellyfinItem = {
   Id: string;
   ProviderIds?: Record<string, string>;
   LocationType?: string;
@@ -46,14 +46,14 @@ type JellyfinItem = {
  * pull ProviderIds and match here instead. Personal-library sized, so listing
  * is cheap.
  */
-function matchesTmdbId(item: JellyfinItem, tmdbId: string): boolean {
+export function matchesTmdbId(item: JellyfinItem, tmdbId: string): boolean {
   const ids = item.ProviderIds ?? {};
   const value = ids.Tmdb ?? ids.tmdb ?? ids.TMDB;
   return value === tmdbId;
 }
 
 /** A real file on disk -- not a metadata-only stub Jellyfin created for a folder with no media yet. */
-function isPlayable(item: JellyfinItem): boolean {
+export function isPlayable(item: JellyfinItem): boolean {
   return item.LocationType === "FileSystem";
 }
 
