@@ -18,7 +18,7 @@ export type DownloadRow = {
 };
 
 /** Stable and unique per row -- queue entries and completed titles can't collide. */
-function rowKey(d: DownloadRow): string {
+export function rowKey(d: DownloadRow): string {
   if (d.queueId != null) return `q${d.queueId}`;
   if (d.episodeId != null) return `ep-done-${d.episodeId}`;
   return `${d.mediaType}-done-${d.externalId}`;

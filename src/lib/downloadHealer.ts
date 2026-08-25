@@ -1,3 +1,4 @@
+import { isUnhealthy, shouldBlocklist } from "./downloadHealthRules";
 import {
   getRadarrQueueHealth,
   getIdleWantedMovies,
@@ -31,11 +32,6 @@ import {
  * rather than a dead one.
  */
 
-// Grace period before touching anything: a torrent legitimately takes a
-// little while to find peers and pull metadata, and we don't want to kill a
-// download that was about to start moving.
-const STALL_GRACE_MINUTES = 12;
-
 // Don't re-heal the same title repeatedly -- if a fresh grab also goes bad,
 // wait before trying again so we don't churn through every release on the
 // indexer in a tight loop.
@@ -43,16 +39,6 @@ const REHEAL_COOLDOWN_MS = 15 * 60 * 1000;
 const lastHealedAt = new Map<string, number>();
 
 export type HealedDownload = { title: string; reason: string };
-
-function isUnhealthy(entry: QueueHealth): boolean {
-  if (entry.ageMinutes < STALL_GRACE_MINUTES) return false;
-  // An explicit error from Radarr/Sonarr ("stalled with no connections",
-  // "qBittorrent is reporting an error") is reason enough.
-  if (entry.errorMessage) return true;
-  // No error reported, but still hasn't moved a single byte well past the
-  // grace period -- effectively dead too.
-  return !entry.hasProgress;
-}
 
 function onCooldown(key: string): boolean {
   const last = lastHealedAt.get(key);
@@ -73,7 +59,7 @@ async function healOne(
   // usually about conditions, not the release: a VPN reconnect or a brief
   // peer drought. Blocklisting those poisoned the best-seeded releases and
   // pushed later searches onto steadily worse ones.
-  const failed = /error|failed|corrupt/i.test(entry.errorMessage ?? "");
+  const failed = shouldBlocklist(entry.errorMessage);
   try {
     const cancelled =
       mediaType === "movie"

@@ -41,6 +41,20 @@ async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type MediaRequestStatus = "requested" | "downloading" | "available";
 
+/**
+ * Download percent from a queue entry's size/sizeleft.
+ *
+ * Returns null rather than 0 while size is 0 -- that's a torrent whose
+ * metadata hasn't resolved yet, and reporting it as 0% wrongly implies the
+ * transfer has started. Callers render the null case as "starting" instead.
+ */
+export function computeProgress(size: number, sizeleft: number): number | null {
+  if (!size || size <= 0) return null;
+  const done = size - sizeleft;
+  const pct = Math.round((done / size) * 100);
+  return Math.min(100, Math.max(0, pct));
+}
+
 /** hasFile means Radarr already imported a file; otherwise check the active queue. */
 async function resolveRadarrStatus(movie: { id: number; hasFile: boolean }): Promise<MediaRequestStatus> {
   if (movie.hasFile) return "available";
@@ -172,7 +186,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
       queueId: r.id,
       externalId: r.movieId,
       title: r.title,
-      progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
+      progress: computeProgress(r.size, r.sizeleft),
     }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);

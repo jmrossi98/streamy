@@ -9,6 +9,7 @@
 import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { expireBlocklist } from "./radarr";
+import { computeProgress } from "./radarr";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -126,7 +127,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
       queueId: r.id,
       externalId: r.seriesId,
       title: r.title,
-      progress: r.size > 0 ? Math.round(((r.size - r.sizeleft) / r.size) * 100) : null,
+      progress: computeProgress(r.size, r.sizeleft),
     }));
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);
