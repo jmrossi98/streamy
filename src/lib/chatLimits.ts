@@ -1,0 +1,62 @@
+/**
+ * Input limits for the admin chat panel.
+ *
+ * Pure, so it tests without the server stack.
+ *
+ * Two jobs. One is keeping requests inside the 8k context the 4GB card can
+ * hold -- overflow doesn't error, it silently evicts the start of the
+ * conversation. The other is a trust boundary: the browser sends a transcript,
+ * and a transcript is data. Roles are re-derived rather than trusted, so a
+ * crafted request can't slip in its own `system` turn and rewrite the model's
+ * instructions.
+ */
+
+import type { ChatMessage } from "./ollama";
+
+/** Characters per message. Roughly 2k tokens -- well clear of a typed question. */
+export const MAX_MESSAGE_CHARS = 8000;
+
+/** Prior turns kept, newest first. Beyond this the context starts evicting. */
+export const MAX_HISTORY_MESSAGES = 20;
+
+export const SYSTEM_PROMPT =
+  "You are a concise assistant embedded in Streamy, a self-hosted media server " +
+  "admin panel. Answer briefly and directly. You are a small 3B model: when you " +
+  "are not confident about a fact, say so plainly rather than guessing. You have " +
+  "no live access to the server's state unless it appears in the conversation.";
+
+export type IncomingMessage = { role?: unknown; content?: unknown };
+
+/**
+ * Builds the message list sent upstream.
+ *
+ * The system prompt is prepended here and only here. Client-supplied roles are
+ * collapsed to user/assistant, so `{role: "system"}` from the browser arrives
+ * as an ordinary user turn instead of new instructions.
+ */
+export function prepareChatMessages(incoming: unknown): ChatMessage[] {
+  const list = Array.isArray(incoming) ? incoming : [];
+
+  const cleaned: ChatMessage[] = [];
+  for (const raw of list as IncomingMessage[]) {
+    const content = typeof raw?.content === "string" ? raw.content.trim() : "";
+    if (!content) continue;
+    cleaned.push({
+      // Anything that isn't explicitly an assistant turn is treated as user
+      // input -- including "system".
+      role: raw?.role === "assistant" ? "assistant" : "user",
+      content: content.slice(0, MAX_MESSAGE_CHARS),
+    });
+  }
+
+  // Keep the most recent turns; the oldest are the ones the model would have
+  // evicted anyway.
+  const trimmed = cleaned.slice(-MAX_HISTORY_MESSAGES);
+
+  return [{ role: "system", content: SYSTEM_PROMPT }, ...trimmed];
+}
+
+/** A request with nothing to answer -- the route rejects rather than calling out. */
+export function hasUserTurn(messages: ChatMessage[]): boolean {
+  return messages.some((m) => m.role === "user");
+}
