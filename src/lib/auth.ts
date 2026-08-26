@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./db";
 import { pickNextAvatarColor } from "./userAvatarColors";
 import { checkPasswordStrength } from "./passwordPolicy";
+import { isSessionStale, passwordStamp } from "./sessionFreshness";
 import { clientIpFromHeaders, MAX_SIGNUPS_PER_IP } from "./loginAttemptRules";
 import {
   clearFailuresForName,
@@ -187,9 +188,23 @@ export const authOptions: NextAuthOptions = {
         try {
           const row = await prisma.user.findUnique({
             where: { id: token.id as string },
-            select: { isAdmin: true },
+            select: { isAdmin: true, passwordChangedAt: true },
           });
           token.isAdmin = row?.isAdmin ?? false;
+
+          // Session invalidation on password change. Tokens are stateless and
+          // last 30 days, so without this a password rotation would leave every
+          // existing session working -- including one an attacker is holding,
+          // which is the main reason anyone rotates in a hurry.
+          if (user) {
+            // Fresh sign-in: adopt the current stamp.
+            token.pwAt = passwordStamp(row?.passwordChangedAt);
+          } else if (isSessionStale(token.pwAt, row?.passwordChangedAt)) {
+            // Issued before the most recent password change. Returning an empty
+            // token strips the id, which is what every downstream check keys
+            // off (middleware, getValidSessionUserId, requireAdmin).
+            return {};
+          }
         } catch {
           // A lookup failure must not silently promote anyone.
           token.isAdmin = false;
@@ -277,5 +292,7 @@ declare module "next-auth/jwt" {
     name?: string;
     avatarColor?: string;
     isAdmin?: boolean;
+    /** User.passwordChangedAt as epoch ms at sign-in; 0 when never changed. */
+    pwAt?: number;
   }
 }

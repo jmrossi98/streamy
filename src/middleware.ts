@@ -8,7 +8,10 @@ export async function middleware(req: NextRequest) {
     secret: process.env.NEXTAUTH_SECRET,
   });
 
-  if (token) {
+  // `token.id` rather than `token`: the jwt callback returns an empty token to
+  // invalidate a session whose password has since changed. That token is still
+  // a decodable object, so checking truthiness alone would keep letting it in.
+  if (token?.id) {
     return NextResponse.next();
   }
 
