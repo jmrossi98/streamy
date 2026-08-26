@@ -202,3 +202,27 @@ select option {
     display: none;
   }
 }
+
+/*
+  Maximize control on the mobile player.
+
+  Positioned here rather than with Tailwind arbitrary values because those emit
+  a single declaration with no fallback:
+
+      bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+
+  A browser that rejects env() inside calc()/max() drops the whole declaration.
+  With both `bottom` and `right` gone, an absolutely-positioned element falls
+  back to its static position -- the top-left corner of the player, which is
+  exactly where this button was turning up on some devices.
+
+  The plain values come first and always apply. The safe-area-aware versions
+  override them only where they parse, so the worst case is a button 12px from
+  the edge instead of clearing the home indicator.
+*/
+.streamy-player-maximize {
+  bottom: 0.75rem;
+  right: 0.75rem;
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  right: max(0.75rem, env(safe-area-inset-right, 0px));
+}

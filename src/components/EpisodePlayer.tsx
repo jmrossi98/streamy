@@ -8,7 +8,6 @@ import {
   tryMobileNativeVideoFullscreen,
   enterNativeVideoFullscreen,
   isMobileViewport,
-  onFullscreenExit,
 } from "@/lib/videoFullscreen";
 
 // No placeholder fallback on purpose: without a real file this used to play
@@ -85,16 +84,12 @@ export function EpisodePlayer({
     setShowOverlay(true);
   }, []);
 
-  // Leaving fullscreen should leave the episode, not strand the viewer on a
-  // bare inline video with no obvious way back.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v || !isMobile) return;
-    return onFullscreenExit(v, () => {
-      v.pause();
-      router.back();
-    });
-  }, [isMobile, router]);
+  // Leaving fullscreen deliberately does NOT leave the page. It used to call
+  // router.back(), from a time when exiting stranded the viewer on a bare
+  // inline video with no way back. The maximise button is that way back now,
+  // so navigating away instead threw people out of the episode for minimising --
+  // and iOS fires the same event when the app is backgrounded, so pulling up
+  // the home panel ejected them too. The close control handles leaving.
 
   useEffect(() => {
     if (!hasSource || !playing || !videoRef.current || isMobile) return;
@@ -249,7 +244,7 @@ export function EpisodePlayer({
             if (v) enterNativeVideoFullscreen(v);
           }}
           aria-label="Maximize video"
-          className="absolute bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] right-[max(0.75rem,env(safe-area-inset-right))] z-20 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white active:bg-black/90 touch-manipulation"
+          className="streamy-player-maximize absolute z-20 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white active:bg-black/90 touch-manipulation"
         >
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
             <path
