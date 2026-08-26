@@ -44,7 +44,19 @@ export const SYSTEM_PROMPT =
 const NO_SEARCH_PATTERNS = [
   /^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|cool|nice|lol|yes|no|nvm)\b[\s!.?]*$/i,
   /^(what|who) are you\b/i,
+  // Questions about the user's own infrastructure. The web knows nothing about
+  // this particular homelab, and irrelevant results measurably degrade a 3B
+  // model's answer, because it tries to reconcile them with the question.
+  /\b(my|our|the)\b[\w\s']*\b(homelab|home lab|server|stack|setup|downloads|library|queue|indexer|torrent)\b/i,
+  /\b(radarr|sonarr|jellyfin|qbittorrent|prowlarr|gluetun|streamy|ollama|searxng)\b/i,
 ];
+
+/**
+ * Past this, the message is pasted material -- a log, a health check, an error
+ * dump -- and the task is to summarise it, not look it up. A wall of text also
+ * makes a useless search query.
+ */
+const MAX_SEARCH_QUERY_CHARS = 300;
 
 /** "can you search the web", "do you have internet access", "are you online". */
 const CAPABILITY_QUESTION = /^(can|do|are|will) you\b.*\b(web|internet|online|search|browse|google)\b/i;
@@ -64,6 +76,7 @@ export function shouldSearch(query: string): boolean {
   const q = query.trim();
   // Too short to be a real question -- "hey", "ok", a stray character.
   if (q.length < 4) return false;
+  if (q.length > MAX_SEARCH_QUERY_CHARS) return false;
   if (NO_SEARCH_PATTERNS.some((re) => re.test(q))) return false;
   if (CAPABILITY_QUESTION.test(q) && q.split(/\s+/).length <= MAX_CAPABILITY_QUESTION_WORDS) {
     return false;
