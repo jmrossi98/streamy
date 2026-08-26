@@ -40,7 +40,7 @@ export default async function WatchPlayPage({ params }: Props) {
       <Link
         href={`/watch/${id}`}
         prefetch
-        className="hidden md:flex absolute top-[calc(1rem+env(safe-area-inset-top,0px))] right-[max(1rem,env(safe-area-inset-right))] z-40 min-w-[44px] min-h-[44px] w-11 h-11 rounded-full bg-black/60 text-white hover:bg-black/80 active:bg-black/90 items-center justify-center transition-colors touch-manipulation"
+        className="flex absolute top-[calc(1rem+env(safe-area-inset-top,0px))] right-[max(1rem,env(safe-area-inset-right))] z-40 min-w-[44px] min-h-[44px] w-11 h-11 rounded-full bg-black/60 text-white hover:bg-black/80 active:bg-black/90 items-center justify-center transition-colors touch-manipulation"
         aria-label="Close and return to info"
       >
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

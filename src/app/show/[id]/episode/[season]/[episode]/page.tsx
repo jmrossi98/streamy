@@ -67,7 +67,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
     <div className="min-h-screen bg-netflix-black relative">
       {/* Desktop only: on mobile the native fullscreen player supplies its own
           Done control, so ours is a second close button competing with it. */}
-      <div className="hidden md:flex absolute top-4 right-4 z-[100] w-10 h-10 rounded-full bg-black/60 text-white hover:bg-black/80 items-center justify-center transition-colors">
+      <div className="flex absolute top-4 right-4 z-[100] w-10 h-10 rounded-full bg-black/60 text-white hover:bg-black/80 items-center justify-center transition-colors">
         <EpisodeCloseButton
           fallbackHref={backHref}
           className="w-full h-full flex items-center justify-center text-white"

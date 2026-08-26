@@ -14,6 +14,7 @@
  */
 export const MOBILE_FULLSCREEN_BREAKPOINT = 768;
 
+
 export function isMobileViewport(): boolean {
   return typeof window !== "undefined" && window.innerWidth < MOBILE_FULLSCREEN_BREAKPOINT;
 }
@@ -61,29 +62,3 @@ export function enterNativeVideoFullscreen(video: HTMLVideoElement): boolean {
   return false;
 }
 
-/**
- * Runs `onExit` when the viewer leaves fullscreen.
- *
- * iOS fires `webkitendfullscreen` on the video element and never touches the
- * document-level Fullscreen API, so listening only for `fullscreenchange`
- * misses it entirely -- which is how you end up stranded on a bare inline
- * player after tapping Done. Returns a cleanup function.
- */
-export function onFullscreenExit(video: HTMLVideoElement, onExit: () => void): () => void {
-  const handleDocumentChange = () => {
-    const active =
-      document.fullscreenElement ??
-      (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement;
-    if (!active) onExit();
-  };
-
-  video.addEventListener("webkitendfullscreen", onExit);
-  document.addEventListener("fullscreenchange", handleDocumentChange);
-  document.addEventListener("webkitfullscreenchange", handleDocumentChange);
-
-  return () => {
-    video.removeEventListener("webkitendfullscreen", onExit);
-    document.removeEventListener("fullscreenchange", handleDocumentChange);
-    document.removeEventListener("webkitfullscreenchange", handleDocumentChange);
-  };
-}
