@@ -20,6 +20,9 @@ export function OpsChat({
   searchAvailable,
   fullHeight = false,
 }: Props) {
+  // Off by default, deliberately: search costs latency and a large share of an
+  // 8k context, and it pulls untrusted web text into the prompt. Turning it on
+  // is an explicit choice.
   const [webSearch, setWebSearch] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");

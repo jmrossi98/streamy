@@ -134,11 +134,28 @@ jobs:
           # Global IPv6 address of the home server. Checked separately: there
           # is no NAT in front of IPv6, so a clean IPv4 result proves nothing.
           PUBLIC_PROBE_HOST_V6: ${{ secrets.PUBLIC_PROBE_HOST_V6 }}
+          # Fine-grained PAT scoped to the website repo, with BOTH
+          # contents:write (branch + commit) and pull_requests:write (open +
+          # merge the PR). Publishing goes through a PR, so a contents-only
+          # token gets as far as the commit and then fails.
+          # Blog publishing is disabled when unset.
+          #
+          # The secrets are named BLOG_GITHUB_* while the env vars stay
+          # GITHUB_BLOG_*. That mismatch is deliberate and load-bearing:
+          # GitHub rejects any Actions secret whose name starts with GITHUB_
+          # (reserved prefix, HTTP 422). Referencing secrets.GITHUB_BLOG_TOKEN
+          # is not an error at run time -- it silently expands to empty, so
+          # publishing would report itself unconfigured forever with nothing
+          # in the logs to explain why. Only the secret name may change here;
+          # the env var name is what the app reads.
+          GITHUB_BLOG_TOKEN: ${{ secrets.BLOG_GITHUB_TOKEN }}
+          GITHUB_BLOG_REPO: ${{ secrets.BLOG_GITHUB_REPO }}
+          GITHUB_BLOG_BRANCH: ${{ secrets.BLOG_GITHUB_BRANCH }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -202,6 +219,9 @@ jobs:
               "SEARXNG_URL=${SEARXNG_URL}" \
               "PUBLIC_PROBE_HOST=${PUBLIC_PROBE_HOST}" \
               "PUBLIC_PROBE_HOST_V6=${PUBLIC_PROBE_HOST_V6}" \
+              "GITHUB_BLOG_TOKEN=${GITHUB_BLOG_TOKEN}" \
+              "GITHUB_BLOG_REPO=${GITHUB_BLOG_REPO}" \
+              "GITHUB_BLOG_BRANCH=${GITHUB_BLOG_BRANCH}" \
               "ALERT_SNS_TOPIC_ARN=${ALERT_SNS_TOPIC_ARN}" \
               "ALERT_PROJECT=streamy" \
               "AWS_REGION=us-east-1" \

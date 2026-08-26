@@ -195,3 +195,26 @@ describe("shouldSearch", () => {
     expect(shouldSearch("hey what happened in the news today")).toBe(true);
   });
 });
+
+describe("shouldSearch — infrastructure and pasted content", () => {
+  // The web knows nothing about this homelab, and irrelevant results
+  // measurably degrade a 3B model's answer.
+  it("skips questions about the user's own infrastructure", () => {
+    expect(shouldSearch("summarize my homelab health")).toBe(false);
+    expect(shouldSearch("why are my downloads stuck")).toBe(false);
+    expect(shouldSearch("what is wrong with radarr")).toBe(false);
+    expect(shouldSearch("is jellyfin up")).toBe(false);
+  });
+
+  // A pasted log is a summarisation task, and makes a useless query besides.
+  it("skips pasted content", () => {
+    expect(shouldSearch("x".repeat(301))).toBe(false);
+    expect(shouldSearch("here is my log: " + "line of output ".repeat(40))).toBe(false);
+  });
+
+  it("still searches genuine questions of similar shape", () => {
+    expect(shouldSearch("who is penguinz0")).toBe(true);
+    expect(shouldSearch("what happened in the news today")).toBe(true);
+    expect(shouldSearch("explain the raft consensus algorithm")).toBe(true);
+  });
+});
