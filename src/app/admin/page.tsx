@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -9,6 +10,7 @@ import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
 import { OpsChat } from "@/components/OpsChat";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
+import { isWebSearchConfigured } from "@/lib/webSearch";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -92,12 +94,21 @@ export default async function AdminFeaturesPage() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Assistant</h2>
+        <div className="mb-4 flex items-baseline justify-between gap-3">
+          <h2 className="text-lg font-semibold text-white">Assistant</h2>
+          <Link
+            href="/admin/chat"
+            className="text-sm text-white/50 transition-colors hover:text-white"
+          >
+            Open full screen →
+          </Link>
+        </div>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <OpsChat
             configured={isOllamaConfigured()}
             model={ollamaModel()}
             statusError={ollamaStatus && !ollamaStatus.ok ? ollamaStatus.error : null}
+            searchAvailable={isWebSearchConfigured()}
           />
         </div>
       </section>

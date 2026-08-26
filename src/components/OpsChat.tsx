@@ -8,9 +8,19 @@ type Props = {
   configured: boolean;
   model: string;
   statusError?: string | null;
+  searchAvailable: boolean;
+  /** Fill the available height instead of capping the transcript at 24rem. */
+  fullHeight?: boolean;
 };
 
-export function OpsChat({ configured, model, statusError }: Props) {
+export function OpsChat({
+  configured,
+  model,
+  statusError,
+  searchAvailable,
+  fullHeight = false,
+}: Props) {
+  const [webSearch, setWebSearch] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -52,7 +62,7 @@ export function OpsChat({ configured, model, statusError }: Props) {
       const res = await fetch("/api/admin/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ messages: history, webSearch }),
         signal: controller.signal,
       });
 
@@ -122,11 +132,21 @@ export function OpsChat({ configured, model, statusError }: Props) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className={fullHeight ? "flex h-full min-h-0 flex-col gap-3" : "space-y-3"}>
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="text-white/40">{model}</span>
         {statusError ? (
           <span className="text-amber-400">Model unreachable: {statusError}</span>
+        ) : searchAvailable ? (
+          <label className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80">
+            <input
+              type="checkbox"
+              checked={webSearch}
+              onChange={(e) => setWebSearch(e.target.checked)}
+              className="accent-netflix-red"
+            />
+            Search the web
+          </label>
         ) : (
           <span className="text-white/40">Runs on your own hardware</span>
         )}
@@ -134,12 +154,15 @@ export function OpsChat({ configured, model, statusError }: Props) {
 
       <div
         ref={scrollRef}
-        className="max-h-96 space-y-3 overflow-y-auto rounded border border-white/10 bg-black/30 p-3"
+        className={`space-y-3 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 ${
+          fullHeight ? "min-h-0 flex-1" : "max-h-96"
+        }`}
         aria-live="polite"
       >
         {turns.length === 0 && (
           <p className="py-6 text-center text-sm text-white/30">
             Ask about the stack, or paste a health check to summarise.
+            {searchAvailable ? " Tick “Search the web” for anything current." : ""}
           </p>
         )}
         {turns.map((t, i) => (

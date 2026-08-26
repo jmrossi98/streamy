@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
-import { hasUserTurn, prepareChatMessages } from "@/lib/chatLimits";
+import {
+  buildSearchContext,
+  hasUserTurn,
+  latestUserQuery,
+  prepareChatMessages,
+  withSearchContext,
+} from "@/lib/chatLimits";
+import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
 /**
  * Admin chat proxy to the self-hosted model.
@@ -29,16 +36,36 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { messages?: unknown };
+  let body: { messages?: unknown; webSearch?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const messages = prepareChatMessages(body.messages);
+  let messages = prepareChatMessages(body.messages);
   if (!hasUserTurn(messages)) {
     return NextResponse.json({ error: "Nothing to answer." }, { status: 400 });
+  }
+
+  // Searched unconditionally when the toggle is on, rather than left to the
+  // model to decide -- a 3B model is not a reliable judge of when it needs a
+  // lookup, which is the whole reason this is a switch.
+  if (body.webSearch === true && isWebSearchConfigured()) {
+    const query = latestUserQuery(messages);
+    if (query) {
+      try {
+        const results = await searchWeb(query);
+        if (results.length > 0) {
+          messages = withSearchContext(messages, buildSearchContext(query, results));
+        }
+      } catch (err) {
+        // A search failure degrades to answering without it. Losing the whole
+        // reply because the search box is down would be worse than an
+        // ungrounded answer the model is told to hedge.
+        console.error("[chat] web search failed:", err);
+      }
+    }
   }
 
   try {
