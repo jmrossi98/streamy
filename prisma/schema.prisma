@@ -130,3 +130,30 @@ model LoginAttempt {
   @@index([ip, at])
   @@index([at])
 }
+
+// Visits to the portfolio site, reported by a beacon on that site.
+//
+// jakobrossi.com is a static SPA on GitHub Pages with no server of its own, so
+// it has nowhere to log. The beacon posts here instead, which keeps the
+// portfolio a pure static site and puts the data on infrastructure that is
+// already authenticated.
+//
+// Caveat worth knowing when reading the numbers: a JS beacon only sees clients
+// that execute JavaScript. Bots, scanners, and curl are invisible to it. This
+// answers "who is reading my site", not "what is probing my site".
+model SiteVisit {
+  id        String   @id @default(cuid())
+  // Which property this came from, so other sites can report here later.
+  site      String
+  path      String
+  ip        String
+  // Best-effort, from the edge header if one is present.
+  country   String?
+  referrer  String?
+  userAgent String?
+  at        DateTime @default(now())
+
+  @@index([at])
+  @@index([site, at])
+  @@index([ip, at])
+}
