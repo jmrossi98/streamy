@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 export async function POST(request: Request) {
-  const session = await getSession();
-  if (!session?.user?.isAdmin) {
+  // requireAdmin re-reads approved + isAdmin from the database, so this single
+  // call replaces the old pair of checks (a JWT claim plus an approval lookup)
+  // and closes the gap where the JWT alone decided who was an admin.
+  if (!(await requireAdmin(await getSession()))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
-  }
-  const adminId = await getValidSessionUserId(session);
-  if (!adminId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const body = await request.json();

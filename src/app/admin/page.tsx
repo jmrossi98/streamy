@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth";
+import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getRadarrStorageInfo, getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
 import { getSonarrTvSize, getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sonarr";
@@ -9,8 +9,10 @@ import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
 
 export default async function AdminFeaturesPage() {
-  const session = await getSession();
-  if (!session?.user?.isAdmin) {
+  // Authorization comes from the database, not the session's isAdmin claim:
+  // a demoted, un-approved, or deleted admin must lose this page immediately
+  // rather than when their 30-day token happens to expire.
+  if (!(await requireAdmin(await getSession()))) {
     redirect("/");
   }
 

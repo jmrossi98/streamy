@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cancelRadarrDownload, cancelRadarrQueueItem, deleteRadarrMovie } from "@/lib/radarr";
 import {
@@ -10,8 +10,8 @@ import {
 } from "@/lib/sonarr";
 
 export async function POST(request: Request) {
-  const session = await getSession();
-  if (!session?.user?.isAdmin) {
+  // Re-read from the database rather than trusting the JWT's isAdmin claim.
+  if (!(await requireAdmin(await getSession()))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
