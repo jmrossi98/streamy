@@ -6,6 +6,7 @@ import {
   hasUserTurn,
   latestUserQuery,
   prepareChatMessages,
+  shouldSearch,
   withSearchContext,
 } from "@/lib/chatLimits";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
@@ -53,7 +54,9 @@ export async function POST(request: Request) {
   // lookup, which is the whole reason this is a switch.
   if (body.webSearch === true && isWebSearchConfigured()) {
     const query = latestUserQuery(messages);
-    if (query) {
+    // Greetings and "can you search?" are answered from the transcript. Running
+    // a lookup on them is what turned "hey" into a definition of the word.
+    if (query && shouldSearch(query)) {
       try {
         const results = await searchWeb(query);
         if (results.length > 0) {

@@ -5,6 +5,7 @@ import {
   latestUserQuery,
   buildSearchContext,
   withSearchContext,
+  shouldSearch,
   MAX_HISTORY_MESSAGES,
   MAX_MESSAGE_CHARS,
   SYSTEM_PROMPT,
@@ -163,5 +164,34 @@ describe("withSearchContext", () => {
   it("returns the input unchanged when there is no user turn", () => {
     const msgs = prepareChatMessages([]);
     expect(withSearchContext(msgs, ctx)).toEqual(msgs);
+  });
+});
+
+describe("shouldSearch", () => {
+  // The bug: "hey" was searched and came back as a dictionary definition of
+  // the word. Greetings are answered from the transcript.
+  it("skips greetings and conversational filler", () => {
+    for (const q of ["hey", "hi", "hello", "thanks", "ok", "cool", "yes", "no"]) {
+      expect(shouldSearch(q)).toBe(false);
+    }
+  });
+
+  // Asking whether it can search must not itself trigger a search, or the
+  // model answers about the concept of searching.
+  it("skips meta-questions about its own abilities", () => {
+    expect(shouldSearch("can you search the web")).toBe(false);
+    expect(shouldSearch("do you have internet access")).toBe(false);
+    expect(shouldSearch("what are you")).toBe(false);
+  });
+
+  it("skips input too short to be a question", () => {
+    expect(shouldSearch("a")).toBe(false);
+    expect(shouldSearch("   ")).toBe(false);
+  });
+
+  it("searches real questions", () => {
+    expect(shouldSearch("who is penguinz0")).toBe(true);
+    expect(shouldSearch("summarise the latest on the CVE in curl")).toBe(true);
+    expect(shouldSearch("hey what happened in the news today")).toBe(true);
   });
 });

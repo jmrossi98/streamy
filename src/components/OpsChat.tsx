@@ -195,7 +195,9 @@ export function OpsChat({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask something…"
-          className="flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder-white/30 focus:border-white/40 focus:outline-none"
+          // text-base on mobile: iOS zooms the viewport when a focused input
+          // is under 16px, and there is no way back out without pinching.
+          className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
           disabled={streaming}
         />
         {streaming ? (
