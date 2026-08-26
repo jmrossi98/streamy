@@ -110,7 +110,15 @@ export default async function AdminFeaturesPage() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Portfolio visitors</h2>
+        <div className="mb-4 flex items-baseline justify-between gap-3">
+          <h2 className="text-lg font-semibold text-white">Portfolio visitors</h2>
+          <Link
+            href="/admin/blog"
+            className="text-sm text-white/50 transition-colors hover:text-white"
+          >
+            Write a post →
+          </Link>
+        </div>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <VisitorsPanel summary={visitors} />
         </div>
