@@ -131,11 +131,14 @@ jobs:
           # the HOME network's public IP -- probing this box's own address only
           # proves these ports aren't open here, which they never were.
           PUBLIC_PROBE_HOST: ${{ secrets.PUBLIC_PROBE_HOST }}
+          # Global IPv6 address of the home server. Checked separately: there
+          # is no NAT in front of IPv6, so a clean IPv4 result proves nothing.
+          PUBLIC_PROBE_HOST_V6: ${{ secrets.PUBLIC_PROBE_HOST_V6 }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -198,6 +201,7 @@ jobs:
               "OLLAMA_MODEL=${OLLAMA_MODEL}" \
               "SEARXNG_URL=${SEARXNG_URL}" \
               "PUBLIC_PROBE_HOST=${PUBLIC_PROBE_HOST}" \
+              "PUBLIC_PROBE_HOST_V6=${PUBLIC_PROBE_HOST_V6}" \
               "ALERT_SNS_TOPIC_ARN=${ALERT_SNS_TOPIC_ARN}" \
               "ALERT_PROJECT=streamy" \
               "AWS_REGION=us-east-1" \

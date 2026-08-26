@@ -13,6 +13,8 @@ import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
 import { isWebSearchConfigured } from "@/lib/webSearch";
 import { runSecurityChecks } from "@/lib/securityChecks";
 import { SecurityPanel } from "@/components/SecurityPanel";
+import { ServicesPanel } from "@/components/ServicesPanel";
+import { getServiceStatuses } from "@/lib/serviceStatus";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -36,6 +38,7 @@ export default async function AdminFeaturesPage() {
     sonarrCompleted,
     ollamaStatus,
     security,
+    services,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -52,6 +55,7 @@ export default async function AdminFeaturesPage() {
     // on the first message.
     isOllamaConfigured() ? getOllamaStatus() : Promise.resolve(null),
     runSecurityChecks(),
+    getServiceStatuses(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -91,6 +95,13 @@ export default async function AdminFeaturesPage() {
             findings={security.findings}
             generatedAt={security.generatedAt}
           />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <ServicesPanel services={services} />
         </div>
       </section>
 
