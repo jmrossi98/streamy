@@ -11,6 +11,8 @@ import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
 import { OpsChat } from "@/components/OpsChat";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
 import { isWebSearchConfigured } from "@/lib/webSearch";
+import { runSecurityChecks } from "@/lib/securityChecks";
+import { SecurityPanel } from "@/components/SecurityPanel";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -33,6 +35,7 @@ export default async function AdminFeaturesPage() {
     radarrCompleted,
     sonarrCompleted,
     ollamaStatus,
+    security,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -48,6 +51,7 @@ export default async function AdminFeaturesPage() {
     // Probed server-side so an unreachable model shows up on load rather than
     // on the first message.
     isOllamaConfigured() ? getOllamaStatus() : Promise.resolve(null),
+    runSecurityChecks(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -78,6 +82,17 @@ export default async function AdminFeaturesPage() {
   return (
     <div className="min-h-screen px-4 sm:px-6 pt-24 pb-16 max-w-2xl mx-auto space-y-10">
       <h1 className="font-display text-3xl font-bold text-white">Admin Features</h1>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Security</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <SecurityPanel
+            activity={security.activity}
+            findings={security.findings}
+            generatedAt={security.generatedAt}
+          />
+        </div>
+      </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Pending approvals</h2>

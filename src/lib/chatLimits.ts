@@ -23,7 +23,53 @@ export const SYSTEM_PROMPT =
   "You are a concise assistant embedded in Streamy, a self-hosted media server " +
   "admin panel. Answer briefly and directly. You are a small 3B model: when you " +
   "are not confident about a fact, say so plainly rather than guessing. You have " +
-  "no live access to the server's state unless it appears in the conversation.";
+  "no live access to the server's state unless it appears in the conversation.\n\n" +
+  // Without this the model used search results while insisting it couldn't
+  // search, because nothing told it the results block was its own lookup.
+  "You DO have web search, run for you automatically when the user enables it. " +
+  "When a block of search results appears, that is the result of a live search " +
+  "just performed on the user's behalf -- treat it as your own and answer from " +
+  "it. When no results appear, search was off or found nothing: answer from " +
+  "memory and say that you didn't search.";
+
+/**
+ * Messages too trivial to be worth a lookup.
+ *
+ * "Always search when the toggle is on" turned out to be too blunt: a user
+ * typing "hey" got a dictionary definition of the word, because the greeting
+ * was dutifully searched and summarised. Conversational filler and
+ * meta-questions about the assistant itself are answered from the transcript,
+ * not the web.
+ */
+const NO_SEARCH_PATTERNS = [
+  /^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|cool|nice|lol|yes|no|nvm)\b[\s!.?]*$/i,
+  /^(what|who) are you\b/i,
+];
+
+/** "can you search the web", "do you have internet access", "are you online". */
+const CAPABILITY_QUESTION = /^(can|do|are|will) you\b.*\b(web|internet|online|search|browse|google)\b/i;
+
+/**
+ * Above this, a capability question has picked up a real subject.
+ *
+ * Word count rather than a trailing anchor, because the topic word isn't
+ * reliably last -- "do you have internet access" ends on "access". Five words
+ * is a question about the assistant; "can you search the web for hotdogs" is
+ * seven and is a genuine request.
+ */
+const MAX_CAPABILITY_QUESTION_WORDS = 6;
+
+/** Whether a user turn is worth spending a search on. */
+export function shouldSearch(query: string): boolean {
+  const q = query.trim();
+  // Too short to be a real question -- "hey", "ok", a stray character.
+  if (q.length < 4) return false;
+  if (NO_SEARCH_PATTERNS.some((re) => re.test(q))) return false;
+  if (CAPABILITY_QUESTION.test(q) && q.split(/\s+/).length <= MAX_CAPABILITY_QUESTION_WORDS) {
+    return false;
+  }
+  return true;
+}
 
 export type IncomingMessage = { role?: unknown; content?: unknown };
 

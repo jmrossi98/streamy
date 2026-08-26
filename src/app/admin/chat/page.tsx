@@ -18,10 +18,11 @@ export default async function AdminChatPage() {
   const status = isOllamaConfigured() ? await getOllamaStatus() : null;
 
   return (
-    // Fixed to the viewport, minus the navbar: the transcript should grow to
-    // fill the screen rather than the page growing a second scrollbar.
-    <div className="fixed inset-x-0 bottom-0 top-16 flex flex-col px-4 pb-4 sm:px-6">
-      <div className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col">
+    // A normal page in the layout flow. LayoutShell pins <main> to 100dvh for
+    // this route, so h-full here fills the screen without fixed positioning --
+    // which is what made this read as an overlay rather than a page.
+    <div className="flex h-full flex-col px-4 pb-4 pt-20 sm:px-6">
+      <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col">
         <div className="flex items-center justify-between py-3">
           <h1 className="font-display text-xl font-bold text-white">Assistant</h1>
           <Link
