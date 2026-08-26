@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   tryMobileNativeVideoFullscreen,
+  enterNativeVideoFullscreen,
   isMobileViewport,
   onFullscreenExit,
 } from "@/lib/videoFullscreen";
@@ -234,6 +235,31 @@ export function EpisodePlayer({
             {showName} · S{seasonNumber} E{episodeNumber} {episodeName && `· ${episodeName}`}
           </p>
         </div>
+      )}
+      {/* Explicit way back to fullscreen on mobile. The tap that starts
+          playback opens the native player, but once a viewer leaves it the
+          episode keeps playing inline with no obvious way to maximise again --
+          iOS gives no control for that. Sits bottom-right, clear of the
+          native transport controls along the top and centre. */}
+      {showVideo && isMobile && (
+        <button
+          type="button"
+          onClick={() => {
+            const v = videoRef.current;
+            if (v) enterNativeVideoFullscreen(v);
+          }}
+          aria-label="Maximize video"
+          className="absolute bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] right-[max(0.75rem,env(safe-area-inset-right))] z-20 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white active:bg-black/90 touch-manipulation"
+        >
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"
+            />
+          </svg>
+        </button>
       )}
       <video
         ref={videoRef}
