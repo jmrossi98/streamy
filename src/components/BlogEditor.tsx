@@ -14,6 +14,8 @@ type PublishResponse = {
   url?: string;
   updated?: boolean;
   scheduled?: boolean;
+  merged?: boolean;
+  prUrl?: string;
   error?: string;
 };
 
@@ -65,7 +67,9 @@ export function BlogEditor({ configured, existingSlugs }: Props) {
         return;
       }
       setResult(data);
-      if (!data.updated) {
+      // An unmerged PR is not finished, so the form is left populated rather
+      // than cleared -- clearing it would imply the post is done.
+      if (!data.updated && data.merged) {
         setTitle("");
         setSummary("");
         setTags("");
@@ -88,16 +92,31 @@ export function BlogEditor({ configured, existingSlugs }: Props) {
     return (
       <div className="space-y-3 rounded border border-green-500/30 bg-green-950/30 px-4 py-4">
         <p className="text-sm font-medium text-green-300">
-          {result.updated ? "Post updated." : "Post published."}
+          {result.merged
+            ? result.updated
+              ? "Post updated."
+              : "Post published."
+            : "Pull request opened — needs merging."}
         </p>
         <p className="text-sm text-white/60">
-          Committed to the website repo, which triggers its deploy. It usually takes a minute
-          or two to appear.
-          {result.scheduled
+          {result.merged
+            ? "Merged to the website repo, which triggers its deploy. It usually takes a minute or two to appear."
+            : "The post is committed and the pull request is open, but the merge was refused — most likely branch protection requiring a review. Nothing is lost; merge it on GitHub and it will deploy."}
+          {result.merged && result.scheduled
             ? " This one is a draft or scheduled, so it stays hidden until the site rebuilds after its publish date — the site builds on a daily cron, so that can be up to a day."
             : ""}
         </p>
         <div className="flex flex-wrap gap-3">
+          {result.prUrl && (
+            <a
+              href={result.prUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-white underline underline-offset-4 hover:text-white/70"
+            >
+              {result.merged ? "View pull request" : "Merge pull request"}
+            </a>
+          )}
           <a
             href={result.url}
             target="_blank"

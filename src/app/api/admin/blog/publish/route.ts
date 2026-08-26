@@ -67,6 +67,10 @@ export async function POST(request: Request) {
     slug: result.slug,
     url: result.url,
     updated: result.updated,
+    // False means the PR is open but unmerged -- the post is committed and
+    // recoverable, it just needs a human to merge it.
+    merged: result.merged,
+    prUrl: result.prUrl,
     // Scheduling is enforced at build time on the website, not at runtime, and
     // its deploy also runs on a daily cron -- so a scheduled post can be up to
     // ~24h late. Said here so the UI can be honest about it.
