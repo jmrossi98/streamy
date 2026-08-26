@@ -139,9 +139,18 @@ jobs:
           # merge the PR). Publishing goes through a PR, so a contents-only
           # token gets as far as the commit and then fails.
           # Blog publishing is disabled when unset.
-          GITHUB_BLOG_TOKEN: ${{ secrets.GITHUB_BLOG_TOKEN }}
-          GITHUB_BLOG_REPO: ${{ secrets.GITHUB_BLOG_REPO }}
-          GITHUB_BLOG_BRANCH: ${{ secrets.GITHUB_BLOG_BRANCH }}
+          #
+          # The secrets are named BLOG_GITHUB_* while the env vars stay
+          # GITHUB_BLOG_*. That mismatch is deliberate and load-bearing:
+          # GitHub rejects any Actions secret whose name starts with GITHUB_
+          # (reserved prefix, HTTP 422). Referencing secrets.GITHUB_BLOG_TOKEN
+          # is not an error at run time -- it silently expands to empty, so
+          # publishing would report itself unconfigured forever with nothing
+          # in the logs to explain why. Only the secret name may change here;
+          # the env var name is what the app reads.
+          GITHUB_BLOG_TOKEN: ${{ secrets.BLOG_GITHUB_TOKEN }}
+          GITHUB_BLOG_REPO: ${{ secrets.BLOG_GITHUB_REPO }}
+          GITHUB_BLOG_BRANCH: ${{ secrets.BLOG_GITHUB_BRANCH }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
