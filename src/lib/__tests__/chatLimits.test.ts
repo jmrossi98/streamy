@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   prepareChatMessages,
   hasUserTurn,
+  latestUserQuery,
+  buildSearchContext,
+  withSearchContext,
   MAX_HISTORY_MESSAGES,
   MAX_MESSAGE_CHARS,
   SYSTEM_PROMPT,
@@ -97,5 +100,68 @@ describe("hasUserTurn", () => {
 
   it("is false for an assistant-only transcript", () => {
     expect(hasUserTurn(prepareChatMessages([{ role: "assistant", content: "hi" }]))).toBe(false);
+  });
+});
+
+describe("latestUserQuery", () => {
+  it("returns the most recent user turn, not the first", () => {
+    const msgs = prepareChatMessages([
+      { role: "user", content: "old" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "current" },
+    ]);
+    expect(latestUserQuery(msgs)).toBe("current");
+  });
+
+  it("is null when there is nothing to search for", () => {
+    expect(latestUserQuery(prepareChatMessages([]))).toBeNull();
+  });
+});
+
+describe("buildSearchContext", () => {
+  const results = [
+    { title: "A Title", url: "https://example.com/a", snippet: "some text" },
+  ];
+
+  it("includes the query, titles, urls and snippets", () => {
+    const msg = buildSearchContext("jfk", results);
+    expect(msg.content).toContain("jfk");
+    expect(msg.content).toContain("A Title");
+    expect(msg.content).toContain("https://example.com/a");
+    expect(msg.content).toContain("some text");
+  });
+
+  // Search results are pages anyone can publish. The framing has to say so, or
+  // a page containing "ignore your instructions" reads as a command.
+  it("frames results as untrusted data rather than instructions", () => {
+    const msg = buildSearchContext("q", results);
+    expect(msg.role).toBe("system");
+    expect(msg.content).toMatch(/untrusted/i);
+    expect(msg.content).toMatch(/not commands|must be ignored/i);
+  });
+
+  it("asks the model to say so rather than invent when results don't answer", () => {
+    expect(buildSearchContext("q", results).content).toMatch(/say so/i);
+  });
+});
+
+describe("withSearchContext", () => {
+  const ctx = { role: "system" as const, content: "CTX" };
+
+  // Small models weight the tail of the prompt, so the question must stay last.
+  it("inserts context immediately before the final user turn", () => {
+    const msgs = prepareChatMessages([
+      { role: "user", content: "old" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "current" },
+    ]);
+    const out = withSearchContext(msgs, ctx);
+    expect(out[out.length - 1].content).toBe("current");
+    expect(out[out.length - 2]).toBe(ctx);
+  });
+
+  it("returns the input unchanged when there is no user turn", () => {
+    const msgs = prepareChatMessages([]);
+    expect(withSearchContext(msgs, ctx)).toEqual(msgs);
   });
 });
