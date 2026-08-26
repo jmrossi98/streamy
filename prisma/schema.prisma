@@ -11,10 +11,18 @@ datasource db {
 
 model User {
   id           String   @id @default(cuid())
-  name         String
+  // Unique: the name is the login identifier and, until now, nothing stopped
+  // two accounts sharing one -- including the admin's. Uniqueness is what makes
+  // "the account called X" a single, unambiguous thing.
+  name         String   @unique
   password     String
-  // Gates login until an admin (see ADMIN_NAME) approves the account.
+  // Gates login until an admin approves the account.
   approved     Boolean  @default(false)
+  // Authorization source of truth. Admin used to be derived from a name/env
+  // comparison held in the JWT, so it could not be revoked without waiting out
+  // a 30-day token. ADMIN_NAME now only bootstraps the first admin; every
+  // authorization decision reads this column.
+  isAdmin      Boolean  @default(false)
   // Hex avatar background (e.g. #e50914); assigned on create / backfill on login.
   avatarColor  String?
   createdAt    DateTime @default(now())
@@ -92,4 +100,28 @@ model MediaRequest {
 
   @@id([tmdbId, mediaType])
   @@index([tvdbId])
+}
+
+// Every sign-in attempt, successful or not.
+//
+// Two consumers: the lockout check in front of the login form, and the
+// security monitor, which alerts when failures spike. Before this table there
+// was no throttle and no evidence -- a brute-force run against the admin
+// account would have left no trace at all.
+//
+// Not linked to User on purpose: the interesting rows are attempts against
+// names that don't exist, and a foreign key would make those unstorable.
+model LoginAttempt {
+  id      String   @id @default(cuid())
+  // As submitted. May not correspond to any User row.
+  name    String
+  ip      String
+  success Boolean
+  // "success" | "bad_password" | "unknown_user" | "not_approved" | "locked_out"
+  outcome String
+  at      DateTime @default(now())
+
+  @@index([name, at])
+  @@index([ip, at])
+  @@index([at])
 }
