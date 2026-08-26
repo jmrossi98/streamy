@@ -7,6 +7,8 @@ import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
 import { AdminApprovals } from "@/components/AdminApprovals";
 import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
+import { OpsChat } from "@/components/OpsChat";
+import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -28,6 +30,7 @@ export default async function AdminFeaturesPage() {
     sonarrDownloads,
     radarrCompleted,
     sonarrCompleted,
+    ollamaStatus,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -40,6 +43,9 @@ export default async function AdminFeaturesPage() {
     getSonarrActiveDownloads(),
     getRadarrCompletedMovies(),
     getSonarrCompletedEpisodes(),
+    // Probed server-side so an unreachable model shows up on load rather than
+    // on the first message.
+    isOllamaConfigured() ? getOllamaStatus() : Promise.resolve(null),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -82,6 +88,17 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <DownloadsPanel downloads={downloads} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Assistant</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <OpsChat
+            configured={isOllamaConfigured()}
+            model={ollamaModel()}
+            statusError={ollamaStatus && !ollamaStatus.ok ? ollamaStatus.error : null}
+          />
         </div>
       </section>
 

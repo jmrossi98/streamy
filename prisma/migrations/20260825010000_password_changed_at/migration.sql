@@ -1,0 +1,11 @@
+-- Records when a password last changed, so changing one can invalidate
+-- sessions issued before it.
+--
+-- Sessions are stateless 30-day JWTs. Without this, rotating a password left
+-- every existing session valid -- fine for a routine change, useless if the
+-- reason for rotating is that someone else might be holding one.
+--
+-- Null means "never changed since this column existed". Existing sessions
+-- carry 0 for their stamp, so a null here matches them and nobody is signed
+-- out by the migration itself.
+ALTER TABLE "User" ADD COLUMN "passwordChangedAt" DATETIME;

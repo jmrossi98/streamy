@@ -3,12 +3,28 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 /**
- * Delete a profile (User row). Cascades watchlist + progress.
- * - Signed in as that user: no name confirmation (Profile page).
- * - Not signed in: must send confirmName matching profile name (e.g. API clients).
+ * Delete your own profile (User row). Cascades watchlist + progress.
+ *
+ * Signed in, self only.
+ *
+ * This route used to accept an unauthenticated request carrying `confirmName`,
+ * and deleted any account whose display name matched. The 403 guard above it
+ * was gated on `session?.user?.id` being truthy, so an anonymous caller skipped
+ * it entirely and fell through to the name branch. Display names are public --
+ * /who-is-watching lists them and is excluded from middleware, as is /api --
+ * so anyone who could reach the site could delete any profile by name.
+ *
+ * The branch existed for "API clients" that never materialised: the only caller
+ * is the signed-in self-delete in Navbar.tsx. Removing it costs nothing and is
+ * the whole fix.
  */
 export async function POST(request: Request) {
-  let body: { userId?: unknown; confirmName?: unknown };
+  const session = await getSession();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+  }
+
+  let body: { userId?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -16,40 +32,23 @@ export async function POST(request: Request) {
   }
 
   const userId = typeof body.userId === "string" ? body.userId.trim() : "";
-  const confirmName = typeof body.confirmName === "string" ? body.confirmName.trim() : "";
-
   if (!userId) {
     return NextResponse.json({ error: "userId required" }, { status: 400 });
   }
 
-  const session = await getSession();
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-
-  if (!user) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
-
-  const isSelf = session?.user?.id === userId;
-
-  if (session?.user?.id && !isSelf) {
+  if (userId !== session.user.id) {
     return NextResponse.json(
-      { error: "You can only remove your own profile while signed in." },
+      { error: "You can only remove your own profile." },
       { status: 403 }
     );
   }
 
-  if (isSelf) {
-    await prisma.user.delete({ where: { id: userId } });
-    return NextResponse.json({ ok: true, deletedSelf: true });
+  // deleteMany rather than delete: a stale session pointing at an already-
+  // deleted row should report "not found", not throw a Prisma P2025.
+  const result = await prisma.user.deleteMany({ where: { id: userId } });
+  if (result.count === 0) {
+    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
   }
 
-  if (!confirmName || user.name.trim().toLowerCase() !== confirmName.toLowerCase()) {
-    return NextResponse.json(
-      { error: "Profile name must match exactly to confirm deletion." },
-      { status: 400 }
-    );
-  }
-
-  await prisma.user.delete({ where: { id: userId } });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deletedSelf: true });
 }

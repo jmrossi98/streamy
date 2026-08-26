@@ -26,6 +26,11 @@ model User {
   // Hex avatar background (e.g. #e50914); assigned on create / backfill on login.
   avatarColor  String?
   createdAt    DateTime @default(now())
+  // Stamped on every password change, and mirrored into the JWT at sign-in.
+  // Sessions are stateless 30-day tokens, so changing a password otherwise
+  // leaves every existing session -- including an attacker's -- valid. The jwt
+  // callback compares the two and drops tokens issued before the change.
+  passwordChangedAt DateTime?
 
   watchlist       WatchlistItem[]
   watchlistShows  WatchlistShowItem[]
