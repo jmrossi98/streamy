@@ -86,14 +86,21 @@ export const authOptions: NextAuthOptions = {
 /**
  * JWT sessions can outlive the User row (db reset, switched DATABASE_URL, deleted user).
  * Use before Prisma writes that reference `userId` to avoid P2003 foreign key errors.
+ *
+ * Approval is re-checked here, not just at login. Sessions are JWTs valid for
+ * 30 days, so checking only at sign-in meant revoking someone's approval left
+ * them with up to a month of continued access -- deleting the account cut them
+ * off, but un-approving them did nothing. Every call site that gates on a real
+ * user now also gates on that user still being allowed in.
  */
 export async function getValidSessionUserId(session: Session | null): Promise<string | null> {
   if (!session?.user?.id) return null;
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { id: true },
+    select: { id: true, approved: true },
   });
-  return user?.id ?? null;
+  if (!user?.approved) return null;
+  return user.id;
 }
 
 declare module "next-auth" {
