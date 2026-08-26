@@ -134,7 +134,10 @@ jobs:
           # Global IPv6 address of the home server. Checked separately: there
           # is no NAT in front of IPv6, so a clean IPv4 result proves nothing.
           PUBLIC_PROBE_HOST_V6: ${{ secrets.PUBLIC_PROBE_HOST_V6 }}
-          # Fine-grained PAT with contents:write on the website repo only.
+          # Fine-grained PAT scoped to the website repo, with BOTH
+          # contents:write (branch + commit) and pull_requests:write (open +
+          # merge the PR). Publishing goes through a PR, so a contents-only
+          # token gets as far as the commit and then fails.
           # Blog publishing is disabled when unset.
           GITHUB_BLOG_TOKEN: ${{ secrets.GITHUB_BLOG_TOKEN }}
           GITHUB_BLOG_REPO: ${{ secrets.GITHUB_BLOG_REPO }}
