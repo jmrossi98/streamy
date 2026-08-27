@@ -9,21 +9,27 @@
  * Notifications are email, via the same SNS topic as the health check.
  */
 
+import { ProxyAgent } from "undici";
 import { prisma } from "@/lib/db";
 import { notify } from "@/lib/notify";
 import {
   describeChange,
   diffLines,
+  egressProxyRequired,
+  egressProxyUrl,
   extractElement,
   formatDiff,
   hashContent,
   htmlToText,
   isAllowedByRobots,
+  isEgressProxied,
   newKeywordHits,
   normalizeLines,
   parseKeywords,
   parseTourDates,
+  resolveEgress,
   shouldNotify,
+  userAgent,
   type ContentDiff,
 } from "@/lib/pageWatchRules";
 
@@ -31,14 +37,27 @@ const FETCH_TIMEOUT_MS = 20_000;
 const MAX_BYTES = 5_000_000;
 const MAX_DIFF_CHARS = 8000;
 
+let cachedAgent: { url: string; agent: ProxyAgent } | null = null;
+function proxyDispatcher(url: string): ProxyAgent {
+  if (cachedAgent?.url !== url) cachedAgent = { url, agent: new ProxyAgent(url) };
+  return cachedAgent.agent;
+}
+
 /**
- * Identifies the crawler honestly, with a contact route.
- *
- * A watcher that hides behind a browser string is indistinguishable from
- * something abusive, and is what gets an IP blocked. This says what it is and
- * where to complain, which is also what makes honouring robots.txt meaningful.
+ * The only fetch used for outbound watch traffic. Fail-closed: it never falls
+ * back to a direct connection when a proxy is required, so a watch request can
+ * never leave from this box's own IP.
  */
-export const USER_AGENT = "StreamyWatch/1.0 (+https://streamy-app.com; personal tour-date watcher)";
+async function watchFetch(url: string, init: RequestInit): Promise<Response> {
+  const decision = resolveEgress(egressProxyUrl(), egressProxyRequired());
+  if (decision.via === "blocked") {
+    throw new Error("Egress proxy required but PAGE_WATCH_PROXY_URL is unset — refusing to fetch");
+  }
+  // `dispatcher` is an undici extension to RequestInit that the global fetch
+  // honours at runtime but the DOM types don't describe.
+  const extra = decision.via === "proxy" ? { dispatcher: proxyDispatcher(decision.url) } : {};
+  return fetch(url, { ...init, ...extra } as RequestInit);
+}
 
 export type CheckOutcome =
   | { ok: true; changed: boolean; summary: string; keywordHits: string[]; dateCount: number }
@@ -54,8 +73,10 @@ function compileIgnore(pattern: string | null): RegExp[] {
       out.push(new RegExp(trimmed));
     } catch {
       // A bad regex is a config mistake, not a reason to stop checking the
-      // page -- it just doesn't filter anything.
-      console.warn(`[pageWatch] ignoring invalid pattern: ${trimmed}`);
+      // page -- it just doesn't filter anything. The pattern itself is not
+      // logged: it can carry site-identifying terms, and logs are the one
+      // place this feature is meant to reveal nothing.
+      console.warn("[pageWatch] ignoring an invalid ignore pattern");
     }
   }
   return out;
@@ -63,8 +84,8 @@ function compileIgnore(pattern: string | null): RegExp[] {
 
 /** Fetches a URL as text, with a timeout and a size ceiling. */
 async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,text/plain" },
+  const res = await watchFetch(url, {
+    headers: { "User-Agent": userAgent(), Accept: "text/html,application/xhtml+xml,text/plain" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     redirect: "follow",
   });
@@ -89,13 +110,19 @@ async function fetchText(url: string): Promise<string> {
 export async function robotsAllows(url: string): Promise<boolean> {
   try {
     const target = new URL(url);
-    const res = await fetch(new URL("/robots.txt", target.origin), {
-      headers: { "User-Agent": USER_AGENT },
+    // Through the same egress as the page fetch: hitting robots.txt directly
+    // would leak this box's IP to the very site we are trying not to be traced
+    // from, one request before the page fetch that is being protected.
+    const res = await watchFetch(new URL("/robots.txt", target.origin).toString(), {
+      headers: { "User-Agent": userAgent() },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return true;
-    return isAllowedByRobots(await res.text(), target.pathname, USER_AGENT);
-  } catch {
+    return isAllowedByRobots(await res.text(), target.pathname, userAgent());
+  } catch (err) {
+    // A required proxy being down must not become an open door: fail-closed
+    // errors propagate rather than being read as "allowed".
+    if (err instanceof Error && err.message.includes("Egress proxy required")) throw err;
     return true;
   }
 }
@@ -313,6 +340,10 @@ export type PageWatchSummary = {
   }[];
   artists: ArtistDates[];
   notifyConfigured: boolean;
+  /** Whether outbound watch traffic exits through an anonymising proxy. */
+  egressProxied: boolean;
+  /** Whether a missing proxy hard-fails the fetch rather than going direct. */
+  egressEnforced: boolean;
 };
 
 /** Everything the admin panel renders, in one round trip. */
@@ -357,5 +388,7 @@ export async function getPageWatchSummary(): Promise<PageWatchSummary> {
     })),
     artists,
     notifyConfigured: isNotifyConfigured(),
+    egressProxied: isEgressProxied(),
+    egressEnforced: egressProxyRequired(),
   };
 }

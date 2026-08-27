@@ -22,6 +22,45 @@ services:
     volumes:
       - streamy-data:/app/data
 
+  # VPN egress for the tour watcher, so its requests exit from the VPN
+  # provider's IP rather than this box's -- which DNS ties to the site and its
+  # owner. Only the watcher's traffic uses this; the public site keeps serving
+  # on the box's real IP, because a public site cannot live behind a commercial
+  # VPN (no stable inbound). Whole-box VPN would gain nothing here and would put
+  # authenticated GitHub/AWS/TMDB traffic through the tunnel for no benefit.
+  #
+  # Gated behind a compose profile so it only starts when explicitly enabled
+  # (`docker compose --profile vpn up -d`). Without VPN credentials set, this
+  # service simply does not run, and it can never take the site down with it.
+  # gluetun exposes an HTTP proxy on :8888; the app reaches it as
+  # PAGE_WATCH_PROXY_URL=http://gluetun:8888, and PAGE_WATCH_REQUIRE_PROXY=1
+  # makes the watcher fail closed if the tunnel drops.
+  #
+  # VPN_* come from the server .env. gluetun supports many providers; the vars
+  # here are the WireGuard shape (see gluetun's wiki for a given provider).
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    profiles: ["vpn"]
+    restart: always
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}
+      - VPN_TYPE=${VPN_TYPE:-wireguard}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES:-}
+      # Turn on gluetun's built-in HTTP proxy, bound inside the compose network.
+      - HTTPPROXY=on
+      - HTTPPROXY_LISTENING_ADDRESS=:8888
+      # gluetun's own kill switch: if the tunnel is down, nothing leaves. This
+      # is belt-and-braces with the app's PAGE_WATCH_REQUIRE_PROXY.
+      - FIREWALL=on
+    expose:
+      - "8888"
+
   # Reverse proxy: terminates TLS and auto-provisions/renews a Let's Encrypt
   # cert for the domain in ./Caddyfile. Zero manual cert management.
   caddy:
