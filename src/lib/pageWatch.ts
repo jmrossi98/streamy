@@ -15,82 +15,27 @@ import { notify } from "@/lib/notify";
 import {
   describeChange,
   diffLines,
+  egressProxyRequired,
+  egressProxyUrl,
   extractElement,
   formatDiff,
   hashContent,
   htmlToText,
   isAllowedByRobots,
+  isEgressProxied,
   newKeywordHits,
   normalizeLines,
   parseKeywords,
   parseTourDates,
+  resolveEgress,
   shouldNotify,
+  userAgent,
   type ContentDiff,
 } from "@/lib/pageWatchRules";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const MAX_BYTES = 5_000_000;
 const MAX_DIFF_CHARS = 8000;
-
-/**
- * User-Agent sent on every watch request.
- *
- * Deliberately does NOT name this project or any personal domain. Announcing
- * "streamy-app.com" would re-attribute every request straight back regardless
- * of what IP it exits from -- which defeats routing egress through a VPN in the
- * first place. It still identifies as a generic bot so that robots.txt
- * user-agent groups can match it, which is what keeps the watcher compliant
- * rather than merely quiet. Overridable so the token can be tuned per target.
- */
-export function userAgent(): string {
-  return process.env.PAGE_WATCH_USER_AGENT?.trim() || "Mozilla/5.0 (compatible; PageWatch/1.0)";
-}
-
-/**
- * Anonymity guarantee for outbound watch traffic.
- *
- * PAGE_WATCH_PROXY_URL points at a VPN egress proxy (e.g. a gluetun sidecar's
- * HTTP proxy). When set, every watch request -- the page and its robots.txt --
- * goes through it, so the request exits from the VPN's IP and the proxy, not
- * this box, resolves the target's DNS.
- *
- * PAGE_WATCH_REQUIRE_PROXY makes that a hard requirement: with it on and no
- * usable proxy, a fetch throws rather than falling back to a direct
- * connection. This is the kill-switch. A single direct request during a VPN
- * outage would leak this box's real IP -- which DNS ties back to the site and
- * its owner -- so the safe failure is to fetch nothing, not to fetch exposed.
- */
-function proxyUrl(): string | null {
-  const value = process.env.PAGE_WATCH_PROXY_URL?.trim();
-  return value ? value : null;
-}
-
-function proxyRequired(): boolean {
-  const value = process.env.PAGE_WATCH_REQUIRE_PROXY?.toLowerCase().trim();
-  return value === "1" || value === "true" || value === "yes";
-}
-
-export type EgressDecision =
-  | { via: "proxy"; url: string }
-  | { via: "direct" }
-  | { via: "blocked" };
-
-/**
- * The one rule that decides how a watch request leaves the box, kept pure so it
- * can be unit tested -- it is the difference between anonymous and exposed.
- *
- * - a proxy is set        -> go through it
- * - none set, not required -> direct (fine for local dev)
- * - none set, required     -> blocked, never direct
- *
- * The last line is the whole point: when anonymity is required, the safe
- * failure is to send nothing, because a single direct request leaks an IP that
- * DNS ties straight back to the owner.
- */
-export function resolveEgress(url: string | null, required: boolean): EgressDecision {
-  if (url) return { via: "proxy", url };
-  return required ? { via: "blocked" } : { via: "direct" };
-}
 
 let cachedAgent: { url: string; agent: ProxyAgent } | null = null;
 function proxyDispatcher(url: string): ProxyAgent {
@@ -104,7 +49,7 @@ function proxyDispatcher(url: string): ProxyAgent {
  * never leave from this box's own IP.
  */
 async function watchFetch(url: string, init: RequestInit): Promise<Response> {
-  const decision = resolveEgress(proxyUrl(), proxyRequired());
+  const decision = resolveEgress(egressProxyUrl(), egressProxyRequired());
   if (decision.via === "blocked") {
     throw new Error("Egress proxy required but PAGE_WATCH_PROXY_URL is unset — refusing to fetch");
   }
@@ -112,11 +57,6 @@ async function watchFetch(url: string, init: RequestInit): Promise<Response> {
   // honours at runtime but the DOM types don't describe.
   const extra = decision.via === "proxy" ? { dispatcher: proxyDispatcher(decision.url) } : {};
   return fetch(url, { ...init, ...extra } as RequestInit);
-}
-
-/** Whether an anonymising egress proxy is active, for the admin panel to show. */
-export function isEgressProxied(): boolean {
-  return proxyUrl() !== null;
 }
 
 export type CheckOutcome =
@@ -449,6 +389,6 @@ export async function getPageWatchSummary(): Promise<PageWatchSummary> {
     artists,
     notifyConfigured: isNotifyConfigured(),
     egressProxied: isEgressProxied(),
-    egressEnforced: proxyRequired(),
+    egressEnforced: egressProxyRequired(),
   };
 }

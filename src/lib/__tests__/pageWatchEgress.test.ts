@@ -1,5 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { resolveEgress, userAgent, isEgressProxied } from "../pageWatch";
+// Imported from pageWatchRules, not pageWatch: these are pure and must stay
+// testable without loading the database client. The CI unit-test step runs
+// `npm ci --ignore-scripts` (no prisma generate) on purpose, so a test that
+// pulled in pageWatch.ts -- and through it @/lib/db -- would fail to resolve
+// the Prisma client. That is exactly what caught this.
+import { resolveEgress, userAgent, isEgressProxied } from "../pageWatchRules";
 
 // The egress rule is the line between anonymous and exposed, so it gets its own
 // tests. A regression here wouldn't throw or fail a page check -- it would

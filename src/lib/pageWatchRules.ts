@@ -386,3 +386,57 @@ export function isAllowedByRobots(robotsTxt: string, path: string, agent: string
   }
   return best ? best.allow : true;
 }
+
+/**
+ * User-Agent for outbound watch requests.
+ *
+ * Deliberately names neither this project nor any personal domain: announcing
+ * one would re-attribute every request regardless of the IP it exits from,
+ * defeating the point of a VPN egress. It still identifies as a generic bot so
+ * robots.txt user-agent groups can match it -- compliant, not merely quiet.
+ *
+ * Pure and env-only, so it lives here with the rest of the tested logic rather
+ * than in pageWatch.ts, which pulls in the database and the network.
+ */
+export function userAgent(): string {
+  return process.env.PAGE_WATCH_USER_AGENT?.trim() || "Mozilla/5.0 (compatible; PageWatch/1.0)";
+}
+
+/** Configured egress proxy URL, or null. */
+export function egressProxyUrl(): string | null {
+  const value = process.env.PAGE_WATCH_PROXY_URL?.trim();
+  return value ? value : null;
+}
+
+/** Whether a missing proxy must hard-fail rather than fetch direct. */
+export function egressProxyRequired(): boolean {
+  const value = process.env.PAGE_WATCH_REQUIRE_PROXY?.toLowerCase().trim();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+/** Whether an anonymising egress proxy is active, for the admin panel. */
+export function isEgressProxied(): boolean {
+  return egressProxyUrl() !== null;
+}
+
+export type EgressDecision =
+  | { via: "proxy"; url: string }
+  | { via: "direct" }
+  | { via: "blocked" };
+
+/**
+ * The one rule that decides how a watch request leaves the box, kept pure so it
+ * can be unit tested -- it is the difference between anonymous and exposed.
+ *
+ * - a proxy is set         -> go through it
+ * - none set, not required -> direct (fine for local dev)
+ * - none set, required     -> blocked, never direct
+ *
+ * The last line is the whole point: when anonymity is required, the safe
+ * failure is to send nothing, because a single direct request leaks an IP that
+ * DNS ties straight back to the owner.
+ */
+export function resolveEgress(url: string | null, required: boolean): EgressDecision {
+  if (url) return { via: "proxy", url };
+  return required ? { via: "blocked" } : { via: "direct" };
+}
