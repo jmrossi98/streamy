@@ -158,7 +158,11 @@ export function OpsChat({
       <div
         ref={scrollRef}
         className={`space-y-3 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 ${
-          fullHeight ? "min-h-0 flex-1" : "max-h-96"
+          // Fixed, not max-h: a max-height collapses to nothing on an empty
+          // transcript, so the panel jumped in size as soon as you asked
+          // anything. 34rem lands the whole section at roughly the height of
+          // the Blog editor below it, whose 14-row textarea sets that mark.
+          fullHeight ? "min-h-0 flex-1" : "h-[34rem]"
         }`}
         aria-live="polite"
       >
