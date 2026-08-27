@@ -17,6 +17,8 @@ import { ServicesPanel } from "@/components/ServicesPanel";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
+import { BlogEditor } from "@/components/BlogEditor";
+import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -30,6 +32,8 @@ export default async function AdminFeaturesPage() {
   // as a heal loop that doesn't depend on someone sitting on a title page.
   maybeHealStalledDownloads();
 
+  const blogConfigured = isBlogPublishingConfigured();
+
   const [
     pendingUsers,
     storageInfo,
@@ -42,6 +46,7 @@ export default async function AdminFeaturesPage() {
     security,
     services,
     visitors,
+    blogPosts,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -60,6 +65,10 @@ export default async function AdminFeaturesPage() {
     runSecurityChecks(),
     getServiceStatuses(),
     getVisitorSummary("portfolio"),
+    // Only to warn before overwriting an existing post. listPosts already
+    // swallows its own failures and returns [], so a GitHub outage costs the
+    // warning, not the page.
+    blogConfigured ? listPosts() : Promise.resolve([]),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -110,17 +119,24 @@ export default async function AdminFeaturesPage() {
       </section>
 
       <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Portfolio visitors</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <VisitorsPanel summary={visitors} />
+        </div>
+      </section>
+
+      <section>
         <div className="mb-4 flex items-baseline justify-between gap-3">
-          <h2 className="text-lg font-semibold text-white">Portfolio visitors</h2>
+          <h2 className="text-lg font-semibold text-white">Blog</h2>
           <Link
             href="/admin/blog"
             className="text-sm text-white/50 transition-colors hover:text-white"
           >
-            Write a post →
+            Open full screen →
           </Link>
         </div>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <VisitorsPanel summary={visitors} />
+          <BlogEditor configured={blogConfigured} existingSlugs={blogPosts.map((b) => b.slug)} />
         </div>
       </section>
 
