@@ -1,0 +1,361 @@
+/**
+ * Fetching, storage and notification for watched pages.
+ *
+ * The decision logic -- extraction, diffing, keyword and date parsing -- is in
+ * pageWatchRules.ts and is pure and unit tested. This module is the part that
+ * touches the network and the database, and it stays deliberately thin so that
+ * almost nothing here is logic you can only verify in production.
+ *
+ * Notifications are email, via the same SNS topic as the health check.
+ */
+
+import { prisma } from "@/lib/db";
+import { notify } from "@/lib/notify";
+import {
+  describeChange,
+  diffLines,
+  extractElement,
+  formatDiff,
+  hashContent,
+  htmlToText,
+  isAllowedByRobots,
+  newKeywordHits,
+  normalizeLines,
+  parseKeywords,
+  parseTourDates,
+  shouldNotify,
+  type ContentDiff,
+} from "@/lib/pageWatchRules";
+
+const FETCH_TIMEOUT_MS = 20_000;
+const MAX_BYTES = 5_000_000;
+const MAX_DIFF_CHARS = 8000;
+
+/**
+ * Identifies the crawler honestly, with a contact route.
+ *
+ * A watcher that hides behind a browser string is indistinguishable from
+ * something abusive, and is what gets an IP blocked. This says what it is and
+ * where to complain, which is also what makes honouring robots.txt meaningful.
+ */
+export const USER_AGENT = "StreamyWatch/1.0 (+https://streamy-app.com; personal tour-date watcher)";
+
+export type CheckOutcome =
+  | { ok: true; changed: boolean; summary: string; keywordHits: string[]; dateCount: number }
+  | { ok: false; error: string };
+
+function compileIgnore(pattern: string | null): RegExp[] {
+  if (!pattern) return [];
+  const out: RegExp[] = [];
+  for (const line of pattern.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      out.push(new RegExp(trimmed));
+    } catch {
+      // A bad regex is a config mistake, not a reason to stop checking the
+      // page -- it just doesn't filter anything.
+      console.warn(`[pageWatch] ignoring invalid pattern: ${trimmed}`);
+    }
+  }
+  return out;
+}
+
+/** Fetches a URL as text, with a timeout and a size ceiling. */
+async function fetchText(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,text/plain" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    redirect: "follow",
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const length = Number(res.headers.get("content-length") ?? 0);
+  if (length > MAX_BYTES) throw new Error(`Response too large (${length} bytes)`);
+
+  const text = await res.text();
+  // content-length is optional and can lie, so the real size is checked too.
+  if (text.length > MAX_BYTES) throw new Error("Response too large");
+  return text;
+}
+
+/**
+ * Whether robots.txt allows fetching this URL.
+ *
+ * Fails open: a missing, unreachable or unparseable robots.txt means allowed.
+ * A site that cannot serve robots.txt has not expressed a preference, and
+ * treating that as a prohibition would make the watcher silently do nothing.
+ */
+export async function robotsAllows(url: string): Promise<boolean> {
+  try {
+    const target = new URL(url);
+    const res = await fetch(new URL("/robots.txt", target.origin), {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return true;
+    return isAllowedByRobots(await res.text(), target.pathname, USER_AGENT);
+  } catch {
+    return true;
+  }
+}
+
+type PageRow = {
+  id: string;
+  url: string;
+  label: string;
+  artist: string | null;
+  selector: string | null;
+  ignorePattern: string | null;
+  keywords: string | null;
+  contentHash: string | null;
+  content: string | null;
+  failureCount: number;
+};
+
+/**
+ * Checks one page: fetch, extract, compare, store, notify.
+ *
+ * Never throws. A page that fails records its error and increments a failure
+ * count, so one dead URL doesn't abort a run over every other page.
+ */
+export async function checkPage(page: PageRow): Promise<CheckOutcome> {
+  let html: string;
+  try {
+    if (!(await robotsAllows(page.url))) {
+      throw new Error("Blocked by robots.txt");
+    }
+    html = await fetchText(page.url);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await prisma.watchedPage.update({
+      where: { id: page.id },
+      data: {
+        lastCheckedAt: new Date(),
+        lastStatus: "error",
+        lastError: error,
+        failureCount: { increment: 1 },
+      },
+    });
+    return { ok: false, error };
+  }
+
+  const scoped = page.selector ? (extractElement(html, page.selector) ?? html) : html;
+  const lines = normalizeLines(htmlToText(scoped), compileIgnore(page.ignorePattern));
+  const hash = hashContent(lines);
+
+  const previousLines = page.content ? page.content.split("\n") : [];
+  const diff: ContentDiff = diffLines(previousLines, lines);
+  const changed = page.contentHash !== null && hash !== page.contentHash;
+  const keywordHits = newKeywordHits(diff, parseKeywords(page.keywords));
+
+  // Dates are replaced wholesale so the overall view reflects the page as it
+  // reads now -- a removed show must disappear, not linger as if still booked.
+  const dates = parseTourDates(lines, new Date().getFullYear());
+  const artist = page.artist ?? page.label;
+
+  await prisma.$transaction([
+    prisma.tourDate.deleteMany({ where: { pageId: page.id } }),
+    prisma.tourDate.createMany({
+      data: dates.map((d) => ({
+        pageId: page.id,
+        artist,
+        date: d.date,
+        detail: d.detail,
+        raw: d.raw,
+      })),
+    }),
+    prisma.watchedPage.update({
+      where: { id: page.id },
+      data: {
+        lastCheckedAt: new Date(),
+        lastStatus: "ok",
+        lastError: null,
+        contentHash: hash,
+        content: lines.join("\n"),
+        failureCount: 0,
+      },
+    }),
+  ]);
+
+  const summary = describeChange(diff);
+
+  if (shouldNotify(page.contentHash, diff)) {
+    const body = [
+      page.label,
+      page.url,
+      "",
+      keywordHits.length ? `Keywords: ${keywordHits.join(", ")}` : null,
+      keywordHits.length ? "" : null,
+      formatDiff(diff).slice(0, MAX_DIFF_CHARS),
+    ]
+      .filter((l) => l !== null)
+      .join("\n");
+
+    const subject = keywordHits.length
+      ? `${page.label}: ${keywordHits.join(", ")}`
+      : `${page.label} changed (${summary})`;
+
+    const sent = await notify(subject, body);
+
+    await prisma.pageChange.create({
+      data: {
+        pageId: page.id,
+        summary,
+        diff: formatDiff(diff).slice(0, MAX_DIFF_CHARS),
+        keywordHits: keywordHits.length ? keywordHits.join(", ") : null,
+        notified: sent,
+      },
+    });
+  }
+
+  return { ok: true, changed, summary, keywordHits, dateCount: dates.length };
+}
+
+export type RunResult = {
+  checked: number;
+  changed: number;
+  failed: number;
+  notified: number;
+};
+
+/**
+ * Checks every enabled page, one at a time.
+ *
+ * Sequential on purpose. These are a handful of pages every few hours, so
+ * concurrency buys nothing measurable, and hitting one site with parallel
+ * requests is how a polite watcher starts looking like a scraper.
+ */
+export async function runAllChecks(): Promise<RunResult> {
+  const pages = await prisma.watchedPage.findMany({ where: { enabled: true } });
+  const result: RunResult = { checked: 0, changed: 0, failed: 0, notified: 0 };
+
+  for (const page of pages) {
+    const outcome = await checkPage(page);
+    result.checked++;
+    if (!outcome.ok) result.failed++;
+    else if (outcome.changed) {
+      result.changed++;
+      if (outcome.keywordHits.length) result.notified++;
+    }
+  }
+  return result;
+}
+
+export type ArtistDates = {
+  artist: string;
+  dates: { date: string | null; detail: string; raw: string; url: string; label: string }[];
+};
+
+/**
+ * The overall view: every artist and their dates, across all watched pages.
+ *
+ * Undated lines sort last rather than being dropped -- a listing the parser
+ * couldn't date is still something worth seeing, and hiding it would make the
+ * view quietly incomplete.
+ */
+export async function getArtistDates(): Promise<ArtistDates[]> {
+  const rows = await prisma.tourDate.findMany({
+    include: { page: { select: { url: true, label: true } } },
+    orderBy: [{ artist: "asc" }, { date: "asc" }],
+  });
+
+  const byArtist = new Map<string, ArtistDates>();
+  for (const row of rows) {
+    let entry = byArtist.get(row.artist);
+    if (!entry) {
+      entry = { artist: row.artist, dates: [] };
+      byArtist.set(row.artist, entry);
+    }
+    entry.dates.push({
+      date: row.date,
+      detail: row.detail,
+      raw: row.raw,
+      url: row.page.url,
+      label: row.page.label,
+    });
+  }
+
+  for (const entry of byArtist.values()) {
+    entry.dates.sort((a, b) => {
+      if (a.date === b.date) return 0;
+      if (a.date === null) return 1;
+      if (b.date === null) return -1;
+      return a.date < b.date ? -1 : 1;
+    });
+  }
+
+  return [...byArtist.values()].sort((a, b) => a.artist.localeCompare(b.artist));
+}
+
+export type PageWatchSummary = {
+  pages: {
+    id: string;
+    url: string;
+    label: string;
+    artist: string | null;
+    keywords: string | null;
+    enabled: boolean;
+    lastCheckedAt: string | null;
+    lastStatus: string | null;
+    lastError: string | null;
+    failureCount: number;
+    dateCount: number;
+  }[];
+  recentChanges: {
+    id: string;
+    label: string;
+    detectedAt: string;
+    summary: string;
+    diff: string;
+    keywordHits: string | null;
+    notified: boolean;
+  }[];
+  artists: ArtistDates[];
+  notifyConfigured: boolean;
+};
+
+/** Everything the admin panel renders, in one round trip. */
+export async function getPageWatchSummary(): Promise<PageWatchSummary> {
+  const { isNotifyConfigured } = await import("@/lib/notify");
+
+  const [pages, changes, artists] = await Promise.all([
+    prisma.watchedPage.findMany({
+      orderBy: { createdAt: "asc" },
+      include: { _count: { select: { dates: true } } },
+    }),
+    prisma.pageChange.findMany({
+      orderBy: { detectedAt: "desc" },
+      take: 20,
+      include: { page: { select: { label: true } } },
+    }),
+    getArtistDates(),
+  ]);
+
+  return {
+    pages: pages.map((p) => ({
+      id: p.id,
+      url: p.url,
+      label: p.label,
+      artist: p.artist,
+      keywords: p.keywords,
+      enabled: p.enabled,
+      lastCheckedAt: p.lastCheckedAt?.toISOString() ?? null,
+      lastStatus: p.lastStatus,
+      lastError: p.lastError,
+      failureCount: p.failureCount,
+      dateCount: p._count.dates,
+    })),
+    recentChanges: changes.map((c) => ({
+      id: c.id,
+      label: c.page.label,
+      detectedAt: c.detectedAt.toISOString(),
+      summary: c.summary,
+      diff: c.diff,
+      keywordHits: c.keywordHits,
+      notified: c.notified,
+    })),
+    artists,
+    notifyConfigured: isNotifyConfigured(),
+  };
+}

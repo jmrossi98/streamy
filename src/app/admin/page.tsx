@@ -19,6 +19,8 @@ import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { BlogEditor } from "@/components/BlogEditor";
 import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
+import { PageWatchPanel } from "@/components/PageWatchPanel";
+import { getPageWatchSummary } from "@/lib/pageWatch";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -47,6 +49,7 @@ export default async function AdminFeaturesPage() {
     services,
     visitors,
     blogPosts,
+    pageWatch,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -69,6 +72,7 @@ export default async function AdminFeaturesPage() {
     // swallows its own failures and returns [], so a GitHub outage costs the
     // warning, not the page.
     blogConfigured ? listPosts() : Promise.resolve([]),
+    getPageWatchSummary(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -137,6 +141,13 @@ export default async function AdminFeaturesPage() {
         </div>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <BlogEditor configured={blogConfigured} existingSlugs={blogPosts.map((b) => b.slug)} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Tour watch</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PageWatchPanel summary={pageWatch} />
         </div>
       </section>
 

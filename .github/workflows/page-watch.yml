@@ -1,0 +1,58 @@
+# Tour page watcher.
+#
+# Hits the app's own cron endpoint, which fetches every enabled watched page,
+# diffs it against the last check and emails on a change or a keyword hit.
+#
+# Unlike the integration check, this needs nothing on the homelab network --
+# it watches public websites -- so it runs from a GitHub runner over the public
+# internet rather than being SSH'd onto the Lightsail box.
+#
+# Never a deploy gate: a site being slow or down should never block anything.
+name: Tour Watch
+
+on:
+  schedule:
+    # Every 4 hours. Tour dates and presales move on the scale of days, so this
+    # catches a change the same morning without hammering anyone's site --
+    # 6 requests a day per page is well inside polite.
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+# One run at a time. Overlapping runs would double-fetch every page and could
+# race on the stored baseline, producing a diff against a half-written state.
+concurrency:
+  group: tour-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the watch
+        env:
+          BASE_URL: ${{ secrets.NEXTAUTH_URL }}
+          WATCH_SECRET: ${{ secrets.PAGE_WATCH_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WATCH_SECRET}" ]; then
+            echo "PAGE_WATCH_SECRET is not set -- the endpoint fails closed, so this would 401."
+            exit 1
+          fi
+
+          # --fail-with-body so a non-2xx still prints what the server said,
+          # instead of failing with an exit code and no explanation.
+          curl --silent --show-error --fail-with-body \
+            --max-time 300 \
+            -X POST \
+            "${BASE_URL%/}/api/cron/page-watch?secret=${WATCH_SECRET}" \
+          | tee response.json
+
+          echo
+
+          # The endpoint answers 200 with ok:false if a run failed internally,
+          # so the body is checked rather than trusting the status code alone.
+          if grep -q '"ok":false' response.json; then
+            echo "Run reported a failure."
+            exit 1
+          fi
