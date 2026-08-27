@@ -118,6 +118,21 @@ jobs:
           # Shared secret for the tour-watch cron endpoint. That endpoint fails
           # closed, so leaving this unset disables page watching entirely.
           PAGE_WATCH_SECRET: ${{ secrets.PAGE_WATCH_SECRET }}
+          # Anonymising egress for the tour watcher. PAGE_WATCH_PROXY_URL points
+          # at the gluetun sidecar's HTTP proxy; PAGE_WATCH_REQUIRE_PROXY=1 makes
+          # a watch fetch fail closed rather than leave from this box's real IP.
+          # PAGE_WATCH_USER_AGENT overrides the (deliberately anonymous) default.
+          PAGE_WATCH_PROXY_URL: ${{ secrets.PAGE_WATCH_PROXY_URL }}
+          PAGE_WATCH_REQUIRE_PROXY: ${{ secrets.PAGE_WATCH_REQUIRE_PROXY }}
+          PAGE_WATCH_USER_AGENT: ${{ secrets.PAGE_WATCH_USER_AGENT }}
+          # VPN credentials for the gluetun sidecar. When VPN_SERVICE_PROVIDER is
+          # set, the deploy enables the "vpn" compose profile and gluetun starts;
+          # unset, the sidecar never runs and egress stays direct.
+          VPN_SERVICE_PROVIDER: ${{ secrets.VPN_SERVICE_PROVIDER }}
+          VPN_TYPE: ${{ secrets.VPN_TYPE }}
+          WIREGUARD_PRIVATE_KEY: ${{ secrets.WIREGUARD_PRIVATE_KEY }}
+          WIREGUARD_ADDRESSES: ${{ secrets.WIREGUARD_ADDRESSES }}
+          VPN_SERVER_COUNTRIES: ${{ secrets.VPN_SERVER_COUNTRIES }}
           MEDIA_WEBHOOK_SECRET: ${{ secrets.MEDIA_WEBHOOK_SECRET }}
           JELLYFIN_URL: ${{ secrets.JELLYFIN_URL }}
           JELLYFIN_API_KEY: ${{ secrets.JELLYFIN_API_KEY }}
@@ -162,7 +177,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,PROWLARR_URL,PROWLARR_API_KEY,PAGE_WATCH_SECRET,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,PROWLARR_URL,PROWLARR_API_KEY,PAGE_WATCH_SECRET,PAGE_WATCH_PROXY_URL,PAGE_WATCH_REQUIRE_PROXY,PAGE_WATCH_USER_AGENT,VPN_SERVICE_PROVIDER,VPN_TYPE,WIREGUARD_PRIVATE_KEY,WIREGUARD_ADDRESSES,VPN_SERVER_COUNTRIES,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -216,6 +231,14 @@ jobs:
               "PROWLARR_URL=${PROWLARR_URL}" \
               "PROWLARR_API_KEY=${PROWLARR_API_KEY}" \
               "PAGE_WATCH_SECRET=${PAGE_WATCH_SECRET}" \
+              "PAGE_WATCH_PROXY_URL=${PAGE_WATCH_PROXY_URL}" \
+              "PAGE_WATCH_REQUIRE_PROXY=${PAGE_WATCH_REQUIRE_PROXY}" \
+              "PAGE_WATCH_USER_AGENT=${PAGE_WATCH_USER_AGENT}" \
+              "VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}" \
+              "VPN_TYPE=${VPN_TYPE}" \
+              "WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}" \
+              "WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}" \
+              "VPN_SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES}" \
               "MEDIA_WEBHOOK_SECRET=${MEDIA_WEBHOOK_SECRET}" \
               "AUTH_TRUST_HOST=true" \
               "RUN_MIGRATE=1" \
@@ -242,7 +265,13 @@ jobs:
             if [ -n "${{ secrets.GHCR_PULL_TOKEN }}" ]; then
               echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             fi
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # The VPN egress sidecar (gluetun) lives behind the "vpn" compose
+            # profile, so it only starts when VPN credentials are actually set.
+            # Without them the profile stays off and the site comes up exactly
+            # as before -- a missing VPN can never take the deploy down.
+            COMPOSE_PROFILES=""
+            if [ -n "${VPN_SERVICE_PROVIDER}" ]; then COMPOSE_PROFILES="--profile vpn"; fi
+            docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} pull
+            docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} up -d --remove-orphans
             # Old :latest becomes untagged (<none>) after each pull — prune frees disk (layers still shared).
             docker image prune -f

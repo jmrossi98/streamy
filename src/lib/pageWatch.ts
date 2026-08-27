@@ -9,6 +9,7 @@
  * Notifications are email, via the same SNS topic as the health check.
  */
 
+import { ProxyAgent } from "undici";
 import { prisma } from "@/lib/db";
 import { notify } from "@/lib/notify";
 import {
@@ -32,13 +33,91 @@ const MAX_BYTES = 5_000_000;
 const MAX_DIFF_CHARS = 8000;
 
 /**
- * Identifies the crawler honestly, with a contact route.
+ * User-Agent sent on every watch request.
  *
- * A watcher that hides behind a browser string is indistinguishable from
- * something abusive, and is what gets an IP blocked. This says what it is and
- * where to complain, which is also what makes honouring robots.txt meaningful.
+ * Deliberately does NOT name this project or any personal domain. Announcing
+ * "streamy-app.com" would re-attribute every request straight back regardless
+ * of what IP it exits from -- which defeats routing egress through a VPN in the
+ * first place. It still identifies as a generic bot so that robots.txt
+ * user-agent groups can match it, which is what keeps the watcher compliant
+ * rather than merely quiet. Overridable so the token can be tuned per target.
  */
-export const USER_AGENT = "StreamyWatch/1.0 (+https://streamy-app.com; personal tour-date watcher)";
+export function userAgent(): string {
+  return process.env.PAGE_WATCH_USER_AGENT?.trim() || "Mozilla/5.0 (compatible; PageWatch/1.0)";
+}
+
+/**
+ * Anonymity guarantee for outbound watch traffic.
+ *
+ * PAGE_WATCH_PROXY_URL points at a VPN egress proxy (e.g. a gluetun sidecar's
+ * HTTP proxy). When set, every watch request -- the page and its robots.txt --
+ * goes through it, so the request exits from the VPN's IP and the proxy, not
+ * this box, resolves the target's DNS.
+ *
+ * PAGE_WATCH_REQUIRE_PROXY makes that a hard requirement: with it on and no
+ * usable proxy, a fetch throws rather than falling back to a direct
+ * connection. This is the kill-switch. A single direct request during a VPN
+ * outage would leak this box's real IP -- which DNS ties back to the site and
+ * its owner -- so the safe failure is to fetch nothing, not to fetch exposed.
+ */
+function proxyUrl(): string | null {
+  const value = process.env.PAGE_WATCH_PROXY_URL?.trim();
+  return value ? value : null;
+}
+
+function proxyRequired(): boolean {
+  const value = process.env.PAGE_WATCH_REQUIRE_PROXY?.toLowerCase().trim();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+export type EgressDecision =
+  | { via: "proxy"; url: string }
+  | { via: "direct" }
+  | { via: "blocked" };
+
+/**
+ * The one rule that decides how a watch request leaves the box, kept pure so it
+ * can be unit tested -- it is the difference between anonymous and exposed.
+ *
+ * - a proxy is set        -> go through it
+ * - none set, not required -> direct (fine for local dev)
+ * - none set, required     -> blocked, never direct
+ *
+ * The last line is the whole point: when anonymity is required, the safe
+ * failure is to send nothing, because a single direct request leaks an IP that
+ * DNS ties straight back to the owner.
+ */
+export function resolveEgress(url: string | null, required: boolean): EgressDecision {
+  if (url) return { via: "proxy", url };
+  return required ? { via: "blocked" } : { via: "direct" };
+}
+
+let cachedAgent: { url: string; agent: ProxyAgent } | null = null;
+function proxyDispatcher(url: string): ProxyAgent {
+  if (cachedAgent?.url !== url) cachedAgent = { url, agent: new ProxyAgent(url) };
+  return cachedAgent.agent;
+}
+
+/**
+ * The only fetch used for outbound watch traffic. Fail-closed: it never falls
+ * back to a direct connection when a proxy is required, so a watch request can
+ * never leave from this box's own IP.
+ */
+async function watchFetch(url: string, init: RequestInit): Promise<Response> {
+  const decision = resolveEgress(proxyUrl(), proxyRequired());
+  if (decision.via === "blocked") {
+    throw new Error("Egress proxy required but PAGE_WATCH_PROXY_URL is unset — refusing to fetch");
+  }
+  // `dispatcher` is an undici extension to RequestInit that the global fetch
+  // honours at runtime but the DOM types don't describe.
+  const extra = decision.via === "proxy" ? { dispatcher: proxyDispatcher(decision.url) } : {};
+  return fetch(url, { ...init, ...extra } as RequestInit);
+}
+
+/** Whether an anonymising egress proxy is active, for the admin panel to show. */
+export function isEgressProxied(): boolean {
+  return proxyUrl() !== null;
+}
 
 export type CheckOutcome =
   | { ok: true; changed: boolean; summary: string; keywordHits: string[]; dateCount: number }
@@ -54,8 +133,10 @@ function compileIgnore(pattern: string | null): RegExp[] {
       out.push(new RegExp(trimmed));
     } catch {
       // A bad regex is a config mistake, not a reason to stop checking the
-      // page -- it just doesn't filter anything.
-      console.warn(`[pageWatch] ignoring invalid pattern: ${trimmed}`);
+      // page -- it just doesn't filter anything. The pattern itself is not
+      // logged: it can carry site-identifying terms, and logs are the one
+      // place this feature is meant to reveal nothing.
+      console.warn("[pageWatch] ignoring an invalid ignore pattern");
     }
   }
   return out;
@@ -63,8 +144,8 @@ function compileIgnore(pattern: string | null): RegExp[] {
 
 /** Fetches a URL as text, with a timeout and a size ceiling. */
 async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,text/plain" },
+  const res = await watchFetch(url, {
+    headers: { "User-Agent": userAgent(), Accept: "text/html,application/xhtml+xml,text/plain" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     redirect: "follow",
   });
@@ -89,13 +170,19 @@ async function fetchText(url: string): Promise<string> {
 export async function robotsAllows(url: string): Promise<boolean> {
   try {
     const target = new URL(url);
-    const res = await fetch(new URL("/robots.txt", target.origin), {
-      headers: { "User-Agent": USER_AGENT },
+    // Through the same egress as the page fetch: hitting robots.txt directly
+    // would leak this box's IP to the very site we are trying not to be traced
+    // from, one request before the page fetch that is being protected.
+    const res = await watchFetch(new URL("/robots.txt", target.origin).toString(), {
+      headers: { "User-Agent": userAgent() },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return true;
-    return isAllowedByRobots(await res.text(), target.pathname, USER_AGENT);
-  } catch {
+    return isAllowedByRobots(await res.text(), target.pathname, userAgent());
+  } catch (err) {
+    // A required proxy being down must not become an open door: fail-closed
+    // errors propagate rather than being read as "allowed".
+    if (err instanceof Error && err.message.includes("Egress proxy required")) throw err;
     return true;
   }
 }
@@ -313,6 +400,10 @@ export type PageWatchSummary = {
   }[];
   artists: ArtistDates[];
   notifyConfigured: boolean;
+  /** Whether outbound watch traffic exits through an anonymising proxy. */
+  egressProxied: boolean;
+  /** Whether a missing proxy hard-fails the fetch rather than going direct. */
+  egressEnforced: boolean;
 };
 
 /** Everything the admin panel renders, in one round trip. */
@@ -357,5 +448,7 @@ export async function getPageWatchSummary(): Promise<PageWatchSummary> {
     })),
     artists,
     notifyConfigured: isNotifyConfigured(),
+    egressProxied: isEgressProxied(),
+    egressEnforced: proxyRequired(),
   };
 }

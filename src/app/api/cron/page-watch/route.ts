@@ -33,12 +33,16 @@ export async function POST(request: Request) {
 
   try {
     const result = await runAllChecks();
+    // Counts only -- no URLs, labels or error text. This body is echoed into
+    // the GitHub Actions log, which is public on a public repo, so it must
+    // reveal nothing about what is being watched. Per-page errors are recorded
+    // in the database (private) and shown in the admin panel instead.
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    // Surfaced rather than swallowed: this one has a human reading the
-    // workflow log, unlike the beacon.
-    const error = err instanceof Error ? err.message : String(err);
-    console.error("[cron/page-watch] run failed:", error);
-    return NextResponse.json({ ok: false, error }, { status: 500 });
+    // Logged to the server's own stdout (private), never returned. The response
+    // says only that the run failed, so the public workflow log carries no
+    // detail that could name a target.
+    console.error("[cron/page-watch] run failed:", err instanceof Error ? err.message : err);
+    return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

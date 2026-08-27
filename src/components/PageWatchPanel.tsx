@@ -99,10 +99,27 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
     setBusy(null);
   }
 
-  const { pages, recentChanges, artists, notifyConfigured } = summary;
+  const { pages, recentChanges, artists, notifyConfigured, egressProxied, egressEnforced } =
+    summary;
 
   return (
     <div className="space-y-6">
+      {/* Egress state first: it is the one thing here that, if wrong, exposes
+          who is doing the watching rather than merely losing a feature. */}
+      {egressProxied ? (
+        <p className="rounded border border-green-500/30 bg-green-950/20 px-3 py-2 text-sm text-green-200/80">
+          Requests exit through the VPN proxy
+          {egressEnforced ? ", and fail closed if it drops" : ""}. Traffic does not leave from this
+          server&apos;s own address.
+        </p>
+      ) : (
+        <p className="rounded border border-red-500/30 bg-red-950/30 px-3 py-2 text-sm text-red-300">
+          Requests leave from this server&apos;s own IP —{" "}
+          <code className="text-red-200">PAGE_WATCH_PROXY_URL</code> is unset, so a watched site can
+          trace the polling back here. Set the VPN egress proxy before adding anything sensitive.
+        </p>
+      )}
+
       {!notifyConfigured && (
         <p className="rounded border border-yellow-500/30 bg-yellow-950/20 px-3 py-2 text-sm text-yellow-200/80">
           Email notification is off — <code className="text-yellow-100">ALERT_SNS_TOPIC_ARN</code>{" "}
