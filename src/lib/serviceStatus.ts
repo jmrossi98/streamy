@@ -56,17 +56,24 @@ async function probe(
   }
 }
 
-/** Radarr and Sonarr share an API shape, so they share this probe. */
+/**
+ * Shared probe for the *arr family, which share an API shape but not an API
+ * version: Radarr and Sonarr are on v3, while Prowlarr (like Lidarr and
+ * Readarr) is still on v1. Hardcoding v3 makes Prowlarr answer 404 and report
+ * itself down even when it is running and correctly configured, so the version
+ * is per-service rather than assumed.
+ */
 async function servarrStatus(
   name: string,
   group: ServiceStatus["group"],
   base: string,
   key: string,
-  configured: boolean
+  configured: boolean,
+  apiVersion: "v1" | "v3" = "v3"
 ): Promise<ServiceStatus> {
   if (!configured) return { name, group, state: "unconfigured", detail: "Not configured" };
 
-  const res = await probe(`${base}/api/v3/system/status`, { "X-Api-Key": key });
+  const res = await probe(`${base}/api/${apiVersion}/system/status`, { "X-Api-Key": key });
   if (!res.ok) {
     return {
       name,
@@ -214,7 +221,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
       "Downloads",
       env("PROWLARR_URL"),
       process.env.PROWLARR_API_KEY ?? "",
-      !!env("PROWLARR_URL") && !!process.env.PROWLARR_API_KEY
+      !!env("PROWLARR_URL") && !!process.env.PROWLARR_API_KEY,
+      "v1"
     ),
     jellyfinStatus(),
     qbittorrentStatus(),
