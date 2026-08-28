@@ -62,7 +62,7 @@ export async function getVisitorMap(): Promise<VisitorMap> {
     }),
     prisma.loginAttempt.findMany({
       where: { at: { gte: since } },
-      select: { ip: true },
+      select: { ip: true, success: true },
     }),
   ]);
 
@@ -71,7 +71,12 @@ export async function getVisitorMap(): Promise<VisitorMap> {
       ip: v.ip,
       source: (v.site === "streamy" ? "streamy" : "portfolio") as LocatedVisit["source"],
     })),
-    ...logins.map((l) => ({ ip: l.ip, source: "login" as const })),
+    // Successful and failed sign-ins are distinct sources -- a failed attempt
+    // is what "who is trying to get in" is actually asking about.
+    ...logins.map((l) => ({
+      ip: l.ip,
+      source: (l.success ? "login-success" : "login-fail") as LocatedVisit["source"],
+    })),
   ];
 
   const located = await locateMany(raw.map((r) => r.ip));
@@ -105,5 +110,9 @@ export async function getVisitorMap(): Promise<VisitorMap> {
 }
 
 function emptyTotals(): MapTotals {
-  return { pins: 0, visits: 0, bySource: { portfolio: 0, streamy: 0, login: 0 } };
+  return {
+    pins: 0,
+    visits: 0,
+    bySource: { portfolio: 0, streamy: 0, "login-success": 0, "login-fail": 0 },
+  };
 }

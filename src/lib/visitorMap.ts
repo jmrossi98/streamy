@@ -17,7 +17,17 @@ export type LocatedVisit = {
   source: VisitSource;
 };
 
-export type VisitSource = "portfolio" | "streamy" | "login";
+// Sign-ins are split into success and failure: a failed attempt is the one that
+// actually matters for "who is trying to get in", and lumping it with successes
+// hid that. The order here is also the canonical source order.
+export type VisitSource = "portfolio" | "streamy" | "login-success" | "login-fail";
+
+export const VISIT_SOURCES: readonly VisitSource[] = [
+  "portfolio",
+  "streamy",
+  "login-success",
+  "login-fail",
+];
 
 export type MapPin = {
   lat: number;
@@ -55,7 +65,7 @@ function cellKey(lat: number, lon: number): string {
 }
 
 function emptyBySource(): Record<VisitSource, number> {
-  return { portfolio: 0, streamy: 0, login: 0 };
+  return { portfolio: 0, streamy: 0, "login-success": 0, "login-fail": 0 };
 }
 
 function labelFor(city: string | null, country: string | null, lat: number, lon: number): string {
@@ -145,9 +155,9 @@ export function totals(pins: MapPin[]): MapTotals {
   let visits = 0;
   for (const pin of pins) {
     visits += pin.total;
-    bySource.portfolio += pin.bySource.portfolio;
-    bySource.streamy += pin.bySource.streamy;
-    bySource.login += pin.bySource.login;
+    // Iterate the sources rather than naming each, so adding or splitting a
+    // source (as login just was) can't leave a total silently uncounted.
+    for (const s of VISIT_SOURCES) bySource[s] += pin.bySource[s];
   }
   return { pins: pins.length, visits, bySource };
 }
