@@ -15,6 +15,8 @@ import { runSecurityChecks } from "@/lib/securityChecks";
 import { SecurityPanel } from "@/components/SecurityPanel";
 import { ServicesPanel } from "@/components/ServicesPanel";
 import { getServiceStatuses } from "@/lib/serviceStatus";
+import { TestAlertButton } from "@/components/TestAlertButton";
+import { isNotifyConfigured } from "@/lib/notify";
 import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
@@ -123,6 +125,7 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <ServicesPanel services={services} />
+          <TestAlertButton configured={isNotifyConfigured()} />
         </div>
       </section>
 

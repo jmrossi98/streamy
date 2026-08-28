@@ -54,6 +54,32 @@ export async function isDatabaseReady(): Promise<boolean> {
 // this is cheap to hold and expensive to reopen -- do it once.
 let reader: Reader<CityResponse> | null = null;
 let downloading: Promise<void> | null = null;
+// Last download failure, kept so a health check can surface a bad key ("HTTP
+// 401") instead of the map sitting on "downloading…" forever.
+let lastDownloadError: string | null = null;
+
+export type GeoStatus = {
+  configured: boolean;
+  present: boolean;
+  ageDays: number | null;
+  error: string | null;
+};
+
+/** Database health for the admin panel: present, how old, or why not. */
+export async function geoStatus(): Promise<GeoStatus> {
+  if (!isGeoipConfigured()) {
+    return { configured: false, present: false, ageDays: null, error: null };
+  }
+  const age = await mmdbAge();
+  const present = age !== Infinity;
+  if (!present) startBackgroundDownload();
+  return {
+    configured: true,
+    present,
+    ageDays: present ? Math.floor(age / (24 * 60 * 60 * 1000)) : null,
+    error: lastDownloadError,
+  };
+}
 
 /** Age of the database file in ms, or Infinity when it isn't there. */
 async function mmdbAge(): Promise<number> {
