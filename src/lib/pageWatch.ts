@@ -59,6 +59,63 @@ async function watchFetch(url: string, init: RequestInit): Promise<Response> {
   return fetch(url, { ...init, ...extra } as RequestInit);
 }
 
+// Echoes back the caller's public IP. The Services panel's torrent-VPN check
+// uses the same service, so the two VPN checks agree on what "our IP" means.
+const IP_ECHO = "https://api.ipify.org?format=json";
+
+export type EgressHealth =
+  | { state: "direct" }
+  | { state: "protected"; exitIp: string }
+  | { state: "leaking"; ip: string }
+  | { state: "down"; error: string };
+
+/**
+ * Verifies, live, that watch traffic actually leaves through the VPN.
+ *
+ * A green banner from PAGE_WATCH_PROXY_URL being set only proves the config is
+ * present, not that gluetun is up and carrying traffic. This proves it: it asks
+ * an IP-echo service for the exit address twice -- once directly, once through
+ * the proxy -- and compares.
+ *
+ *  - direct    : no proxy configured; traffic leaves from this box, as the
+ *                banner already says.
+ *  - protected : the proxied request came back with a different IP -- the
+ *                tunnel is up and carrying traffic. The exit IP is shown.
+ *  - leaking   : the proxied IP equals this box's own -- the proxy is set but
+ *                not actually tunnelling, which is the dangerous silent case.
+ *  - down      : the proxied request failed -- gluetun is not reachable. With
+ *                PAGE_WATCH_REQUIRE_PROXY on this is also what the watcher hits,
+ *                so it is failing closed rather than leaking, but nothing is
+ *                being watched until it recovers.
+ */
+export async function checkEgress(): Promise<EgressHealth> {
+  if (!isEgressProxied()) return { state: "direct" };
+
+  // This box's own public IP -- a plain fetch, never through the proxy.
+  let directIp: string | null = null;
+  try {
+    const res = await fetch(IP_ECHO, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) directIp = ((await res.json()) as { ip?: string }).ip ?? null;
+  } catch {
+    // A failure to learn our own IP isn't fatal; the exit IP is what matters.
+  }
+
+  // The exit IP as the watcher sees it -- through the proxy.
+  let exitIp: string | null = null;
+  let error = "";
+  try {
+    const res = await watchFetch(IP_ECHO, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) exitIp = ((await res.json()) as { ip?: string }).ip ?? null;
+    else error = `proxy returned HTTP ${res.status}`;
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!exitIp) return { state: "down", error: error || "no exit address returned" };
+  if (directIp && exitIp === directIp) return { state: "leaking", ip: exitIp };
+  return { state: "protected", exitIp };
+}
+
 export type CheckOutcome =
   | { ok: true; changed: boolean; summary: string; keywordHits: string[]; dateCount: number }
   | { ok: false; error: string };

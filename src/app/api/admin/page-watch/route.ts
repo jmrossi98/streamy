@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { checkPage, runAllChecks } from "@/lib/pageWatch";
+import { checkEgress, checkPage, runAllChecks } from "@/lib/pageWatch";
 
 /**
  * Manage watched pages, and run a check on demand.
@@ -67,6 +67,11 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // Live verification that watch traffic exits through the VPN, not the box.
+  if (body.action === "egress") {
+    return NextResponse.json({ ok: true, egress: await checkEgress() });
   }
 
   // Run-now, for the whole set or a single page, rather than waiting for cron.
