@@ -6,6 +6,7 @@ import { WatchlistProvider } from "@/contexts/WatchlistContext";
 import { HomeRefresh } from "@/components/HomeRefresh";
 import { NavigationSync } from "@/components/NavigationSync";
 import { LayoutShell } from "@/components/LayoutShell";
+import { VisitReporter } from "@/components/VisitReporter";
 
 const bebas = Bebas_Neue({
   weight: "400",
@@ -41,6 +42,7 @@ export default function RootLayout({
           <WatchlistProvider>
             <HomeRefresh />
             <NavigationSync />
+            <VisitReporter />
             <LayoutShell>{children}</LayoutShell>
           </WatchlistProvider>
         </SessionProvider>

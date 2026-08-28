@@ -17,11 +17,30 @@ import { isKnownSite, pruneOldVisits, recordVisit } from "@/lib/siteVisits";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Only these origins may report. Anything else gets no CORS headers back. */
-const ALLOWED_ORIGINS = new Set([
-  "https://jakobrossi.com",
-  "https://www.jakobrossi.com",
-]);
+/**
+ * Only these origins may report. Anything else gets no CORS headers back.
+ *
+ * The portfolio origins are fixed; Streamy's own origin is added from
+ * NEXTAUTH_URL so the app can report its own page views to this endpoint. That
+ * is a same-origin request, but the browser still sends an Origin header on the
+ * POST, and the check below rejects any origin not in this set.
+ */
+const ALLOWED_ORIGINS = new Set(
+  [
+    "https://jakobrossi.com",
+    "https://www.jakobrossi.com",
+    originOf(process.env.NEXTAUTH_URL),
+  ].filter((o): o is string => o !== null)
+);
+
+function originOf(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
 
 function corsHeaders(origin: string | null): Record<string, string> {
   if (!origin || !ALLOWED_ORIGINS.has(origin)) return {};

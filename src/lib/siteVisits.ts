@@ -10,7 +10,10 @@
 import { prisma } from "./db";
 
 /** Allowed `site` values. An unknown site is rejected rather than stored. */
-export const KNOWN_SITES = ["portfolio"] as const;
+// "streamy" is this app reporting its own page views, alongside the portfolio
+// beacon. Both flow through the same collect endpoint and store; the site field
+// is what keeps them apart.
+export const KNOWN_SITES = ["portfolio", "streamy"] as const;
 export type KnownSite = (typeof KNOWN_SITES)[number];
 
 /** Rows kept. Long enough to see a trend, short enough to stay small. */
