@@ -101,3 +101,33 @@ Then `terraform init -migrate-state`.
   snapshot's data, move the static IP. Minutes, not an hour.
 - **State safety:** `*.tfstate` is gitignored — it can contain sensitive values.
   Never commit it.
+
+## Actual cutover (2026-08-28): snapshot-clone, not fresh provision
+
+The nano→2 GB migration was done by **snapshot-cloning** the live box, not by
+`terraform apply` of a fresh instance — a clone copies the whole disk (SQLite
+data, `.env`, swap) with zero manual data migration, which was safer under
+pressure. The steps taken (all via AWS CLI):
+
+1. `create-instance-snapshot` of the old `Ubuntu-1`
+2. `create-instances-from-snapshot ... --instance-names streamy-prod --bundle-id small_3_0`
+3. `attach-static-ip StaticIp-1 streamy-prod` (moved the IP; DNS unchanged)
+4. `open-instance-public-ports ... 443` — the clone's firewall reset to 22/80 only
+5. verified, kept old box as a temporary fallback
+
+The result matches this Terraform's defaults exactly (`streamy-prod`,
+`small_3_0`, `us-east-1a`), so to bring the running box under Terraform
+management, **import** rather than apply:
+
+```bash
+cd infra
+terraform init
+terraform import aws_lightsail_instance.streamy streamy-prod
+terraform import aws_lightsail_static_ip_attachment.streamy StaticIp-1
+terraform import aws_lightsail_instance_public_ports.streamy streamy-prod
+terraform plan   # should show little/no drift; reconcile add_on/user_data if it does
+```
+
+Note: a snapshot clone won't have the cloud-init `user_data`, and `add_on`
+auto-snapshots may need enabling to match. `terraform plan` will show any such
+drift to reconcile deliberately.
