@@ -205,6 +205,45 @@ export async function publishPost(input: {
   }
 }
 
+export type BlogAccess = {
+  ok: boolean;
+  canWrite: boolean;
+  /** Short human detail for the panel: the repo, or the failure. */
+  detail: string;
+};
+
+/**
+ * Whether the token can still write to the target repo.
+ *
+ * A publishing token can silently lose its scope or expire, and the first sign
+ * of that is a failed publish. GET /repos returns the caller's `permissions`,
+ * so this catches "token can't write any more" before an author hits it.
+ */
+export async function checkBlogAccess(): Promise<BlogAccess> {
+  if (!isBlogPublishingConfigured()) {
+    return { ok: false, canWrite: false, detail: "GITHUB_BLOG_TOKEN unset" };
+  }
+  try {
+    const res = await fetch(`${API}/repos/${repo()}`, {
+      headers: headers(),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      const msg = res.status === 401 ? "token rejected (401)" : `HTTP ${res.status}`;
+      return { ok: false, canWrite: false, detail: msg };
+    }
+    const json = (await res.json()) as { permissions?: { push?: boolean } };
+    const canWrite = json.permissions?.push === true;
+    return {
+      ok: true,
+      canWrite,
+      detail: canWrite ? `can write to ${repo()}` : `read-only on ${repo()}`,
+    };
+  } catch (err) {
+    return { ok: false, canWrite: false, detail: err instanceof Error ? err.message : "unreachable" };
+  }
+}
+
 export type ExistingPost = { slug: string; path: string };
 
 /** Posts already in the repo, so the editor can warn before overwriting one. */

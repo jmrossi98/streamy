@@ -8,7 +8,7 @@ const STATE_STYLE: Record<ServiceState, { dot: string; label: string; text: stri
   unconfigured: { dot: "bg-white/25", label: "Off", text: "text-white/40" },
 };
 
-const GROUP_ORDER: ServiceStatus["group"][] = ["Media", "Downloads", "Assistant"];
+const GROUP_ORDER: ServiceStatus["group"][] = ["Media", "Downloads", "Assistant", "System"];
 
 export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
   const down = services.filter((s) => s.state === "down");

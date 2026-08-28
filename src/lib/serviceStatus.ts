@@ -15,6 +15,12 @@ import { isJellyfinConfigured } from "./jellyfin";
 import { isQbittorrentConfigured } from "./qbittorrent";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
 import { isWebSearchConfigured } from "./webSearch";
+import { connect } from "node:tls";
+import { statfs, stat } from "node:fs/promises";
+import { geoStatus } from "./geoip";
+import { checkBlogAccess } from "./githubPublish";
+import { isNotifyConfigured } from "./notify";
+import { prisma } from "./db";
 
 const PROBE_TIMEOUT_MS = 5_000;
 
@@ -23,7 +29,7 @@ export type ServiceState = "up" | "down" | "unconfigured";
 export type ServiceStatus = {
   name: string;
   /** Grouping for the panel: what this service is for. */
-  group: "Media" | "Downloads" | "Assistant";
+  group: "Media" | "Downloads" | "Assistant" | "System";
   state: ServiceState;
   /** Short human detail: version, model, error reason. */
   detail: string;
@@ -212,8 +218,172 @@ async function searxngStatus(): Promise<ServiceStatus> {
   return { name: "SearXNG", group, state: "up", detail: "JSON API responding" };
 }
 
+const SYSTEM = "System" as const;
+
+/** GeoLite2 database backing the visitor map. */
+async function geoipStatus(): Promise<ServiceStatus> {
+  const s = await geoStatus();
+  if (!s.configured) {
+    return { name: "GeoLite2", group: SYSTEM, state: "unconfigured", detail: "No MAXMIND_LICENSE_KEY" };
+  }
+  if (s.present) {
+    const age = s.ageDays === 0 ? "today" : `${s.ageDays}d ago`;
+    return { name: "GeoLite2", group: SYSTEM, state: "up", detail: `database updated ${age}` };
+  }
+  // Not present: either still downloading, or the key is bad.
+  return {
+    name: "GeoLite2",
+    group: SYSTEM,
+    state: "down",
+    detail: s.error ? `download failing: ${s.error}` : "downloading…",
+  };
+}
+
+/** Whether the blog-publishing token can still write to the website repo. */
+async function blogTokenStatus(): Promise<ServiceStatus> {
+  const a = await checkBlogAccess();
+  if (a.detail === "GITHUB_BLOG_TOKEN unset") {
+    return { name: "Blog token", group: SYSTEM, state: "unconfigured", detail: "Not configured" };
+  }
+  return {
+    name: "Blog token",
+    group: SYSTEM,
+    state: a.ok && a.canWrite ? "up" : "down",
+    detail: a.detail,
+  };
+}
+
+/**
+ * TLS certificate expiry for the public domain.
+ *
+ * Reads the live certificate the way an external client would -- a raw TLS
+ * connection to the domain -- rather than trusting that Caddy's auto-renew is
+ * working. rejectUnauthorized is off because the goal is to READ the cert
+ * (including an already-expired one), not to validate the chain.
+ */
+async function tlsCertStatus(): Promise<ServiceStatus> {
+  const url = env("NEXTAUTH_URL");
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return { name: "TLS cert", group: SYSTEM, state: "unconfigured", detail: "No NEXTAUTH_URL" };
+  }
+
+  return await new Promise((resolve) => {
+    const socket = connect(
+      { host, port: 443, servername: host, rejectUnauthorized: false, timeout: PROBE_TIMEOUT_MS },
+      () => {
+        const cert = socket.getPeerCertificate();
+        socket.end();
+        if (!cert?.valid_to) {
+          resolve({ name: "TLS cert", group: SYSTEM, state: "down", detail: "no certificate" });
+          return;
+        }
+        const daysLeft = Math.floor((new Date(cert.valid_to).getTime() - Date.now()) / 86_400_000);
+        resolve({
+          name: "TLS cert",
+          group: SYSTEM,
+          state: daysLeft <= 0 ? "down" : "up",
+          detail:
+            daysLeft <= 0
+              ? "expired"
+              : daysLeft <= 14
+                ? `expires in ${daysLeft}d — renewal may be stuck`
+                : `valid for ${daysLeft}d`,
+        });
+      }
+    );
+    socket.on("error", (e) => resolve({ name: "TLS cert", group: SYSTEM, state: "down", detail: e.message }));
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve({ name: "TLS cert", group: SYSTEM, state: "down", detail: "timeout" });
+    });
+  });
+}
+
+/** Free space on the data volume, so it's visible before writes start failing. */
+async function diskStatus(): Promise<ServiceStatus> {
+  try {
+    const s = await statfs("/app/data");
+    const total = s.blocks * s.bsize;
+    const free = s.bavail * s.bsize;
+    const usedPct = total > 0 ? Math.round((1 - free / total) * 100) : 0;
+    const freeGb = (free / 1e9).toFixed(1);
+    return {
+      name: "Disk",
+      group: SYSTEM,
+      state: usedPct >= 90 ? "down" : "up",
+      detail: `${usedPct}% used, ${freeGb} GB free`,
+    };
+  } catch (err) {
+    return { name: "Disk", group: SYSTEM, state: "down", detail: err instanceof Error ? err.message : "unreadable" };
+  }
+}
+
+/** SQLite database size. Not a health failure by itself; a growth signal. */
+async function databaseStatus(): Promise<ServiceStatus> {
+  const path = (process.env.DATABASE_URL ?? "").replace(/^file:/, "");
+  if (!path) return { name: "Database", group: SYSTEM, state: "unconfigured", detail: "No DATABASE_URL" };
+  try {
+    const s = await stat(path);
+    const mb = (s.size / 1e6).toFixed(1);
+    return { name: "Database", group: SYSTEM, state: "up", detail: `SQLite, ${mb} MB` };
+  } catch (err) {
+    return { name: "Database", group: SYSTEM, state: "down", detail: err instanceof Error ? err.message : "unreadable" };
+  }
+}
+
+/** Email alerting wiring -- presence only; a live send would spam a real topic. */
+function alertingStatus(): ServiceStatus {
+  return isNotifyConfigured()
+    ? { name: "Alerting", group: SYSTEM, state: "up", detail: `SNS, project "${process.env.ALERT_PROJECT ?? "streamy"}"` }
+    : { name: "Alerting", group: SYSTEM, state: "unconfigured", detail: "No ALERT_SNS_TOPIC_ARN" };
+}
+
+/** Aggregate tour-watch health: enabled pages, any failing, last successful check. */
+async function tourWatchStatus(): Promise<ServiceStatus> {
+  try {
+    const pages = await prisma.watchedPage.findMany({
+      where: { enabled: true },
+      select: { lastStatus: true, lastCheckedAt: true },
+    });
+    if (pages.length === 0) {
+      return { name: "Tour watch", group: SYSTEM, state: "unconfigured", detail: "No pages watched" };
+    }
+    const failing = pages.filter((p) => p.lastStatus === "error").length;
+    const newest = pages.reduce<Date | null>(
+      (acc, p) => (p.lastCheckedAt && (!acc || p.lastCheckedAt > acc) ? p.lastCheckedAt : acc),
+      null
+    );
+    const last = newest ? `${Math.floor((Date.now() - newest.getTime()) / 3_600_000)}h ago` : "never";
+    return {
+      name: "Tour watch",
+      group: SYSTEM,
+      state: failing > 0 ? "down" : "up",
+      detail: failing > 0 ? `${failing}/${pages.length} failing, last ${last}` : `${pages.length} watched, last ${last}`,
+    };
+  } catch {
+    return { name: "Tour watch", group: SYSTEM, state: "down", detail: "check failed" };
+  }
+}
+
 export async function getServiceStatuses(): Promise<ServiceStatus[]> {
-  const [radarr, sonarr, prowlarr, jellyfin, downloads, ollama, searxng] = await Promise.all([
+  const [
+    radarr,
+    sonarr,
+    prowlarr,
+    jellyfin,
+    downloads,
+    ollama,
+    searxng,
+    geoip,
+    blogToken,
+    tls,
+    disk,
+    database,
+    tourWatch,
+  ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
     servarrStatus(
@@ -228,7 +398,29 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     qbittorrentStatus(),
     ollamaServiceStatus(),
     searxngStatus(),
+    geoipStatus(),
+    blogTokenStatus(),
+    tlsCertStatus(),
+    diskStatus(),
+    databaseStatus(),
+    tourWatchStatus(),
   ]);
 
-  return [jellyfin, radarr, sonarr, ...downloads, prowlarr, ollama, searxng];
+  return [
+    jellyfin,
+    radarr,
+    sonarr,
+    ...downloads,
+    prowlarr,
+    ollama,
+    searxng,
+    // System group, in rough order of "how loudly does this failing matter".
+    disk,
+    tls,
+    database,
+    blogToken,
+    geoip,
+    tourWatch,
+    alertingStatus(),
+  ];
 }
