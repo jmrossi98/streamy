@@ -16,7 +16,13 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (status === "authenticated" && session) {
+    // Require a real user id, not just the "authenticated" status. When a
+    // session is invalidated server-side (a stale token whose jwt callback
+    // returns an empty {}), useSession still reports "authenticated" but the
+    // session carries no user.id. Redirecting on status alone bounced such a
+    // user between /login and the middleware forever -- the sign-in loop. With
+    // no id we fall through to the form; signing in overwrites the bad cookie.
+    if (status === "authenticated" && session?.user?.id) {
       window.location.href = callbackUrl.startsWith("/") ? callbackUrl : "/";
     }
   }, [status, session, callbackUrl]);
@@ -48,7 +54,10 @@ export default function LoginPage() {
     }
   }
 
-  if (status === "loading" || (status === "authenticated" && session)) {
+  // Same guard as the redirect effect: show "Redirecting" only when there is a
+  // real user to redirect. An invalidated session (authenticated, no id) must
+  // fall through to the form rather than sit on a redirect that loops.
+  if (status === "loading" || (status === "authenticated" && session?.user?.id)) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 bg-netflix-black">
         <p className="text-white/70">Redirecting…</p>
