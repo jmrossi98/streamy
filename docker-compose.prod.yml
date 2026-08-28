@@ -49,8 +49,20 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}
       - VPN_TYPE=${VPN_TYPE:-wireguard}
-      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
-      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      # Two ways providers authenticate, and gluetun accepts whichever is set:
+      #  - credential providers (PIA, NordVPN, ...): OPENVPN_USER/PASSWORD, from
+      #    which gluetun generates the WireGuard key itself. This is PIA's path
+      #    -- there is no WireGuard config to download; it's your account login.
+      #  - config providers (Mullvad, Proton, ...): a WIREGUARD_PRIVATE_KEY and
+      #    ADDRESSES taken from a downloaded .conf.
+      # Unused ones stay blank and gluetun ignores them.
+      - OPENVPN_USER=${OPENVPN_USER:-}
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD:-}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:-}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES:-}
+      # PIA selects exits by region; most others by country. Set whichever your
+      # provider uses, or leave both blank for its default.
+      - SERVER_REGIONS=${VPN_SERVER_REGIONS:-}
       - SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES:-}
       # Turn on gluetun's built-in HTTP proxy, bound inside the compose network.
       - HTTPPROXY=on
