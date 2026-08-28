@@ -133,6 +133,9 @@ jobs:
           # VPN credentials for the gluetun sidecar. When VPN_SERVICE_PROVIDER is
           # set, the deploy enables the "vpn" compose profile and gluetun starts;
           # unset, the sidecar never runs and egress stays direct.
+          # Master switch for the gluetun sidecar. Must be exactly "true" for it
+          # to start; anything else (including unset) keeps it off.
+          VPN_ENABLED: ${{ secrets.VPN_ENABLED }}
           VPN_SERVICE_PROVIDER: ${{ secrets.VPN_SERVICE_PROVIDER }}
           VPN_TYPE: ${{ secrets.VPN_TYPE }}
           # Credential auth (PIA, Nord): gluetun makes the WireGuard key from these.
@@ -187,7 +190,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,PROWLARR_URL,PROWLARR_API_KEY,MAXMIND_LICENSE_KEY,PAGE_WATCH_SECRET,PAGE_WATCH_PROXY_URL,PAGE_WATCH_REQUIRE_PROXY,PAGE_WATCH_USER_AGENT,VPN_SERVICE_PROVIDER,VPN_TYPE,OPENVPN_USER,OPENVPN_PASSWORD,WIREGUARD_PRIVATE_KEY,WIREGUARD_ADDRESSES,VPN_SERVER_REGIONS,VPN_SERVER_COUNTRIES,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,PROWLARR_URL,PROWLARR_API_KEY,MAXMIND_LICENSE_KEY,PAGE_WATCH_SECRET,PAGE_WATCH_PROXY_URL,PAGE_WATCH_REQUIRE_PROXY,PAGE_WATCH_USER_AGENT,VPN_ENABLED,VPN_SERVICE_PROVIDER,VPN_TYPE,OPENVPN_USER,OPENVPN_PASSWORD,WIREGUARD_PRIVATE_KEY,WIREGUARD_ADDRESSES,VPN_SERVER_REGIONS,VPN_SERVER_COUNTRIES,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -279,12 +282,14 @@ jobs:
             if [ -n "${{ secrets.GHCR_PULL_TOKEN }}" ]; then
               echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
             fi
-            # The VPN egress sidecar (gluetun) lives behind the "vpn" compose
-            # profile, so it only starts when VPN credentials are actually set.
-            # Without them the profile stays off and the site comes up exactly
-            # as before -- a missing VPN can never take the deploy down.
+            # The VPN egress sidecar (gluetun) starts only when VPN_ENABLED is
+            # explicitly "true" -- not merely when credentials are present. This
+            # is deliberate: a failing gluetun once crash-looped hard enough to
+            # take the whole box offline, so it must be an explicit, deliberate
+            # opt-in, and the safe default (flag unset) is "no VPN, box healthy".
+            # Turn it on only after confirming the tunnel connects.
             COMPOSE_PROFILES=""
-            if [ -n "${VPN_SERVICE_PROVIDER}" ]; then COMPOSE_PROFILES="--profile vpn"; fi
+            if [ "${VPN_ENABLED}" = "true" ]; then COMPOSE_PROFILES="--profile vpn"; fi
             docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} pull
             docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} up -d --remove-orphans
             # Old :latest becomes untagged (<none>) after each pull — prune frees disk (layers still shared).

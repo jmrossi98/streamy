@@ -41,7 +41,22 @@ services:
   gluetun:
     image: qmcgaw/gluetun:latest
     profiles: ["vpn"]
-    restart: always
+    # NOT restart: always. A VPN that can't connect must not be able to take the
+    # whole box down: with "always", a failing gluetun crash-loops forever, and
+    # on a small instance that exhausts CPU/disk until even sshd is refused --
+    # which is exactly what happened. on-failure with a cap means it tries a few
+    # times and then stays stopped, leaving the box healthy and the watcher
+    # failing closed (safe) until someone looks.
+    restart: on-failure:5
+    # Hard ceilings so even while it is trying, it cannot starve the app.
+    mem_limit: 128m
+    cpus: 0.5
+    # Cap the logs too; a crash loop otherwise fills the disk with them.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     cap_add:
       - NET_ADMIN
     devices:
