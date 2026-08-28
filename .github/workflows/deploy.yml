@@ -15,6 +15,14 @@ on:
       - "**.md"
   workflow_dispatch:  # Run manually from Actions tab
 
+# One deploy at a time. Merging two PRs seconds apart triggered two overlapping
+# deploys, and two ~1.3GB image pulls at once thrashed the small instance into a
+# lock-up. Queue deploys instead of running them concurrently; don't cancel a
+# deploy already touching the server mid-way, which could leave it half-updated.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
 
