@@ -20,7 +20,8 @@ const H = WORLD_VIEWBOX.h;
 const SOURCE_META: Record<VisitSource, { label: string; color: string }> = {
   portfolio: { label: "Portfolio", color: "#38bdf8" }, // sky
   streamy: { label: "Streamy", color: "#e50914" }, // netflix red
-  login: { label: "Sign-ins", color: "#f59e0b" }, // amber
+  "login-success": { label: "Sign-ins", color: "#22c55e" }, // green — got in
+  "login-fail": { label: "Failed sign-ins", color: "#f59e0b" }, // amber — didn't
 };
 
 /** The source contributing the most visits to a pin decides its colour. */

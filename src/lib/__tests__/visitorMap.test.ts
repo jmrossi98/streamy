@@ -42,12 +42,12 @@ describe("aggregatePins", () => {
   it("merges visits in the same place into one pin and counts sources", () => {
     const pins = aggregatePins([
       visit({ lat: 40.71, lon: -74.0, city: "New York", country: "United States", source: "portfolio" }),
-      visit({ lat: 40.72, lon: -74.01, city: "New York", country: "United States", source: "login" }),
+      visit({ lat: 40.72, lon: -74.01, city: "New York", country: "United States", source: "login-fail" }),
       visit({ lat: 40.7, lon: -74.0, city: "New York", country: "United States", source: "streamy" }),
     ]);
     expect(pins).toHaveLength(1);
     expect(pins[0].total).toBe(3);
-    expect(pins[0].bySource).toEqual({ portfolio: 1, login: 1, streamy: 1 });
+    expect(pins[0].bySource).toEqual({ portfolio: 1, "login-fail": 1, streamy: 1, "login-success": 0 });
     expect(pins[0].label).toBe("New York, United States");
   });
 
@@ -105,13 +105,13 @@ describe("totals", () => {
   it("sums visits and sources across pins", () => {
     const pins = aggregatePins([
       visit({ lat: 40.71, lon: -74.0, source: "portfolio" }),
-      visit({ lat: 51.5, lon: -0.13, source: "login" }),
+      visit({ lat: 51.5, lon: -0.13, source: "login-fail" }),
       visit({ lat: 51.5, lon: -0.13, source: "streamy" }),
     ]);
     expect(totals(pins)).toEqual({
       pins: 2,
       visits: 3,
-      bySource: { portfolio: 1, streamy: 1, login: 1 },
+      bySource: { portfolio: 1, streamy: 1, "login-success": 0, "login-fail": 1 },
     });
   });
 });
