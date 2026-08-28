@@ -3,11 +3,13 @@
 import { useState } from "react";
 import type { VisitorMap } from "@/lib/visitorMapData";
 import { pinRadius, type MapPin, type VisitSource } from "@/lib/visitorMap";
+import { WORLD_LAND_PATH, WORLD_VIEWBOX } from "./worldMapPath";
 
 // Equirectangular canvas, 2:1 like the projection. The pin x/y are 0..1, so
-// they scale straight onto this viewBox.
-const W = 720;
-const H = 360;
+// they scale straight onto this viewBox -- and it matches the world path's own
+// viewBox, so coastlines and pins share one coordinate space.
+const W = WORLD_VIEWBOX.w;
+const H = WORLD_VIEWBOX.h;
 
 const SOURCE_META: Record<VisitSource, { label: string; color: string }> = {
   portfolio: { label: "Portfolio", color: "#38bdf8" }, // sky
@@ -110,6 +112,8 @@ export function VisitorMapPanel({ map }: { map: VisitorMap }) {
 
       <div className="relative overflow-hidden rounded-lg border border-white/10 bg-black/40">
         <svg viewBox={`0 0 ${W} ${H}`} className="block w-full" role="img" aria-label="Visitor map">
+          {/* Landmasses first, then the graticule over them, then pins on top. */}
+          <path d={WORLD_LAND_PATH} fill="rgba(255,255,255,0.09)" stroke="rgba(255,255,255,0.16)" strokeWidth={0.5} />
           <Graticule />
           {/* Largest pins are first in the array; render reversed so they end up
               painted on top of the smaller ones rather than under them. */}
