@@ -64,12 +64,32 @@ function Graticule({ sw }: { sw: number }) {
   return <g>{lines}</g>;
 }
 
-export function VisitorMapPanel({ map }: { map: VisitorMap }) {
+export function VisitorMapPanel() {
+  // The map data is fetched on demand rather than passed in, so opening the
+  // admin page doesn't pay for the GeoLite2 mmap and per-IP geolocation every
+  // time. It loads only when this panel is actually on screen.
+  const [map, setMap] = useState<VisitorMap | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [hover, setHover] = useState<MapPin | null>(null);
   const [view, setView] = useState<Box>(FULL);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
   const [grabbing, setGrabbing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/visitor-map")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: VisitorMap) => {
+        if (!cancelled) setMap(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Keeps the view inside the world and within the zoom limits.
   const clampBox = useCallback((b: Box): Box => {
@@ -134,6 +154,13 @@ export function VisitorMapPanel({ map }: { map: VisitorMap }) {
   // on screen -- zooming in separates overlapping pins instead of inflating them.
   const zoom = FULL.w / view.w;
   const zoomed = view.w < FULL.w - 0.5;
+
+  if (loadError) {
+    return <p className="text-sm text-red-300">Couldn&apos;t load the map: {loadError}</p>;
+  }
+  if (!map) {
+    return <p className="text-sm text-white/50">Loading the map…</p>;
+  }
 
   if (!map.configured) {
     return (

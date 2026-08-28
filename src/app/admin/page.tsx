@@ -20,7 +20,6 @@ import { isNotifyConfigured } from "@/lib/notify";
 import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
-import { getVisitorMap } from "@/lib/visitorMapData";
 import { BlogEditor } from "@/components/BlogEditor";
 import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
 import { PageWatchPanel } from "@/components/PageWatchPanel";
@@ -54,7 +53,6 @@ export default async function AdminFeaturesPage() {
     visitors,
     blogPosts,
     pageWatch,
-    visitorMap,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -78,7 +76,6 @@ export default async function AdminFeaturesPage() {
     // warning, not the page.
     blogConfigured ? listPosts() : Promise.resolve([]),
     getPageWatchSummary(),
-    getVisitorMap(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -139,7 +136,7 @@ export default async function AdminFeaturesPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Visitor map</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <VisitorMapPanel map={visitorMap} />
+          <VisitorMapPanel />
         </div>
       </section>
 
