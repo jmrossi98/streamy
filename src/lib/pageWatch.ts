@@ -44,9 +44,32 @@ function proxyDispatcher(url: string): ProxyAgent {
 }
 
 /**
+ * Headers for every watch request: ordinary, and carrying nothing that could
+ * link one visit to the next.
+ *
+ * Deliberately a plain, common set -- no unusual header would make the request
+ * stand out in a log. It sends no Cookie and no conditional-request header
+ * (If-None-Match / If-Modified-Since): echoing back a server-supplied ETag is
+ * a known "supercookie", a value the site hands out and then recognises on the
+ * next visit, so we never store or return one.
+ */
+function requestHeaders(accept: string): Record<string, string> {
+  return {
+    "User-Agent": userAgent(),
+    Accept: accept,
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+}
+
+/**
  * The only fetch used for outbound watch traffic. Fail-closed: it never falls
  * back to a direct connection when a proxy is required, so a watch request can
  * never leave from this box's own IP.
+ *
+ * Stateless by construction: `cache: "no-store"` means no response is kept to
+ * be revalidated with an ETag later, and credentials are omitted so no cookie
+ * is ever sent. Each visit is therefore indistinguishable from a first one --
+ * there is no thread the site can pull to tie our visits into a history.
  */
 async function watchFetch(url: string, init: RequestInit): Promise<Response> {
   const decision = resolveEgress(egressProxyUrl(), egressProxyRequired());
@@ -56,7 +79,12 @@ async function watchFetch(url: string, init: RequestInit): Promise<Response> {
   // `dispatcher` is an undici extension to RequestInit that the global fetch
   // honours at runtime but the DOM types don't describe.
   const extra = decision.via === "proxy" ? { dispatcher: proxyDispatcher(decision.url) } : {};
-  return fetch(url, { ...init, ...extra } as RequestInit);
+  return fetch(url, {
+    cache: "no-store",
+    credentials: "omit",
+    ...init,
+    ...extra,
+  } as RequestInit);
 }
 
 // Echoes back the caller's public IP. The Services panel's torrent-VPN check
@@ -142,7 +170,7 @@ function compileIgnore(pattern: string | null): RegExp[] {
 /** Fetches a URL as text, with a timeout and a size ceiling. */
 async function fetchText(url: string): Promise<string> {
   const res = await watchFetch(url, {
-    headers: { "User-Agent": userAgent(), Accept: "text/html,application/xhtml+xml,text/plain" },
+    headers: requestHeaders("text/html,application/xhtml+xml,text/plain"),
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     redirect: "follow",
   });
@@ -171,7 +199,7 @@ export async function robotsAllows(url: string): Promise<boolean> {
     // would leak this box's IP to the very site we are trying not to be traced
     // from, one request before the page fetch that is being protected.
     const res = await watchFetch(new URL("/robots.txt", target.origin).toString(), {
-      headers: { "User-Agent": userAgent() },
+      headers: requestHeaders("text/plain"),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return true;

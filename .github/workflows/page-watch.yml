@@ -12,10 +12,12 @@ name: Tour Watch
 
 on:
   schedule:
-    # Every 4 hours. Tour dates and presales move on the scale of days, so this
-    # catches a change the same morning without hammering anyone's site --
-    # 6 requests a day per page is well inside polite.
-    - cron: "0 */4 * * *"
+    # Every ~4 hours, but at :17 rather than :00. Combined with the random
+    # delay in the job, the actual fetch time wanders, so a watched site never
+    # sees a request arrive like clockwork on the hour -- a fixed cadence is
+    # itself a fingerprint that ties one visit to the next even when the IP
+    # changes. Tour dates move on the scale of days, so the drift costs nothing.
+    - cron: "17 */4 * * *"
   workflow_dispatch:
 
 # One run at a time. Overlapping runs would double-fetch every page and could
@@ -38,6 +40,15 @@ jobs:
           if [ -z "${WATCH_SECRET}" ]; then
             echo "PAGE_WATCH_SECRET is not set -- the endpoint fails closed, so this would 401."
             exit 1
+          fi
+
+          # Random delay up to ~29 minutes before fetching, so scheduled runs
+          # don't hit the target at a predictable minute. Skipped for a manual
+          # dispatch, where waiting half an hour would just be annoying.
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            DELAY=$(( RANDOM % 1740 ))
+            echo "Jittering ${DELAY}s before the run."
+            sleep "${DELAY}"
           fi
 
           # --fail-with-body so a non-2xx still prints what the server said,
