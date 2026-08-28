@@ -35,6 +35,14 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [egress, setEgress] = useState<
+    | { state: "protected"; exitIp: string }
+    | { state: "leaking"; ip: string }
+    | { state: "down"; error: string }
+    | { state: "direct" }
+    | null
+  >(null);
+  const [testingEgress, setTestingEgress] = useState(false);
   const [form, setForm] = useState({
     label: "",
     url: "",
@@ -99,6 +107,25 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
     setBusy(null);
   }
 
+  async function testEgress() {
+    setTestingEgress(true);
+    setEgress(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/page-watch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "egress" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.egress) setEgress(data.egress);
+      else setError(data.error ?? `Egress test failed (${res.status})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    setTestingEgress(false);
+  }
+
   const { pages, recentChanges, artists, notifyConfigured, egressProxied, egressEnforced } =
     summary;
 
@@ -107,11 +134,43 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
       {/* Egress state first: it is the one thing here that, if wrong, exposes
           who is doing the watching rather than merely losing a feature. */}
       {egressProxied ? (
-        <p className="rounded border border-green-500/30 bg-green-950/20 px-3 py-2 text-sm text-green-200/80">
-          Requests exit through the VPN proxy
-          {egressEnforced ? ", and fail closed if it drops" : ""}. Traffic does not leave from this
-          server&apos;s own address.
-        </p>
+        <div className="space-y-2 rounded border border-green-500/30 bg-green-950/20 px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-green-200/80">
+              Requests exit through the VPN proxy
+              {egressEnforced ? ", and fail closed if it drops" : ""}.
+            </p>
+            <button
+              onClick={testEgress}
+              disabled={testingEgress}
+              className="shrink-0 text-xs text-white/60 underline underline-offset-4 transition-colors hover:text-white disabled:opacity-40"
+            >
+              {testingEgress ? "Testing…" : "Test egress"}
+            </button>
+          </div>
+          {egress && egress.state === "protected" && (
+            <p className="text-green-300">
+              ✓ Verified — traffic exits via{" "}
+              <code className="text-green-200">{egress.exitIp}</code>, not this server.
+            </p>
+          )}
+          {egress && egress.state === "leaking" && (
+            <p className="text-red-300">
+              ⚠ Leaking — the proxy is set but traffic still exits from{" "}
+              <code className="text-red-200">{egress.ip}</code>, this server&apos;s own IP. The
+              tunnel is not carrying traffic.
+            </p>
+          )}
+          {egress && egress.state === "down" && (
+            <p className="text-yellow-200/90">
+              Proxy unreachable ({egress.error}). Nothing is being watched until it recovers —
+              failing closed, not leaking.
+            </p>
+          )}
+          {egress && egress.state === "direct" && (
+            <p className="text-white/50">No proxy configured after all.</p>
+          )}
+        </div>
       ) : (
         <p className="rounded border border-red-500/30 bg-red-950/30 px-3 py-2 text-sm text-red-300">
           Requests leave from this server&apos;s own IP —{" "}
