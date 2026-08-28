@@ -3,6 +3,14 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
 
+  // Node-only libraries the geolocation code uses. Marked external so Next
+  // keeps them as runtime requires and traces them (with their transitive
+  // deps) into the standalone output, instead of trying to bundle them and
+  // silently dropping them -- which is exactly what happened: the container
+  // would fail with "Cannot find module 'maxmind'" the moment the visitor map
+  // rendered. maxmind reads the .mmdb via node:fs; tar extracts the download.
+  serverExternalPackages: ["maxmind", "mmdb-lib", "tar"],
+
   // ── Build speed ──────────────────────────────────────────────
   // Skip linting & type-checking during `next build` (run separately via `npm run lint` / `typecheck`)
   eslint: { ignoreDuringBuilds: true },
