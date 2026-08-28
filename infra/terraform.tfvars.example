@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+# All of these have sensible defaults in variables.tf; override only what differs.
+
+# region            = "us-east-1"
+# availability_zone = "us-east-1a"
+# instance_name     = "streamy-prod"
+# bundle_id         = "small_3_0"   # 2GB RAM. micro_3_0 = 1GB (budget), medium_3_0 = 4GB.
+# static_ip_name    = "StaticIp-1"
+# snapshot_time     = "06:00"       # UTC

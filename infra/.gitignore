@@ -1,0 +1,10 @@
+# Terraform state can contain sensitive values -- never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+
+# Local variable overrides (may hold specifics you'd rather not commit).
+*.auto.tfvars
+terraform.tfvars

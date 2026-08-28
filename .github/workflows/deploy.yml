@@ -7,6 +7,12 @@ name: Build and Deploy
 on:
   push:
     branches: [main]
+    # Don't rebuild and redeploy the app for changes that don't affect it --
+    # infrastructure code, docs, and the infra scripts. Saves a slow ~1.3GB
+    # image pull on the server for a README edit.
+    paths-ignore:
+      - "infra/**"
+      - "**.md"
   workflow_dispatch:  # Run manually from Actions tab
 
 env:
