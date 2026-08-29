@@ -4,7 +4,6 @@ import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
 import { findJellyfinEpisodeItemId } from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
-import { EpisodeCloseButton } from "@/components/EpisodeCloseButton";
 
 type Props = {
   params: Promise<{ id: string; season: string; episode: string }>;
@@ -65,16 +64,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
 
   return (
     <div className="min-h-screen bg-netflix-black relative">
-      {/* Desktop only: on mobile the native fullscreen player supplies its own
-          Done control, so ours is a second close button competing with it. */}
-      <div className="flex absolute top-4 right-4 z-[100] w-10 h-10 rounded-full bg-black/60 text-white hover:bg-black/80 items-center justify-center transition-colors">
-        <EpisodeCloseButton
-          fallbackHref={backHref}
-          className="w-full h-full flex items-center justify-center text-white"
-        />
-      </div>
-      <div className="relative z-0">
-        <EpisodePlayer
+      <EpisodePlayer
         showId={show.id}
         showName={show.name}
         seasonNumber={seasonNum}
@@ -82,12 +72,13 @@ export default async function EpisodeWatchPage({ params }: Props) {
         episodeName={ep.name}
         backdropUrl={show.backdrop}
         initialProgressSeconds={initialProgressSeconds}
+        runtimeMinutes={ep.runtime}
         autoPlay
         nextEpisodeHref={nextEpisodeHref}
         nextEpisodeLabel={nextEpisodeLabel ?? undefined}
         videoUrl={videoUrl}
+        closeHref={backHref}
       />
-      </div>
     </div>
   );
 }

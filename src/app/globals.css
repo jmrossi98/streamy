@@ -226,3 +226,29 @@ select option {
   bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   right: max(0.75rem, env(safe-area-inset-right, 0px));
 }
+
+/* Custom player scrubber/volume thumb -- the track is drawn separately behind
+   the input (see VideoChrome), so the native track is transparent and only the
+   draggable thumb shows. */
+.player-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.player-scrubber::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border: none;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.player-scrubber:focus {
+  outline: none;
+}

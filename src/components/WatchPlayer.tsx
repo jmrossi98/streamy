@@ -2,13 +2,15 @@
 
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   tryMobileNativeVideoFullscreen,
-  enterNativeVideoFullscreen,
   isMobileViewport,
 } from "@/lib/videoFullscreen";
-import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
+import { type PlaybackQuality } from "./QualitySelector";
+import { VideoChrome } from "./VideoChrome";
+import { usePlayerChrome } from "@/lib/usePlayerChrome";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the movie is here" when it
@@ -22,17 +24,19 @@ type WatchPlayerProps = {
   runtimeMinutes: number | null;
   autoPlay?: boolean;
   videoUrl?: string | null;
+  closeHref?: string;
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
-const TITLE_SHOW_MS = 3000;
 export function WatchPlayer({
   movieId,
   movieTitle,
   backdropUrl,
   initialProgressSeconds,
+  runtimeMinutes,
   autoPlay = false,
   videoUrl,
+  closeHref,
 }: WatchPlayerProps) {
   const hasSource = !!videoUrl;
   // Playback quality is viewer-chosen: Auto direct-plays and falls back to a
@@ -62,23 +66,11 @@ export function WatchPlayer({
   const router = useRouter();
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
-  const [showTitle, setShowTitle] = useState(true);
-  const titleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  const scheduleTitleHide = () => {
-    if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
-    titleTimeoutRef.current = setTimeout(() => setShowTitle(false), TITLE_SHOW_MS);
-  };
-  const showTitleTemporarily = () => {
-    setShowTitle(true);
-    scheduleTitleHide();
-  };
-  useEffect(() => {
-    return () => {
-      if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
-    };
-  }, []);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chrome = usePlayerChrome(videoRef, containerRef, {
+    knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
+  });
 
   // On mobile, hold at the play button instead of autoplaying. Fullscreen can
   // only be entered from a real user gesture, and arriving on this page isn't
@@ -109,22 +101,34 @@ export function WatchPlayer({
   // Any source swap (quality change, or Auto's codec fallback) flips
   // `transcoding`, which changes the src. Force the element to load the new URL,
   // seek back to where the viewer was, and resume -- changing src alone can
-  // leave a browser sitting on the media it just gave up on.
+  // leave a browser sitting on the media it just gave up on. Wait for `canplay`
+  // (not just metadata) and only seek within the seekable range: a transcode
+  // isn't freely seekable, and setting currentTime out of range stalls it --
+  // which is what stopped mobile playback when switching to 1080p.
   useEffect(() => {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
     if (!v) return;
     v.load();
-    const onLoaded = () => {
-      if (resumeAtRef.current != null) {
-        v.currentTime = resumeAtRef.current;
-        resumeAtRef.current = null;
+    const onReady = () => {
+      const target = resumeAtRef.current;
+      resumeAtRef.current = null;
+      if (target != null) {
+        try {
+          const seekable =
+            v.seekable && v.seekable.length > 0
+              ? target <= v.seekable.end(v.seekable.length - 1)
+              : false;
+          if (seekable) v.currentTime = target;
+        } catch {
+          /* not seekable yet; play from the stream's start instead of stalling */
+        }
       }
       v.play().catch(() => {});
       setVideoLoading(false);
     };
-    v.addEventListener("loadedmetadata", onLoaded, { once: true });
-    return () => v.removeEventListener("loadedmetadata", onLoaded);
+    v.addEventListener("canplay", onReady, { once: true });
+    return () => v.removeEventListener("canplay", onReady);
   }, [transcoding]);
 
   // Leaving fullscreen deliberately does NOT leave the page. It used to call
@@ -243,61 +247,23 @@ export function WatchPlayer({
 
   return (
     <div
+      ref={containerRef}
       className={`relative w-full bg-black ${containerClass}`}
-      onMouseEnter={() => showVideo && showTitleTemporarily()}
-      onMouseLeave={() => showVideo && scheduleTitleHide()}
+      onMouseMove={() => showVideo && chrome.revealControls()}
+      onTouchStart={() => showVideo && chrome.revealControls()}
     >
-      {/* Our own title bar is desktop-only. In native fullscreen the OS draws
-          its own controls and title, and layering ours on top is what made
-          mobile feel cluttered. */}
-      {showVideo && !isMobile && (
-        <div
-          className={`absolute top-0 left-0 right-0 z-10 flex items-start justify-between gap-4 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
-            showTitle ? "opacity-100" : "opacity-0"
-          }`}
-        >
-          <p className="text-white font-medium text-lg drop-shadow-md">{movieTitle}</p>
-          <QualitySelector value={quality} onChange={changeQuality} />
-        </div>
-      )}
-      {/* Explicit way back to fullscreen on mobile. The tap that starts
-          playback opens the native player, but once a viewer leaves it the
-          video keeps playing inline with no obvious way to maximise again --
-          iOS gives no control for that. Sits bottom-right, clear of the
-          native transport controls along the top and centre. */}
-      {showVideo && isMobile && (
-        <button
-          type="button"
-          onClick={() => {
-            const v = videoRef.current;
-            if (v) enterNativeVideoFullscreen(v);
-          }}
-          aria-label="Maximize video"
-          className="streamy-player-maximize absolute z-20 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white active:bg-black/90 touch-manipulation"
-        >
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"
-            />
-          </svg>
-        </button>
-      )}
-      {/* Mobile: the selector lives on the inline view (native fullscreen draws
-          its own controls we can't overlay). Choose quality before maximising. */}
-      {showVideo && isMobile && (
-        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
-          <QualitySelector value={quality} onChange={changeQuality} />
-        </div>
-      )}
       <video
         ref={videoRef}
         src={videoSrc}
-        controls
         autoPlay
         playsInline
+        onClick={() => {
+          if (!showVideo) return;
+          // Tap on the picture: reveal the controls if hidden, otherwise
+          // play/pause -- the usual click-to-toggle once they're already up.
+          if (chrome.controlsVisible) chrome.togglePlay();
+          else chrome.revealControls();
+        }}
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={movieTitle}
         onError={() => {
@@ -319,11 +285,19 @@ export function WatchPlayer({
         }}
         onPlay={() => {
           setShowOverlay(false);
-          setShowTitle(true);
           setPlaybackError(false);
-          scheduleTitleHide();
+          chrome.revealControls();
         }}
       />
+      {showVideo && (
+        <VideoChrome
+          title={movieTitle}
+          quality={quality}
+          onQualityChange={changeQuality}
+          closeHref={closeHref}
+          chrome={chrome}
+        />
+      )}
       {showOverlay && (
         <>
           <Image
@@ -334,6 +308,18 @@ export function WatchPlayer({
             sizes="100vw"
           />
           <div className="hero-overlay absolute inset-0" />
+          {closeHref && (
+            <Link
+              href={closeHref}
+              prefetch
+              aria-label="Close"
+              className="absolute top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </Link>
+          )}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             {!hasSource ? (
               <div className="z-10 flex max-w-sm flex-col items-center gap-2 px-6 text-center">
