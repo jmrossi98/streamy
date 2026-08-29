@@ -62,20 +62,30 @@ export async function getVisitorMap(): Promise<VisitorMap> {
     }),
     prisma.loginAttempt.findMany({
       where: { at: { gte: since } },
-      select: { ip: true, success: true },
+      select: { ip: true, success: true, at: true },
+      orderBy: { at: "asc" },
     }),
   ]);
+
+  // Classify each IP by the outcome of its MOST RECENT attempt, not per attempt.
+  // An address that eventually got in (last attempt succeeded) is a real user
+  // who had some failures along the way -- e.g. the sign-in loop bug -- not a
+  // threat, so all of its attempts show as successful (green). An address whose
+  // last attempt failed is still out, and stays amber. Rows are ordered oldest
+  // first, so the last write per IP wins.
+  const lastOutcomeByIp = new Map<string, boolean>();
+  for (const l of logins) lastOutcomeByIp.set(l.ip, l.success);
 
   const raw: RawVisit[] = [
     ...siteVisits.map((v) => ({
       ip: v.ip,
       source: (v.site === "streamy" ? "streamy" : "portfolio") as LocatedVisit["source"],
     })),
-    // Successful and failed sign-ins are distinct sources -- a failed attempt
-    // is what "who is trying to get in" is actually asking about.
     ...logins.map((l) => ({
       ip: l.ip,
-      source: (l.success ? "login-success" : "login-fail") as LocatedVisit["source"],
+      source: (lastOutcomeByIp.get(l.ip)
+        ? "login-success"
+        : "login-fail") as LocatedVisit["source"],
     })),
   ];
 
