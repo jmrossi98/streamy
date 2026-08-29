@@ -19,5 +19,8 @@ export async function GET(request: Request, { params }: Props) {
     return new Response("Not available", { status: 404 });
   }
 
-  return proxyJellyfinStream(itemId, request);
+  // The player retries with ?mode=transcode when direct-play fails on a codec
+  // the browser can't handle (HEVC/10-bit/4K).
+  const transcode = new URL(request.url).searchParams.get("mode") === "transcode";
+  return proxyJellyfinStream(itemId, request, { transcode });
 }

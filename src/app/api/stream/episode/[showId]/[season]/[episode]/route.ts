@@ -25,5 +25,6 @@ export async function GET(request: Request, { params }: Props) {
     return new Response("Not available", { status: 404 });
   }
 
-  return proxyJellyfinStream(itemId, request);
+  const transcode = new URL(request.url).searchParams.get("mode") === "transcode";
+  return proxyJellyfinStream(itemId, request, { transcode });
 }

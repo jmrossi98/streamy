@@ -154,3 +154,31 @@ export async function isJellyfinShowAvailable(showTmdbId: string): Promise<boole
 export function jellyfinUpstreamStreamUrl(itemId: string): string {
   return `${JELLYFIN_URL}/Videos/${itemId}/stream?static=true&api_key=${JELLYFIN_API_KEY}`;
 }
+
+/**
+ * Transcoded, browser-safe stream for content the browser can't direct-play
+ * (HEVC/x265, 10-bit, some containers -- most 4K downloads).
+ *
+ * Asks Jellyfin to transcode to H.264/AAC in an MP4, downscaled to 1080p and
+ * bitrate-capped. The downscale is deliberate: full 4K over a home uplink to a
+ * remote browser would buffer regardless, and 1080p H.264 is well within the
+ * 1050 Ti's NVENC. It stays progressive (not HLS) so it drops straight into the
+ * same proxy and a plain <video> element.
+ *
+ * Bitrate/size are overridable so they can be tuned against the real Jellyfin:
+ *   JELLYFIN_TRANSCODE_MAX_WIDTH   default 1920
+ *   JELLYFIN_TRANSCODE_BITRATE     default 8000000 (8 Mbps)
+ */
+export function jellyfinTranscodeStreamUrl(itemId: string): string {
+  const params = new URLSearchParams({
+    static: "false",
+    container: "mp4",
+    videoCodec: "h264",
+    audioCodec: "aac",
+    maxWidth: process.env.JELLYFIN_TRANSCODE_MAX_WIDTH || "1920",
+    videoBitRate: process.env.JELLYFIN_TRANSCODE_BITRATE || "8000000",
+    audioBitRate: "192000",
+    api_key: JELLYFIN_API_KEY ?? "",
+  });
+  return `${JELLYFIN_URL}/Videos/${itemId}/stream.mp4?${params.toString()}`;
+}
