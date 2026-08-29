@@ -19,7 +19,8 @@ function hostOf(referrer: string): string {
 }
 
 export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
-  const { visits24h, visits7d, uniqueVisitors7d, topPages, topReferrers, recent } = summary;
+  const { visits24h, visits7d, uniqueVisitors7d, topPages, topReferrers, recent, totalActivity } =
+    summary;
 
   if (visits7d === 0 && recent.length === 0) {
     return (
@@ -71,12 +72,16 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
       </div>
 
       <div>
-        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-white/30">
-          Recent activity
+        <h3 className="mb-2 flex flex-wrap items-baseline gap-2 text-xs font-medium uppercase tracking-wide text-white/30">
+          <span>Visitor log</span>
+          <span className="normal-case text-white/40">
+            {recent.length}
+            {totalActivity > recent.length ? ` of ${totalActivity}` : ""} events
+          </span>
         </h3>
         {/* Scrolls inside its own container so a wide row never makes the page
-            scroll sideways on mobile. */}
-        <div className="max-h-72 overflow-y-auto rounded border border-white/10">
+            scroll sideways on mobile, and a long log doesn't push the page down. */}
+        <div className="max-h-[32rem] overflow-y-auto rounded border border-white/10">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-netflix-dark text-xs uppercase tracking-wide text-white/30">

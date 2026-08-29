@@ -87,13 +87,17 @@ export type VisitorSummary = {
   uniqueVisitors7d: number;
   topPages: { path: string; count: number }[];
   topReferrers: { referrer: string; count: number }[];
+  /**
+   * The full visitor log: every page visit and every sign-in attempt we've kept
+   * (within retention), newest first, as one merged timeline.
+   */
   recent: {
     id: string;
     /** "visit" for a page view, "login" for a sign-in attempt. */
     kind: "visit" | "login";
     /** "portfolio" | "streamy" for a visit; "login" for a sign-in attempt. */
     site: string;
-    /** The page path for a visit; the attempt's outcome for a login. */
+    /** The page path for a visit; the attempt's "name: outcome" for a login. */
     path: string;
     ip: string;
     /** "City, Country" from GeoLite2, or null when it can't be placed. */
@@ -103,6 +107,8 @@ export type VisitorSummary = {
     success?: boolean;
     at: string;
   }[];
+  /** Total rows across both tables, so the panel can say if the log is capped. */
+  totalActivity: number;
 };
 
 export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<VisitorSummary> {
@@ -110,45 +116,55 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
   const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-  const RECENT_LIMIT = 60;
-  const [visits24h, visits7d, uniqueIps, pages, referrers, recentVisits, recentLogins] =
-    await Promise.all([
-      prisma.siteVisit.count({ where: { site, at: { gte: dayAgo } } }),
-      prisma.siteVisit.count({ where: { site, at: { gte: weekAgo } } }),
-      prisma.siteVisit.groupBy({ by: ["ip"], where: { site, at: { gte: weekAgo } } }),
-      prisma.siteVisit.groupBy({
-        by: ["path"],
-        where: { site, at: { gte: weekAgo } },
-        _count: { path: true },
-        orderBy: { _count: { path: "desc" } },
-        take: 5,
-      }),
-      prisma.siteVisit.groupBy({
-        by: ["referrer"],
-        where: { site, at: { gte: weekAgo }, referrer: { not: null } },
-        _count: { referrer: true },
-        orderBy: { _count: { referrer: "desc" } },
-        take: 5,
-      }),
-      // Recent list spans every property (Streamy's own views alongside the
-      // portfolio's), and now sign-in attempts too, so a login from India
-      // shows here as well as on the map. The Site column says which is which.
-      prisma.siteVisit.findMany({
-        orderBy: { at: "desc" },
-        take: RECENT_LIMIT,
-        select: { id: true, site: true, path: true, ip: true, referrer: true, at: true },
-      }),
-      prisma.loginAttempt.findMany({
-        orderBy: { at: "desc" },
-        take: RECENT_LIMIT,
-        select: { id: true, ip: true, name: true, success: true, outcome: true, at: true },
-      }),
-    ]);
+  // Effectively "all" for a personal site inside 90-day retention, with a
+  // safety ceiling so a pathological burst can't return an unbounded payload.
+  const LOG_CAP = 1000;
+  const [
+    visits24h,
+    visits7d,
+    uniqueIps,
+    pages,
+    referrers,
+    allVisits,
+    allLogins,
+    visitTotal,
+    loginTotal,
+  ] = await Promise.all([
+    prisma.siteVisit.count({ where: { site, at: { gte: dayAgo } } }),
+    prisma.siteVisit.count({ where: { site, at: { gte: weekAgo } } }),
+    prisma.siteVisit.groupBy({ by: ["ip"], where: { site, at: { gte: weekAgo } } }),
+    prisma.siteVisit.groupBy({
+      by: ["path"],
+      where: { site, at: { gte: weekAgo } },
+      _count: { path: true },
+      orderBy: { _count: { path: "desc" } },
+      take: 5,
+    }),
+    prisma.siteVisit.groupBy({
+      by: ["referrer"],
+      where: { site, at: { gte: weekAgo }, referrer: { not: null } },
+      _count: { referrer: true },
+      orderBy: { _count: { referrer: "desc" } },
+      take: 5,
+    }),
+    prisma.siteVisit.findMany({
+      orderBy: { at: "desc" },
+      take: LOG_CAP,
+      select: { id: true, site: true, path: true, ip: true, referrer: true, at: true },
+    }),
+    prisma.loginAttempt.findMany({
+      orderBy: { at: "desc" },
+      take: LOG_CAP,
+      select: { id: true, ip: true, name: true, success: true, outcome: true, at: true },
+    }),
+    prisma.siteVisit.count(),
+    prisma.loginAttempt.count(),
+  ]);
 
-  // Merge visits and logins into one timeline, newest first, capped.
-  type Recent = VisitorSummary["recent"][number] & { _at: Date };
-  const merged: Recent[] = [
-    ...recentVisits.map((v) => ({
+  // One merged, newest-first timeline of everything.
+  type Row = VisitorSummary["recent"][number] & { _at: Date };
+  const rows: Row[] = [
+    ...allVisits.map((v) => ({
       id: v.id,
       kind: "visit" as const,
       site: v.site,
@@ -159,11 +175,10 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       at: v.at.toISOString(),
       _at: v.at,
     })),
-    ...recentLogins.map((l) => ({
+    ...allLogins.map((l) => ({
       id: l.id,
       kind: "login" as const,
       site: "login",
-      // "name: outcome" reads at a glance -- who was tried and how it went.
       path: `${l.name}: ${l.outcome}`,
       ip: l.ip,
       location: null,
@@ -174,10 +189,9 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     })),
   ]
     .sort((a, b) => b._at.getTime() - a._at.getTime())
-    .slice(0, RECENT_LIMIT);
+    .slice(0, LOG_CAP);
 
-  // Geolocate every address in the merged list, distinct IPs once.
-  const located = await locateMany(merged.map((r) => r.ip));
+  const located = await locateMany(rows.map((r) => r.ip));
   const locationOf = (ip: string): string | null => {
     const loc = located.get(ip);
     if (!loc) return null;
@@ -194,6 +208,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       referrer: r.referrer ?? "(direct)",
       count: r._count.referrer,
     })),
-    recent: merged.map(({ _at, ...r }) => ({ ...r, location: locationOf(r.ip) })),
+    recent: rows.map(({ _at, ...r }) => ({ ...r, location: locationOf(r.ip) })),
+    totalActivity: visitTotal + loginTotal,
   };
 }
