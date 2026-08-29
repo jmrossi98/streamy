@@ -6,12 +6,19 @@ const STATE_STYLE: Record<ServiceState, { dot: string; label: string; text: stri
   up: { dot: "bg-emerald-500", label: "Up", text: "text-emerald-400" },
   down: { dot: "bg-red-500", label: "Down", text: "text-red-400" },
   unconfigured: { dot: "bg-white/25", label: "Off", text: "text-white/40" },
+  // A dependency it needs (e.g. qBittorrent auth) failed, so this check
+  // couldn't run at all -- distinct from "down", which means the check ran
+  // and found a real problem. Amber rather than red: it isn't a verified
+  // outage, and rendering it identically to "down" is how a stale password
+  // once read as a compromised VPN.
+  unknown: { dot: "bg-amber-500", label: "Unknown", text: "text-amber-400" },
 };
 
 const GROUP_ORDER: ServiceStatus["group"][] = ["Media", "Downloads", "Assistant", "System"];
 
 export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
   const down = services.filter((s) => s.state === "down");
+  const unknown = services.filter((s) => s.state === "unknown");
   const up = services.filter((s) => s.state === "up").length;
   const configured = services.filter((s) => s.state !== "unconfigured").length;
 
@@ -19,11 +26,17 @@ export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
     <div className="space-y-5">
       <div className="flex items-center gap-2">
         <span
-          className={`h-2.5 w-2.5 rounded-full ${down.length ? "bg-red-500" : "bg-emerald-500"}`}
+          className={`h-2.5 w-2.5 rounded-full ${down.length ? "bg-red-500" : unknown.length ? "bg-amber-500" : "bg-emerald-500"}`}
           aria-hidden
         />
-        <span className={`text-sm font-medium ${down.length ? "text-red-400" : "text-emerald-400"}`}>
-          {down.length ? `${down.length} service${down.length === 1 ? "" : "s"} down` : "All services up"}
+        <span
+          className={`text-sm font-medium ${down.length ? "text-red-400" : unknown.length ? "text-amber-400" : "text-emerald-400"}`}
+        >
+          {down.length
+            ? `${down.length} service${down.length === 1 ? "" : "s"} down`
+            : unknown.length
+              ? `${unknown.length} unverified`
+              : "All services up"}
         </span>
         <span className="text-xs text-white/30">
           {up}/{configured} configured

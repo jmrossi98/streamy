@@ -25,7 +25,12 @@ import { prisma } from "./db";
 
 const PROBE_TIMEOUT_MS = 5_000;
 
-export type ServiceState = "up" | "down" | "unconfigured";
+// "unknown" is distinct from "down": down means we verified a failure,
+// unknown means the check itself couldn't run (e.g. we can't authenticate to
+// qBittorrent) so we genuinely don't know the thing it would tell us. Reporting
+// unknown as down is a false alarm -- a stale password looks identical to a
+// compromised VPN if both just say "down".
+export type ServiceState = "up" | "down" | "unconfigured" | "unknown";
 
 export type ServiceStatus = {
   name: string;
@@ -109,9 +114,39 @@ async function jellyfinStatus(): Promise<ServiceStatus> {
 }
 
 /**
+ * One fetch, with a single retry on a network-level failure (timeout, DNS,
+ * connection refused). A clean HTTP error response is not retried -- if the
+ * password is wrong the tenth attempt fails exactly like the first, so
+ * retrying just delays an already-known answer. This is what "resilient"
+ * means here: absorb a transient blip (the box waking up, a momentary drop),
+ * not paper over a real failure.
+ */
+async function fetchResilient(url: string, init: RequestInit): Promise<Response | { networkError: string }> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 750));
+        continue;
+      }
+      return { networkError: detail };
+    }
+  }
+  return { networkError: "unreachable" };
+}
+
+/**
  * qBittorrent plus the VPN check that matters most: torrent traffic must not
  * leave from the home connection. Reported together because a torrent client
  * that is up but unprotected is worse than one that is down.
+ *
+ * VPN is reported "unknown" (not "down") whenever qBittorrent itself can't be
+ * reached or authenticated -- a stale QBITTORRENT_PASSWORD (which has nothing
+ * to do with the tunnel) used to render identically to an actually-leaking
+ * VPN, both as a red "Down". They are not the same failure and do not deserve
+ * the same alarm.
  */
 async function qbittorrentStatus(): Promise<ServiceStatus[]> {
   const group = "Downloads" as const;
@@ -123,24 +158,37 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
   }
 
   const base = env("QBITTORRENT_URL");
-  try {
-    const login = await fetch(`${base}/api/v2/auth/login`, {
-      method: "POST",
-      headers: { Referer: base, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        username: process.env.QBITTORRENT_USER ?? "",
-        password: process.env.QBITTORRENT_PASSWORD ?? "",
-      }).toString(),
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
-    const cookie = login.headers.get("set-cookie")?.match(/(QBT_SID[^=]*=[^;]+)/)?.[1];
-    if (!login.ok || !cookie) {
-      return [
-        { name: "qBittorrent", group, state: "down", detail: `auth failed (HTTP ${login.status})` },
-        { name: "VPN", group, state: "down", detail: "Can't check without qBittorrent" },
-      ];
-    }
+  const login = await fetchResilient(`${base}/api/v2/auth/login`, {
+    method: "POST",
+    headers: { Referer: base, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      username: process.env.QBITTORRENT_USER ?? "",
+      password: process.env.QBITTORRENT_PASSWORD ?? "",
+    }).toString(),
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+  });
 
+  if ("networkError" in login) {
+    return [
+      { name: "qBittorrent", group, state: "down", detail: `unreachable — ${login.networkError}` },
+      { name: "VPN", group, state: "unknown", detail: "qBittorrent unreachable, can't verify" },
+    ];
+  }
+
+  const cookie = login.headers.get("set-cookie")?.match(/(QBT_SID[^=]*=[^;]+)/)?.[1];
+  if (!login.ok || !cookie) {
+    return [
+      {
+        name: "qBittorrent",
+        group,
+        state: "down",
+        detail: `auth rejected (HTTP ${login.status}) — check QBITTORRENT_PASSWORD`,
+      },
+      { name: "VPN", group, state: "unknown", detail: "qBittorrent auth failed, can't verify" },
+    ];
+  }
+
+  try {
     const info = await fetch(`${base}/api/v2/transfer/info`, {
       headers: { Cookie: cookie, Referer: base },
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
@@ -163,23 +211,29 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
     const torrentIp = t.last_external_address_v4;
     let vpn: ServiceStatus;
     if (!torrentIp) {
-      vpn = { name: "VPN", group, state: "down", detail: "No external address reported" };
+      vpn = { name: "VPN", group, state: "unknown", detail: "No external address reported yet" };
     } else {
       // Compared against this host's own public IP. Equal means the tunnel is
-      // not carrying torrent traffic.
+      // not carrying torrent traffic -- this is the one case that's a real,
+      // verified failure, so it stays "down".
       const direct = await probe("https://api.ipify.org?format=json");
       const hostIp = (direct.json as { ip?: string } | undefined)?.ip;
-      vpn = hostIp && torrentIp === hostIp
-        ? { name: "VPN", group, state: "down", detail: `Torrents leaving from ${hostIp} — NOT protected` }
-        : { name: "VPN", group, state: "up", detail: `Torrents exit via ${torrentIp}` };
+      vpn = !hostIp
+        ? { name: "VPN", group, state: "unknown", detail: "Couldn't determine this host's own IP" }
+        : torrentIp === hostIp
+          ? { name: "VPN", group, state: "down", detail: `Torrents leaving from ${hostIp} — NOT protected` }
+          : { name: "VPN", group, state: "up", detail: `Torrents exit via ${torrentIp}` };
     }
 
     return [client, vpn];
   } catch (err) {
+    // Authenticated fine, but the follow-up call failed -- a real qBittorrent
+    // problem (we successfully logged in and it's still not answering), but
+    // still tells us nothing about the tunnel.
     const detail = err instanceof Error ? err.message : String(err);
     return [
-      { name: "qBittorrent", group, state: "down", detail },
-      { name: "VPN", group, state: "down", detail: "Can't check without qBittorrent" },
+      { name: "qBittorrent", group, state: "down", detail: `authenticated, but ${detail}` },
+      { name: "VPN", group, state: "unknown", detail: "qBittorrent unreachable, can't verify" },
     ];
   }
 }
