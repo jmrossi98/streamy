@@ -13,10 +13,27 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 export function usePlayerChrome(
   videoRef: RefObject<HTMLVideoElement | null>,
   containerRef: RefObject<HTMLElement | null>,
-  opts: { knownDurationSeconds?: number | null } = {}
+  opts: {
+    knownDurationSeconds?: number | null;
+    /**
+     * Where the current source begins in the title's real timeline. Non-zero
+     * for a transcode that was started mid-title (via Jellyfin's
+     * startTimeTicks) -- the video element's own currentTime resets to ~0 in
+     * that case, so the absolute position is offset + the element's time.
+     * Zero for direct play, where the whole file is one seekable source.
+     */
+    timeOffsetSeconds?: number;
+    /**
+     * Called with the requested *absolute* position before the default
+     * client-side seek runs. Returning true means it's been handled (e.g. by
+     * restarting a transcode at that position) and the default seek is
+     * skipped; false/undefined falls through to the normal clamped seek.
+     */
+    onExternalSeek?: (absoluteSeconds: number) => boolean;
+  } = {}
 ) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [rawCurrentTime, setRawCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [muted, setMuted] = useState(false);
@@ -29,13 +46,15 @@ export function usePlayerChrome(
   // back to the element's own duration only when we weren't told the runtime.
   const known = opts.knownDurationSeconds && opts.knownDurationSeconds > 0 ? opts.knownDurationSeconds : 0;
   const duration = known || (Number.isFinite(videoDuration) ? videoDuration : 0);
+  const offset = opts.timeOffsetSeconds ?? 0;
+  const currentTime = offset + rawCurrentTime;
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
-    const onTime = () => setCurrentTime(v.currentTime);
+    const onTime = () => setRawCurrentTime(v.currentTime);
     const onDur = () => setVideoDuration(v.duration);
     const onVol = () => {
       setMuted(v.muted);
@@ -101,27 +120,29 @@ export function usePlayerChrome(
   }, [videoRef, revealControls]);
 
   const seek = useCallback(
-    (time: number) => {
+    (absoluteTime: number) => {
+      revealControls();
+      if (opts.onExternalSeek?.(absoluteTime)) return;
       const v = videoRef.current;
       if (!v) return;
-      // Guard against seeking into a range the element can't serve yet -- a
-      // progressive transcode isn't freely seekable and an out-of-range set can
-      // stall it. Clamp to what's seekable; otherwise leave playback alone.
+      // Guard against seeking into a range the element can't serve yet -- an
+      // out-of-range set can stall a partially-buffered source. Clamp to
+      // what's seekable; otherwise leave playback alone.
       try {
-        let target = time;
+        const target = absoluteTime - offset;
+        let clamped = target;
         if (v.seekable && v.seekable.length > 0) {
           const end = v.seekable.end(v.seekable.length - 1);
           const start = v.seekable.start(0);
-          target = Math.min(Math.max(time, start), end);
+          clamped = Math.min(Math.max(target, start), end);
         }
-        v.currentTime = target;
-        setCurrentTime(target);
+        v.currentTime = clamped;
+        setRawCurrentTime(clamped);
       } catch {
         /* not seekable yet; ignore */
       }
-      revealControls();
     },
-    [videoRef, revealControls]
+    [videoRef, revealControls, offset, opts.onExternalSeek]
   );
 
   const toggleMute = useCallback(() => {

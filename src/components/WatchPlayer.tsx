@@ -8,7 +8,7 @@ import {
   tryMobileNativeVideoFullscreen,
   isMobileViewport,
 } from "@/lib/videoFullscreen";
-import { type PlaybackQuality } from "./QualitySelector";
+import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
 import { VideoChrome } from "./VideoChrome";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 
@@ -49,13 +49,22 @@ export function WatchPlayer({
   // screen. Reset whenever the viewer picks a quality.
   const [autoFellBack, setAutoFellBack] = useState(false);
   const transcoding = quality === "1080p" || autoFellBack;
+  // Where the *current* transcode source begins in the movie's real timeline
+  // (Jellyfin's startTimeTicks). A transcode can only be played from where
+  // ffmpeg has already encoded to, so scrubbing ahead has to restart the
+  // transcode at the target instead of setting currentTime on the same
+  // stream -- which does nothing there, since those bytes don't exist yet.
+  // Always 0 for direct play, where the whole file is one seekable source.
+  const [transcodeStartAt, setTranscodeStartAt] = useState(0);
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode`
+      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode${
+          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+        }`
       : videoUrl;
-  // Position to restore after a source swap (quality change), so switching
-  // quality resumes where you were instead of jumping to the start.
+  // Absolute (real-timeline) position to resume at after a source swap --
+  // quality change, Auto's codec fallback, or a transcode-seek restart.
   const resumeAtRef = useRef<number | null>(null);
   // Guards the reload effect from firing on first mount, where the initial
   // source and the saved-progress seek are handled elsewhere.
@@ -70,6 +79,18 @@ export function WatchPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const chrome = usePlayerChrome(videoRef, containerRef, {
     knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
+    timeOffsetSeconds: transcoding ? transcodeStartAt : 0,
+    // Only wired up while transcoding -- direct play seeks for free via Range
+    // requests, no restart needed.
+    onExternalSeek: transcoding
+      ? (absoluteSeconds: number) => {
+          resumeAtRef.current = null; // the new stream starts exactly there; nothing more to seek
+          didSwapRef.current = true;
+          setVideoLoading(true);
+          setTranscodeStartAt(Math.max(0, absoluteSeconds));
+          return true;
+        }
+      : undefined,
   });
 
   // On mobile, hold at the play button instead of autoplaying. Fullscreen can
@@ -83,28 +104,31 @@ export function WatchPlayer({
     setShowOverlay(true);
   }, []);
 
-  // Viewer picked a quality. Remember where we are, then let the derived
-  // `transcoding`/`videoSrc` change drive the reload effect below.
+  // Viewer picked a quality. Remember where we are (in absolute/real-timeline
+  // terms -- chrome.currentTime already accounts for any transcode offset),
+  // then let the derived `transcoding`/`videoSrc` change drive the reload
+  // effect below.
   const changeQuality = (q: PlaybackQuality) => {
     // Re-picking the current quality is a no-op, unless we'd fallen back to a
     // transcode -- then it's a request to retry direct-play at that quality.
     if (q === quality && !autoFellBack) return;
-    const v = videoRef.current;
-    resumeAtRef.current = v && v.currentTime > 0 ? v.currentTime : null;
+    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
     didSwapRef.current = true;
     setAutoFellBack(false);
     setPlaybackError(false);
     setVideoLoading(true);
+    // Switching to a transcode: start it exactly at the resume position, same
+    // mechanism as a scrub-seek. Switching to direct play: no offset, the
+    // resume seek happens client-side once the file is loaded (below).
+    setTranscodeStartAt(q === "1080p" && resumeAtRef.current ? resumeAtRef.current : 0);
     setQuality(q);
   };
 
-  // Any source swap (quality change, or Auto's codec fallback) flips
-  // `transcoding`, which changes the src. Force the element to load the new URL,
-  // seek back to where the viewer was, and resume -- changing src alone can
-  // leave a browser sitting on the media it just gave up on. Wait for `canplay`
-  // (not just metadata) and only seek within the seekable range: a transcode
-  // isn't freely seekable, and setting currentTime out of range stalls it --
-  // which is what stopped mobile playback when switching to 1080p.
+  // Any source swap (quality change, Auto's codec fallback, or a
+  // transcode-seek restart) flips `transcoding` and/or `transcodeStartAt`,
+  // which change the src. Force the element to load the new URL and resume --
+  // changing src alone can leave a browser sitting on the media it just gave
+  // up on. Wait for `canplay`, not just metadata.
   useEffect(() => {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
@@ -113,7 +137,11 @@ export function WatchPlayer({
     const onReady = () => {
       const target = resumeAtRef.current;
       resumeAtRef.current = null;
-      if (target != null) {
+      // A transcode restart already begins at the right position (via
+      // startTimeTicks) -- nothing left to seek. Only direct play needs a
+      // client-side seek here, and only within what's actually seekable, so
+      // an out-of-range set can't stall a partially-buffered file.
+      if (target != null && !transcoding) {
         try {
           const seekable =
             v.seekable && v.seekable.length > 0
@@ -129,7 +157,7 @@ export function WatchPlayer({
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding]);
+  }, [transcoding, transcodeStartAt]);
 
   // Leaving fullscreen deliberately does NOT leave the page. It used to call
   // router.back(), from a time when exiting stranded the viewer on a bare
@@ -257,8 +285,15 @@ export function WatchPlayer({
         src={videoSrc}
         autoPlay
         playsInline
+        // Native controls on mobile, our own chrome on desktop. iOS/Android's
+        // fullscreen (entered below, on tap) only ever shows the <video>
+        // element itself -- VideoChrome is a sibling <div>, so it can't render
+        // inside that native surface no matter what we do; native controls are
+        // the only ones that exist there. Without this, mobile fullscreen has
+        // no controls at all.
+        controls={isMobile}
         onClick={() => {
-          if (!showVideo) return;
+          if (!showVideo || isMobile) return;
           // Tap on the picture: reveal the controls if hidden, otherwise
           // play/pause -- the usual click-to-toggle once they're already up.
           if (chrome.controlsVisible) chrome.togglePlay();
@@ -272,8 +307,10 @@ export function WatchPlayer({
           // overlay -- from either Auto or 4K. Only a failure while already
           // transcoding is a real error.
           if (hasSource && !transcoding) {
-            resumeAtRef.current = videoRef.current?.currentTime || null;
+            const at = chrome.currentTime > 0 ? chrome.currentTime : null;
+            resumeAtRef.current = at;
             didSwapRef.current = true;
+            setTranscodeStartAt(at ?? 0);
             setAutoFellBack(true);
             setVideoLoading(true);
             return;
@@ -289,7 +326,7 @@ export function WatchPlayer({
           chrome.revealControls();
         }}
       />
-      {showVideo && (
+      {showVideo && !isMobile && (
         <VideoChrome
           title={movieTitle}
           quality={quality}
@@ -297,6 +334,28 @@ export function WatchPlayer({
           closeHref={closeHref}
           chrome={chrome}
         />
+      )}
+      {/* Mobile: playing inline, before the viewer has tapped into native
+          fullscreen (or after backing out of it) -- native fullscreen supplies
+          its own controls, so this exists only for the inline window where it
+          doesn't. Quality has to live here since native controls don't offer
+          it, and it's the only view where our own DOM can render at all. */}
+      {showVideo && isMobile && (
+        <div className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 px-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]">
+          <QualitySelector value={quality} onChange={changeQuality} />
+          {closeHref && (
+            <Link
+              href={closeHref}
+              prefetch
+              aria-label="Close"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </Link>
+          )}
+        </div>
       )}
       {showOverlay && (
         <>

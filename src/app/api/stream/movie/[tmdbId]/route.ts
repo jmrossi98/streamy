@@ -20,7 +20,13 @@ export async function GET(request: Request, { params }: Props) {
   }
 
   // The player retries with ?mode=transcode when direct-play fails on a codec
-  // the browser can't handle (HEVC/10-bit/4K).
-  const transcode = new URL(request.url).searchParams.get("mode") === "transcode";
-  return proxyJellyfinStream(itemId, request, { transcode });
+  // the browser can't handle (HEVC/10-bit/4K). ?t=<seconds> re-starts the
+  // transcode from that position -- see the note on jellyfinTranscodeStreamUrl.
+  const searchParams = new URL(request.url).searchParams;
+  const transcode = searchParams.get("mode") === "transcode";
+  const startSeconds = Number(searchParams.get("t"));
+  return proxyJellyfinStream(itemId, request, {
+    transcode,
+    startSeconds: Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : undefined,
+  });
 }

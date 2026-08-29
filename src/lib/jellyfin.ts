@@ -168,8 +168,15 @@ export function jellyfinUpstreamStreamUrl(itemId: string): string {
  * Bitrate/size are overridable so they can be tuned against the real Jellyfin:
  *   JELLYFIN_TRANSCODE_MAX_WIDTH   default 1920
  *   JELLYFIN_TRANSCODE_BITRATE     default 8000000 (8 Mbps)
+ *
+ * `startSeconds` restarts the transcode from that position instead of the
+ * beginning. This matters because a progressive transcode can only be played
+ * from where ffmpeg has already encoded to -- setting the <video> element's
+ * currentTime ahead of that does nothing (the bytes for that position don't
+ * exist yet), so a real seek has to ask Jellyfin to start a fresh encode at
+ * the target instead. This is exactly what Jellyfin's own web client does.
  */
-export function jellyfinTranscodeStreamUrl(itemId: string): string {
+export function jellyfinTranscodeStreamUrl(itemId: string, startSeconds?: number): string {
   const params = new URLSearchParams({
     static: "false",
     container: "mp4",
@@ -180,5 +187,9 @@ export function jellyfinTranscodeStreamUrl(itemId: string): string {
     audioBitRate: "192000",
     api_key: JELLYFIN_API_KEY ?? "",
   });
+  // Jellyfin ticks are 100-nanosecond units.
+  if (startSeconds && startSeconds > 0) {
+    params.set("startTimeTicks", String(Math.round(startSeconds * 10_000_000)));
+  }
   return `${JELLYFIN_URL}/Videos/${itemId}/stream.mp4?${params.toString()}`;
 }

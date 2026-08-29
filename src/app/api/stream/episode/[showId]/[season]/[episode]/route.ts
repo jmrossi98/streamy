@@ -25,6 +25,11 @@ export async function GET(request: Request, { params }: Props) {
     return new Response("Not available", { status: 404 });
   }
 
-  const transcode = new URL(request.url).searchParams.get("mode") === "transcode";
-  return proxyJellyfinStream(itemId, request, { transcode });
+  const searchParams = new URL(request.url).searchParams;
+  const transcode = searchParams.get("mode") === "transcode";
+  const startSeconds = Number(searchParams.get("t"));
+  return proxyJellyfinStream(itemId, request, {
+    transcode,
+    startSeconds: Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : undefined,
+  });
 }
