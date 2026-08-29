@@ -72,7 +72,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
 
       <div>
         <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-white/30">
-          Recent visits
+          Recent activity
         </h3>
         {/* Scrolls inside its own container so a wide row never makes the page
             scroll sideways on mobile. */}
@@ -98,15 +98,21 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                     <td className="whitespace-nowrap px-3 py-2">
                       <span
                         className={
-                          v.site === "streamy"
-                            ? "rounded bg-red-500/15 px-1.5 py-0.5 text-xs text-red-300"
-                            : "rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300"
+                          v.kind === "login"
+                            ? v.success
+                              ? "rounded bg-green-500/15 px-1.5 py-0.5 text-xs text-green-300"
+                              : "rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300"
+                            : v.site === "streamy"
+                              ? "rounded bg-red-500/15 px-1.5 py-0.5 text-xs text-red-300"
+                              : "rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300"
                         }
                       >
-                        {v.site}
+                        {v.kind === "login" ? (v.success ? "sign-in" : "sign-in ✗") : v.site}
                       </span>
                     </td>
-                    <td className="max-w-[12rem] truncate px-3 py-2 text-white/80">{v.path}</td>
+                    <td className="max-w-[12rem] truncate px-3 py-2 text-white/80" title={v.path}>
+                      {v.path}
+                    </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/60">
                       {v.location ?? <span className="text-white/25">—</span>}
                     </td>
