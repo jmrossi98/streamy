@@ -89,14 +89,18 @@ export type VisitorSummary = {
   topReferrers: { referrer: string; count: number }[];
   recent: {
     id: string;
-    /** Which property the visit was to -- "portfolio" or "streamy". */
+    /** "visit" for a page view, "login" for a sign-in attempt. */
+    kind: "visit" | "login";
+    /** "portfolio" | "streamy" for a visit; "login" for a sign-in attempt. */
     site: string;
+    /** The page path for a visit; the attempt's outcome for a login. */
     path: string;
     ip: string;
-    country: string | null;
     /** "City, Country" from GeoLite2, or null when it can't be placed. */
     location: string | null;
     referrer: string | null;
+    /** Login rows only: whether the attempt succeeded. */
+    success?: boolean;
     at: string;
   }[];
 };
@@ -106,38 +110,74 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
   const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
   const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-  const [visits24h, visits7d, uniqueIps, pages, referrers, recent] = await Promise.all([
-    prisma.siteVisit.count({ where: { site, at: { gte: dayAgo } } }),
-    prisma.siteVisit.count({ where: { site, at: { gte: weekAgo } } }),
-    prisma.siteVisit.groupBy({ by: ["ip"], where: { site, at: { gte: weekAgo } } }),
-    prisma.siteVisit.groupBy({
-      by: ["path"],
-      where: { site, at: { gte: weekAgo } },
-      _count: { path: true },
-      orderBy: { _count: { path: "desc" } },
-      take: 5,
-    }),
-    prisma.siteVisit.groupBy({
-      by: ["referrer"],
-      where: { site, at: { gte: weekAgo }, referrer: { not: null } },
-      _count: { referrer: true },
-      orderBy: { _count: { referrer: "desc" } },
-      take: 5,
-    }),
-    // Recent list spans every property, not just the one this summary's stats
-    // are for -- so Streamy's own page views show up alongside the portfolio's.
-    // The Site column in the panel says which is which.
-    prisma.siteVisit.findMany({
-      orderBy: { at: "desc" },
-      take: 25,
-      select: { id: true, site: true, path: true, ip: true, country: true, referrer: true, at: true },
-    }),
-  ]);
+  const RECENT_LIMIT = 60;
+  const [visits24h, visits7d, uniqueIps, pages, referrers, recentVisits, recentLogins] =
+    await Promise.all([
+      prisma.siteVisit.count({ where: { site, at: { gte: dayAgo } } }),
+      prisma.siteVisit.count({ where: { site, at: { gte: weekAgo } } }),
+      prisma.siteVisit.groupBy({ by: ["ip"], where: { site, at: { gte: weekAgo } } }),
+      prisma.siteVisit.groupBy({
+        by: ["path"],
+        where: { site, at: { gte: weekAgo } },
+        _count: { path: true },
+        orderBy: { _count: { path: "desc" } },
+        take: 5,
+      }),
+      prisma.siteVisit.groupBy({
+        by: ["referrer"],
+        where: { site, at: { gte: weekAgo }, referrer: { not: null } },
+        _count: { referrer: true },
+        orderBy: { _count: { referrer: "desc" } },
+        take: 5,
+      }),
+      // Recent list spans every property (Streamy's own views alongside the
+      // portfolio's), and now sign-in attempts too, so a login from India
+      // shows here as well as on the map. The Site column says which is which.
+      prisma.siteVisit.findMany({
+        orderBy: { at: "desc" },
+        take: RECENT_LIMIT,
+        select: { id: true, site: true, path: true, ip: true, referrer: true, at: true },
+      }),
+      prisma.loginAttempt.findMany({
+        orderBy: { at: "desc" },
+        take: RECENT_LIMIT,
+        select: { id: true, ip: true, name: true, success: true, outcome: true, at: true },
+      }),
+    ]);
 
-  // Geolocate the recent visits' addresses. Only ~25 rows and distinct IPs are
-  // looked up once, so this is cheap; it degrades to null when geolocation is
-  // unconfigured or an address can't be placed.
-  const located = await locateMany(recent.map((r) => r.ip));
+  // Merge visits and logins into one timeline, newest first, capped.
+  type Recent = VisitorSummary["recent"][number] & { _at: Date };
+  const merged: Recent[] = [
+    ...recentVisits.map((v) => ({
+      id: v.id,
+      kind: "visit" as const,
+      site: v.site,
+      path: v.path,
+      ip: v.ip,
+      location: null,
+      referrer: v.referrer,
+      at: v.at.toISOString(),
+      _at: v.at,
+    })),
+    ...recentLogins.map((l) => ({
+      id: l.id,
+      kind: "login" as const,
+      site: "login",
+      // "name: outcome" reads at a glance -- who was tried and how it went.
+      path: `${l.name}: ${l.outcome}`,
+      ip: l.ip,
+      location: null,
+      referrer: null,
+      success: l.success,
+      at: l.at.toISOString(),
+      _at: l.at,
+    })),
+  ]
+    .sort((a, b) => b._at.getTime() - a._at.getTime())
+    .slice(0, RECENT_LIMIT);
+
+  // Geolocate every address in the merged list, distinct IPs once.
+  const located = await locateMany(merged.map((r) => r.ip));
   const locationOf = (ip: string): string | null => {
     const loc = located.get(ip);
     if (!loc) return null;
@@ -154,6 +194,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       referrer: r.referrer ?? "(direct)",
       count: r._count.referrer,
     })),
-    recent: recent.map((r) => ({ ...r, location: locationOf(r.ip), at: r.at.toISOString() })),
+    recent: merged.map(({ _at, ...r }) => ({ ...r, location: locationOf(r.ip) })),
   };
 }
