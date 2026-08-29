@@ -1,4 +1,4 @@
-import { jellyfinUpstreamStreamUrl } from "./jellyfin";
+import { jellyfinTranscodeStreamUrl, jellyfinUpstreamStreamUrl } from "./jellyfin";
 
 // Headers that must survive the hop for video playback to behave: the browser
 // relies on them for seeking (Range/Content-Range/Accept-Ranges), for knowing
@@ -19,9 +19,18 @@ const FORWARDED_RESPONSE_HEADERS = [
  * exactly as they would against Jellyfin directly. The response body is
  * streamed, not buffered, so a multi-GB movie doesn't sit in memory.
  */
-export async function proxyJellyfinStream(itemId: string, request: Request): Promise<Response> {
+export async function proxyJellyfinStream(
+  itemId: string,
+  request: Request,
+  opts: { transcode?: boolean } = {}
+): Promise<Response> {
   const range = request.headers.get("range");
-  const upstream = await fetch(jellyfinUpstreamStreamUrl(itemId), {
+  // Direct file by default; the transcoded stream is requested only as a
+  // fallback for content the browser couldn't play (see the watch page).
+  const upstreamUrl = opts.transcode
+    ? jellyfinTranscodeStreamUrl(itemId)
+    : jellyfinUpstreamStreamUrl(itemId);
+  const upstream = await fetch(upstreamUrl, {
     headers: range ? { Range: range } : {},
     cache: "no-store",
   });

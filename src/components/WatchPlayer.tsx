@@ -33,8 +33,16 @@ export function WatchPlayer({
   autoPlay = false,
   videoUrl,
 }: WatchPlayerProps) {
-  const videoSrc = videoUrl ?? "";
   const hasSource = !!videoUrl;
+  // Direct-play first; on a codec the browser can't handle (HEVC/10-bit/4K) the
+  // <video> fires onError, and we retry the same item transcoded to H.264 via
+  // Jellyfin. One-way: once transcoding, a further error is a real failure.
+  const [transcoding, setTranscoding] = useState(false);
+  const videoSrc = !videoUrl
+    ? ""
+    : transcoding
+      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode`
+      : videoUrl;
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [isMobile, setIsMobile] = useState(false);
@@ -69,6 +77,17 @@ export function WatchPlayer({
     setPlaying(false);
     setShowOverlay(true);
   }, []);
+
+  // When we switch to the transcoded source, force the element to load the new
+  // URL and resume. Changing src alone can leave a browser sitting on the
+  // errored media it just gave up on.
+  useEffect(() => {
+    if (!transcoding) return;
+    const v = videoRef.current;
+    if (!v) return;
+    v.load();
+    v.play().catch(() => {});
+  }, [transcoding]);
 
   // Leaving fullscreen deliberately does NOT leave the page. It used to call
   // router.back(), from a time when exiting stranded the viewer on a bare
@@ -236,6 +255,14 @@ export function WatchPlayer({
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={movieTitle}
         onError={() => {
+          // First failure on a source we haven't transcoded yet: almost always
+          // an unsupported codec. Retry transcoded and keep playing rather than
+          // dropping to the error overlay.
+          if (hasSource && !transcoding) {
+            setTranscoding(true);
+            setVideoLoading(true);
+            return;
+          }
           setPlaying(false);
           setShowOverlay(true);
           setVideoLoading(false);

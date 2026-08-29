@@ -45,8 +45,15 @@ export function EpisodePlayer({
   nextEpisodeLabel,
   videoUrl,
 }: EpisodePlayerProps) {
-  const videoSrc = videoUrl ?? "";
   const hasSource = !!videoUrl;
+  // Direct-play first; retry transcoded to H.264 if the browser can't play the
+  // source codec (HEVC/10-bit/4K). See the movie player for the rationale.
+  const [transcoding, setTranscoding] = useState(false);
+  const videoSrc = !videoUrl
+    ? ""
+    : transcoding
+      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode`
+      : videoUrl;
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [videoLoading, setVideoLoading] = useState(false);
@@ -58,6 +65,15 @@ export function EpisodePlayer({
   const titleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const router = useRouter();
+
+  // Force a reload + resume when we switch to the transcoded source.
+  useEffect(() => {
+    if (!transcoding) return;
+    const v = videoRef.current;
+    if (!v) return;
+    v.load();
+    v.play().catch(() => {});
+  }, [transcoding]);
 
   const scheduleTitleHide = () => {
     if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
@@ -265,6 +281,11 @@ export function EpisodePlayer({
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay || showNextOverlay ? "invisible" : ""}`}
         aria-label={`${showName} - ${episodeName}`}
         onError={() => {
+          if (hasSource && !transcoding) {
+            setTranscoding(true);
+            setVideoLoading(true);
+            return;
+          }
           setPlaying(false);
           setShowOverlay(true);
           setVideoLoading(false);
