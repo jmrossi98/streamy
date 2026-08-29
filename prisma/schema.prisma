@@ -237,3 +237,11 @@ model TourDate {
   @@index([artist, date])
   @@index([date])
 }
+
+/// Small key/value store for runtime toggles the admin flips without a deploy.
+/// First use: whether the tour watcher routes through the VPN egress proxy.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

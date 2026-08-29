@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { checkEgress, checkPage, runAllChecks } from "@/lib/pageWatch";
+import { EGRESS_ENABLED_KEY, isEgressEnabled, setBoolSetting } from "@/lib/appSettings";
 
 /**
  * Manage watched pages, and run a check on demand.
@@ -72,6 +73,13 @@ export async function POST(request: Request) {
   // Live verification that watch traffic exits through the VPN, not the box.
   if (body.action === "egress") {
     return NextResponse.json({ ok: true, egress: await checkEgress() });
+  }
+
+  // Toggle whether the watcher routes through the VPN egress. Persisted, so it
+  // survives restarts and takes effect on the next check without a redeploy.
+  if (body.action === "set-egress") {
+    await setBoolSetting(EGRESS_ENABLED_KEY, body.enabled === true);
+    return NextResponse.json({ ok: true, egressEnabled: await isEgressEnabled() });
   }
 
   // Run-now, for the whole set or a single page, rather than waiting for cron.

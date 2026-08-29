@@ -11,6 +11,7 @@
 
 import { ProxyAgent } from "undici";
 import { prisma } from "@/lib/db";
+import { isEgressEnabled } from "@/lib/appSettings";
 import {
   describeChange,
   diffLines,
@@ -73,7 +74,12 @@ function requestHeaders(accept: string): Record<string, string> {
  * there is no thread the site can pull to tie our visits into a history.
  */
 async function watchFetch(url: string, init: RequestInit): Promise<Response> {
-  const decision = resolveEgress(egressProxyUrl(), egressProxyRequired());
+  // The admin's runtime toggle wins: turned off, the watcher goes direct with
+  // no proxy, regardless of the env config. Turned on (the default), the env
+  // config decides -- proxy when set, fail-closed when required.
+  const decision = (await isEgressEnabled())
+    ? resolveEgress(egressProxyUrl(), egressProxyRequired())
+    : ({ via: "direct" } as const);
   if (decision.via === "blocked") {
     throw new Error("Egress proxy required but PAGE_WATCH_PROXY_URL is unset — refusing to fetch");
   }
@@ -118,7 +124,9 @@ export type EgressHealth =
  *                being watched until it recovers.
  */
 export async function checkEgress(): Promise<EgressHealth> {
-  if (!isEgressProxied()) return { state: "direct" };
+  // Toggled off, or no proxy configured, means traffic goes direct -- report it
+  // as such rather than probing a proxy that won't be used.
+  if (!(await isEgressEnabled()) || !isEgressProxied()) return { state: "direct" };
 
   // This box's own public IP -- a plain fetch, never through the proxy.
   let directIp: string | null = null;
@@ -430,7 +438,9 @@ export type PageWatchSummary = {
   artists: ArtistDates[];
   /** The location filter in effect on the overall dates view. */
   locations: string[];
-  /** Whether outbound watch traffic exits through an anonymising proxy. */
+  /** The admin's on/off toggle for routing through the VPN egress. */
+  egressEnabled: boolean;
+  /** Whether an egress proxy is configured at all (env). */
   egressProxied: boolean;
   /** Whether a missing proxy hard-fails the fetch rather than going direct. */
   egressEnforced: boolean;
@@ -475,6 +485,7 @@ export async function getPageWatchSummary(): Promise<PageWatchSummary> {
     })),
     artists,
     locations: watchLocations(),
+    egressEnabled: await isEgressEnabled(),
     egressProxied: isEgressProxied(),
     egressEnforced: egressProxyRequired(),
   };
