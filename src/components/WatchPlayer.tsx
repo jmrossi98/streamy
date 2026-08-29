@@ -8,6 +8,7 @@ import {
   enterNativeVideoFullscreen,
   isMobileViewport,
 } from "@/lib/videoFullscreen";
+import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the movie is here" when it
@@ -34,15 +35,27 @@ export function WatchPlayer({
   videoUrl,
 }: WatchPlayerProps) {
   const hasSource = !!videoUrl;
-  // Direct-play first; on a codec the browser can't handle (HEVC/10-bit/4K) the
-  // <video> fires onError, and we retry the same item transcoded to H.264 via
-  // Jellyfin. One-way: once transcoding, a further error is a real failure.
-  const [transcoding, setTranscoding] = useState(false);
+  // Playback quality is viewer-chosen: Auto direct-plays and falls back to a
+  // 1080p transcode only if the browser can't decode the source; 4K forces the
+  // raw source; 1080p forces the transcode. `transcoding` is derived from that
+  // choice (plus Auto's one-shot fallback) and picks the source URL.
+  const [quality, setQuality] = useState<PlaybackQuality>("auto");
+  // Set when a direct-play source errors (unplayable codec) and we drop to the
+  // transcode. Applies to both Auto and 4K -- a watchable 1080p beats a black
+  // screen. Reset whenever the viewer picks a quality.
+  const [autoFellBack, setAutoFellBack] = useState(false);
+  const transcoding = quality === "1080p" || autoFellBack;
   const videoSrc = !videoUrl
     ? ""
     : transcoding
       ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode`
       : videoUrl;
+  // Position to restore after a source swap (quality change), so switching
+  // quality resumes where you were instead of jumping to the start.
+  const resumeAtRef = useRef<number | null>(null);
+  // Guards the reload effect from firing on first mount, where the initial
+  // source and the saved-progress seek are handled elsewhere.
+  const didSwapRef = useRef(false);
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [isMobile, setIsMobile] = useState(false);
@@ -78,15 +91,40 @@ export function WatchPlayer({
     setShowOverlay(true);
   }, []);
 
-  // When we switch to the transcoded source, force the element to load the new
-  // URL and resume. Changing src alone can leave a browser sitting on the
-  // errored media it just gave up on.
+  // Viewer picked a quality. Remember where we are, then let the derived
+  // `transcoding`/`videoSrc` change drive the reload effect below.
+  const changeQuality = (q: PlaybackQuality) => {
+    // Re-picking the current quality is a no-op, unless we'd fallen back to a
+    // transcode -- then it's a request to retry direct-play at that quality.
+    if (q === quality && !autoFellBack) return;
+    const v = videoRef.current;
+    resumeAtRef.current = v && v.currentTime > 0 ? v.currentTime : null;
+    didSwapRef.current = true;
+    setAutoFellBack(false);
+    setPlaybackError(false);
+    setVideoLoading(true);
+    setQuality(q);
+  };
+
+  // Any source swap (quality change, or Auto's codec fallback) flips
+  // `transcoding`, which changes the src. Force the element to load the new URL,
+  // seek back to where the viewer was, and resume -- changing src alone can
+  // leave a browser sitting on the media it just gave up on.
   useEffect(() => {
-    if (!transcoding) return;
+    if (!didSwapRef.current) return;
     const v = videoRef.current;
     if (!v) return;
     v.load();
-    v.play().catch(() => {});
+    const onLoaded = () => {
+      if (resumeAtRef.current != null) {
+        v.currentTime = resumeAtRef.current;
+        resumeAtRef.current = null;
+      }
+      v.play().catch(() => {});
+      setVideoLoading(false);
+    };
+    v.addEventListener("loadedmetadata", onLoaded, { once: true });
+    return () => v.removeEventListener("loadedmetadata", onLoaded);
   }, [transcoding]);
 
   // Leaving fullscreen deliberately does NOT leave the page. It used to call
@@ -214,11 +252,12 @@ export function WatchPlayer({
           mobile feel cluttered. */}
       {showVideo && !isMobile && (
         <div
-          className={`absolute top-0 left-0 right-0 z-10 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
+          className={`absolute top-0 left-0 right-0 z-10 flex items-start justify-between gap-4 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
             showTitle ? "opacity-100" : "opacity-0"
           }`}
         >
           <p className="text-white font-medium text-lg drop-shadow-md">{movieTitle}</p>
+          <QualitySelector value={quality} onChange={changeQuality} />
         </div>
       )}
       {/* Explicit way back to fullscreen on mobile. The tap that starts
@@ -246,6 +285,13 @@ export function WatchPlayer({
           </svg>
         </button>
       )}
+      {/* Mobile: the selector lives on the inline view (native fullscreen draws
+          its own controls we can't overlay). Choose quality before maximising. */}
+      {showVideo && isMobile && (
+        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
+          <QualitySelector value={quality} onChange={changeQuality} />
+        </div>
+      )}
       <video
         ref={videoRef}
         src={videoSrc}
@@ -255,11 +301,14 @@ export function WatchPlayer({
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={movieTitle}
         onError={() => {
-          // First failure on a source we haven't transcoded yet: almost always
-          // an unsupported codec. Retry transcoded and keep playing rather than
-          // dropping to the error overlay.
+          // Direct-play failed (almost always an unsupported codec). Fall back
+          // to the transcode and keep playing rather than dropping to the error
+          // overlay -- from either Auto or 4K. Only a failure while already
+          // transcoding is a real error.
           if (hasSource && !transcoding) {
-            setTranscoding(true);
+            resumeAtRef.current = videoRef.current?.currentTime || null;
+            didSwapRef.current = true;
+            setAutoFellBack(true);
             setVideoLoading(true);
             return;
           }
