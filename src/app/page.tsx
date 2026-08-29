@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
 import { HomeFeedHeader } from "@/components/HomeFeedHeader";
-import { RecentlyWatchedRow } from "@/components/RecentlyWatchedRow";
+import { RecentlyWatchedRow, type RecentItem } from "@/components/RecentlyWatchedRow";
 import { HomeMoviesSection } from "@/components/HomeMoviesSection";
 import { HomePrefetch } from "@/components/HomePrefetch";
 import { getTrending, getGenres, getDiscoverByGenre, getMovieById, getShowById, getTrendingTV, getTVGenres, getDiscoverTVByGenre } from "@/lib/tmdb";
@@ -65,19 +65,32 @@ export default async function HomePage() {
     Promise.all(recentProgress.map((p) => getMovieById(String(p.movieId)))),
     ...recentShowIds.map((id) => getShowById(id)),
   ]);
-  const recentlyWatched = recentProgress
-    .map((p, i) => {
+  // Movies and shows merged into one strip ordered by when each was last
+  // watched (newest first), so a show watched minutes ago outranks an older
+  // movie -- the "Continue Watching" ordering people expect.
+  const recentMovieItems: RecentItem[] = recentProgress
+    .map((p, i): RecentItem | null => {
       const movie = movieDetails[i];
       if (!movie) return null;
       return {
+        kind: "movie",
+        sortAt: new Date(p.updatedAt).getTime(),
         movie,
         progressSeconds: p.progressSeconds,
         runtimeMinutes: movie.runtime ?? null,
       };
     })
-    .filter((item): item is NonNullable<typeof item> => item != null);
-  const recentlyWatchedShows = showDetails.filter(
-    (s): s is NonNullable<Awaited<ReturnType<typeof getShowById>>> => s != null
+    .filter((item): item is RecentItem => item != null);
+  const recentShowItems: RecentItem[] = recentShowIds
+    .map((id, i): RecentItem | null => {
+      const show = showDetails[i];
+      if (!show) return null;
+      const lastWatched = recentEpisodeProgress.find((p) => p.showId === id)?.updatedAt;
+      return { kind: "show", sortAt: lastWatched ? new Date(lastWatched).getTime() : 0, show };
+    })
+    .filter((item): item is RecentItem => item != null);
+  const recentlyWatchedItems = [...recentMovieItems, ...recentShowItems].sort(
+    (a, b) => b.sortAt - a.sortAt
   );
 
   const movieIdsOnPage = new Set([
@@ -100,7 +113,7 @@ export default async function HomePage() {
     );
   }
 
-  const hasRecentProgress = recentlyWatched.length > 0 || recentlyWatchedShows.length > 0;
+  const hasRecentProgress = recentlyWatchedItems.length > 0;
   const featuredProgressSeconds =
     allWatchProgress.find((p) => String(p.movieId) === String(featured.id))?.progressSeconds ?? 0;
 
@@ -123,10 +136,7 @@ export default async function HomePage() {
       </div>
       <div id="movies" className="space-y-4 pt-6 sm:space-y-5 md:space-y-2 md:pt-5">
         {hasRecentProgress && (
-          <RecentlyWatchedRow
-            items={recentlyWatched}
-            showItems={recentlyWatchedShows.map((show) => ({ show }))}
-          />
+          <RecentlyWatchedRow items={recentlyWatchedItems} />
         )}
         <HomeMoviesSection
           trending={trending}

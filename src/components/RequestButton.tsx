@@ -50,6 +50,9 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   const inFlightRef = useRef(false);
 
   const callbackUrl = mediaType === "movie" ? `/watch/${id}` : `/show/${id}`;
+  // Shows pull a whole series, so the label says so -- "Download" alone read as
+  // a single-file action on a show page.
+  const downloadLabel = mediaType === "show" ? "Download series" : "Download";
 
   const request = useCallback(async () => {
     if (!session?.user || inFlightRef.current || !id) return;
@@ -217,7 +220,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
     return (
       <Link href={`/who-is-watching?callbackUrl=${encodeURIComponent(callbackUrl)}`} className={PRIMARY_CLASS}>
         <DownloadIcon />
-        Download
+        {downloadLabel}
       </Link>
     );
   }
@@ -229,7 +232,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
       ) : (
         <DownloadIcon />
       )}
-      {error ? "Couldn't download — try again" : "Download"}
+      {error ? "Couldn't download — try again" : downloadLabel}
     </button>
   );
 }
