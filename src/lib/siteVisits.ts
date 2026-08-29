@@ -8,6 +8,7 @@
  */
 
 import { prisma } from "./db";
+import { locateMany } from "./geoip";
 
 /** Allowed `site` values. An unknown site is rejected rather than stored. */
 // "streamy" is this app reporting its own page views, alongside the portfolio
@@ -91,6 +92,8 @@ export type VisitorSummary = {
     path: string;
     ip: string;
     country: string | null;
+    /** "City, Country" from GeoLite2, or null when it can't be placed. */
+    location: string | null;
     referrer: string | null;
     at: string;
   }[];
@@ -127,6 +130,17 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     }),
   ]);
 
+  // Geolocate the recent visits' addresses. Only ~25 rows and distinct IPs are
+  // looked up once, so this is cheap; it degrades to null when geolocation is
+  // unconfigured or an address can't be placed.
+  const located = await locateMany(recent.map((r) => r.ip));
+  const locationOf = (ip: string): string | null => {
+    const loc = located.get(ip);
+    if (!loc) return null;
+    if (loc.city && loc.country) return `${loc.city}, ${loc.country}`;
+    return loc.country ?? loc.city ?? null;
+  };
+
   return {
     visits24h,
     visits7d,
@@ -136,6 +150,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       referrer: r.referrer ?? "(direct)",
       count: r._count.referrer,
     })),
-    recent: recent.map((r) => ({ ...r, at: r.at.toISOString() })),
+    recent: recent.map((r) => ({ ...r, location: locationOf(r.ip), at: r.at.toISOString() })),
   };
 }
