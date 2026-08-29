@@ -82,6 +82,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
               <thead className="sticky top-0 bg-netflix-dark text-xs uppercase tracking-wide text-white/30">
                 <tr>
                   <th className="px-3 py-2 font-medium">When</th>
+                  <th className="px-3 py-2 font-medium">Site</th>
                   <th className="px-3 py-2 font-medium">Page</th>
                   <th className="px-3 py-2 font-medium">Location</th>
                   <th className="px-3 py-2 font-medium">IP</th>
@@ -93,6 +94,17 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                   <tr key={v.id} className="border-t border-white/5">
                     <td className="whitespace-nowrap px-3 py-2 text-white/50">
                       {new Date(v.at).toLocaleString()}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      <span
+                        className={
+                          v.site === "streamy"
+                            ? "rounded bg-red-500/15 px-1.5 py-0.5 text-xs text-red-300"
+                            : "rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300"
+                        }
+                      >
+                        {v.site}
+                      </span>
                     </td>
                     <td className="max-w-[12rem] truncate px-3 py-2 text-white/80">{v.path}</td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/60">
