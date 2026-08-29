@@ -6,10 +6,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   tryMobileNativeVideoFullscreen,
-  enterNativeVideoFullscreen,
   isMobileViewport,
 } from "@/lib/videoFullscreen";
-import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
+import { type PlaybackQuality } from "./QualitySelector";
+import { VideoChrome } from "./VideoChrome";
+import { usePlayerChrome } from "@/lib/usePlayerChrome";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -23,16 +24,18 @@ type EpisodePlayerProps = {
   episodeName: string;
   backdropUrl: string;
   initialProgressSeconds: number;
+  runtimeMinutes?: number | null;
   autoPlay?: boolean;
   /** When set, show "Next episode" overlay when video ends and link to this href. */
   nextEpisodeHref?: string | null;
   nextEpisodeLabel?: string;
   videoUrl?: string | null;
+  closeHref?: string;
+  onClose?: () => void;
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
 const NEXT_EPISODE_COUNTDOWN_SEC = 15;
-const TITLE_SHOW_MS = 3000;
 export function EpisodePlayer({
   showId,
   showName,
@@ -41,10 +44,13 @@ export function EpisodePlayer({
   episodeName,
   backdropUrl,
   initialProgressSeconds,
+  runtimeMinutes,
   autoPlay = true,
   nextEpisodeHref,
   nextEpisodeLabel,
   videoUrl,
+  closeHref,
+  onClose,
 }: EpisodePlayerProps) {
   const hasSource = !!videoUrl;
   // Viewer-chosen quality: Auto direct-plays and falls back to a 1080p transcode
@@ -67,9 +73,11 @@ export function EpisodePlayer({
   const [isMobile, setIsMobile] = useState(false);
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
-  const [showTitle, setShowTitle] = useState(true);
-  const titleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chrome = usePlayerChrome(videoRef, containerRef, {
+    knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
+  });
   const router = useRouter();
 
   const changeQuality = (q: PlaybackQuality) => {
@@ -84,37 +92,34 @@ export function EpisodePlayer({
   };
 
   // Any source swap (quality change, or Auto's codec fallback) reloads the
-  // element, seeks back to where the viewer was, and resumes.
+  // element and resumes. Wait for `canplay` and only seek within the seekable
+  // range -- a transcode isn't freely seekable, and an out-of-range seek stalls
+  // it (what stopped mobile playback on a 1080p switch).
   useEffect(() => {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
     if (!v) return;
     v.load();
-    const onLoaded = () => {
-      if (resumeAtRef.current != null) {
-        v.currentTime = resumeAtRef.current;
-        resumeAtRef.current = null;
+    const onReady = () => {
+      const target = resumeAtRef.current;
+      resumeAtRef.current = null;
+      if (target != null) {
+        try {
+          const seekable =
+            v.seekable && v.seekable.length > 0
+              ? target <= v.seekable.end(v.seekable.length - 1)
+              : false;
+          if (seekable) v.currentTime = target;
+        } catch {
+          /* not seekable yet; play from start rather than stall */
+        }
       }
       v.play().catch(() => {});
       setVideoLoading(false);
     };
-    v.addEventListener("loadedmetadata", onLoaded, { once: true });
-    return () => v.removeEventListener("loadedmetadata", onLoaded);
+    v.addEventListener("canplay", onReady, { once: true });
+    return () => v.removeEventListener("canplay", onReady);
   }, [transcoding]);
-
-  const scheduleTitleHide = () => {
-    if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
-    titleTimeoutRef.current = setTimeout(() => setShowTitle(false), TITLE_SHOW_MS);
-  };
-  const showTitleTemporarily = () => {
-    setShowTitle(true);
-    scheduleTitleHide();
-  };
-  useEffect(() => {
-    return () => {
-      if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
-    };
-  }, []);
 
   // On mobile, hold at the play button rather than autoplaying. Fullscreen can
   // only be entered from a real user gesture, and opening this page isn't one,
@@ -257,60 +262,21 @@ export function EpisodePlayer({
 
   return (
     <div
+      ref={containerRef}
       className={`relative w-full bg-black ${containerClass}`}
-      onMouseEnter={() => showVideo && showTitleTemporarily()}
-      onMouseLeave={() => showVideo && scheduleTitleHide()}
+      onMouseMove={() => showVideo && chrome.revealControls()}
+      onTouchStart={() => showVideo && chrome.revealControls()}
     >
-      {/* Desktop only: in native fullscreen the OS draws its own controls
-          and title, so layering ours on top is what made mobile feel busy. */}
-      {showVideo && !isMobile && (
-        <div
-          className={`absolute top-0 left-0 right-0 z-10 flex items-start justify-between gap-4 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
-            showTitle ? "opacity-100" : "opacity-0"
-          }`}
-        >
-          <p className="text-white font-medium text-lg drop-shadow-md">
-            {showName} · S{seasonNumber} E{episodeNumber} {episodeName && `· ${episodeName}`}
-          </p>
-          <QualitySelector value={quality} onChange={changeQuality} />
-        </div>
-      )}
-      {/* Explicit way back to fullscreen on mobile. The tap that starts
-          playback opens the native player, but once a viewer leaves it the
-          episode keeps playing inline with no obvious way to maximise again --
-          iOS gives no control for that. Sits bottom-right, clear of the
-          native transport controls along the top and centre. */}
-      {showVideo && isMobile && (
-        <button
-          type="button"
-          onClick={() => {
-            const v = videoRef.current;
-            if (v) enterNativeVideoFullscreen(v);
-          }}
-          aria-label="Maximize video"
-          className="streamy-player-maximize absolute z-20 flex h-11 w-11 items-center justify-center rounded-full bg-black/70 text-white active:bg-black/90 touch-manipulation"
-        >
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"
-            />
-          </svg>
-        </button>
-      )}
-      {showVideo && isMobile && (
-        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
-          <QualitySelector value={quality} onChange={changeQuality} />
-        </div>
-      )}
       <video
         ref={videoRef}
         src={videoSrc}
-        controls
         autoPlay
         playsInline
+        onClick={() => {
+          if (!showVideo) return;
+          if (chrome.controlsVisible) chrome.togglePlay();
+          else chrome.revealControls();
+        }}
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay || showNextOverlay ? "invisible" : ""}`}
         aria-label={`${showName} - ${episodeName}`}
         onError={() => {
@@ -328,14 +294,24 @@ export function EpisodePlayer({
         }}
         onPlay={() => {
           setShowOverlay(false);
-          setShowTitle(true);
           setPlaybackError(false);
-          scheduleTitleHide();
+          chrome.revealControls();
         }}
         onEnded={() => {
           if (nextEpisodeHref) setShowNextOverlay(true);
         }}
       />
+      {showVideo && (
+        <VideoChrome
+          title={showName}
+          subtitle={`S${seasonNumber} E${episodeNumber}${episodeName ? ` · ${episodeName}` : ""}`}
+          quality={quality}
+          onQualityChange={changeQuality}
+          closeHref={closeHref}
+          onClose={onClose}
+          chrome={chrome}
+        />
+      )}
       {showNextOverlay && nextEpisodeHref && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80">
           <p className="text-white text-lg mb-2">Next episode</p>
@@ -375,6 +351,31 @@ export function EpisodePlayer({
             sizes="100vw"
           />
           <div className="hero-overlay absolute inset-0" />
+          {(closeHref || onClose) && (
+            closeHref ? (
+              <Link
+                href={closeHref}
+                prefetch
+                aria-label="Close"
+                className="absolute top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="absolute top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )
+          )}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             {!hasSource ? (
               <div className="z-10 flex max-w-sm flex-col items-center gap-2 px-6 text-center">

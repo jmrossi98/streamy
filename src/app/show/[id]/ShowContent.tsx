@@ -188,16 +188,6 @@ export function ShowContent({
     <div className="min-h-screen bg-black pb-16 pt-16 md:bg-netflix-black md:pb-12">
       {overlayEpisode && (
         <div className="fixed inset-0 z-[100] bg-netflix-black">
-          <button
-            type="button"
-            onClick={closeOverlay}
-            className="absolute top-4 right-4 z-[101] w-10 h-10 rounded-full bg-black/60 text-white hover:bg-black/80 flex items-center justify-center transition-colors"
-            aria-label="Close and return to show"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
           <EpisodePlayer
             showId={show.id}
             showName={show.name}
@@ -206,6 +196,10 @@ export function ShowContent({
             episodeName={overlayEpisode.episodeName}
             backdropUrl={show.backdrop}
             initialProgressSeconds={overlayEpisode.progressSeconds}
+            runtimeMinutes={
+              season?.episodes.find((e) => e.episodeNumber === overlayEpisode.episodeNumber)?.runtime ?? null
+            }
+            onClose={closeOverlay}
             autoPlay
             nextEpisodeHref={overlayEpisode.nextHref}
             nextEpisodeLabel={overlayEpisode.nextLabel ?? undefined}
