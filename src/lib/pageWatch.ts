@@ -11,7 +11,6 @@
 
 import { ProxyAgent } from "undici";
 import { prisma } from "@/lib/db";
-import { notify } from "@/lib/notify";
 import {
   describeChange,
   diffLines,
@@ -23,9 +22,11 @@ import {
   htmlToText,
   isAllowedByRobots,
   isEgressProxied,
+  matchesLocation,
   newKeywordHits,
   normalizeLines,
   parseKeywords,
+  parseLocations,
   parseTourDates,
   resolveEgress,
   shouldNotify,
@@ -292,31 +293,18 @@ export async function checkPage(page: PageRow): Promise<CheckOutcome> {
 
   const summary = describeChange(diff);
 
+  // A change is recorded for the panel to show. No email: this feature is read
+  // from the admin panel, not pushed to an inbox. The first check of a page
+  // establishes a baseline and is not a change (shouldNotify handles that).
   if (shouldNotify(page.contentHash, diff)) {
-    const body = [
-      page.label,
-      page.url,
-      "",
-      keywordHits.length ? `Keywords: ${keywordHits.join(", ")}` : null,
-      keywordHits.length ? "" : null,
-      formatDiff(diff).slice(0, MAX_DIFF_CHARS),
-    ]
-      .filter((l) => l !== null)
-      .join("\n");
-
-    const subject = keywordHits.length
-      ? `${page.label}: ${keywordHits.join(", ")}`
-      : `${page.label} changed (${summary})`;
-
-    const sent = await notify(subject, body);
-
     await prisma.pageChange.create({
       data: {
         pageId: page.id,
         summary,
         diff: formatDiff(diff).slice(0, MAX_DIFF_CHARS),
         keywordHits: keywordHits.length ? keywordHits.join(", ") : null,
-        notified: sent,
+        // Not emailed by design; kept so the column still reconciles.
+        notified: false,
       },
     });
   }
@@ -366,14 +354,31 @@ export type ArtistDates = {
  * couldn't date is still something worth seeing, and hiding it would make the
  * view quietly incomplete.
  */
+/**
+ * Location filter for the overall view. Only dates whose venue text matches one
+ * of these show up, so the "all dates" view answers "who is playing near me"
+ * rather than listing every city. Defaults to the DC area; override with a
+ * comma-separated PAGE_WATCH_LOCATIONS, or set it empty to show everywhere.
+ */
+export function watchLocations(): string[] {
+  const raw = process.env.PAGE_WATCH_LOCATIONS ?? "Tysons,Washington";
+  return parseLocations(raw);
+}
+
 export async function getArtistDates(): Promise<ArtistDates[]> {
   const rows = await prisma.tourDate.findMany({
     include: { page: { select: { url: true, label: true } } },
     orderBy: [{ artist: "asc" }, { date: "asc" }],
   });
 
+  const locations = watchLocations();
   const byArtist = new Map<string, ArtistDates>();
   for (const row of rows) {
+    // Filter to the wanted area, matching against both the cleaned detail and
+    // the original line so a city that only survives in the raw text still
+    // counts.
+    if (!matchesLocation(`${row.detail} ${row.raw}`, locations)) continue;
+
     let entry = byArtist.get(row.artist);
     if (!entry) {
       entry = { artist: row.artist, dates: [] };
@@ -421,10 +426,10 @@ export type PageWatchSummary = {
     summary: string;
     diff: string;
     keywordHits: string | null;
-    notified: boolean;
   }[];
   artists: ArtistDates[];
-  notifyConfigured: boolean;
+  /** The location filter in effect on the overall dates view. */
+  locations: string[];
   /** Whether outbound watch traffic exits through an anonymising proxy. */
   egressProxied: boolean;
   /** Whether a missing proxy hard-fails the fetch rather than going direct. */
@@ -433,8 +438,6 @@ export type PageWatchSummary = {
 
 /** Everything the admin panel renders, in one round trip. */
 export async function getPageWatchSummary(): Promise<PageWatchSummary> {
-  const { isNotifyConfigured } = await import("@/lib/notify");
-
   const [pages, changes, artists] = await Promise.all([
     prisma.watchedPage.findMany({
       orderBy: { createdAt: "asc" },
@@ -469,10 +472,9 @@ export async function getPageWatchSummary(): Promise<PageWatchSummary> {
       summary: c.summary,
       diff: c.diff,
       keywordHits: c.keywordHits,
-      notified: c.notified,
     })),
     artists,
-    notifyConfigured: isNotifyConfigured(),
+    locations: watchLocations(),
     egressProxied: isEgressProxied(),
     egressEnforced: egressProxyRequired(),
   };

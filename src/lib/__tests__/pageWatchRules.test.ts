@@ -10,7 +10,9 @@ import {
   newKeywordHits,
   normalizeLines,
   parseDateLine,
+  matchesLocation,
   parseKeywords,
+  parseLocations,
   parseTourDates,
   shouldNotify,
   stripNoise,
@@ -233,5 +235,25 @@ Disallow: /nope
   it("allows when there are no applicable rules", () => {
     expect(isAllowedByRobots("", "/tour", "StreamyWatch")).toBe(true);
     expect(isAllowedByRobots("User-agent: *\nDisallow:", "/tour", "StreamyWatch")).toBe(true);
+  });
+});
+
+describe("location filter", () => {
+  it("parses a comma-separated list, trimming and dropping blanks", () => {
+    expect(parseLocations("Tysons, Washington , ")).toEqual(["Tysons", "Washington"]);
+    expect(parseLocations("")).toEqual([]);
+    expect(parseLocations(null)).toEqual([]);
+  });
+
+  it("matches a venue line case-insensitively as a substring", () => {
+    const patterns = ["Tysons", "Washington"];
+    expect(matchesLocation("The Anthem, Washington, D.C.", patterns)).toBe(true);
+    expect(matchesLocation("Capital One Hall, Tysons, VA", patterns)).toBe(true);
+    expect(matchesLocation("Madison Square Garden, New York", patterns)).toBe(false);
+  });
+
+  // No patterns means the filter is off -- everything passes.
+  it("passes everything when no patterns are set", () => {
+    expect(matchesLocation("anywhere at all", [])).toBe(true);
   });
 });
