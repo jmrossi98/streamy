@@ -210,12 +210,34 @@ export async function cancelRadarrQueueItem(queueId: number): Promise<boolean> {
 
 export type CompletedDownload = { id: number; title: string };
 
-/** Every movie Radarr has fully downloaded, for the admin panel's completed section. */
+/** Basename of a path, minus its extension -- "Movie.2024.1080p.BluRay.mkv" -> "Movie.2024.1080p.BluRay". */
+function fileBaseName(relativePath: string): string {
+  const base = relativePath.split(/[/\\]/).pop() ?? relativePath;
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/**
+ * Every movie Radarr has fully downloaded, for the admin panel's completed
+ * section. Shows the actual imported file's name (quality/source tags and
+ * all) rather than Radarr's clean parsed movie title -- while a download is
+ * active the panel shows the release name from the queue, and switching to
+ * the tidied-up title the moment it finishes read as if the real filename
+ * had been discarded on import. Falls back to the movie title only if a file
+ * is somehow missing its own filename (movieFile without a relativePath).
+ */
 export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
-    const movies = await radarrFetch<{ id: number; title: string; hasFile: boolean }[]>("/api/v3/movie");
-    return movies.filter((m) => m.hasFile).map((m) => ({ id: m.id, title: m.title }));
+    const movies = await radarrFetch<
+      { id: number; title: string; hasFile: boolean; movieFile?: { relativePath?: string } }[]
+    >("/api/v3/movie");
+    return movies
+      .filter((m) => m.hasFile)
+      .map((m) => ({
+        id: m.id,
+        title: m.movieFile?.relativePath ? fileBaseName(m.movieFile.relativePath) : m.title,
+      }));
   } catch (err) {
     console.error("[radarr] getRadarrCompletedMovies failed:", err);
     return [];
