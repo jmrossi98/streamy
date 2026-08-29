@@ -9,6 +9,7 @@ import {
   enterNativeVideoFullscreen,
   isMobileViewport,
 } from "@/lib/videoFullscreen";
+import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -46,14 +47,19 @@ export function EpisodePlayer({
   videoUrl,
 }: EpisodePlayerProps) {
   const hasSource = !!videoUrl;
-  // Direct-play first; retry transcoded to H.264 if the browser can't play the
-  // source codec (HEVC/10-bit/4K). See the movie player for the rationale.
-  const [transcoding, setTranscoding] = useState(false);
+  // Viewer-chosen quality: Auto direct-plays and falls back to a 1080p transcode
+  // if the browser can't decode the source; 4K forces the raw source; 1080p
+  // forces the transcode. See the movie player for the full rationale.
+  const [quality, setQuality] = useState<PlaybackQuality>("auto");
+  const [autoFellBack, setAutoFellBack] = useState(false);
+  const transcoding = quality === "1080p" || autoFellBack;
   const videoSrc = !videoUrl
     ? ""
     : transcoding
       ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode`
       : videoUrl;
+  const resumeAtRef = useRef<number | null>(null);
+  const didSwapRef = useRef(false);
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [videoLoading, setVideoLoading] = useState(false);
@@ -66,13 +72,34 @@ export function EpisodePlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const router = useRouter();
 
-  // Force a reload + resume when we switch to the transcoded source.
+  const changeQuality = (q: PlaybackQuality) => {
+    if (q === quality && !autoFellBack) return;
+    const v = videoRef.current;
+    resumeAtRef.current = v && v.currentTime > 0 ? v.currentTime : null;
+    didSwapRef.current = true;
+    setAutoFellBack(false);
+    setPlaybackError(false);
+    setVideoLoading(true);
+    setQuality(q);
+  };
+
+  // Any source swap (quality change, or Auto's codec fallback) reloads the
+  // element, seeks back to where the viewer was, and resumes.
   useEffect(() => {
-    if (!transcoding) return;
+    if (!didSwapRef.current) return;
     const v = videoRef.current;
     if (!v) return;
     v.load();
-    v.play().catch(() => {});
+    const onLoaded = () => {
+      if (resumeAtRef.current != null) {
+        v.currentTime = resumeAtRef.current;
+        resumeAtRef.current = null;
+      }
+      v.play().catch(() => {});
+      setVideoLoading(false);
+    };
+    v.addEventListener("loadedmetadata", onLoaded, { once: true });
+    return () => v.removeEventListener("loadedmetadata", onLoaded);
   }, [transcoding]);
 
   const scheduleTitleHide = () => {
@@ -238,13 +265,14 @@ export function EpisodePlayer({
           and title, so layering ours on top is what made mobile feel busy. */}
       {showVideo && !isMobile && (
         <div
-          className={`absolute top-0 left-0 right-0 z-10 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
+          className={`absolute top-0 left-0 right-0 z-10 flex items-start justify-between gap-4 px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none transition-opacity duration-300 ${
             showTitle ? "opacity-100" : "opacity-0"
           }`}
         >
           <p className="text-white font-medium text-lg drop-shadow-md">
             {showName} · S{seasonNumber} E{episodeNumber} {episodeName && `· ${episodeName}`}
           </p>
+          <QualitySelector value={quality} onChange={changeQuality} />
         </div>
       )}
       {/* Explicit way back to fullscreen on mobile. The tap that starts
@@ -272,6 +300,11 @@ export function EpisodePlayer({
           </svg>
         </button>
       )}
+      {showVideo && isMobile && (
+        <div className="absolute top-3 left-1/2 z-20 -translate-x-1/2">
+          <QualitySelector value={quality} onChange={changeQuality} />
+        </div>
+      )}
       <video
         ref={videoRef}
         src={videoSrc}
@@ -282,7 +315,9 @@ export function EpisodePlayer({
         aria-label={`${showName} - ${episodeName}`}
         onError={() => {
           if (hasSource && !transcoding) {
-            setTranscoding(true);
+            resumeAtRef.current = videoRef.current?.currentTime || null;
+            didSwapRef.current = true;
+            setAutoFellBack(true);
             setVideoLoading(true);
             return;
           }
