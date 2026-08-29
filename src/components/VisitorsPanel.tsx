@@ -83,6 +83,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                 <tr>
                   <th className="px-3 py-2 font-medium">When</th>
                   <th className="px-3 py-2 font-medium">Page</th>
+                  <th className="px-3 py-2 font-medium">Location</th>
                   <th className="px-3 py-2 font-medium">IP</th>
                   <th className="px-3 py-2 font-medium">From</th>
                 </tr>
@@ -94,9 +95,11 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                       {new Date(v.at).toLocaleString()}
                     </td>
                     <td className="max-w-[12rem] truncate px-3 py-2 text-white/80">{v.path}</td>
+                    <td className="max-w-[10rem] truncate px-3 py-2 text-white/60">
+                      {v.location ?? <span className="text-white/25">—</span>}
+                    </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-white/60">
                       {v.ip}
-                      {v.country ? <span className="ml-1 text-white/30">{v.country}</span> : null}
                     </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/50">
                       {v.referrer ? hostOf(v.referrer) : "direct"}
