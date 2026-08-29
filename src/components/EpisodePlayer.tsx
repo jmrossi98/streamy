@@ -8,7 +8,7 @@ import {
   tryMobileNativeVideoFullscreen,
   isMobileViewport,
 } from "@/lib/videoFullscreen";
-import { type PlaybackQuality } from "./QualitySelector";
+import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
 import { VideoChrome } from "./VideoChrome";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 
@@ -59,10 +59,18 @@ export function EpisodePlayer({
   const [quality, setQuality] = useState<PlaybackQuality>("auto");
   const [autoFellBack, setAutoFellBack] = useState(false);
   const transcoding = quality === "1080p" || autoFellBack;
+  // Where the current transcode source begins in the episode's real timeline
+  // (Jellyfin's startTimeTicks). See the movie player for the full rationale --
+  // a transcode can only be played from where ffmpeg has already encoded to,
+  // so a scrub-seek has to restart the transcode at the target instead of
+  // setting currentTime, which does nothing on a progressive stream.
+  const [transcodeStartAt, setTranscodeStartAt] = useState(0);
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode`
+      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode${
+          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+        }`
       : videoUrl;
   const resumeAtRef = useRef<number | null>(null);
   const didSwapRef = useRef(false);
@@ -77,24 +85,33 @@ export function EpisodePlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const chrome = usePlayerChrome(videoRef, containerRef, {
     knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
+    timeOffsetSeconds: transcoding ? transcodeStartAt : 0,
+    onExternalSeek: transcoding
+      ? (absoluteSeconds: number) => {
+          resumeAtRef.current = null;
+          didSwapRef.current = true;
+          setVideoLoading(true);
+          setTranscodeStartAt(Math.max(0, absoluteSeconds));
+          return true;
+        }
+      : undefined,
   });
   const router = useRouter();
 
   const changeQuality = (q: PlaybackQuality) => {
     if (q === quality && !autoFellBack) return;
-    const v = videoRef.current;
-    resumeAtRef.current = v && v.currentTime > 0 ? v.currentTime : null;
+    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
     didSwapRef.current = true;
     setAutoFellBack(false);
     setPlaybackError(false);
     setVideoLoading(true);
+    setTranscodeStartAt(q === "1080p" && resumeAtRef.current ? resumeAtRef.current : 0);
     setQuality(q);
   };
 
-  // Any source swap (quality change, or Auto's codec fallback) reloads the
-  // element and resumes. Wait for `canplay` and only seek within the seekable
-  // range -- a transcode isn't freely seekable, and an out-of-range seek stalls
-  // it (what stopped mobile playback on a 1080p switch).
+  // Any source swap (quality change, Auto's codec fallback, or a
+  // transcode-seek restart) reloads the element and resumes. Wait for
+  // `canplay`, not just metadata.
   useEffect(() => {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
@@ -103,7 +120,10 @@ export function EpisodePlayer({
     const onReady = () => {
       const target = resumeAtRef.current;
       resumeAtRef.current = null;
-      if (target != null) {
+      // A transcode restart already begins at the right position -- only
+      // direct play needs a client-side seek, and only within what's actually
+      // seekable, so an out-of-range set can't stall a partial file.
+      if (target != null && !transcoding) {
         try {
           const seekable =
             v.seekable && v.seekable.length > 0
@@ -119,7 +139,7 @@ export function EpisodePlayer({
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding]);
+  }, [transcoding, transcodeStartAt]);
 
   // On mobile, hold at the play button rather than autoplaying. Fullscreen can
   // only be entered from a real user gesture, and opening this page isn't one,
@@ -272,8 +292,9 @@ export function EpisodePlayer({
         src={videoSrc}
         autoPlay
         playsInline
+        controls={isMobile}
         onClick={() => {
-          if (!showVideo) return;
+          if (!showVideo || isMobile) return;
           if (chrome.controlsVisible) chrome.togglePlay();
           else chrome.revealControls();
         }}
@@ -281,8 +302,10 @@ export function EpisodePlayer({
         aria-label={`${showName} - ${episodeName}`}
         onError={() => {
           if (hasSource && !transcoding) {
-            resumeAtRef.current = videoRef.current?.currentTime || null;
+            const at = chrome.currentTime > 0 ? chrome.currentTime : null;
+            resumeAtRef.current = at;
             didSwapRef.current = true;
+            setTranscodeStartAt(at ?? 0);
             setAutoFellBack(true);
             setVideoLoading(true);
             return;
@@ -301,7 +324,7 @@ export function EpisodePlayer({
           if (nextEpisodeHref) setShowNextOverlay(true);
         }}
       />
-      {showVideo && (
+      {showVideo && !isMobile && (
         <VideoChrome
           title={showName}
           subtitle={`S${seasonNumber} E${episodeNumber}${episodeName ? ` · ${episodeName}` : ""}`}
@@ -311,6 +334,37 @@ export function EpisodePlayer({
           onClose={onClose}
           chrome={chrome}
         />
+      )}
+      {/* Mobile inline view -- see the movie player for why native fullscreen
+          can't show our own overlay at all. */}
+      {showVideo && isMobile && (
+        <div className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 px-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]">
+          <QualitySelector value={quality} onChange={changeQuality} />
+          {(closeHref || onClose) &&
+            (closeHref ? (
+              <Link
+                href={closeHref}
+                prefetch
+                aria-label="Close"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            ))}
+        </div>
       )}
       {showNextOverlay && nextEpisodeHref && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80">
