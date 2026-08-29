@@ -6,6 +6,7 @@ import { getMovieFromCache, setMovieInCache } from "@/lib/movieCache";
 import { InfoHero } from "@/components/InfoHero";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
+import { Credits } from "@/components/Credits";
 
 const FALLBACK_BACKDROP = "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
@@ -154,6 +155,12 @@ export function WatchPageContent({
           </div>
         )}
       </div>
+
+      {"credits" in movie && movie.credits && (
+        <div className="mx-auto max-w-4xl px-4 pb-12 text-left sm:px-6">
+          <Credits credits={movie.credits} />
+        </div>
+      )}
     </div>
   );
 }
