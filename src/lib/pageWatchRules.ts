@@ -440,3 +440,26 @@ export function resolveEgress(url: string | null, required: boolean): EgressDeci
   if (url) return { via: "proxy", url };
   return required ? { via: "blocked" } : { via: "direct" };
 }
+
+/** Comma-separated location filter into trimmed patterns. */
+export function parseLocations(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Whether a listing line is in one of the wanted locations.
+ *
+ * Substring, case-insensitive, matched against the venue/detail text -- so
+ * "Tysons" catches "Tysons, VA" and "Tysons Corner", and "Washington" catches
+ * "Washington, DC" and "The Anthem, Washington D.C." An empty pattern list means
+ * no filter, so everything passes.
+ */
+export function matchesLocation(text: string, patterns: string[]): boolean {
+  if (patterns.length === 0) return true;
+  const hay = text.toLowerCase();
+  return patterns.some((p) => hay.includes(p.toLowerCase()));
+}

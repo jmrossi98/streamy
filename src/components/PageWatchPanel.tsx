@@ -126,8 +126,7 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
     setTestingEgress(false);
   }
 
-  const { pages, recentChanges, artists, notifyConfigured, egressProxied, egressEnforced } =
-    summary;
+  const { pages, recentChanges, artists, locations, egressProxied, egressEnforced } = summary;
 
   return (
     <div className="space-y-6">
@@ -176,13 +175,6 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
           Requests leave from this server&apos;s own IP —{" "}
           <code className="text-red-200">PAGE_WATCH_PROXY_URL</code> is unset, so a watched site can
           trace the polling back here. Set the VPN egress proxy before adding anything sensitive.
-        </p>
-      )}
-
-      {!notifyConfigured && (
-        <p className="rounded border border-yellow-500/30 bg-yellow-950/20 px-3 py-2 text-sm text-yellow-200/80">
-          Email notification is off — <code className="text-yellow-100">ALERT_SNS_TOPIC_ARN</code>{" "}
-          is unset. Changes are still detected and recorded below, they just aren&apos;t emailed.
         </p>
       )}
 
@@ -335,10 +327,13 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
         )}
       </div>
 
-      {/* The overall view: every artist, every date, across all pages. */}
+      {/* The overall view: every artist's dates in the watched locations. */}
       <div>
-        <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
-          All dates ({artists.reduce((n, a) => n + a.dates.length, 0)})
+        <h3 className="mb-3 flex flex-wrap items-baseline gap-2 text-xs font-medium uppercase tracking-wide text-white/30">
+          <span>All dates ({artists.reduce((n, a) => n + a.dates.length, 0)})</span>
+          {locations.length > 0 && (
+            <span className="normal-case text-white/40">in {locations.join(" / ")}</span>
+          )}
         </h3>
         {artists.length === 0 ? (
           <p className="text-sm text-white/50">
@@ -385,11 +380,6 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
                     </span>
                   )}
                   <span className="text-xs text-white/30">{timeAgo(c.detectedAt)}</span>
-                  {!c.notified && (
-                    <span className="text-xs text-white/30" title="No email was sent for this">
-                      not emailed
-                    </span>
-                  )}
                 </div>
                 <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-2 text-xs text-white/50">
                   {c.diff}
