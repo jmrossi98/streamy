@@ -89,6 +89,8 @@ export type VisitorSummary = {
   topReferrers: { referrer: string; count: number }[];
   recent: {
     id: string;
+    /** Which property the visit was to -- "portfolio" or "streamy". */
+    site: string;
     path: string;
     ip: string;
     country: string | null;
@@ -122,11 +124,13 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       orderBy: { _count: { referrer: "desc" } },
       take: 5,
     }),
+    // Recent list spans every property, not just the one this summary's stats
+    // are for -- so Streamy's own page views show up alongside the portfolio's.
+    // The Site column in the panel says which is which.
     prisma.siteVisit.findMany({
-      where: { site },
       orderBy: { at: "desc" },
       take: 25,
-      select: { id: true, path: true, ip: true, country: true, referrer: true, at: true },
+      select: { id: true, site: true, path: true, ip: true, country: true, referrer: true, at: true },
     }),
   ]);
 

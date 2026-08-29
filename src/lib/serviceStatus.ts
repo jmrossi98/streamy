@@ -19,6 +19,7 @@ import { connect } from "node:tls";
 import { statfs, stat } from "node:fs/promises";
 import { geoStatus } from "./geoip";
 import { checkBlogAccess } from "./githubPublish";
+import { checkEgress } from "./pageWatch";
 import { isNotifyConfigured } from "./notify";
 import { prisma } from "./db";
 
@@ -335,6 +336,29 @@ async function databaseStatus(): Promise<ServiceStatus> {
 }
 
 /** Email alerting wiring -- presence only; a live send would spam a real topic. */
+/**
+ * VPN egress for the tour watcher: is its traffic actually leaving through the
+ * proxy, or from this box? Reuses the same live two-request check the Tour
+ * watch panel's button runs, so the passive row and the button agree.
+ *
+ * "leaking" is the one that must read as down: the proxy is configured but not
+ * carrying traffic, so requests exit from this server's real IP -- the silent
+ * failure the whole egress design exists to prevent.
+ */
+async function egressStatus(): Promise<ServiceStatus> {
+  const e = await checkEgress();
+  switch (e.state) {
+    case "direct":
+      return { name: "VPN egress", group: SYSTEM, state: "unconfigured", detail: "Direct (no proxy)" };
+    case "protected":
+      return { name: "VPN egress", group: SYSTEM, state: "up", detail: `exits via ${e.exitIp}` };
+    case "leaking":
+      return { name: "VPN egress", group: SYSTEM, state: "down", detail: `leaking — exits from ${e.ip}` };
+    case "down":
+      return { name: "VPN egress", group: SYSTEM, state: "down", detail: `proxy unreachable (${e.error})` };
+  }
+}
+
 function alertingStatus(): ServiceStatus {
   return isNotifyConfigured()
     ? { name: "Alerting", group: SYSTEM, state: "up", detail: `SNS, project "${process.env.ALERT_PROJECT ?? "streamy"}"` }
@@ -383,6 +407,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     disk,
     database,
     tourWatch,
+    egress,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -404,6 +429,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     diskStatus(),
     databaseStatus(),
     tourWatchStatus(),
+    egressStatus(),
   ]);
 
   return [
@@ -421,6 +447,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     blogToken,
     geoip,
     tourWatch,
+    egress,
     alertingStatus(),
   ];
 }
