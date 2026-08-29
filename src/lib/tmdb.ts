@@ -59,12 +59,53 @@ export type WatchProviderItem = {
   logoPath: string;
 };
 
+export type CastMember = { id: number; name: string; character: string; profile: string | null };
+
+// The people worth surfacing on a title page, in the IMDb/Letterboxd sense.
+// director doubles as "creator(s)" for TV (TMDB's created_by).
+export type Credits = {
+  cast: CastMember[];
+  director: string[];
+  writer: string[];
+  producer: string[];
+};
+
 export type MovieDetail = Movie & {
   runtime: number | null;
   flatrate?: WatchProviderItem[];
   rent?: WatchProviderItem[];
   buy?: WatchProviderItem[];
+  credits?: Credits;
 };
+
+type TmdbCastRaw = { id: number; name: string; character?: string; profile_path?: string | null };
+type TmdbCrewRaw = { id: number; name: string; job?: string; department?: string };
+
+// Pulls director/writer/producer/cast out of a TMDB credits payload. For TV,
+// pass createdBy (TMDB `created_by`) -- shows have creators rather than a single
+// director, and the show-level crew list is usually empty. The full cast is
+// kept (TMDB already orders it by billing), so the title page can show everyone.
+function extractCredits(
+  credits: { cast?: TmdbCastRaw[]; crew?: TmdbCrewRaw[] } | undefined,
+  createdBy?: { name: string }[]
+): Credits {
+  const crew = credits?.crew ?? [];
+  const namesForJobs = (jobs: string[]) =>
+    Array.from(new Set(crew.filter((c) => c.job && jobs.includes(c.job)).map((c) => c.name)));
+  const creators = (createdBy ?? []).map((c) => c.name);
+  const director = creators.length ? creators : namesForJobs(["Director"]);
+  return {
+    cast: (credits?.cast ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      character: c.character || "",
+      profile: c.profile_path ? imageUrl(c.profile_path, "w185") : null,
+    })),
+    director,
+    writer: namesForJobs(["Writer", "Screenplay", "Story", "Teleplay"]),
+    producer: namesForJobs(["Producer", "Executive Producer"]),
+  };
+}
 
 type TmdbMovieResult = {
   id: number;
@@ -105,7 +146,7 @@ const PLACEHOLDER_POSTER =
 const PLACEHOLDER_BACKDROP =
   "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
-function imageUrl(path: string | null, size: "w92" | "w500" | "original" = "w500"): string {
+function imageUrl(path: string | null, size: "w92" | "w185" | "w500" | "original" = "w500"): string {
   if (!path) return PLACEHOLDER_POSTER;
   return `${IMAGE_BASE}/${size}${path}`;
 }
@@ -291,7 +332,9 @@ function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
   };
 }
 
-async function getShowByIdUncached(id: string): Promise<(TVShow & { numberOfSeasons: number }) | null> {
+export type ShowDetail = TVShow & { numberOfSeasons: number; credits?: Credits };
+
+async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
   const data = await fetchTmdb<{
     id: number;
     name: string;
@@ -302,7 +345,9 @@ async function getShowByIdUncached(id: string): Promise<(TVShow & { numberOfSeas
     vote_average: number;
     genres: { id: number; name: string }[];
     number_of_seasons: number;
-  }>(`tv/${id}`);
+    created_by?: { name: string }[];
+    credits?: { cast?: TmdbCastRaw[]; crew?: TmdbCrewRaw[] };
+  }>(`tv/${id}`, { append_to_response: "credits" });
   if (!data) return null;
   const genres = (data.genres || []).map((g: { name: string }) => g.name);
   return {
@@ -315,6 +360,7 @@ async function getShowByIdUncached(id: string): Promise<(TVShow & { numberOfSeas
     rating: Math.round((data.vote_average || 0) * 10) / 10,
     genres,
     numberOfSeasons: data.number_of_seasons || 1,
+    credits: extractCredits(data.credits, data.created_by),
   };
 }
 
@@ -448,7 +494,7 @@ async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
   const key = getApiKey();
   const [movieRes, providersRes] = await Promise.all([
     fetch(
-      `${TMDB_BASE}/movie/${id}?api_key=${key}&language=en-US`,
+      `${TMDB_BASE}/movie/${id}?api_key=${key}&language=en-US&append_to_response=credits`,
       { next: { revalidate: CACHE_REVALIDATE } }
     ),
     fetch(
@@ -495,6 +541,7 @@ async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
     flatrate: flatrate.length ? flatrate : undefined,
     rent: rent.length ? rent : undefined,
     buy: buy.length ? buy : undefined,
+    credits: extractCredits(movie.credits),
   };
 }
 

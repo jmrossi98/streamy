@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import type { TVShow, TVSeason, TVEpisode } from "@/lib/tmdb";
+import type { ShowDetail, TVSeason, TVEpisode } from "@/lib/tmdb";
+import { Credits } from "@/components/Credits";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
 import { InfoHero } from "@/components/InfoHero";
@@ -16,7 +17,7 @@ import {
 } from "@/components/EpisodeDownloadButton";
 
 type ShowContentProps = {
-  show: TVShow & { numberOfSeasons: number };
+  show: ShowDetail;
   initialSeason: TVSeason;
   initialSeasonNum: number;
   initialSeasonData: TVSeason | null;
@@ -275,6 +276,12 @@ export function ShowContent({
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/45">Synopsis</h2>
           <p className="text-base leading-relaxed text-white/85 sm:text-lg">{show.overview}</p>
         </div>
+
+        {show.credits && (
+          <div className="mt-8 md:mt-10">
+            <Credits credits={show.credits} />
+          </div>
+        )}
 
         <div className="mt-8 flex items-center gap-4 mb-4 md:mt-10">
           <label className="text-white/80 text-sm">Season</label>
