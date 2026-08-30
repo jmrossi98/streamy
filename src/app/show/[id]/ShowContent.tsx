@@ -141,10 +141,19 @@ export function ShowContent({
   );
 
   // Roll the season's episodes up into one state so the season-level control
-  // can show overall progress and offer cancel/delete for the whole season.
+  // can show overall progress and offer cancel/delete for the whole season --
+  // but only once every episode has at least been queued. Until then it stays
+  // a plain "Download season" button: requestSeason already only searches
+  // what's still missing (it re-checks monitored/hasFile per episode before
+  // searching), so re-clicking is exactly "get the rest of the season" with
+  // no risk of re-grabbing anything already done.
+  const seasonEpisodeNumbers = season?.episodes.map((e) => e.episodeNumber) ?? [];
+  const everyEpisodeQueued =
+    seasonEpisodeNumbers.length > 0 &&
+    seasonEpisodeNumbers.every((n) => episodeStatuses[n] != null);
   const seasonState = (() => {
+    if (!everyEpisodeQueued) return undefined;
     const values = Object.values(episodeStatuses);
-    if (values.length === 0) return undefined;
     const downloading = values.filter((v) => v.status === "downloading");
     if (downloading.length > 0) {
       const known = downloading.filter((v) => v.progress != null);
