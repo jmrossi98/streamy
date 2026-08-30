@@ -1,47 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Hls from "hls.js";
-import { isMobileViewport } from "@/lib/videoFullscreen";
-import { supportsNativeHls } from "@/lib/hlsSupport";
 import { VideoChrome } from "./VideoChrome";
 import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
-import { usePlayerChrome } from "@/lib/usePlayerChrome";
-
-/** Applies the viewer's subtitle choice to the <video>'s live text tracks --
- * called on selection and again after every reload (v.load() resets track
- * modes back to whatever the <track> attributes said). Matched positionally:
- * textTracks[i] corresponds to the i-th rendered <track>. */
-function applySubtitleMode(v: HTMLVideoElement, tracks: SubtitleOption[], selected: number | null) {
-  for (let i = 0; i < v.textTracks.length && i < tracks.length; i++) {
-    v.textTracks[i].mode = tracks[i].index === selected ? "showing" : "disabled";
-  }
-}
-
-/** Same helper in WatchPlayer -- see there for the full rationale. Setting
- * currentTime before the browser has any metadata (readyState 0) can stall
- * a fresh load entirely rather than just being ignored/queued -- confirmed
- * live, a resumed title's Play/Retry button reliably stuck at HAVE_NOTHING.
- * Wait for loadedmetadata first, the same way the reload-on-swap effect
- * already waits for canplay before its own seek. */
-function seekThenRun(v: HTMLVideoElement, target: number, then: () => void) {
-  if (v.readyState >= 1) {
-    v.currentTime = target;
-    then();
-    return;
-  }
-  v.addEventListener(
-    "loadedmetadata",
-    () => {
-      v.currentTime = target;
-      then();
-    },
-    { once: true }
-  );
-}
+import { usePlayerEngine } from "@/lib/usePlayerEngine";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -70,8 +35,8 @@ type EpisodePlayerProps = {
   forceTranscode?: boolean;
 };
 
-const PROGRESS_SAVE_INTERVAL_SEC = 60;
 const NEXT_EPISODE_COUNTDOWN_SEC = 15;
+
 export function EpisodePlayer({
   showId,
   showName,
@@ -90,345 +55,46 @@ export function EpisodePlayer({
   subtitleTracks = [],
   forceTranscode = false,
 }: EpisodePlayerProps) {
-  const hasSource = !!videoUrl;
-  // Always direct-plays and falls back to a transcode only if the browser
-  // can't decode the source -- see the movie player for the full rationale
-  // (no manual quality picker anymore; the transcode path has repeatedly
-  // been the less reliable one, and auto-only means a viewer only lands
-  // there when direct play genuinely can't work). Seeded from
-  // forceTranscode, not always false -- some titles need to skip direct
-  // play altogether (see the prop's own doc).
-  const [autoFellBack, setAutoFellBack] = useState(forceTranscode);
-  const transcoding = autoFellBack;
-  // Where the current transcode source begins in the episode's real timeline
-  // (Jellyfin's startTimeTicks). See the movie player for the full rationale --
-  // a transcode can only be played from where ffmpeg has already encoded to,
-  // so a scrub-seek has to restart the transcode at the target instead of
-  // setting currentTime, which does nothing on a progressive stream.
-  // Initialised from the saved position, not 0 -- see the movie player for
-  // the full rationale (a resume straight into a forced transcode should
-  // start where the viewer left off, same as a scrub-seek). Harmless for
-  // direct play, which never reads it.
-  const [transcodeStartAt, setTranscodeStartAt] = useState(initialProgressSeconds);
-  const [playSessionId] = useState(() => crypto.randomUUID());
-  // A transcode is always delivered as HLS now, not a plain progressive MP4
-  // -- see the movie player for the full rationale (that path turned out to
-  // hang indefinitely in the browser despite Jellyfin streaming real bytes
-  // correctly the whole time). Native for Safari, hls.js for everyone else.
-  const [nativeHlsSupport] = useState(supportsNativeHls);
-  const needsHlsJs = transcoding && !nativeHlsSupport;
-  const hlsRef = useRef<Hls | null>(null);
-  const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
-  const videoSrc = !videoUrl
-    ? ""
-    : transcoding
-      ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${
-          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
-        }`
-      : videoUrl;
-  // Best-effort: see the movie player for why this has to happen before
-  // asking Jellyfin for a new position during an active transcode. Returns
-  // the request's promise -- callers must await it before triggering the new
-  // stream request, or the new request can race ahead of the old encode's
-  // teardown and Jellyfin just keeps serving the old one (see the movie
-  // player for the full rationale -- this is what caused "sometimes still
-  // stuck" rather than "always stuck").
-  const stopCurrentTranscode = () => {
-    return fetch("/api/stream/stop", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ playSessionId }),
-    }).catch(() => {});
-  };
-  const resumeAtRef = useRef<number | null>(null);
-  const didSwapRef = useRef(false);
-  const [playing, setPlaying] = useState(autoPlay && hasSource);
-  const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
-  const [videoLoading, setVideoLoading] = useState(false);
-  // Separate from videoLoading, which is specifically "nothing is playing
-  // yet" (pre-play, quality/seek swaps). This is "playback is up but has
-  // run out of buffer mid-stream" -- a real, different state that had no
-  // indicator at all before; the picture just froze with no feedback.
-  const [buffering, setBuffering] = useState(false);
-  const [playbackError, setPlaybackError] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const router = useRouter();
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chrome = usePlayerChrome(videoRef, containerRef, {
-    knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
-    timeOffsetSeconds: transcoding ? transcodeStartAt : 0,
-    onExternalSeek: transcoding
-      ? (absoluteSeconds: number) => {
-          resumeAtRef.current = null;
-          setVideoLoading(true);
-          stopCurrentTranscode().finally(() => {
-            didSwapRef.current = true;
-            setTranscodeStartAt(Math.max(0, absoluteSeconds));
-          });
-          return true;
-        }
-      : undefined,
-  });
-  const router = useRouter();
 
-  // Leaving mid-transcode (navigating to the next episode, closing the
-  // player) would otherwise leave that ffmpeg job running on the mediabox
-  // indefinitely -- nothing else ever tells Jellyfin this session is done.
-  // Read through a ref since this only re-creates when the episode identity
-  // changes, so a closed-over `transcoding` would go stale the moment
-  // quality changes after mount.
-  const transcodingRef = useRef(transcoding);
-  useEffect(() => {
-    transcodingRef.current = transcoding;
-  }, [transcoding]);
-  useEffect(() => {
-    return () => {
-      if (transcodingRef.current) stopCurrentTranscode();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Stable across renders (see usePlayerEngine's saveProgress doc).
+  const saveProgress = useCallback((sec: number) => {
+    fetch("/api/episode-progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ showId, seasonNumber, episodeNumber, progressSeconds: sec }),
+    }).catch(() => {});
   }, [showId, seasonNumber, episodeNumber]);
 
-  // Feeds an HLS transcode into the video element via MSE for every browser
-  // without native HLS support -- see the movie player for the full
-  // rationale and needsHlsJs above. Runs on mount too, not just later swaps:
-  // a resumed episode where direct play had already fallen back before can
-  // be in the hls.js state on the very first render. Placed before the
-  // reload effect below so its teardown/recreate happens first on a shared
-  // dependency change.
-  useEffect(() => {
-    if (!needsHlsJs || !videoSrc) return;
-    const v = videoRef.current;
-    if (!v) return;
-    if (!Hls.isSupported()) {
-      setVideoLoading(false);
-      setPlaybackError(true);
-      return;
-    }
-    const hls = new Hls();
-    hlsRef.current = hls;
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      setPlaying(false);
-      setShowOverlay(true);
-      setVideoLoading(false);
-      setPlaybackError(true);
-    });
-    hls.loadSource(videoSrc);
-    hls.attachMedia(v);
-    return () => {
-      hls.destroy();
-      if (hlsRef.current === hls) hlsRef.current = null;
-    };
-  }, [needsHlsJs, videoSrc]);
-
-  // Any source swap (quality change, Auto's codec fallback, or a
-  // transcode-seek restart) reloads the element and resumes. Wait for
-  // `canplay`, not just metadata.
-  //
-  // Skips v.load() when hls.js owns the element (needsHlsJs) -- the effect
-  // above already tears down and recreates the hls.js instance on the same
-  // videoSrc change.
-  useEffect(() => {
-    if (!didSwapRef.current) return;
-    const v = videoRef.current;
-    if (!v) return;
-    if (!needsHlsJs) v.load();
-    const onReady = () => {
-      const target = resumeAtRef.current;
-      resumeAtRef.current = null;
-      // A transcode restart already begins at the right position -- only
-      // direct play needs a client-side seek, and only within what's actually
-      // seekable, so an out-of-range set can't stall a partial file.
-      if (target != null && !transcoding) {
-        try {
-          const seekable =
-            v.seekable && v.seekable.length > 0
-              ? target <= v.seekable.end(v.seekable.length - 1)
-              : false;
-          if (seekable) v.currentTime = target;
-        } catch {
-          /* not seekable yet; play from start rather than stall */
-        }
-      }
-      // v.load() reset every text track back to its <track> default -- reassert
-      // whichever one the viewer had picked.
-      applySubtitleMode(v, subtitleTracks, selectedSubtitle);
-      v.play().catch(() => {});
-      setVideoLoading(false);
-    };
-    v.addEventListener("canplay", onReady, { once: true });
-    return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding, transcodeStartAt, subtitleTracks, selectedSubtitle, needsHlsJs]);
-
-  // Viewer picked a subtitle track (or turned them off).
-  useEffect(() => {
-    const v = videoRef.current;
-    if (v) applySubtitleMode(v, subtitleTracks, selectedSubtitle);
-  }, [selectedSubtitle, subtitleTracks]);
-
-  // On mobile, hold at the play button rather than autoplaying. Fullscreen can
-  // only be entered from a real user gesture, and opening this page isn't one,
-  // so autoplaying guarantees an inline video that never maximises. Making the
-  // tap the trigger is what lets it open fullscreen.
-  useEffect(() => {
-    if (!isMobileViewport()) return;
-    setIsMobile(true);
-    setPlaying(false);
-    setShowOverlay(true);
-  }, []);
-
-  // Buffering indicator, independent of which delivery mechanism is active
-  // (direct play, hls.js, or native HLS all fire these same native
-  // HTMLMediaElement events) -- one listener covers every case rather than
-  // needing its own signal per source type.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const onWaiting = () => setBuffering(true);
-    const onPlaying = () => setBuffering(false);
-    v.addEventListener("waiting", onWaiting);
-    v.addEventListener("playing", onPlaying);
-    return () => {
-      v.removeEventListener("waiting", onWaiting);
-      v.removeEventListener("playing", onPlaying);
-    };
-  }, []);
-
-  // Leaving fullscreen deliberately does NOT leave the page. It used to call
-  // router.back(), from a time when exiting stranded the viewer on a bare
-  // inline video with no way back. The maximise button is that way back now,
-  // so navigating away instead threw people out of the episode for minimising --
-  // and iOS fires the same event when the app is backgrounded, so pulling up
-  // the home panel ejected them too. The close control handles leaving.
-
-  useEffect(() => {
-    // Checks isMobileViewport() directly, not just the isMobile state -- see
-    // the movie player for the full rationale (a same-commit race with the
-    // mobile-detection effect above could let a mobile viewer's video
-    // briefly autoplay inline before the correction landed).
-    if (!hasSource || !playing || !videoRef.current || isMobile || isMobileViewport()) return;
-    const v = videoRef.current;
-    setVideoLoading(true);
-    const startPlayback = () => {
-      v.play()
-        .then(() => {
-          setVideoLoading(false);
-          setShowOverlay(false);
-        })
-        .catch(() => {
-          setVideoLoading(false);
-          setPlaying(false);
-          setShowOverlay(true);
-          setPlaybackError(true);
-        });
-    };
-    const doPlay = () => {
-      // Only direct play needs a client-side seek -- a transcode already
-      // begins at transcodeStartAt (initialised from this same value), via
-      // the URL, same as a scrub-seek.
-      if (initialProgressSeconds > 0 && !transcoding) seekThenRun(v, initialProgressSeconds, startPlayback);
-      else startPlayback();
-    };
-    if (needsHlsJs) {
-      // hls.js needs a moment to fetch and parse the manifest before play()
-      // can succeed -- firing immediately would just reject every time.
-      v.addEventListener("canplay", doPlay, { once: true });
-      return () => v.removeEventListener("canplay", doPlay);
-    }
-    doPlay();
-  }, [hasSource, playing, initialProgressSeconds, isMobile, needsHlsJs, transcoding]);
-
-  const handlePlayClick = () => {
-    const v = videoRef.current;
-    if (v) {
-      setVideoLoading(true);
-      setPlaybackError(false);
-      const startPlayback = () => {
-        v.play()
-          .then(() => {
-            setVideoLoading(false);
-            setPlaying(true);
-            setShowOverlay(false);
-          })
-          .catch(() => {
-            setVideoLoading(false);
-            setPlaybackError(true);
-          });
-      };
-      const doPlay = () => {
-        if (initialProgressSeconds > 0 && !transcoding) seekThenRun(v, initialProgressSeconds, startPlayback);
-        else startPlayback();
-      };
-
-      // Fullscreen is opt-in via the chrome's own button (usePlayerChrome),
-      // not forced here. Jumping straight to native video fullscreen used to
-      // happen right at this tap -- before anything had even loaded -- and it
-      // replaces the whole element with the OS's own player UI, which is why
-      // our overlay (quality, subtitles, next-episode) never showed on
-      // mobile at all. The chrome's fullscreen button tries container
-      // fullscreen first, which keeps our overlay as a sibling and visible;
-      // it only falls back to native video fullscreen if that's unsupported.
-      if (needsHlsJs) {
-        if (v.readyState >= 3) doPlay();
-        else v.addEventListener("canplay", doPlay, { once: true });
-      } else {
-        // A previous attempt can leave the element in a failed state that
-        // won't retry on play() alone -- reload it so a retry is a real
-        // retry rather than an unresponsive-looking no-op.
-        if (v.error) v.load();
-        doPlay();
-      }
-    } else {
-      setPlaying(true);
-      setShowOverlay(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!playing) return;
-    const v = videoRef.current;
-    if (!v) return;
-    let lastSaved = 0;
-    const onTimeUpdate = () => {
-      const sec = Math.floor(v.currentTime);
-      if (sec > 0 && sec - lastSaved >= PROGRESS_SAVE_INTERVAL_SEC) {
-        lastSaved = sec;
-        fetch("/api/episode-progress", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            showId,
-            seasonNumber,
-            episodeNumber,
-            progressSeconds: sec,
-          }),
-        }).catch(() => {});
-      }
-    };
-    const onPause = () => {
-      const sec = Math.floor(v.currentTime);
-      if (sec > 0) {
-        fetch("/api/episode-progress", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            showId,
-            seasonNumber,
-            episodeNumber,
-            progressSeconds: sec,
-          }),
-        }).catch(() => {});
-      }
-    };
-    v.addEventListener("timeupdate", onTimeUpdate);
-    v.addEventListener("pause", onPause);
-    return () => {
-      v.removeEventListener("timeupdate", onTimeUpdate);
-      v.removeEventListener("pause", onPause);
-    };
-  }, [playing, showId, seasonNumber, episodeNumber]);
+  const {
+    hasSource,
+    selectedSubtitle,
+    setSelectedSubtitle,
+    playing,
+    showOverlay,
+    videoLoading,
+    buffering,
+    playbackError,
+    needsHlsJs,
+    videoSrc,
+    videoRef,
+    containerRef,
+    chrome,
+    handlePlayClick,
+    onVideoError,
+    onVideoPlay,
+  } = usePlayerEngine({
+    videoUrl,
+    initialProgressSeconds,
+    runtimeMinutes,
+    autoPlay,
+    forceTranscode,
+    subtitleTracks,
+    identityKey: `${showId}-${seasonNumber}-${episodeNumber}`,
+    saveProgress,
+  });
 
   useEffect(() => {
     if (!showNextOverlay || !nextEpisodeHref) return;
@@ -452,14 +118,13 @@ export function EpisodePlayer({
 
   const showVideo = playing && !showOverlay && !showNextOverlay;
   // Fills the viewport via CSS on every size, not just desktop -- this is
-  // what stands in for real fullscreen on mobile now (see handlePlayClick):
-  // it keeps our own chrome on screen as a sibling of the <video>, which
-  // native video fullscreen can never do. inset-0 alone (no h-screen/
-  // w-screen) is deliberate -- those are a static 100vh/100vw snapshot, and
-  // mobile browsers resize the *real* viewport as their address bar
-  // collapses/expands, which is exactly what left the scrubber and expand
-  // button sitting below the visible fold on first load. inset-0 on a fixed
-  // element tracks the actual current viewport continuously instead.
+  // what stands in for real fullscreen on mobile (fullscreen itself is
+  // opt-in via the chrome's own button): it keeps the chrome on screen as a
+  // sibling of the <video>, which native video fullscreen can never do.
+  // inset-0 alone (no h-screen/w-screen) is deliberate -- those are a static
+  // 100vh/100vw snapshot, and mobile browsers resize the *real* viewport as
+  // their address bar collapses/expands, which is what left the scrubber
+  // and expand button sitting below the visible fold on first load.
   const containerClass = showNextOverlay
     ? "fixed inset-0 z-30"
     : showVideo
@@ -475,9 +140,9 @@ export function EpisodePlayer({
     >
       <video
         ref={videoRef}
-        // hls.js feeds the element itself via MSE (see the hls.js-management
-        // effect) -- setting src too would fight it. Every other case (direct
-        // play, native Safari HLS) uses the attribute normally.
+        // hls.js feeds the element itself via MSE -- setting src too would
+        // fight it. Every other case (direct play, native Safari HLS) uses
+        // the attribute normally.
         src={needsHlsJs ? undefined : videoSrc}
         autoPlay={!needsHlsJs}
         playsInline
@@ -489,26 +154,8 @@ export function EpisodePlayer({
         }}
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay || showNextOverlay ? "invisible" : ""}`}
         aria-label={`${showName} - ${episodeName}`}
-        onError={() => {
-          if (hasSource && !transcoding) {
-            const at = chrome.currentTime > 0 ? chrome.currentTime : null;
-            resumeAtRef.current = at;
-            didSwapRef.current = true;
-            setTranscodeStartAt(at ?? 0);
-            setAutoFellBack(true);
-            setVideoLoading(true);
-            return;
-          }
-          setPlaying(false);
-          setShowOverlay(true);
-          setVideoLoading(false);
-          setPlaybackError(true);
-        }}
-        onPlay={() => {
-          setShowOverlay(false);
-          setPlaybackError(false);
-          chrome.revealControls();
-        }}
+        onError={onVideoError}
+        onPlay={onVideoPlay}
         onEnded={() => {
           if (nextEpisodeHref) setShowNextOverlay(true);
         }}
