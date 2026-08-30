@@ -22,6 +22,28 @@ function applySubtitleMode(v: HTMLVideoElement, tracks: SubtitleOption[], select
   }
 }
 
+/** Same helper in WatchPlayer -- see there for the full rationale. Setting
+ * currentTime before the browser has any metadata (readyState 0) can stall
+ * a fresh load entirely rather than just being ignored/queued -- confirmed
+ * live, a resumed title's Play/Retry button reliably stuck at HAVE_NOTHING.
+ * Wait for loadedmetadata first, the same way the reload-on-swap effect
+ * already waits for canplay before its own seek. */
+function seekThenRun(v: HTMLVideoElement, target: number, then: () => void) {
+  if (v.readyState >= 1) {
+    v.currentTime = target;
+    then();
+    return;
+  }
+  v.addEventListener(
+    "loadedmetadata",
+    () => {
+      v.currentTime = target;
+      then();
+    },
+    { once: true }
+  );
+}
+
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
 // isn't. An episode with no source now refuses to play and says why.
@@ -278,11 +300,7 @@ export function EpisodePlayer({
     if (!hasSource || !playing || !videoRef.current || isMobile) return;
     const v = videoRef.current;
     setVideoLoading(true);
-    const doPlay = () => {
-      // Only direct play needs a client-side seek -- a transcode already
-      // begins at transcodeStartAt (initialised from this same value), via
-      // the URL, same as a scrub-seek.
-      if (initialProgressSeconds > 0 && !transcoding) v.currentTime = initialProgressSeconds;
+    const startPlayback = () => {
       v.play()
         .then(() => {
           setVideoLoading(false);
@@ -294,6 +312,13 @@ export function EpisodePlayer({
           setShowOverlay(true);
           setPlaybackError(true);
         });
+    };
+    const doPlay = () => {
+      // Only direct play needs a client-side seek -- a transcode already
+      // begins at transcodeStartAt (initialised from this same value), via
+      // the URL, same as a scrub-seek.
+      if (initialProgressSeconds > 0 && !transcoding) seekThenRun(v, initialProgressSeconds, startPlayback);
+      else startPlayback();
     };
     if (needsHlsJs) {
       // hls.js needs a moment to fetch and parse the manifest before play()
@@ -309,8 +334,7 @@ export function EpisodePlayer({
     if (v) {
       setVideoLoading(true);
       setPlaybackError(false);
-      const doPlay = () => {
-        if (initialProgressSeconds > 0 && !transcoding) v.currentTime = initialProgressSeconds;
+      const startPlayback = () => {
         v.play()
           .then(() => {
             setVideoLoading(false);
@@ -321,6 +345,10 @@ export function EpisodePlayer({
             setVideoLoading(false);
             setPlaybackError(true);
           });
+      };
+      const doPlay = () => {
+        if (initialProgressSeconds > 0 && !transcoding) seekThenRun(v, initialProgressSeconds, startPlayback);
+        else startPlayback();
       };
 
       // Fullscreen is opt-in via the chrome's own button (usePlayerChrome),
