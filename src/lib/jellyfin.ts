@@ -272,17 +272,26 @@ export async function getJellyfinSubtitleTracks(
 ): Promise<{ mediaSourceId: string; tracks: JellyfinSubtitleTrack[] } | null> {
   if (!isJellyfinConfigured()) return null;
   try {
-    const item = await jellyfinFetch<{
-      MediaSources?: { Id: string }[];
-      MediaStreams?: {
-        Type: string;
-        Index: number;
-        DisplayTitle?: string;
-        Language?: string;
-        IsExternal?: boolean;
-        Codec?: string;
+    // Not /Items/{id} -- that single-item route (UserLibraryController.GetItem)
+    // throws "Guid can't be empty" on this server version when called without a
+    // userId, which we don't have (Streamy authenticates as the service API
+    // key, not a specific Jellyfin user). The list route below is the same
+    // query shape every other lookup in this file already uses successfully.
+    const result = await jellyfinFetch<{
+      Items: {
+        MediaSources?: { Id: string }[];
+        MediaStreams?: {
+          Type: string;
+          Index: number;
+          DisplayTitle?: string;
+          Language?: string;
+          IsExternal?: boolean;
+          Codec?: string;
+        }[];
       }[];
-    }>(`/Items/${itemId}?Fields=MediaStreams,MediaSources`);
+    }>(`/Items?Ids=${itemId}&Fields=MediaStreams,MediaSources`);
+    const item = result.Items[0];
+    if (!item) return null;
     const mediaSourceId = item.MediaSources?.[0]?.Id ?? itemId;
     const tracks = (item.MediaStreams ?? [])
       .filter((s) => s.Type === "Subtitle")
