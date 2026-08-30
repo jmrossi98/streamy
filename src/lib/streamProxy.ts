@@ -22,15 +22,16 @@ const FORWARDED_RESPONSE_HEADERS = [
 export async function proxyJellyfinStream(
   itemId: string,
   request: Request,
-  opts: { transcode?: boolean; startSeconds?: number } = {}
+  opts: { transcode?: boolean; startSeconds?: number; playSessionId?: string } = {}
 ): Promise<Response> {
   const range = request.headers.get("range");
   // Direct file by default; the transcoded stream is requested only as a
   // fallback for content the browser couldn't play (see the watch page).
-  // startSeconds only means anything for a transcode -- a direct-play file is
-  // already fully seekable via Range, which `range` above already handles.
+  // startSeconds/playSessionId only mean anything for a transcode -- a
+  // direct-play file is already fully seekable via Range, which `range` above
+  // already handles.
   const upstreamUrl = opts.transcode
-    ? jellyfinTranscodeStreamUrl(itemId, opts.startSeconds)
+    ? jellyfinTranscodeStreamUrl(itemId, opts.startSeconds, opts.playSessionId)
     : jellyfinUpstreamStreamUrl(itemId);
   const upstream = await fetch(upstreamUrl, {
     headers: range ? { Range: range } : {},

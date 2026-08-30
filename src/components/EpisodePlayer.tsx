@@ -55,8 +55,9 @@ export function EpisodePlayer({
   const hasSource = !!videoUrl;
   // Viewer-chosen quality: Auto direct-plays and falls back to a 1080p transcode
   // if the browser can't decode the source; 4K forces the raw source; 1080p
-  // forces the transcode. See the movie player for the full rationale.
-  const [quality, setQuality] = useState<PlaybackQuality>("auto");
+  // forces the transcode. Defaults to 1080p rather than Auto -- see the movie
+  // player for the full rationale on both.
+  const [quality, setQuality] = useState<PlaybackQuality>("1080p");
   const [autoFellBack, setAutoFellBack] = useState(false);
   const transcoding = quality === "1080p" || autoFellBack;
   // Where the current transcode source begins in the episode's real timeline
@@ -65,13 +66,23 @@ export function EpisodePlayer({
   // so a scrub-seek has to restart the transcode at the target instead of
   // setting currentTime, which does nothing on a progressive stream.
   const [transcodeStartAt, setTranscodeStartAt] = useState(0);
+  const [playSessionId] = useState(() => crypto.randomUUID());
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode${
+      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
           transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
         }`
       : videoUrl;
+  // Best-effort: see the movie player for why this has to happen before
+  // asking Jellyfin for a new position during an active transcode.
+  const stopCurrentTranscode = () => {
+    fetch("/api/stream/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playSessionId }),
+    }).catch(() => {});
+  };
   const resumeAtRef = useRef<number | null>(null);
   const didSwapRef = useRef(false);
   const [playing, setPlaying] = useState(autoPlay && hasSource);
@@ -88,6 +99,7 @@ export function EpisodePlayer({
     timeOffsetSeconds: transcoding ? transcodeStartAt : 0,
     onExternalSeek: transcoding
       ? (absoluteSeconds: number) => {
+          stopCurrentTranscode();
           resumeAtRef.current = null;
           didSwapRef.current = true;
           setVideoLoading(true);
@@ -98,8 +110,26 @@ export function EpisodePlayer({
   });
   const router = useRouter();
 
+  // Leaving mid-transcode (navigating to the next episode, closing the
+  // player) would otherwise leave that ffmpeg job running on the mediabox
+  // indefinitely -- nothing else ever tells Jellyfin this session is done.
+  // Read through a ref since this only re-creates when the episode identity
+  // changes, so a closed-over `transcoding` would go stale the moment
+  // quality changes after mount.
+  const transcodingRef = useRef(transcoding);
+  useEffect(() => {
+    transcodingRef.current = transcoding;
+  }, [transcoding]);
+  useEffect(() => {
+    return () => {
+      if (transcodingRef.current) stopCurrentTranscode();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showId, seasonNumber, episodeNumber]);
+
   const changeQuality = (q: PlaybackQuality) => {
     if (q === quality && !autoFellBack) return;
+    if (transcoding) stopCurrentTranscode();
     resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
     didSwapRef.current = true;
     setAutoFellBack(false);

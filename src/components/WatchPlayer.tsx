@@ -43,7 +43,11 @@ export function WatchPlayer({
   // 1080p transcode only if the browser can't decode the source; 4K forces the
   // raw source; 1080p forces the transcode. `transcoding` is derived from that
   // choice (plus Auto's one-shot fallback) and picks the source URL.
-  const [quality, setQuality] = useState<PlaybackQuality>("auto");
+  // Defaults to 1080p rather than Auto: every title transcodes from the
+  // start now, trading some GPU cost on titles that would've played fine
+  // directly for a consistently smooth stream without waiting on a
+  // direct-play failure to discover it needed to fall back anyway.
+  const [quality, setQuality] = useState<PlaybackQuality>("1080p");
   // Set when a direct-play source errors (unplayable codec) and we drop to the
   // transcode. Applies to both Auto and 4K -- a watchable 1080p beats a black
   // screen. Reset whenever the viewer picks a quality.
@@ -56,13 +60,31 @@ export function WatchPlayer({
   // stream -- which does nothing there, since those bytes don't exist yet.
   // Always 0 for direct play, where the whole file is one seekable source.
   const [transcodeStartAt, setTranscodeStartAt] = useState(0);
+  // One id for this whole viewing, sent as Jellyfin's PlaySessionId on every
+  // transcode request so a seek is recognised as "move this session", not a
+  // brand new independent stream. Generated once, lazily, on first render.
+  const [playSessionId] = useState(() => crypto.randomUUID());
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode${
+      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
           transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
         }`
       : videoUrl;
+  // Best-effort: tell Jellyfin to kill the ffmpeg job for the current session
+  // before asking for a new position. Without this, Jellyfin can leave the
+  // old encode running and just keep serving *that*, ignoring the new
+  // startTimeTicks entirely -- which is what made seeking during a transcode
+  // snap back to wherever the transcode first started. Fired, not awaited:
+  // the new request starting a fresh encode doesn't depend on the old one
+  // having finished tearing down.
+  const stopCurrentTranscode = () => {
+    fetch("/api/stream/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playSessionId }),
+    }).catch(() => {});
+  };
   // Absolute (real-timeline) position to resume at after a source swap --
   // quality change, Auto's codec fallback, or a transcode-seek restart.
   const resumeAtRef = useRef<number | null>(null);
@@ -84,6 +106,7 @@ export function WatchPlayer({
     // requests, no restart needed.
     onExternalSeek: transcoding
       ? (absoluteSeconds: number) => {
+          stopCurrentTranscode();
           resumeAtRef.current = null; // the new stream starts exactly there; nothing more to seek
           didSwapRef.current = true;
           setVideoLoading(true);
@@ -112,6 +135,7 @@ export function WatchPlayer({
     // Re-picking the current quality is a no-op, unless we'd fallen back to a
     // transcode -- then it's a request to retry direct-play at that quality.
     if (q === quality && !autoFellBack) return;
+    if (transcoding) stopCurrentTranscode(); // leaving or restarting a transcode either way
     resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
     didSwapRef.current = true;
     setAutoFellBack(false);
@@ -253,6 +277,15 @@ export function WatchPlayer({
     };
   }, [playing, movieId]);
 
+  // The unmount cleanup below only re-creates when movieId changes, so a
+  // closed-over `transcoding` would go stale the moment quality changes after
+  // mount -- mirror it into a ref (via its own effect, not during render) and
+  // read that instead.
+  const transcodingRef = useRef(transcoding);
+  useEffect(() => {
+    transcodingRef.current = transcoding;
+  }, [transcoding]);
+
   useEffect(() => {
     return () => {
       const v = videoRef.current;
@@ -264,7 +297,12 @@ export function WatchPlayer({
           body: JSON.stringify({ movieId, progressSeconds: sec }),
         }).catch(() => {});
       }
+      // Leaving the page mid-transcode would otherwise leave that ffmpeg job
+      // running on the mediabox indefinitely -- nothing else ever tells
+      // Jellyfin this session is done.
+      if (transcodingRef.current) stopCurrentTranscode();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [movieId]);
 
   const showVideo = playing && !showOverlay;
