@@ -34,6 +34,14 @@ export function isSonarrConfigured(): boolean {
   );
 }
 
+// Unbounded before this. A large legacy show (e.g. a hundred-plus episode
+// back catalog) makes Sonarr do real synchronous work fetching metadata for
+// every episode when it's added, which can genuinely take a while -- but with
+// no timeout anywhere in the chain (this call, or the client's fetch behind
+// it), that showed up as "stuck on starting" forever with zero feedback
+// rather than a bounded wait or a clear error.
+const ARR_FETCH_TIMEOUT_MS = 15_000;
+
 async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${SONARR_URL}${path}`, {
     ...init,
@@ -42,6 +50,7 @@ async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
+    signal: init?.signal ?? AbortSignal.timeout(ARR_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");

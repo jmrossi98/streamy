@@ -22,6 +22,14 @@ export function isRadarrConfigured(): boolean {
   );
 }
 
+// Unbounded before this: a slow/hung Radarr call had no ceiling at all, so the
+// request chain (and the client's fetch behind it, which has no timeout of
+// its own either) could sit indefinitely with zero feedback -- exactly what
+// "stuck on starting" for minutes looks like. 15s per call, so even a handful
+// of sequential calls in one request flow stays close to a ~30s ceiling
+// end-to-end, while failing visibly instead of hanging forever.
+const ARR_FETCH_TIMEOUT_MS = 15_000;
+
 async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${RADARR_URL}${path}`, {
     ...init,
@@ -30,6 +38,7 @@ async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
+    signal: init?.signal ?? AbortSignal.timeout(ARR_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
