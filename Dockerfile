@@ -61,4 +61,4 @@ RUN npm install prisma --no-save --ignore-scripts
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "mkdir -p /app/data && if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && chown -R nextjs:nodejs /app/data && exec runuser -u nextjs -- node server.js"]
+CMD ["sh", "-c", "mkdir -p /app/data /app/.next/cache && if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && chown -R nextjs:nodejs /app/data /app/.next/cache && exec runuser -u nextjs -- node server.js"]
