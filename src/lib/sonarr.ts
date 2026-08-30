@@ -11,6 +11,7 @@ import { deleteTorrents } from "./qbittorrent";
 import { expireBlocklist } from "./radarr";
 import { computeProgress } from "./radarr";
 import { isSearchStale } from "./radarr";
+import { fileBaseName } from "./radarr";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -186,16 +187,29 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
     const withFiles = series.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0);
     const perSeries = await Promise.all(
       withFiles.map(async (s) => {
-        const episodes = await sonarrFetch<
-          { id: number; seasonNumber: number; episodeNumber: number; title: string; hasFile: boolean }[]
-        >(`/api/v3/episode?seriesId=${s.id}`);
+        const [episodes, files] = await Promise.all([
+          sonarrFetch<
+            { id: number; episodeFileId: number; seasonNumber: number; episodeNumber: number; title: string; hasFile: boolean }[]
+          >(`/api/v3/episode?seriesId=${s.id}`),
+          // The episode list only has episodeFileId, not the file itself --
+          // this is what the movie side gets straight from movieFile. Same
+          // fix as there: show the actual file name, not a synthesised
+          // "show · SxxEyy · title" label that isn't what's really on disk.
+          sonarrFetch<{ id: number; relativePath: string }[]>(`/api/v3/episodefile?seriesId=${s.id}`),
+        ]);
+        const pathById = new Map(files.map((f) => [f.id, f.relativePath]));
         return episodes
           .filter((e) => e.hasFile)
-          .map((e) => ({
-            episodeId: e.id,
-            seriesId: s.id,
-            title: `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
-          }));
+          .map((e) => {
+            const relativePath = pathById.get(e.episodeFileId);
+            return {
+              episodeId: e.id,
+              seriesId: s.id,
+              title: relativePath
+                ? fileBaseName(relativePath)
+                : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
+            };
+          });
       })
     );
     return perSeries.flat();

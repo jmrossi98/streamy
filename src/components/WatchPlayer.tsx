@@ -6,7 +6,6 @@ import Link from "next/link";
 import Hls from "hls.js";
 import { isMobileViewport } from "@/lib/videoFullscreen";
 import { supportsNativeHls } from "@/lib/hlsSupport";
-import type { PlaybackQuality } from "./QualitySelector";
 import { VideoChrome } from "./VideoChrome";
 import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
@@ -57,6 +56,13 @@ type WatchPlayerProps = {
   closeHref?: string;
   /** Subtitle tracks Jellyfin already has for this movie -- omitted (or empty) hides the control entirely. */
   subtitleTracks?: SubtitleOption[];
+  /** Skip straight to the transcode instead of attempting direct play first
+   * -- set when the file's own audio codec is one direct play silently
+   * fails on (AC3/DTS/TrueHD/EAC3; see needsForcedTranscode). Those don't
+   * throw an error direct play's normal fallback can react to -- the
+   * browser just plays picture with no sound and never says anything's
+   * wrong -- so there's nothing to catch after the fact. */
+  forceTranscode?: boolean;
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
@@ -70,21 +76,19 @@ export function WatchPlayer({
   videoUrl,
   closeHref,
   subtitleTracks = [],
+  forceTranscode = false,
 }: WatchPlayerProps) {
   const hasSource = !!videoUrl;
-  // Playback quality is viewer-chosen: Auto direct-plays and falls back to a
-  // 1080p transcode only if the browser can't decode the source; 4K forces the
-  // raw source; 1080p forces the transcode. `transcoding` is derived from that
-  // choice (plus Auto's one-shot fallback) and picks the source URL.
-  // Defaults to Auto, not 1080p. This library is mostly standard H.264/AAC
-  // rips that direct-play fine, and a live transcode is real GPU/CPU cost
-  // worth avoiding when direct play already works.
-  const [quality, setQuality] = useState<PlaybackQuality>("auto");
-  // Set when a direct-play source errors (unplayable codec) and we drop to the
-  // transcode. Applies to both Auto and 4K -- a watchable 1080p beats a black
-  // screen. Reset whenever the viewer picks a quality.
-  const [autoFellBack, setAutoFellBack] = useState(false);
-  const transcoding = quality === "1080p" || autoFellBack;
+  // Always direct-plays and falls back to a transcode only if the browser
+  // can't decode the source -- no manual quality picker anymore. That picker
+  // (4K/1080p) meant forcing a transcode on demand, and the transcode path
+  // has repeatedly been the less reliable one in real testing; auto-only
+  // means a viewer never lands there except when direct play genuinely can't
+  // work, which is exactly when the transcode is actually needed. Seeded
+  // from forceTranscode, not always false -- some titles need to skip direct
+  // play altogether (see the prop's own doc).
+  const [autoFellBack, setAutoFellBack] = useState(forceTranscode);
+  const transcoding = autoFellBack;
   // Where the *current* transcode source begins in the movie's real timeline
   // (Jellyfin's startTimeTicks). A transcode can only be played from where
   // ffmpeg has already encoded to, so scrubbing ahead has to restart the
@@ -152,6 +156,11 @@ export function WatchPlayer({
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [isMobile, setIsMobile] = useState(false);
   const [videoLoading, setVideoLoading] = useState(false);
+  // Separate from videoLoading, which is specifically "nothing is playing
+  // yet" (pre-play, quality/seek swaps). This is "playback is up but has
+  // run out of buffer mid-stream" -- a real, different state that had no
+  // indicator at all before; the picture just froze with no feedback.
+  const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -187,33 +196,22 @@ export function WatchPlayer({
     setShowOverlay(true);
   }, []);
 
-  // Viewer picked a quality. Remember where we are (in absolute/real-timeline
-  // terms -- chrome.currentTime already accounts for any transcode offset),
-  // then let the derived `transcoding`/`videoSrc` change drive the reload
-  // effect below.
-  const changeQuality = (q: PlaybackQuality) => {
-    // Re-picking the current quality is a no-op, unless we'd fallen back to a
-    // transcode -- then it's a request to retry direct-play at that quality.
-    if (q === quality && !autoFellBack) return;
-    const resumeAt = chrome.currentTime > 0 ? chrome.currentTime : null;
-    resumeAtRef.current = resumeAt;
-    setAutoFellBack(false);
-    setPlaybackError(false);
-    setVideoLoading(true);
-    const applyChange = () => {
-      didSwapRef.current = true;
-      // Switching to a transcode: start it exactly at the resume position,
-      // same mechanism as a scrub-seek. Switching to direct play: no offset,
-      // the resume seek happens client-side once the file is loaded (below).
-      setTranscodeStartAt(q === "1080p" && resumeAt ? resumeAt : 0);
-      setQuality(q);
+  // Buffering indicator, independent of which delivery mechanism is active
+  // (direct play, hls.js, or native HLS all fire these same native
+  // HTMLMediaElement events) -- one listener covers every case rather than
+  // needing its own signal per source type.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onWaiting = () => setBuffering(true);
+    const onPlaying = () => setBuffering(false);
+    v.addEventListener("waiting", onWaiting);
+    v.addEventListener("playing", onPlaying);
+    return () => {
+      v.removeEventListener("waiting", onWaiting);
+      v.removeEventListener("playing", onPlaying);
     };
-    // Leaving or restarting a transcode either way -- wait for the old encode
-    // to actually be torn down first, same race as a scrub-seek (see
-    // stopCurrentTranscode).
-    if (transcoding) stopCurrentTranscode().finally(applyChange);
-    else applyChange();
-  };
+  }, []);
 
   // Feeds an HLS transcode into the video element via MSE for every browser
   // without native HLS support (see nativeHlsSupport/needsHlsJs above) --
@@ -312,8 +310,15 @@ export function WatchPlayer({
 
   useEffect(() => {
     // Mobile plays from the tap handler instead, which is the only place
-    // fullscreen can actually be requested.
-    if (!hasSource || !playing || !videoRef.current || isMobile) return;
+    // fullscreen can actually be requested. Checks isMobileViewport()
+    // directly, not just the isMobile state -- both this effect and the
+    // mobile-detection one above run in the same initial commit, and this
+    // one is declared later, so on first mount it can still see this
+    // render's stale isMobile=false before the other effect's setIsMobile
+    // has taken effect. That let a mobile viewer's video briefly autoplay
+    // inline before the correction landed, which is what "the overlay
+    // doesn't show up until refreshing" turned out to be.
+    if (!hasSource || !playing || !videoRef.current || isMobile || isMobileViewport()) return;
     const v = videoRef.current;
     setVideoLoading(true);
     const startPlayback = () => {
@@ -460,8 +465,13 @@ export function WatchPlayer({
   // Fills the viewport via CSS on every size, not just desktop -- this is
   // what stands in for real fullscreen on mobile now (see handlePlayClick):
   // it keeps our own chrome on screen as a sibling of the <video>, which
-  // native video fullscreen can never do.
-  const containerClass = showVideo ? "fixed inset-0 z-30 h-screen w-screen bg-black" : "min-h-[400px] h-[60vh]";
+  // native video fullscreen can never do. inset-0 alone (no h-screen/
+  // w-screen) is deliberate -- those are a static 100vh/100vw snapshot, and
+  // mobile browsers resize the *real* viewport as their address bar
+  // collapses/expands, which is exactly what left the scrubber and expand
+  // button sitting below the visible fold on first load. inset-0 on a fixed
+  // element tracks the actual current viewport continuously instead.
+  const containerClass = showVideo ? "fixed inset-0 z-30 bg-black" : "min-h-[400px] h-[60vh]";
 
   return (
     <div
@@ -517,11 +527,17 @@ export function WatchPlayer({
           <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} />
         ))}
       </video>
+      {showVideo && buffering && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <span
+            className="h-14 w-14 rounded-full border-4 border-white/25 border-t-white animate-spin"
+            aria-label="Buffering"
+          />
+        </div>
+      )}
       {showVideo && (
         <VideoChrome
           title={movieTitle}
-          quality={quality}
-          onQualityChange={changeQuality}
           closeHref={closeHref}
           chrome={chrome}
           extraTopRight={

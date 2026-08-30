@@ -250,8 +250,9 @@ export async function cancelRadarrQueueItem(queueId: number): Promise<boolean> {
 
 export type CompletedDownload = { id: number; title: string };
 
-/** Basename of a path, minus its extension -- "Movie.2024.1080p.BluRay.mkv" -> "Movie.2024.1080p.BluRay". */
-function fileBaseName(relativePath: string): string {
+/** Basename of a path, minus its extension -- "Movie.2024.1080p.BluRay.mkv" -> "Movie.2024.1080p.BluRay".
+ * Exported for the Sonarr side too -- same file-naming convention, same need. */
+export function fileBaseName(relativePath: string): string {
   const base = relativePath.split(/[/\\]/).pop() ?? relativePath;
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(0, dot) : base;
