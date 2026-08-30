@@ -4,13 +4,22 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  tryMobileNativeVideoFullscreen,
-  isMobileViewport,
-} from "@/lib/videoFullscreen";
-import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
+import { isMobileViewport } from "@/lib/videoFullscreen";
+import { supportsNativeHls } from "@/lib/hlsSupport";
+import type { PlaybackQuality } from "./QualitySelector";
 import { VideoChrome } from "./VideoChrome";
+import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
+
+/** Applies the viewer's subtitle choice to the <video>'s live text tracks --
+ * called on selection and again after every reload (v.load() resets track
+ * modes back to whatever the <track> attributes said). Matched positionally:
+ * textTracks[i] corresponds to the i-th rendered <track>. */
+function applySubtitleMode(v: HTMLVideoElement, tracks: SubtitleOption[], selected: number | null) {
+  for (let i = 0; i < v.textTracks.length && i < tracks.length; i++) {
+    v.textTracks[i].mode = tracks[i].index === selected ? "showing" : "disabled";
+  }
+}
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -32,6 +41,8 @@ type EpisodePlayerProps = {
   videoUrl?: string | null;
   closeHref?: string;
   onClose?: () => void;
+  /** Subtitle tracks Jellyfin already has for this episode -- omitted (or empty) hides the control entirely. */
+  subtitleTracks?: SubtitleOption[];
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
@@ -51,6 +62,7 @@ export function EpisodePlayer({
   videoUrl,
   closeHref,
   onClose,
+  subtitleTracks = [],
 }: EpisodePlayerProps) {
   const hasSource = !!videoUrl;
   // Viewer-chosen quality: Auto direct-plays and falls back to a 1080p transcode
@@ -67,12 +79,21 @@ export function EpisodePlayer({
   // setting currentTime, which does nothing on a progressive stream.
   const [transcodeStartAt, setTranscodeStartAt] = useState(0);
   const [playSessionId] = useState(() => crypto.randomUUID());
+  // Safari won't reliably start playback against the plain progressive
+  // transcode endpoint (see jellyfinHlsMasterUrl) -- route it through
+  // Jellyfin's HLS output there instead. Chrome/Firefox keep the simpler path.
+  const [useHls] = useState(supportsNativeHls);
+  const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
-          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
-        }`
+      ? useHls
+        ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${
+            transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+          }`
+        : `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
+            transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+          }`
       : videoUrl;
   // Best-effort: see the movie player for why this has to happen before
   // asking Jellyfin for a new position during an active transcode. Returns
@@ -176,12 +197,21 @@ export function EpisodePlayer({
           /* not seekable yet; play from start rather than stall */
         }
       }
+      // v.load() reset every text track back to its <track> default -- reassert
+      // whichever one the viewer had picked.
+      applySubtitleMode(v, subtitleTracks, selectedSubtitle);
       v.play().catch(() => {});
       setVideoLoading(false);
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding, transcodeStartAt]);
+  }, [transcoding, transcodeStartAt, subtitleTracks, selectedSubtitle]);
+
+  // Viewer picked a subtitle track (or turned them off).
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) applySubtitleMode(v, subtitleTracks, selectedSubtitle);
+  }, [selectedSubtitle, subtitleTracks]);
 
   // On mobile, hold at the play button rather than autoplaying. Fullscreen can
   // only be entered from a real user gesture, and opening this page isn't one,
@@ -230,11 +260,14 @@ export function EpisodePlayer({
       if (v.error) v.load();
       if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
 
-      // Requested synchronously inside the tap: iOS only honours fullscreen
-      // while the user gesture is live, so calling it from .then() silently
-      // no-ops and leaves the episode playing inline under our own chrome.
-      tryMobileNativeVideoFullscreen(v);
-
+      // Fullscreen is opt-in via the chrome's own button (usePlayerChrome),
+      // not forced here. Jumping straight to native video fullscreen used to
+      // happen right at this tap -- before anything had even loaded -- and it
+      // replaces the whole element with the OS's own player UI, which is why
+      // our overlay (quality, subtitles, next-episode) never showed on
+      // mobile at all. The chrome's fullscreen button tries container
+      // fullscreen first, which keeps our overlay as a sibling and visible;
+      // it only falls back to native video fullscreen if that's unsupported.
       v.play()
         .then(() => {
           setVideoLoading(false);
@@ -316,10 +349,14 @@ export function EpisodePlayer({
   }, [showNextOverlay, nextEpisodeHref, nextCountdown, router]);
 
   const showVideo = playing && !showOverlay && !showNextOverlay;
+  // Fills the viewport via CSS on every size, not just desktop -- this is
+  // what stands in for real fullscreen on mobile now (see handlePlayClick):
+  // it keeps our own chrome on screen as a sibling of the <video>, which
+  // native video fullscreen can never do.
   const containerClass = showNextOverlay
     ? "fixed inset-0 z-30 w-screen h-screen"
     : showVideo
-      ? "relative w-full aspect-video bg-black md:fixed md:inset-0 md:z-30 md:h-screen md:w-screen md:aspect-auto"
+      ? "fixed inset-0 z-30 h-screen w-screen bg-black"
       : "min-h-[400px] h-[60vh]";
 
   return (
@@ -334,9 +371,9 @@ export function EpisodePlayer({
         src={videoSrc}
         autoPlay
         playsInline
-        controls={isMobile}
+        controls={false}
         onClick={() => {
-          if (!showVideo || isMobile) return;
+          if (!showVideo) return;
           if (chrome.controlsVisible) chrome.togglePlay();
           else chrome.revealControls();
         }}
@@ -365,8 +402,12 @@ export function EpisodePlayer({
         onEnded={() => {
           if (nextEpisodeHref) setShowNextOverlay(true);
         }}
-      />
-      {showVideo && !isMobile && (
+      >
+        {subtitleTracks.map((t) => (
+          <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} />
+        ))}
+      </video>
+      {showVideo && (
         <VideoChrome
           title={showName}
           subtitle={`S${seasonNumber} E${episodeNumber}${episodeName ? ` · ${episodeName}` : ""}`}
@@ -375,38 +416,27 @@ export function EpisodePlayer({
           closeHref={closeHref}
           onClose={onClose}
           chrome={chrome}
-        />
-      )}
-      {/* Mobile inline view -- see the movie player for why native fullscreen
-          can't show our own overlay at all. */}
-      {showVideo && isMobile && (
-        <div className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 px-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]">
-          <QualitySelector value={quality} onChange={changeQuality} />
-          {(closeHref || onClose) &&
-            (closeHref ? (
+          extraTopRight={
+            subtitleTracks.length > 0 ? (
+              <SubtitleSelector tracks={subtitleTracks} value={selectedSubtitle} onChange={setSelectedSubtitle} />
+            ) : undefined
+          }
+          extraBottomRight={
+            nextEpisodeHref ? (
               <Link
-                href={closeHref}
+                href={nextEpisodeHref}
                 prefetch
-                aria-label="Close"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
+                title={nextEpisodeLabel ? `Next: ${nextEpisodeLabel}` : "Next episode"}
+                aria-label={nextEpisodeLabel ? `Next episode: ${nextEpisodeLabel}` : "Next episode"}
+                className="shrink-0 touch-manipulation"
               >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path d="M6 5v14l8.5-7L6 5zm10 0v14h2V5h-2z" />
                 </svg>
               </Link>
-            ) : (
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            ))}
-        </div>
+            ) : undefined
+          }
+        />
       )}
       {showNextOverlay && nextEpisodeHref && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80">

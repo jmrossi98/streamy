@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getMovieById } from "@/lib/tmdb";
-import { findJellyfinMovieItemId } from "@/lib/jellyfin";
+import { findJellyfinMovieItemId, getJellyfinSubtitleTracks } from "@/lib/jellyfin";
 import { PrefetchBack } from "./PrefetchBack";
 // Imported directly rather than via next/dynamic with `ssr: false`, which
 // Next 16 no longer allows from a Server Component. WatchPlayer is already a
@@ -28,6 +28,7 @@ export default async function WatchPlayPage({ params }: Props) {
 
   // Proxied through our own origin -- see the note in lib/jellyfin.ts.
   const videoUrl = jellyfinItemId ? `/api/stream/movie/${id}` : null;
+  const subtitles = jellyfinItemId ? await getJellyfinSubtitleTracks(jellyfinItemId) : null;
 
   const initialProgressSeconds = progressRow?.progressSeconds ?? 0;
 
@@ -43,6 +44,7 @@ export default async function WatchPlayPage({ params }: Props) {
         autoPlay
         videoUrl={videoUrl}
         closeHref={`/watch/${id}`}
+        subtitleTracks={subtitles?.tracks}
       />
     </div>
   );

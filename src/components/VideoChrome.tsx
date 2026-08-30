@@ -32,6 +32,7 @@ export function VideoChrome({
   onClose,
   chrome,
   extraTopRight,
+  extraBottomRight,
 }: {
   title: string;
   subtitle?: string;
@@ -41,6 +42,8 @@ export function VideoChrome({
   onClose?: () => void;
   chrome: ChromeState;
   extraTopRight?: React.ReactNode;
+  /** Rendered in the bottom bar, left of fullscreen -- e.g. a "next episode" button. */
+  extraBottomRight?: React.ReactNode;
 }) {
   const {
     isPlaying,
@@ -180,6 +183,7 @@ export function VideoChrome({
           </span>
 
           <div className="ml-auto flex items-center gap-2">
+            {extraBottomRight}
             <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} className="shrink-0 touch-manipulation">
               {isFullscreen ? (
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>

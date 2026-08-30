@@ -1,64 +1,14 @@
 /**
- * Mobile fullscreen for <video>: hand the OS its own player rather than
- * running the Fullscreen API on a wrapper div, which doesn't match how iOS
- * behaves and leaves you with a small inline video plus our own chrome on top.
- *
- * - iOS Safari: HTMLVideoElement.webkitEnterFullscreen()
- * - Most Android: video.requestFullscreen() on the video element
- *
- * Timing is the whole game here. Both APIs require an active user-gesture
- * context, and that context is gone by the time a `play()` promise resolves --
- * so calling this from `.then(...)` fails silently and the video just stays
- * inline. It has to be called straight from the tap handler, before anything
- * is awaited.
+ * Below this width, the player treats the viewport as mobile: hold at the
+ * play button instead of autoplaying (autoplay isn't a user gesture, and
+ * fullscreen -- via usePlayerChrome's toggleFullscreen -- can only be
+ * requested from a live one), and fill the viewport via CSS the same way
+ * desktop does rather than reaching for the native <video> fullscreen APIs,
+ * which replace the whole element with the OS's own player and can't show
+ * our own chrome (quality, subtitles, next-episode) at all.
  */
 export const MOBILE_FULLSCREEN_BREAKPOINT = 768;
-
 
 export function isMobileViewport(): boolean {
   return typeof window !== "undefined" && window.innerWidth < MOBILE_FULLSCREEN_BREAKPOINT;
 }
-
-/** Only goes fullscreen below {@link MOBILE_FULLSCREEN_BREAKPOINT}px width. */
-export function tryMobileNativeVideoFullscreen(video: HTMLVideoElement): void {
-  if (!isMobileViewport()) return;
-  enterNativeVideoFullscreen(video);
-}
-
-export function enterNativeVideoFullscreen(video: HTMLVideoElement): boolean {
-  const v = video as HTMLVideoElement & {
-    webkitEnterFullscreen?: () => void;
-    webkitRequestFullscreen?: () => void;
-  };
-
-  // iOS only exposes this one, and only on the video element itself.
-  if (typeof v.webkitEnterFullscreen === "function") {
-    try {
-      v.webkitEnterFullscreen();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  try {
-    if (typeof video.requestFullscreen === "function") {
-      void video.requestFullscreen();
-      return true;
-    }
-  } catch {
-    /* fall through to the prefixed form */
-  }
-
-  if (typeof v.webkitRequestFullscreen === "function") {
-    try {
-      v.webkitRequestFullscreen();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  return false;
-}
-

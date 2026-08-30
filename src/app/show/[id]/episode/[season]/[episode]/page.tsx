@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
-import { findJellyfinEpisodeItemId } from "@/lib/jellyfin";
+import { findJellyfinEpisodeItemId, getJellyfinSubtitleTracks } from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 
 type Props = {
@@ -43,6 +43,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
   const videoUrl = jellyfinItemId
     ? `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}`
     : null;
+  const subtitles = jellyfinItemId ? await getJellyfinSubtitleTracks(jellyfinItemId) : null;
 
   const initialProgressSeconds = progressRow?.progressSeconds ?? 0;
 
@@ -78,6 +79,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
         nextEpisodeLabel={nextEpisodeLabel ?? undefined}
         videoUrl={videoUrl}
         closeHref={backHref}
+        subtitleTracks={subtitles?.tracks}
       />
     </div>
   );
