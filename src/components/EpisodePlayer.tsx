@@ -75,9 +75,14 @@ export function EpisodePlayer({
         }`
       : videoUrl;
   // Best-effort: see the movie player for why this has to happen before
-  // asking Jellyfin for a new position during an active transcode.
+  // asking Jellyfin for a new position during an active transcode. Returns
+  // the request's promise -- callers must await it before triggering the new
+  // stream request, or the new request can race ahead of the old encode's
+  // teardown and Jellyfin just keeps serving the old one (see the movie
+  // player for the full rationale -- this is what caused "sometimes still
+  // stuck" rather than "always stuck").
   const stopCurrentTranscode = () => {
-    fetch("/api/stream/stop", {
+    return fetch("/api/stream/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ playSessionId }),
@@ -99,11 +104,12 @@ export function EpisodePlayer({
     timeOffsetSeconds: transcoding ? transcodeStartAt : 0,
     onExternalSeek: transcoding
       ? (absoluteSeconds: number) => {
-          stopCurrentTranscode();
           resumeAtRef.current = null;
-          didSwapRef.current = true;
           setVideoLoading(true);
-          setTranscodeStartAt(Math.max(0, absoluteSeconds));
+          stopCurrentTranscode().finally(() => {
+            didSwapRef.current = true;
+            setTranscodeStartAt(Math.max(0, absoluteSeconds));
+          });
           return true;
         }
       : undefined,
@@ -129,14 +135,20 @@ export function EpisodePlayer({
 
   const changeQuality = (q: PlaybackQuality) => {
     if (q === quality && !autoFellBack) return;
-    if (transcoding) stopCurrentTranscode();
-    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
-    didSwapRef.current = true;
+    const resumeAt = chrome.currentTime > 0 ? chrome.currentTime : null;
+    resumeAtRef.current = resumeAt;
     setAutoFellBack(false);
     setPlaybackError(false);
     setVideoLoading(true);
-    setTranscodeStartAt(q === "1080p" && resumeAtRef.current ? resumeAtRef.current : 0);
-    setQuality(q);
+    const applyChange = () => {
+      didSwapRef.current = true;
+      setTranscodeStartAt(q === "1080p" && resumeAt ? resumeAt : 0);
+      setQuality(q);
+    };
+    // Wait for the old encode to actually be torn down first -- same race as
+    // a scrub-seek (see stopCurrentTranscode).
+    if (transcoding) stopCurrentTranscode().finally(applyChange);
+    else applyChange();
   };
 
   // Any source swap (quality change, Auto's codec fallback, or a
