@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import Hls from "hls.js";
 import { isMobileViewport } from "@/lib/videoFullscreen";
 import { supportsNativeHls } from "@/lib/hlsSupport";
 import type { PlaybackQuality } from "./QualitySelector";
@@ -79,23 +80,26 @@ export function EpisodePlayer({
   // a transcode can only be played from where ffmpeg has already encoded to,
   // so a scrub-seek has to restart the transcode at the target instead of
   // setting currentTime, which does nothing on a progressive stream.
-  const [transcodeStartAt, setTranscodeStartAt] = useState(0);
+  // Initialised from the saved position, not 0 -- see the movie player for
+  // the full rationale (a resume straight into a forced transcode should
+  // start where the viewer left off, same as a scrub-seek). Harmless for
+  // direct play, which never reads it.
+  const [transcodeStartAt, setTranscodeStartAt] = useState(initialProgressSeconds);
   const [playSessionId] = useState(() => crypto.randomUUID());
-  // Safari won't reliably start playback against the plain progressive
-  // transcode endpoint (see jellyfinHlsMasterUrl) -- route it through
-  // Jellyfin's HLS output there instead. Chrome/Firefox keep the simpler path.
-  const [useHls] = useState(supportsNativeHls);
+  // A transcode is always delivered as HLS now, not a plain progressive MP4
+  // -- see the movie player for the full rationale (that path turned out to
+  // hang indefinitely in the browser despite Jellyfin streaming real bytes
+  // correctly the whole time). Native for Safari, hls.js for everyone else.
+  const [nativeHlsSupport] = useState(supportsNativeHls);
+  const needsHlsJs = transcoding && !nativeHlsSupport;
+  const hlsRef = useRef<Hls | null>(null);
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? useHls
-        ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${
-            transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
-          }`
-        : `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
-            transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
-          }`
+      ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${
+          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+        }`
       : videoUrl;
   // Best-effort: see the movie player for why this has to happen before
   // asking Jellyfin for a new position during an active transcode. Returns
@@ -174,14 +178,51 @@ export function EpisodePlayer({
     else applyChange();
   };
 
+  // Feeds an HLS transcode into the video element via MSE for every browser
+  // without native HLS support -- see the movie player for the full
+  // rationale and needsHlsJs above. Runs on mount too, not just later swaps:
+  // a resumed episode where Auto had fallen back before, or 1080p picked
+  // directly, can already be in the hls.js state on the very first render.
+  // Placed before the reload effect below so its teardown/recreate happens
+  // first on a shared dependency change.
+  useEffect(() => {
+    if (!needsHlsJs || !videoSrc) return;
+    const v = videoRef.current;
+    if (!v) return;
+    if (!Hls.isSupported()) {
+      setVideoLoading(false);
+      setPlaybackError(true);
+      return;
+    }
+    const hls = new Hls();
+    hlsRef.current = hls;
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      setPlaying(false);
+      setShowOverlay(true);
+      setVideoLoading(false);
+      setPlaybackError(true);
+    });
+    hls.loadSource(videoSrc);
+    hls.attachMedia(v);
+    return () => {
+      hls.destroy();
+      if (hlsRef.current === hls) hlsRef.current = null;
+    };
+  }, [needsHlsJs, videoSrc]);
+
   // Any source swap (quality change, Auto's codec fallback, or a
   // transcode-seek restart) reloads the element and resumes. Wait for
   // `canplay`, not just metadata.
+  //
+  // Skips v.load() when hls.js owns the element (needsHlsJs) -- the effect
+  // above already tears down and recreates the hls.js instance on the same
+  // videoSrc change.
   useEffect(() => {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
     if (!v) return;
-    v.load();
+    if (!needsHlsJs) v.load();
     const onReady = () => {
       const target = resumeAtRef.current;
       resumeAtRef.current = null;
@@ -207,7 +248,7 @@ export function EpisodePlayer({
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding, transcodeStartAt, subtitleTracks, selectedSubtitle]);
+  }, [transcoding, transcodeStartAt, subtitleTracks, selectedSubtitle, needsHlsJs]);
 
   // Viewer picked a subtitle track (or turned them off).
   useEffect(() => {
@@ -236,31 +277,51 @@ export function EpisodePlayer({
   useEffect(() => {
     if (!hasSource || !playing || !videoRef.current || isMobile) return;
     const v = videoRef.current;
-    if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
     setVideoLoading(true);
-    v.play()
-      .then(() => {
-        setVideoLoading(false);
-        setShowOverlay(false);
-      })
-      .catch(() => {
-        setVideoLoading(false);
-        setPlaying(false);
-        setShowOverlay(true);
-        setPlaybackError(true);
-      });
-  }, [hasSource, playing, initialProgressSeconds, isMobile]);
+    const doPlay = () => {
+      // Only direct play needs a client-side seek -- a transcode already
+      // begins at transcodeStartAt (initialised from this same value), via
+      // the URL, same as a scrub-seek.
+      if (initialProgressSeconds > 0 && !transcoding) v.currentTime = initialProgressSeconds;
+      v.play()
+        .then(() => {
+          setVideoLoading(false);
+          setShowOverlay(false);
+        })
+        .catch(() => {
+          setVideoLoading(false);
+          setPlaying(false);
+          setShowOverlay(true);
+          setPlaybackError(true);
+        });
+    };
+    if (needsHlsJs) {
+      // hls.js needs a moment to fetch and parse the manifest before play()
+      // can succeed -- firing immediately would just reject every time.
+      v.addEventListener("canplay", doPlay, { once: true });
+      return () => v.removeEventListener("canplay", doPlay);
+    }
+    doPlay();
+  }, [hasSource, playing, initialProgressSeconds, isMobile, needsHlsJs, transcoding]);
 
   const handlePlayClick = () => {
     const v = videoRef.current;
     if (v) {
       setVideoLoading(true);
       setPlaybackError(false);
-      // A previous attempt can leave the element in a failed state that
-      // won't retry on play() alone -- reload it so a retry is a real retry
-      // rather than an unresponsive-looking no-op.
-      if (v.error) v.load();
-      if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
+      const doPlay = () => {
+        if (initialProgressSeconds > 0 && !transcoding) v.currentTime = initialProgressSeconds;
+        v.play()
+          .then(() => {
+            setVideoLoading(false);
+            setPlaying(true);
+            setShowOverlay(false);
+          })
+          .catch(() => {
+            setVideoLoading(false);
+            setPlaybackError(true);
+          });
+      };
 
       // Fullscreen is opt-in via the chrome's own button (usePlayerChrome),
       // not forced here. Jumping straight to native video fullscreen used to
@@ -270,16 +331,16 @@ export function EpisodePlayer({
       // mobile at all. The chrome's fullscreen button tries container
       // fullscreen first, which keeps our overlay as a sibling and visible;
       // it only falls back to native video fullscreen if that's unsupported.
-      v.play()
-        .then(() => {
-          setVideoLoading(false);
-          setPlaying(true);
-          setShowOverlay(false);
-        })
-        .catch(() => {
-          setVideoLoading(false);
-          setPlaybackError(true);
-        });
+      if (needsHlsJs) {
+        if (v.readyState >= 3) doPlay();
+        else v.addEventListener("canplay", doPlay, { once: true });
+      } else {
+        // A previous attempt can leave the element in a failed state that
+        // won't retry on play() alone -- reload it so a retry is a real
+        // retry rather than an unresponsive-looking no-op.
+        if (v.error) v.load();
+        doPlay();
+      }
     } else {
       setPlaying(true);
       setShowOverlay(false);
@@ -370,8 +431,11 @@ export function EpisodePlayer({
     >
       <video
         ref={videoRef}
-        src={videoSrc}
-        autoPlay
+        // hls.js feeds the element itself via MSE (see the hls.js-management
+        // effect) -- setting src too would fight it. Every other case (direct
+        // play, native Safari HLS) uses the attribute normally.
+        src={needsHlsJs ? undefined : videoSrc}
+        autoPlay={!needsHlsJs}
         playsInline
         controls={false}
         onClick={() => {
