@@ -28,5 +28,6 @@ export async function GET(request: Request, { params }: Props) {
   return proxyJellyfinStream(itemId, request, {
     transcode,
     startSeconds: Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : undefined,
+    playSessionId: searchParams.get("session") || undefined,
   });
 }

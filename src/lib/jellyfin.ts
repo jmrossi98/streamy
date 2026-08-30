@@ -175,8 +175,20 @@ export function jellyfinUpstreamStreamUrl(itemId: string): string {
  * currentTime ahead of that does nothing (the bytes for that position don't
  * exist yet), so a real seek has to ask Jellyfin to start a fresh encode at
  * the target instead. This is exactly what Jellyfin's own web client does.
+ *
+ * `playSessionId` identifies one continuous playback session to Jellyfin (a
+ * stable id the player generates once and reuses across every seek within the
+ * same viewing). Without it -- or without explicitly killing the old encode
+ * before starting a new one, see stopJellyfinTranscode below -- Jellyfin can
+ * keep the *previous* ffmpeg job running and just keep serving it, ignoring a
+ * later startTimeTicks entirely; that's what "seeking snaps back to wherever
+ * I first switched to 1080p" was.
  */
-export function jellyfinTranscodeStreamUrl(itemId: string, startSeconds?: number): string {
+export function jellyfinTranscodeStreamUrl(
+  itemId: string,
+  startSeconds?: number,
+  playSessionId?: string
+): string {
   const params = new URLSearchParams({
     static: "false",
     container: "mp4",
@@ -191,5 +203,26 @@ export function jellyfinTranscodeStreamUrl(itemId: string, startSeconds?: number
   if (startSeconds && startSeconds > 0) {
     params.set("startTimeTicks", String(Math.round(startSeconds * 10_000_000)));
   }
+  if (playSessionId) params.set("PlaySessionId", playSessionId);
   return `${JELLYFIN_URL}/Videos/${itemId}/stream.mp4?${params.toString()}`;
+}
+
+/**
+ * Kills the ffmpeg job behind one transcode session. Call this before asking
+ * for a new position in the same playback (see jellyfinTranscodeStreamUrl) --
+ * without it, Jellyfin can leave the old encode running and just keep serving
+ * that instead of honouring the new startTimeTicks. Best-effort: a seek
+ * should still proceed even if this fails (nothing was playing from the old
+ * job anymore either way once the browser moves on).
+ */
+export async function stopJellyfinTranscode(playSessionId: string): Promise<void> {
+  if (!isJellyfinConfigured() || !playSessionId) return;
+  try {
+    await fetch(
+      `${JELLYFIN_URL}/Videos/ActiveEncodings?deviceId=streamy&playSessionId=${encodeURIComponent(playSessionId)}`,
+      { method: "DELETE", headers: { "X-Emby-Token": JELLYFIN_API_KEY! } }
+    );
+  } catch (err) {
+    console.error(`[jellyfin] stopJellyfinTranscode failed for session ${playSessionId}:`, err);
+  }
 }
