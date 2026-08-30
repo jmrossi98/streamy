@@ -8,7 +8,12 @@ import { useSession } from "next-auth/react";
 const POLL_INTERVAL_DOWNLOADING_MS = 5000;
 const POLL_INTERVAL_QUEUED_MS = 12000;
 
-export type EpisodeStatus = "requested" | "downloading" | "available";
+// "noReleaseFound" is distinct from "requested": Sonarr searched this
+// episode and nothing cleared the quality/seeder bar, vs. still actively
+// searching. Without the distinction both looked like the same indefinite
+// spinner -- a title that would never come in without a config change read
+// exactly like one about to succeed any second.
+export type EpisodeStatus = "requested" | "noReleaseFound" | "downloading" | "available";
 export type EpisodeState = { status: EpisodeStatus; progress: number | null };
 
 /**
@@ -175,6 +180,30 @@ export function EpisodeDownloadButton({
         <div className={`flex shrink-0 items-center gap-3 ${className}`}>
           <span className="text-xs font-medium text-white/40">Downloaded</span>
           {authStatus === "authenticated" && manageButton}
+        </div>
+      );
+    }
+    if (state.status === "noReleaseFound") {
+      // Searched and nothing cleared the quality/seeder bar. Distinct from
+      // the pending/spinner state below on purpose -- this is a dead end
+      // until something changes (a fresh upload, a wider quality profile),
+      // not "in progress." "Search again" re-runs the same search rather
+      // than silently spinning, in case a better release has shown up since.
+      return (
+        <div className={`flex shrink-0 items-center gap-3 ${className}`}>
+          <span className="text-xs font-medium text-white/40" title="No release met the quality/seeder bar">
+            No release found
+          </span>
+          {authStatus === "authenticated" && (
+            <button
+              type="button"
+              onClick={handleClick}
+              disabled={loading}
+              className="text-xs font-medium text-white/40 hover:text-white disabled:opacity-50"
+            >
+              {loading ? "…" : "Search again"}
+            </button>
+          )}
         </div>
       );
     }

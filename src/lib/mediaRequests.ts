@@ -94,6 +94,24 @@ export async function resolveMediaRequestStatus(
     return { status: "downloading", progress };
   }
 
+  // Searched and came up with nothing that cleared the quality/seeder bar --
+  // distinct from "requested" (still actively searching), which otherwise
+  // looks identical to a viewer as an indefinite spinner. Reported directly
+  // rather than folded into the staleness logic below: this is an explicit
+  // signal from Radarr's own lastSearchTime, not an inferred one, and it
+  // should show up the moment it's true rather than after another wait.
+  // The row stays (not cleared) so a later auto-heal re-search can still
+  // resolve it forward if a release shows up.
+  if (liveStatus === "noReleaseFound") {
+    if (storedStatus !== "noReleaseFound") {
+      await prisma.mediaRequest.update({
+        where: { tmdbId_mediaType: { tmdbId, mediaType } },
+        data: { status: "noReleaseFound" },
+      });
+    }
+    return { status: "noReleaseFound", progress: null };
+  }
+
   // liveStatus is "requested": in Radarr/Sonarr, but neither downloading nor
   // available. Two very different situations share this shape -- a download
   // that was just dropped and re-searched (by the auto-healer or a manual
@@ -102,7 +120,10 @@ export async function resolveMediaRequestStatus(
   //
   // Treat it as "searching" first and only clear the row once it has stayed
   // that way past the grace window. Clearing immediately would bounce the
-  // user back to an idle Download button mid-heal.
+  // user back to an idle Download button mid-heal. (liveStatus is genuinely
+  // "requested" here, not "noReleaseFound" -- that returned above -- so this
+  // also correctly catches a fresh re-search moving off a stale
+  // "noReleaseFound" row, resetting updatedAt for the staleness check below.)
   if (storedStatus !== "requested") {
     await prisma.mediaRequest.update({
       where: { tmdbId_mediaType: { tmdbId, mediaType } },
