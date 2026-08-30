@@ -9,8 +9,8 @@
  * Read-only, like everything else in the ops surface.
  */
 
-import { isRadarrConfigured } from "./radarr";
-import { isSonarrConfigured } from "./sonarr";
+import { isRadarrConfigured, getRadarrHealthIssues } from "./radarr";
+import { isSonarrConfigured, getSonarrHealthIssues } from "./sonarr";
 import { isJellyfinConfigured } from "./jellyfin";
 import { isQbittorrentConfigured } from "./qbittorrent";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
@@ -238,6 +238,38 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
   }
 }
 
+/**
+ * Radarr's/Sonarr's own self-reported integration health -- indexers,
+ * download clients, import paths. This is the layer that catches a stale
+ * download-client password: Streamy's own probe of Radarr/Sonarr (servarrStatus,
+ * above) only confirms Streamy can reach *them*, which says nothing about
+ * whether *they* can reach qBittorrent. That gap is exactly how a password
+ * reset on qBittorrent silently broke every download for both apps while
+ * every other check kept reporting green.
+ */
+async function arrIntegrationStatus(
+  name: "Radarr" | "Sonarr",
+  configured: boolean,
+  getIssues: () => Promise<{ source: string; message: string; type: "error" | "warning" }[]>
+): Promise<ServiceStatus> {
+  const group = "Downloads" as const;
+  const label = `${name} integrations`;
+  if (!configured) {
+    return { name: label, group, state: "unconfigured", detail: "Not configured" };
+  }
+  const issues = await getIssues();
+  const errors = issues.filter((i) => i.type === "error");
+  if (errors.length > 0) {
+    const detail = errors.map((i) => i.message).join("; ");
+    return { name: label, group, state: "down", detail };
+  }
+  const warnings = issues.filter((i) => i.type === "warning");
+  if (warnings.length > 0) {
+    return { name: label, group, state: "up", detail: warnings.map((i) => i.message).join("; ") };
+  }
+  return { name: label, group, state: "up", detail: "healthy" };
+}
+
 async function ollamaServiceStatus(): Promise<ServiceStatus> {
   const group = "Assistant" as const;
   if (!isOllamaConfigured()) {
@@ -462,6 +494,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     database,
     tourWatch,
     egress,
+    radarrIntegrations,
+    sonarrIntegrations,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -484,6 +518,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     databaseStatus(),
     tourWatchStatus(),
     egressStatus(),
+    arrIntegrationStatus("Radarr", isRadarrConfigured(), getRadarrHealthIssues),
+    arrIntegrationStatus("Sonarr", isSonarrConfigured(), getSonarrHealthIssues),
   ]);
 
   return [
@@ -491,6 +527,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     radarr,
     sonarr,
     ...downloads,
+    radarrIntegrations,
+    sonarrIntegrations,
     prowlarr,
     ollama,
     searxng,

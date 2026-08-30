@@ -4,6 +4,7 @@ import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getRadarrStorageInfo, getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
 import { getSonarrTvSize, getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sonarr";
+import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
 import { AdminApprovals } from "@/components/AdminApprovals";
 import { StorageChart } from "@/components/StorageChart";
@@ -47,6 +48,7 @@ export default async function AdminFeaturesPage() {
     sonarrDownloads,
     radarrCompleted,
     sonarrCompleted,
+    pendingRequests,
     ollamaStatus,
     security,
     services,
@@ -65,6 +67,12 @@ export default async function AdminFeaturesPage() {
     getSonarrActiveDownloads(),
     getRadarrCompletedMovies(),
     getSonarrCompletedEpisodes(),
+    // Requested but not yet picked up by Radarr/Sonarr's own queue -- still
+    // searching for a release. Without this, a fresh request is invisible in
+    // the admin panel for however long the search takes, which read as
+    // "doesn't show up until after search" even though it was already in
+    // flight the whole time.
+    prisma.mediaRequest.findMany({ where: { status: "requested" } }),
     // Probed server-side so an unreachable model shows up on load rather than
     // on the first message.
     isOllamaConfigured() ? getOllamaStatus() : Promise.resolve(null),
@@ -102,6 +110,43 @@ export default async function AdminFeaturesPage() {
       completed: true,
     }))
   );
+
+  // Requests still searching -- not yet in Radarr/Sonarr's queue, so absent
+  // from everything above. Skip any whose externalId already showed up (a
+  // request that got grabbed between the query above and now).
+  const representedMovieIds = new Set([
+    ...radarrDownloads.map((d) => d.externalId),
+    ...radarrCompleted.map((d) => d.id),
+  ]);
+  const representedShowIds = new Set([
+    ...sonarrDownloads.map((d) => d.externalId),
+    ...sonarrCompleted.map((d) => d.seriesId),
+  ]);
+  const stillSearching = pendingRequests.filter((r) =>
+    r.externalId != null &&
+    (r.mediaType === "movie" ? !representedMovieIds.has(r.externalId) : !representedShowIds.has(r.externalId))
+  );
+  const searchingRows = (
+    await Promise.all(
+      stillSearching.map(async (r): Promise<DownloadRow | null> => {
+        const title =
+          r.mediaType === "movie"
+            ? (await getMovieById(r.tmdbId))?.title
+            : (await getShowById(r.tmdbId))?.name;
+        if (!title || r.externalId == null) return null;
+        return {
+          queueId: null,
+          externalId: r.externalId,
+          title,
+          progress: null,
+          mediaType: r.mediaType as "movie" | "show",
+          completed: false,
+          searching: true,
+        };
+      })
+    )
+  ).filter((r): r is DownloadRow => r != null);
+  downloads.unshift(...searchingRows);
 
   return (
     <div className="min-h-screen px-4 sm:px-6 pt-24 pb-16 max-w-2xl mx-auto space-y-10">

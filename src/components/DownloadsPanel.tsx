@@ -15,12 +15,18 @@ export type DownloadRow = {
   progress: number | null;
   mediaType: "movie" | "show";
   completed: boolean;
+  /** Requested but not yet picked up by Radarr/Sonarr's queue -- still
+   *  searching for a release. Distinct from `completed`; both false means
+   *  actively downloading with a real queue entry. */
+  searching?: boolean;
 };
 
-/** Stable and unique per row -- queue entries and completed titles can't collide. */
+/** Stable and unique per row -- queue entries, completed titles, and
+ *  searching requests can't collide even for the same show/movie. */
 export function rowKey(d: DownloadRow): string {
   if (d.queueId != null) return `q${d.queueId}`;
   if (d.episodeId != null) return `ep-done-${d.episodeId}`;
+  if (d.searching) return `${d.mediaType}-searching-${d.externalId}`;
   return `${d.mediaType}-done-${d.externalId}`;
 }
 
@@ -33,15 +39,37 @@ const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
 export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const router = useRouter();
   const [managingKey, setManagingKey] = useState<string | null>(null);
+  // Rows the viewer just cancelled/deleted, hidden immediately rather than
+  // waiting for the server round trip + a fresh page render to catch up.
+  // Radarr/Sonarr/qBittorrent all take a moment to actually process a
+  // cancel, so waiting for the *real* state to reflect it before hiding the
+  // row read as broken ("I need to refresh"). Rolled back on failure.
+  const [removedKeys, setRemovedKeys] = useState<Set<string>>(new Set());
+  const visibleDownloads = downloads.filter((d) => !removedKeys.has(rowKey(d)));
 
-  // Keep progress live without a manual reload, but only while something is
-  // actually downloading -- a list of finished titles doesn't change on its own.
-  const hasActive = downloads.some((d) => !d.completed);
+  // Once the server's own list no longer contains a key, there's nothing
+  // left to hide -- prune it so the set doesn't grow across a long session.
   useEffect(() => {
-    if (!hasActive) return;
+    const present = new Set(downloads.map(rowKey));
+    setRemovedKeys((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const k of prev) {
+        if (present.has(k)) next.add(k);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [downloads]);
+
+  // Poll unconditionally rather than only while something is downloading --
+  // a panel with nothing active still needs to notice a fresh request (from
+  // this admin or anyone else) land and start searching, not sit static
+  // until someone happens to reload the page.
+  useEffect(() => {
     const interval = setInterval(() => router.refresh(), REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [hasActive, router]);
+  }, [router]);
 
   if (downloads.length === 0) {
     return <p className="text-white/50 text-sm">Nothing downloading right now.</p>;
@@ -52,8 +80,12 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     const action = d.completed ? "delete" : "cancel";
     // No confirm prompt: anything removed here can be downloaded again.
     setManagingKey(key);
+    // Optimistic: hide the row immediately. Radarr/Sonarr/qBittorrent take a
+    // moment to actually process this, and there's no reason to make the
+    // viewer stare at a stale row for that whole round trip.
+    setRemovedKeys((prev) => new Set(prev).add(key));
     try {
-      await fetch("/api/admin/downloads/manage", {
+      const res = await fetch("/api/admin/downloads/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -64,18 +96,37 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           action,
         }),
       });
-      router.refresh();
+      if (!res.ok) {
+        // It didn't actually go through -- bring the row back.
+        setRemovedKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      } else {
+        router.refresh();
+      }
+    } catch {
+      setRemovedKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     } finally {
       setManagingKey(null);
     }
   }
 
+  if (visibleDownloads.length === 0) {
+    return <p className="text-white/50 text-sm">Nothing downloading right now.</p>;
+  }
+
   return (
     <ul
       className="space-y-3 overflow-y-auto pr-1"
-      style={{ maxHeight: downloads.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
+      style={{ maxHeight: visibleDownloads.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
     >
-      {downloads.map((d) => {
+      {visibleDownloads.map((d) => {
         const key = rowKey(d);
         const isManaging = managingKey === key;
         return (
@@ -84,7 +135,13 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
               <span className="text-white/90 truncate">{d.title}</span>
               <div className="flex shrink-0 items-center gap-3">
                 <span className="text-white/50 tabular-nums">
-                  {d.completed ? "Downloaded" : d.progress != null ? `${d.progress}%` : "metadata…"}
+                  {d.completed
+                    ? "Downloaded"
+                    : d.searching
+                      ? "Searching…"
+                      : d.progress != null
+                        ? `${d.progress}%`
+                        : "metadata…"}
                 </span>
                 <button
                   type="button"

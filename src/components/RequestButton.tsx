@@ -97,6 +97,12 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
       // downloaded again from this same button.
       setManaging(action);
       setError(false);
+      // Optimistic: drop straight to the idle button rather than waiting on
+      // the round trip to Radarr/Sonarr/qBittorrent. Rolled back on failure.
+      const prevStatus = status;
+      const prevProgress = progress;
+      setStatus(null);
+      setProgress(null);
       try {
         const res = await fetch("/api/requests/manage", {
           method: "POST",
@@ -105,19 +111,21 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
         });
         if (await signOutIfStaleSession(res)) return;
         if (!res.ok) {
+          setStatus(prevStatus);
+          setProgress(prevProgress);
           setError(true);
           return;
         }
-        setStatus(null);
-        setProgress(null);
         router.refresh();
       } catch {
+        setStatus(prevStatus);
+        setProgress(prevProgress);
         setError(true);
       } finally {
         setManaging(null);
       }
     },
-    [session?.user, managing, id, mediaType, router]
+    [session?.user, managing, id, mediaType, router, status, progress]
   );
 
   // Poll our own status endpoint while a request is in flight — Radarr/Sonarr
