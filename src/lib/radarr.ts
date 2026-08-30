@@ -470,6 +470,32 @@ export async function deleteRadarrMovie(radarrId: number): Promise<boolean> {
   }
 }
 
+export type RadarrHealthIssue = { source: string; message: string; type: "error" | "warning" };
+
+/**
+ * Radarr's own self-reported integration health -- indexers, download
+ * clients, import paths, etc. This is how a *stale download-client password*
+ * shows up: Streamy's own connectivity to Radarr can be perfectly fine while
+ * Radarr's connection to qBittorrent is broken underneath it, and nothing
+ * Streamy checks directly would ever notice. Radarr already tracks exactly
+ * this and exposes it here -- surfacing it is cheaper and more honest than
+ * re-deriving the same checks ourselves.
+ */
+export async function getRadarrHealthIssues(): Promise<RadarrHealthIssue[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    const issues = await radarrFetch<{ source: string; message: string; type: string }[]>(
+      "/api/v3/health"
+    );
+    return issues
+      .filter((i) => i.type === "error" || i.type === "warning")
+      .map((i) => ({ source: i.source, message: i.message, type: i.type as "error" | "warning" }));
+  } catch (err) {
+    console.error("[radarr] getRadarrHealthIssues failed:", err);
+    return [];
+  }
+}
+
 export type RadarrRequestResult =
   | { ok: true; radarrId: number; status: MediaRequestStatus }
   | { ok: false; error: string };

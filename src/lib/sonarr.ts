@@ -16,6 +16,7 @@ import type {
   ActiveDownload,
   CompletedDownload,
   QueueHealth,
+  RadarrHealthIssue,
 } from "./radarr";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
@@ -826,5 +827,21 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
   } catch (err) {
     console.error(`[sonarr] requestShow failed for tmdbId ${tmdbId}:`, err);
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
+/** Sonarr's own self-reported integration health. See getRadarrHealthIssues for the rationale. */
+export async function getSonarrHealthIssues(): Promise<RadarrHealthIssue[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const issues = await sonarrFetch<{ source: string; message: string; type: string }[]>(
+      "/api/v3/health"
+    );
+    return issues
+      .filter((i) => i.type === "error" || i.type === "warning")
+      .map((i) => ({ source: i.source, message: i.message, type: i.type as "error" | "warning" }));
+  } catch (err) {
+    console.error("[sonarr] getSonarrHealthIssues failed:", err);
+    return [];
   }
 }
