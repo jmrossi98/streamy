@@ -48,7 +48,21 @@ async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-export type MediaRequestStatus = "requested" | "downloading" | "available";
+// "requested" (still actively searching) vs "noReleaseFound" (searched, came
+// up empty) look identical to a viewer without this distinction -- both were
+// shown as an indefinite spinner, so a title that will never come in without
+// a config change read exactly like one about to succeed any second. Radarr
+// exposes lastSearchTime on the movie itself; once that's old enough for a
+// normal search-to-grab round trip to have finished and nothing changed,
+// there's nothing left actually happening.
+export type MediaRequestStatus = "requested" | "noReleaseFound" | "downloading" | "available";
+
+const SEARCH_GRACE_MS = 3 * 60 * 1000;
+
+export function isSearchStale(lastSearchTime?: string | null): boolean {
+  if (!lastSearchTime) return false;
+  return Date.now() - Date.parse(lastSearchTime) > SEARCH_GRACE_MS;
+}
 
 /**
  * Download percent from a queue entry's size/sizeleft.
@@ -65,10 +79,13 @@ export function computeProgress(size: number, sizeleft: number): number | null {
 }
 
 /** hasFile means Radarr already imported a file; otherwise check the active queue. */
-async function resolveRadarrStatus(movie: { id: number; hasFile: boolean }): Promise<MediaRequestStatus> {
+async function resolveRadarrStatus(
+  movie: { id: number; hasFile: boolean; lastSearchTime?: string | null }
+): Promise<MediaRequestStatus> {
   if (movie.hasFile) return "available";
   const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue`);
-  return queue.records.some((r) => r.movieId === movie.id) ? "downloading" : "requested";
+  if (queue.records.some((r) => r.movieId === movie.id)) return "downloading";
+  return isSearchStale(movie.lastSearchTime) ? "noReleaseFound" : "requested";
 }
 
 export type RadarrStorageInfo = { totalSpace: number; freeSpace: number; moviesSize: number };
@@ -108,9 +125,9 @@ export async function getRadarrStatusByTmdbId(tmdbId: string): Promise<{
 } | null> {
   if (!isRadarrConfigured()) return null;
   try {
-    const movies = await radarrFetch<{ id: number; hasFile: boolean; monitored: boolean }[]>(
-      `/api/v3/movie?tmdbId=${tmdbId}`
-    );
+    const movies = await radarrFetch<
+      { id: number; hasFile: boolean; monitored: boolean; lastSearchTime?: string | null }[]
+    >(`/api/v3/movie?tmdbId=${tmdbId}`);
     const movie = movies[0];
     if (!movie) return null;
     if (movie.hasFile) return { status: "available", radarrId: movie.id };
@@ -119,8 +136,13 @@ export async function getRadarrStatusByTmdbId(tmdbId: string): Promise<{
     if (queue.records.some((r) => r.movieId === movie.id)) {
       return { status: "downloading", radarrId: movie.id };
     }
-    // In Radarr but idle: only "requested" if it's actually still wanted.
-    return movie.monitored ? { status: "requested", radarrId: movie.id } : null;
+    // In Radarr but idle: only "requested"/"noReleaseFound" if it's actually
+    // still wanted.
+    if (!movie.monitored) return null;
+    return {
+      status: isSearchStale(movie.lastSearchTime) ? "noReleaseFound" : "requested",
+      radarrId: movie.id,
+    };
   } catch (err) {
     console.error(`[radarr] getRadarrStatusByTmdbId failed for ${tmdbId}:`, err);
     return null;
@@ -141,9 +163,12 @@ export async function getRadarrStatusByTmdbId(tmdbId: string): Promise<{
 export async function getRadarrLiveStatus(radarrId: number): Promise<LiveStatus | null> {
   if (!isRadarrConfigured()) return null;
   try {
-    const movie = await radarrFetch<{ id: number; hasFile: boolean; monitored: boolean }>(
-      `/api/v3/movie/${radarrId}`
-    );
+    const movie = await radarrFetch<{
+      id: number;
+      hasFile: boolean;
+      monitored: boolean;
+      lastSearchTime?: string | null;
+    }>(`/api/v3/movie/${radarrId}`);
     if (movie.hasFile) return "available";
     if (!movie.monitored) return "cancelled";
     return resolveRadarrStatus(movie);

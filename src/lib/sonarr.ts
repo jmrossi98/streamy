@@ -10,6 +10,7 @@ import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { expireBlocklist } from "./radarr";
 import { computeProgress } from "./radarr";
+import { isSearchStale } from "./radarr";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -61,13 +62,28 @@ async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** Any episode file on disk means "available"; otherwise check the active queue. */
+/**
+ * "requested" (still actively searching) vs "noReleaseFound" (searched, came
+ * up empty) -- see the Radarr twin (isSearchStale) for the full rationale.
+ * A series has no single lastSearchTime of its own, so this rolls its
+ * monitored, fileless episodes up: only reports noReleaseFound once *every*
+ * one of them has an individually stale search, so a show that's still
+ * mid-search on some episodes doesn't get flagged early.
+ */
 async function resolveSonarrStatus(series: {
   id: number;
   statistics?: { episodeFileCount?: number };
 }): Promise<MediaRequestStatus> {
   if ((series.statistics?.episodeFileCount ?? 0) > 0) return "available";
   const queue = await sonarrFetch<{ records: { seriesId: number }[] }>(`/api/v3/queue`);
-  return queue.records.some((r) => r.seriesId === series.id) ? "downloading" : "requested";
+  if (queue.records.some((r) => r.seriesId === series.id)) return "downloading";
+
+  const episodes = await sonarrFetch<
+    { monitored: boolean; hasFile: boolean; lastSearchTime?: string | null }[]
+  >(`/api/v3/episode?seriesId=${series.id}`);
+  const wanted = episodes.filter((e) => e.monitored && !e.hasFile);
+  const allStale = wanted.length > 0 && wanted.every((e) => isSearchStale(e.lastSearchTime));
+  return allStale ? "noReleaseFound" : "requested";
 }
 
 /** Total size on disk across every episode file Sonarr is tracking. */
@@ -418,6 +434,7 @@ export type SonarrEpisode = {
   seasonNumber: number;
   hasFile: boolean;
   monitored: boolean;
+  lastSearchTime?: string | null;
 };
 
 /**
@@ -526,7 +543,14 @@ export async function getSonarrSeasonStatuses(
           progress: q.size > 0 ? Math.round(((q.size - q.sizeleft) / q.size) * 100) : null,
         };
       } else if (ep.monitored) {
-        statuses[ep.episodeNumber] = { status: "requested", progress: null };
+        // "requested" (still searching) vs "noReleaseFound" (searched, came
+        // up empty) -- see isSearchStale for the rationale. Without this an
+        // episode with nothing available looked identical to one about to
+        // succeed any second.
+        statuses[ep.episodeNumber] = {
+          status: isSearchStale(ep.lastSearchTime) ? "noReleaseFound" : "requested",
+          progress: null,
+        };
       }
     }
     return statuses;

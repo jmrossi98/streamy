@@ -163,6 +163,35 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   // Status is shared/global library state — show it to anyone viewing the
   // page, logged in or not. Only the idle "nothing requested yet" case needs
   // to branch on auth (sign-in prompt vs. an actual clickable Download button).
+  if (status === "noReleaseFound") {
+    // Searched and nothing cleared the quality/seeder bar -- a dead end until
+    // something changes, not "in progress." Distinct from the spinner below
+    // on purpose. "Search again" hits the same endpoint, which re-searches
+    // rather than just handing back the same stale status for this case.
+    return (
+      <div className={BADGE_CLASS}>
+        <div className="flex items-center justify-between gap-3">
+          <span
+            className="text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal"
+            title="No release met the quality/seeder bar"
+          >
+            No release found
+          </span>
+          {authStatus === "authenticated" && (
+            <button
+              type="button"
+              onClick={request}
+              disabled={loading}
+              className="shrink-0 text-xs font-medium normal-case tracking-normal text-white/50 hover:text-white disabled:opacity-50"
+            >
+              {loading ? "…" : "Search again"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (status === "requested" || status === "downloading") {
     return (
       <div className={DOWNLOADING_BADGE_CLASS}>
