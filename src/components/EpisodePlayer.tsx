@@ -67,9 +67,11 @@ export function EpisodePlayer({
   const hasSource = !!videoUrl;
   // Viewer-chosen quality: Auto direct-plays and falls back to a 1080p transcode
   // if the browser can't decode the source; 4K forces the raw source; 1080p
-  // forces the transcode. Defaults to 1080p rather than Auto -- see the movie
-  // player for the full rationale on both.
-  const [quality, setQuality] = useState<PlaybackQuality>("1080p");
+  // forces the transcode. Defaults to Auto, not 1080p -- see the movie player
+  // for the full rationale (the live-transcode delivery path itself turned
+  // out to be unreliable; defaulting everyone through it broke playback
+  // broadly, where direct play against the same titles works fine).
+  const [quality, setQuality] = useState<PlaybackQuality>("auto");
   const [autoFellBack, setAutoFellBack] = useState(false);
   const transcoding = quality === "1080p" || autoFellBack;
   // Where the current transcode source begins in the episode's real timeline
