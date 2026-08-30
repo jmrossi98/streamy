@@ -224,9 +224,16 @@ export function jellyfinTranscodeStreamUrl(
 export function jellyfinHlsMasterUrl(
   itemId: string,
   startSeconds?: number,
-  playSessionId?: string
+  playSessionId?: string,
+  mediaSourceId?: string
 ): string {
   const params = new URLSearchParams({
+    // Required by this server version -- omitting it fails the whole request
+    // with HTTP 400 "The mediaSourceId field is required" before ffmpeg ever
+    // starts (confirmed directly against Jellyfin). itemId is the right
+    // fallback for the common case (a local file with one version) -- same
+    // fallback getJellyfinSubtitleTracks already uses for the same field.
+    mediaSourceId: mediaSourceId || itemId,
     videoCodec: "h264",
     audioCodec: "aac",
     maxWidth: process.env.JELLYFIN_TRANSCODE_MAX_WIDTH || "1920",
@@ -313,23 +320,27 @@ export function jellyfinSubtitleStreamUrl(itemId: string, mediaSourceId: string,
   return `${JELLYFIN_URL}/Videos/${itemId}/${mediaSourceId}/Subtitles/${index}/Stream.vtt?api_key=${JELLYFIN_API_KEY}`;
 }
 
-// Codecs that direct play silently fails on rather than erroring: the
-// browser plays what it can decode and just drops the rest, so a video
-// track that plays fine while its audio track is one of these produces no
-// error event at all -- confirmed live on a real title (The Wire S1E1:
-// HEVC/AC3, picture flickering from a marginal hardware decode path, no
-// audio whatsoever, and the player never found out anything was wrong,
-// since nothing ever fires onError for "one track quietly didn't work").
-// None of this is guesswork about what browsers support -- it's Chrome
-// specifically never shipping AC3/DTS/TrueHD decode at all (licensing, not
-// a bug), so there's nothing to wait for or retry into.
+// Tracks that direct play silently fails on rather than erroring: the
+// browser plays what it can decode and just drops or blanks the rest, so
+// there's no error event to react to -- confirmed live, twice, on real
+// titles:
+//  - The Wire S1E1 (HEVC 8-bit / AC3): picture flickering from a marginal
+//    hardware decode path, no audio whatsoever.
+//  - The Studio S1E1 (HEVC 10-bit / AAC): audio played completely normally,
+//    picture was solid black -- the opposite failure, same root codec.
+// None of this is guesswork about what browsers support -- Chrome
+// specifically never ships AC3/DTS/TrueHD decode at all (licensing, not a
+// bug), and HEVC support is inconsistent enough across browsers/GPUs/OSes
+// (frequently no license for it on Windows at all) that "plays, but
+// something's silently wrong" is the realistic outcome, not a clean error.
 const AUDIO_CODECS_NEEDING_TRANSCODE = new Set(["ac3", "eac3", "dts", "truehd"]);
+const VIDEO_CODECS_NEEDING_TRANSCODE = new Set(["hevc", "h265"]);
 
 /**
- * Whether this item's own audio track uses a codec direct play can't
- * reliably deliver sound for -- see AUDIO_CODECS_NEEDING_TRANSCODE. Used to
- * skip straight to the transcode instead of attempting (and silently
- * failing at) direct play first.
+ * Whether this item's audio or video track uses a codec direct play can't
+ * reliably deliver -- see AUDIO_CODECS_NEEDING_TRANSCODE and
+ * VIDEO_CODECS_NEEDING_TRANSCODE. Used to skip straight to the transcode
+ * instead of attempting (and silently failing at) direct play first.
  */
 export async function needsForcedTranscode(itemId: string): Promise<boolean> {
   if (!isJellyfinConfigured()) return false;
@@ -339,7 +350,11 @@ export async function needsForcedTranscode(itemId: string): Promise<boolean> {
     }>(`/Items?Ids=${itemId}&Fields=MediaStreams`);
     const streams = result.Items[0]?.MediaStreams ?? [];
     const audioCodec = streams.find((s) => s.Type === "Audio")?.Codec?.toLowerCase();
-    return !!audioCodec && AUDIO_CODECS_NEEDING_TRANSCODE.has(audioCodec);
+    const videoCodec = streams.find((s) => s.Type === "Video")?.Codec?.toLowerCase();
+    return (
+      (!!audioCodec && AUDIO_CODECS_NEEDING_TRANSCODE.has(audioCodec)) ||
+      (!!videoCodec && VIDEO_CODECS_NEEDING_TRANSCODE.has(videoCodec))
+    );
   } catch (err) {
     console.error(`[jellyfin] needsForcedTranscode failed for item ${itemId}:`, err);
     return false;

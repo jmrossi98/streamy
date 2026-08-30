@@ -1,6 +1,7 @@
 import {
   jellyfinTranscodeStreamUrl,
   jellyfinUpstreamStreamUrl,
+  jellyfinHlsMasterUrl,
   jellyfinHlsResourceUrl,
   jellyfinSubtitleStreamUrl,
 } from "./jellyfin";
@@ -81,7 +82,29 @@ export async function proxyJellyfinHlsResource(
   request: Request
 ): Promise<Response> {
   const incoming = new URL(request.url);
-  const upstreamUrl = jellyfinHlsResourceUrl(itemId, jellyfinPath, new URLSearchParams(incoming.searchParams));
+  // The master playlist is the one request usePlayerEngine builds itself
+  // (videoSrc: `${videoUrl}/hls/master.m3u8?session=...&t=...`) rather than
+  // one Jellyfin already emitted -- so, unlike every other HLS resource here,
+  // its query string is ours, not Jellyfin's, and forwarding it verbatim was
+  // wrong: `session`/`t` aren't params Jellyfin recognizes (it wants
+  // PlaySessionId/startTimeTicks), and the request was missing every
+  // transcode param entirely -- videoCodec, audioCodec, maxWidth,
+  // videoBitRate, audioBitRate, segmentContainer, and mediaSourceId, the last
+  // of which this server version outright rejects the request without
+  // (confirmed live: HTTP 400 "The mediaSourceId field is required"). Build
+  // it properly via jellyfinHlsMasterUrl instead of the generic passthrough.
+  // Everything else here (variant playlists, segments) *is* a reference
+  // Jellyfin already emitted inside the master playlist's own body, rewritten
+  // only to relative + re-keyed through us (see rewriteHlsReference) -- those
+  // already carry the right params and should keep being forwarded as-is.
+  const upstreamUrl =
+    jellyfinPath === "master.m3u8"
+      ? jellyfinHlsMasterUrl(
+          itemId,
+          Number(incoming.searchParams.get("t")) || undefined,
+          incoming.searchParams.get("session") || undefined
+        )
+      : jellyfinHlsResourceUrl(itemId, jellyfinPath, new URLSearchParams(incoming.searchParams));
   const range = request.headers.get("range");
   const upstream = await fetch(upstreamUrl, {
     headers: range ? { Range: range } : {},
