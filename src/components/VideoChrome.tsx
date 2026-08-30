@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
-import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
 
 type ChromeState = {
   isPlaying: boolean;
@@ -26,8 +25,6 @@ type ChromeState = {
 export function VideoChrome({
   title,
   subtitle,
-  quality,
-  onQualityChange,
   closeHref,
   onClose,
   chrome,
@@ -36,8 +33,6 @@ export function VideoChrome({
 }: {
   title: string;
   subtitle?: string;
-  quality: PlaybackQuality;
-  onQualityChange: (q: PlaybackQuality) => void;
   closeHref?: string;
   onClose?: () => void;
   chrome: ChromeState;
@@ -81,7 +76,6 @@ export function VideoChrome({
           {subtitle && <p className="truncate text-xs text-white/70 sm:text-sm">{subtitle}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <QualitySelector value={quality} onChange={onQualityChange} />
           {extraTopRight}
           {(closeHref || onClose) &&
             (closeHref ? (
@@ -157,12 +151,19 @@ export function VideoChrome({
           <div className="hidden items-center gap-2 sm:flex">
             <button type="button" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} className="shrink-0">
               {muted || volume === 0 ? (
+                // Muted / 0: speaker with an X.
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                   <path d="M4 9v6h4l5 5V4L8 9H4zm12.5 3l2.7-2.7-1.4-1.4L15.1 10.6 12.4 7.9 11 9.3l2.7 2.7L11 14.7l1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z" />
                 </svg>
-              ) : (
+              ) : volume < 0.5 ? (
+                // Low: speaker with one sound wave.
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                   <path d="M4 9v6h4l5 5V4L8 9H4zm11.5 3a4 4 0 00-2-3.5v7a4 4 0 002-3.5z" />
+                </svg>
+              ) : (
+                // High: speaker with two sound waves.
+                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path d="M4 9v6h4l5 5V4L8 9H4zm11.5 3a4 4 0 00-2-3.5v7a4 4 0 002-3.5zM16 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                 </svg>
               )}
             </button>

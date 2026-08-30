@@ -313,6 +313,39 @@ export function jellyfinSubtitleStreamUrl(itemId: string, mediaSourceId: string,
   return `${JELLYFIN_URL}/Videos/${itemId}/${mediaSourceId}/Subtitles/${index}/Stream.vtt?api_key=${JELLYFIN_API_KEY}`;
 }
 
+// Codecs that direct play silently fails on rather than erroring: the
+// browser plays what it can decode and just drops the rest, so a video
+// track that plays fine while its audio track is one of these produces no
+// error event at all -- confirmed live on a real title (The Wire S1E1:
+// HEVC/AC3, picture flickering from a marginal hardware decode path, no
+// audio whatsoever, and the player never found out anything was wrong,
+// since nothing ever fires onError for "one track quietly didn't work").
+// None of this is guesswork about what browsers support -- it's Chrome
+// specifically never shipping AC3/DTS/TrueHD decode at all (licensing, not
+// a bug), so there's nothing to wait for or retry into.
+const AUDIO_CODECS_NEEDING_TRANSCODE = new Set(["ac3", "eac3", "dts", "truehd"]);
+
+/**
+ * Whether this item's own audio track uses a codec direct play can't
+ * reliably deliver sound for -- see AUDIO_CODECS_NEEDING_TRANSCODE. Used to
+ * skip straight to the transcode instead of attempting (and silently
+ * failing at) direct play first.
+ */
+export async function needsForcedTranscode(itemId: string): Promise<boolean> {
+  if (!isJellyfinConfigured()) return false;
+  try {
+    const result = await jellyfinFetch<{
+      Items: { MediaStreams?: { Type: string; Codec?: string }[] }[];
+    }>(`/Items?Ids=${itemId}&Fields=MediaStreams`);
+    const streams = result.Items[0]?.MediaStreams ?? [];
+    const audioCodec = streams.find((s) => s.Type === "Audio")?.Codec?.toLowerCase();
+    return !!audioCodec && AUDIO_CODECS_NEEDING_TRANSCODE.has(audioCodec);
+  } catch (err) {
+    console.error(`[jellyfin] needsForcedTranscode failed for item ${itemId}:`, err);
+    return false;
+  }
+}
+
 /**
  * Kills the ffmpeg job behind one transcode session. Call this before asking
  * for a new position in the same playback (see jellyfinTranscodeStreamUrl) --

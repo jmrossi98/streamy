@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 import Hls from "hls.js";
 import { isMobileViewport } from "@/lib/videoFullscreen";
 import { supportsNativeHls } from "@/lib/hlsSupport";
-import type { PlaybackQuality } from "./QualitySelector";
 import { VideoChrome } from "./VideoChrome";
 import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
@@ -66,6 +65,9 @@ type EpisodePlayerProps = {
   onClose?: () => void;
   /** Subtitle tracks Jellyfin already has for this episode -- omitted (or empty) hides the control entirely. */
   subtitleTracks?: SubtitleOption[];
+  /** Skip straight to the transcode instead of attempting direct play first
+   * -- see the movie player's WatchPlayerProps for the full rationale. */
+  forceTranscode?: boolean;
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
@@ -86,17 +88,18 @@ export function EpisodePlayer({
   closeHref,
   onClose,
   subtitleTracks = [],
+  forceTranscode = false,
 }: EpisodePlayerProps) {
   const hasSource = !!videoUrl;
-  // Viewer-chosen quality: Auto direct-plays and falls back to a 1080p transcode
-  // if the browser can't decode the source; 4K forces the raw source; 1080p
-  // forces the transcode. Defaults to Auto, not 1080p -- see the movie player
-  // for the full rationale (the live-transcode delivery path itself turned
-  // out to be unreliable; defaulting everyone through it broke playback
-  // broadly, where direct play against the same titles works fine).
-  const [quality, setQuality] = useState<PlaybackQuality>("auto");
-  const [autoFellBack, setAutoFellBack] = useState(false);
-  const transcoding = quality === "1080p" || autoFellBack;
+  // Always direct-plays and falls back to a transcode only if the browser
+  // can't decode the source -- see the movie player for the full rationale
+  // (no manual quality picker anymore; the transcode path has repeatedly
+  // been the less reliable one, and auto-only means a viewer only lands
+  // there when direct play genuinely can't work). Seeded from
+  // forceTranscode, not always false -- some titles need to skip direct
+  // play altogether (see the prop's own doc).
+  const [autoFellBack, setAutoFellBack] = useState(forceTranscode);
+  const transcoding = autoFellBack;
   // Where the current transcode source begins in the episode's real timeline
   // (Jellyfin's startTimeTicks). See the movie player for the full rationale --
   // a transcode can only be played from where ffmpeg has already encoded to,
@@ -142,6 +145,11 @@ export function EpisodePlayer({
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [videoLoading, setVideoLoading] = useState(false);
+  // Separate from videoLoading, which is specifically "nothing is playing
+  // yet" (pre-play, quality/seek swaps). This is "playback is up but has
+  // run out of buffer mid-stream" -- a real, different state that had no
+  // indicator at all before; the picture just froze with no feedback.
+  const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showNextOverlay, setShowNextOverlay] = useState(false);
@@ -182,31 +190,13 @@ export function EpisodePlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showId, seasonNumber, episodeNumber]);
 
-  const changeQuality = (q: PlaybackQuality) => {
-    if (q === quality && !autoFellBack) return;
-    const resumeAt = chrome.currentTime > 0 ? chrome.currentTime : null;
-    resumeAtRef.current = resumeAt;
-    setAutoFellBack(false);
-    setPlaybackError(false);
-    setVideoLoading(true);
-    const applyChange = () => {
-      didSwapRef.current = true;
-      setTranscodeStartAt(q === "1080p" && resumeAt ? resumeAt : 0);
-      setQuality(q);
-    };
-    // Wait for the old encode to actually be torn down first -- same race as
-    // a scrub-seek (see stopCurrentTranscode).
-    if (transcoding) stopCurrentTranscode().finally(applyChange);
-    else applyChange();
-  };
-
   // Feeds an HLS transcode into the video element via MSE for every browser
   // without native HLS support -- see the movie player for the full
   // rationale and needsHlsJs above. Runs on mount too, not just later swaps:
-  // a resumed episode where Auto had fallen back before, or 1080p picked
-  // directly, can already be in the hls.js state on the very first render.
-  // Placed before the reload effect below so its teardown/recreate happens
-  // first on a shared dependency change.
+  // a resumed episode where direct play had already fallen back before can
+  // be in the hls.js state on the very first render. Placed before the
+  // reload effect below so its teardown/recreate happens first on a shared
+  // dependency change.
   useEffect(() => {
     if (!needsHlsJs || !videoSrc) return;
     const v = videoRef.current;
@@ -289,6 +279,23 @@ export function EpisodePlayer({
     setShowOverlay(true);
   }, []);
 
+  // Buffering indicator, independent of which delivery mechanism is active
+  // (direct play, hls.js, or native HLS all fire these same native
+  // HTMLMediaElement events) -- one listener covers every case rather than
+  // needing its own signal per source type.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onWaiting = () => setBuffering(true);
+    const onPlaying = () => setBuffering(false);
+    v.addEventListener("waiting", onWaiting);
+    v.addEventListener("playing", onPlaying);
+    return () => {
+      v.removeEventListener("waiting", onWaiting);
+      v.removeEventListener("playing", onPlaying);
+    };
+  }, []);
+
   // Leaving fullscreen deliberately does NOT leave the page. It used to call
   // router.back(), from a time when exiting stranded the viewer on a bare
   // inline video with no way back. The maximise button is that way back now,
@@ -297,7 +304,11 @@ export function EpisodePlayer({
   // the home panel ejected them too. The close control handles leaving.
 
   useEffect(() => {
-    if (!hasSource || !playing || !videoRef.current || isMobile) return;
+    // Checks isMobileViewport() directly, not just the isMobile state -- see
+    // the movie player for the full rationale (a same-commit race with the
+    // mobile-detection effect above could let a mobile viewer's video
+    // briefly autoplay inline before the correction landed).
+    if (!hasSource || !playing || !videoRef.current || isMobile || isMobileViewport()) return;
     const v = videoRef.current;
     setVideoLoading(true);
     const startPlayback = () => {
@@ -443,11 +454,16 @@ export function EpisodePlayer({
   // Fills the viewport via CSS on every size, not just desktop -- this is
   // what stands in for real fullscreen on mobile now (see handlePlayClick):
   // it keeps our own chrome on screen as a sibling of the <video>, which
-  // native video fullscreen can never do.
+  // native video fullscreen can never do. inset-0 alone (no h-screen/
+  // w-screen) is deliberate -- those are a static 100vh/100vw snapshot, and
+  // mobile browsers resize the *real* viewport as their address bar
+  // collapses/expands, which is exactly what left the scrubber and expand
+  // button sitting below the visible fold on first load. inset-0 on a fixed
+  // element tracks the actual current viewport continuously instead.
   const containerClass = showNextOverlay
-    ? "fixed inset-0 z-30 w-screen h-screen"
+    ? "fixed inset-0 z-30"
     : showVideo
-      ? "fixed inset-0 z-30 h-screen w-screen bg-black"
+      ? "fixed inset-0 z-30 bg-black"
       : "min-h-[400px] h-[60vh]";
 
   return (
@@ -501,12 +517,18 @@ export function EpisodePlayer({
           <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} />
         ))}
       </video>
+      {showVideo && buffering && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <span
+            className="h-14 w-14 rounded-full border-4 border-white/25 border-t-white animate-spin"
+            aria-label="Buffering"
+          />
+        </div>
+      )}
       {showVideo && (
         <VideoChrome
           title={showName}
           subtitle={`S${seasonNumber} E${episodeNumber}${episodeName ? ` · ${episodeName}` : ""}`}
-          quality={quality}
-          onQualityChange={changeQuality}
           closeHref={closeHref}
           onClose={onClose}
           chrome={chrome}

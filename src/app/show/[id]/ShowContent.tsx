@@ -90,6 +90,7 @@ export function ShowContent({
   const [seasonLoading, setSeasonLoading] = useState(false);
   const [overlayEpisode, setOverlayEpisode] = useState<OverlayEpisode | null>(null);
   const [overlaySubtitleTracks, setOverlaySubtitleTracks] = useState<{ index: number; label: string }[]>([]);
+  const [overlayForceTranscode, setOverlayForceTranscode] = useState(false);
 
   // The watch pages resolve this server-side (they're server components); this
   // overlay only exists client-side, so it hits the list route instead. No
@@ -101,10 +102,14 @@ export function ShowContent({
     fetch(`/api/stream/episode/${show.id}/${overlayEpisode.seasonNumber}/${overlayEpisode.episodeNumber}/subtitles`)
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setOverlaySubtitleTracks(data.tracks ?? []);
+        if (cancelled) return;
+        setOverlaySubtitleTracks(data.tracks ?? []);
+        setOverlayForceTranscode(!!data.forceTranscode);
       })
       .catch(() => {
-        if (!cancelled) setOverlaySubtitleTracks([]);
+        if (cancelled) return;
+        setOverlaySubtitleTracks([]);
+        setOverlayForceTranscode(false);
       });
     return () => {
       cancelled = true;
@@ -242,6 +247,7 @@ export function ShowContent({
                 : null
             }
             subtitleTracks={overlaySubtitleTracks}
+            forceTranscode={overlayForceTranscode}
           />
         </div>
       )}

@@ -9,6 +9,23 @@ function Stat({ label, value }: { label: string; value: number }) {
   );
 }
 
+// This panel renders server-side, so a bare toLocaleString() used whatever
+// timezone the server process is in (UTC on the Lightsail box) -- not the
+// viewer's, and not necessarily meaningful to anyone. Pinned to New York
+// explicitly instead, since that's the one timezone every viewer of this
+// panel actually cares about, regardless of where the render happens to run
+// or where the viewer themselves is.
+const VISITOR_LOG_TIME_ZONE = "America/New_York";
+const visitorLogTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: VISITOR_LOG_TIME_ZONE,
+  dateStyle: "short",
+  timeStyle: "medium",
+});
+
+function formatVisitAt(at: string): string {
+  return `${visitorLogTimeFormatter.format(new Date(at))} ET`;
+}
+
 function hostOf(referrer: string): string {
   if (referrer === "(direct)") return referrer;
   try {
@@ -97,9 +114,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
               <tbody>
                 {recent.map((v) => (
                   <tr key={v.id} className="border-t border-white/5">
-                    <td className="whitespace-nowrap px-3 py-2 text-white/50">
-                      {new Date(v.at).toLocaleString()}
-                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-white/50">{formatVisitAt(v.at)}</td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <span
                         className={
