@@ -30,7 +30,12 @@ export function rowKey(d: DownloadRow): string {
   return `${d.mediaType}-done-${d.externalId}`;
 }
 
-const REFRESH_INTERVAL_MS = 5000;
+// A new request happens on a different page/tab than this panel, so there's
+// no way to learn about it except by polling -- 5s meant up to a 5s wait
+// before a freshly-started movie showed up here at all. Confirmed the
+// request itself is fast (~200ms for the Radarr round trip), so the delay
+// was purely this interval; halving it halves the worst case.
+const REFRESH_INTERVAL_MS = 2500;
 const VISIBLE_ROWS = 5;
 // ~52px per row (text line + progress bar + gaps) + list gaps, tuned so a
 // sixth row is visibly cut off rather than the panel just guessing.

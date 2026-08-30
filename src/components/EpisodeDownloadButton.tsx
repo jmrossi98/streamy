@@ -33,6 +33,19 @@ export function useSeasonStatuses(
     seedSeason === seasonNumber && seed ? seed : {}
   );
 
+  // Cancelling an episode is several sequential Sonarr calls server-side
+  // (look up the series, the queue, the file, then unmonitor -- see
+  // manageSonarrEpisodes), easily a couple of seconds. The season's own poll
+  // interval keeps running the whole time (other episodes are still active),
+  // and a tick landing mid-cancel would read Sonarr's still-current state and
+  // overwrite the optimistic clear with it -- confirmed live as the "still
+  // says Starting… right after cancel" report. Recently-written episode
+  // numbers are protected from being clobbered by a poll for a few seconds,
+  // long enough for the mutation's own request to finish and settle things
+  // properly either way.
+  const RECENT_WRITE_GRACE_MS = 4000;
+  const recentWritesRef = useRef<Map<number, number>>(new Map());
+
   const refresh = useCallback(async () => {
     if (!enabled) return;
     try {
@@ -41,7 +54,20 @@ export function useSeasonStatuses(
       );
       if (!res.ok) return;
       const data = await res.json();
-      setStatuses(data.statuses ?? {});
+      const fresh: Record<number, EpisodeState> = data.statuses ?? {};
+      const now = Date.now();
+      setStatuses((prev) => {
+        const merged: Record<number, EpisodeState> = { ...fresh };
+        for (const [epNum, writtenAt] of recentWritesRef.current) {
+          if (now - writtenAt >= RECENT_WRITE_GRACE_MS) {
+            recentWritesRef.current.delete(epNum);
+            continue;
+          }
+          if (prev[epNum] !== undefined) merged[epNum] = prev[epNum];
+          else delete merged[epNum];
+        }
+        return merged;
+      });
     } catch {
       /* transient -- next tick retries */
     }
@@ -76,6 +102,7 @@ export function useSeasonStatuses(
 
   /** Paints one episode's state locally so a click registers before the server answers. */
   const setLocalState = useCallback((episodeNumber: number, next: EpisodeState | null) => {
+    recentWritesRef.current.set(episodeNumber, Date.now());
     setStatuses((prev) => {
       const updated = { ...prev };
       if (next) updated[episodeNumber] = next;
@@ -92,10 +119,12 @@ export function useSeasonStatuses(
    * Episodes already downloading or on disk keep their real state.
    */
   const setLocalStates = useCallback((episodeNumbers: number[], next: EpisodeState | null) => {
+    const now = Date.now();
     setStatuses((prev) => {
       const updated = { ...prev };
       for (const n of episodeNumbers) {
         if (prev[n]?.status === "downloading" || prev[n]?.status === "available") continue;
+        recentWritesRef.current.set(n, now);
         if (next) updated[n] = next;
         else delete updated[n];
       }

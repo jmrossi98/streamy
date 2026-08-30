@@ -57,7 +57,13 @@ async function radarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
 // there's nothing left actually happening.
 export type MediaRequestStatus = "requested" | "noReleaseFound" | "downloading" | "available";
 
-const SEARCH_GRACE_MS = 3 * 60 * 1000;
+// 5 minutes, not 3 -- confirmed live that a single search command against
+// the full indexer set can legitimately take ~90s, and the healer (see
+// downloadHealer.ts) re-searches idle titles on its own roughly every couple
+// of minutes. 3 minutes was tight enough to flip to "no release found" right
+// before that natural retry landed, reading as flapping rather than one
+// continuous search.
+const SEARCH_GRACE_MS = 5 * 60 * 1000;
 
 export function isSearchStale(lastSearchTime?: string | null): boolean {
   if (!lastSearchTime) return false;
