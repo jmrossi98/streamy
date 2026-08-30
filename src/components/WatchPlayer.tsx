@@ -3,14 +3,21 @@
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import {
-  tryMobileNativeVideoFullscreen,
-  isMobileViewport,
-} from "@/lib/videoFullscreen";
-import { QualitySelector, type PlaybackQuality } from "./QualitySelector";
+import { isMobileViewport } from "@/lib/videoFullscreen";
+import { supportsNativeHls } from "@/lib/hlsSupport";
+import type { PlaybackQuality } from "./QualitySelector";
 import { VideoChrome } from "./VideoChrome";
+import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
+
+/** See the same helper in EpisodePlayer -- kept duplicated rather than
+ * shared since it's three lines and pulling it out would mean a new module
+ * just for this. */
+function applySubtitleMode(v: HTMLVideoElement, tracks: SubtitleOption[], selected: number | null) {
+  for (let i = 0; i < v.textTracks.length && i < tracks.length; i++) {
+    v.textTracks[i].mode = tracks[i].index === selected ? "showing" : "disabled";
+  }
+}
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the movie is here" when it
@@ -25,6 +32,8 @@ type WatchPlayerProps = {
   autoPlay?: boolean;
   videoUrl?: string | null;
   closeHref?: string;
+  /** Subtitle tracks Jellyfin already has for this movie -- omitted (or empty) hides the control entirely. */
+  subtitleTracks?: SubtitleOption[];
 };
 
 const PROGRESS_SAVE_INTERVAL_SEC = 60;
@@ -37,6 +46,7 @@ export function WatchPlayer({
   autoPlay = false,
   videoUrl,
   closeHref,
+  subtitleTracks = [],
 }: WatchPlayerProps) {
   const hasSource = !!videoUrl;
   // Playback quality is viewer-chosen: Auto direct-plays and falls back to a
@@ -64,12 +74,21 @@ export function WatchPlayer({
   // transcode request so a seek is recognised as "move this session", not a
   // brand new independent stream. Generated once, lazily, on first render.
   const [playSessionId] = useState(() => crypto.randomUUID());
+  // Safari won't reliably start playback against the plain progressive
+  // transcode endpoint (see jellyfinHlsMasterUrl) -- route it through
+  // Jellyfin's HLS output there instead. Chrome/Firefox keep the simpler path.
+  const [useHls] = useState(supportsNativeHls);
+  const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
   const videoSrc = !videoUrl
     ? ""
     : transcoding
-      ? `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
-          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
-        }`
+      ? useHls
+        ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${
+            transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+          }`
+        : `${videoUrl}${videoUrl.includes("?") ? "&" : "?"}mode=transcode&session=${playSessionId}${
+            transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
+          }`
       : videoUrl;
   // Best-effort: tell Jellyfin to kill the ffmpeg job for the current session
   // before asking for a new position. Without this, Jellyfin can leave the
@@ -100,7 +119,6 @@ export function WatchPlayer({
   const [playing, setPlaying] = useState(autoPlay && hasSource);
   const [showOverlay, setShowOverlay] = useState(!autoPlay || !hasSource);
   const [isMobile, setIsMobile] = useState(false);
-  const router = useRouter();
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -193,12 +211,21 @@ export function WatchPlayer({
           /* not seekable yet; play from the stream's start instead of stalling */
         }
       }
+      // v.load() reset every text track back to its <track> default -- reassert
+      // whichever one the viewer had picked.
+      applySubtitleMode(v, subtitleTracks, selectedSubtitle);
       v.play().catch(() => {});
       setVideoLoading(false);
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding, transcodeStartAt]);
+  }, [transcoding, transcodeStartAt, subtitleTracks, selectedSubtitle]);
+
+  // Viewer picked a subtitle track (or turned them off).
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) applySubtitleMode(v, subtitleTracks, selectedSubtitle);
+  }, [selectedSubtitle, subtitleTracks]);
 
   // Leaving fullscreen deliberately does NOT leave the page. It used to call
   // router.back(), from a time when exiting stranded the viewer on a bare
@@ -238,12 +265,14 @@ export function WatchPlayer({
       if (v.error) v.load();
       if (initialProgressSeconds > 0) v.currentTime = initialProgressSeconds;
 
-      // Fullscreen must be requested here, synchronously inside the tap, not
-      // after play() resolves: iOS only honours it while the user gesture is
-      // still active, so doing it in a .then() silently no-ops and leaves the
-      // video playing inline under our own chrome.
-      tryMobileNativeVideoFullscreen(v);
-
+      // Fullscreen is opt-in via the chrome's own button (usePlayerChrome),
+      // not forced here. Jumping straight to native video fullscreen used to
+      // happen right at this tap -- before anything had even loaded -- and it
+      // replaces the whole element with the OS's own player UI, which is why
+      // our overlay (quality, subtitles) never showed on mobile at all. The
+      // chrome's fullscreen button tries container fullscreen first, which
+      // keeps our overlay as a sibling and visible; it only falls back to
+      // native video fullscreen if that's unsupported.
       v.play()
         .then(() => {
           setVideoLoading(false);
@@ -323,10 +352,11 @@ export function WatchPlayer({
   }, [movieId]);
 
   const showVideo = playing && !showOverlay;
-  /** Mobile: inline slot + native video fullscreen (iOS webkitEnterFullscreen, etc.). Desktop: faux fullscreen. */
-  const containerClass = showVideo
-    ? "relative w-full aspect-video bg-black md:fixed md:inset-0 md:z-30 md:h-screen md:w-screen md:aspect-auto"
-    : "min-h-[400px] h-[60vh]";
+  // Fills the viewport via CSS on every size, not just desktop -- this is
+  // what stands in for real fullscreen on mobile now (see handlePlayClick):
+  // it keeps our own chrome on screen as a sibling of the <video>, which
+  // native video fullscreen can never do.
+  const containerClass = showVideo ? "fixed inset-0 z-30 h-screen w-screen bg-black" : "min-h-[400px] h-[60vh]";
 
   return (
     <div
@@ -340,15 +370,9 @@ export function WatchPlayer({
         src={videoSrc}
         autoPlay
         playsInline
-        // Native controls on mobile, our own chrome on desktop. iOS/Android's
-        // fullscreen (entered below, on tap) only ever shows the <video>
-        // element itself -- VideoChrome is a sibling <div>, so it can't render
-        // inside that native surface no matter what we do; native controls are
-        // the only ones that exist there. Without this, mobile fullscreen has
-        // no controls at all.
-        controls={isMobile}
+        controls={false}
         onClick={() => {
-          if (!showVideo || isMobile) return;
+          if (!showVideo) return;
           // Tap on the picture: reveal the controls if hidden, otherwise
           // play/pause -- the usual click-to-toggle once they're already up.
           if (chrome.controlsVisible) chrome.togglePlay();
@@ -380,37 +404,24 @@ export function WatchPlayer({
           setPlaybackError(false);
           chrome.revealControls();
         }}
-      />
-      {showVideo && !isMobile && (
+      >
+        {subtitleTracks.map((t) => (
+          <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} />
+        ))}
+      </video>
+      {showVideo && (
         <VideoChrome
           title={movieTitle}
           quality={quality}
           onQualityChange={changeQuality}
           closeHref={closeHref}
           chrome={chrome}
+          extraTopRight={
+            subtitleTracks.length > 0 ? (
+              <SubtitleSelector tracks={subtitleTracks} value={selectedSubtitle} onChange={setSelectedSubtitle} />
+            ) : undefined
+          }
         />
-      )}
-      {/* Mobile: playing inline, before the viewer has tapped into native
-          fullscreen (or after backing out of it) -- native fullscreen supplies
-          its own controls, so this exists only for the inline window where it
-          doesn't. Quality has to live here since native controls don't offer
-          it, and it's the only view where our own DOM can render at all. */}
-      {showVideo && isMobile && (
-        <div className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 px-4 pt-[calc(0.75rem+env(safe-area-inset-top,0px))]">
-          <QualitySelector value={quality} onChange={changeQuality} />
-          {closeHref && (
-            <Link
-              href={closeHref}
-              prefetch
-              aria-label="Close"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
-            >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </Link>
-          )}
-        </div>
       )}
       {showOverlay && (
         <>

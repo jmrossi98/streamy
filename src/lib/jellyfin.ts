@@ -208,6 +208,103 @@ export function jellyfinTranscodeStreamUrl(
 }
 
 /**
+ * Same rationale as jellyfinTranscodeStreamUrl, but asks Jellyfin for its HLS
+ * output instead of one progressive MP4. Safari (iOS and desktop) won't
+ * reliably start playback against a live, growing, non-seekable progressive
+ * stream -- it wants either a fully-buffered file or an HLS manifest, and
+ * only the transcode itself can supply the latter for content Safari can't
+ * direct-play. Chrome/Firefox don't have this problem, so they stay on the
+ * simpler mp4 endpoint (see jellyfinTranscodeStreamUrl) -- see hlsSupport.ts
+ * for how the player decides which one to request.
+ *
+ * `container: ts` (not the newer fmp4) deliberately -- it's Jellyfin's own
+ * default and the most broadly compatible segment format, including with
+ * Safari's native HLS decoder.
+ */
+export function jellyfinHlsMasterUrl(
+  itemId: string,
+  startSeconds?: number,
+  playSessionId?: string
+): string {
+  const params = new URLSearchParams({
+    videoCodec: "h264",
+    audioCodec: "aac",
+    maxWidth: process.env.JELLYFIN_TRANSCODE_MAX_WIDTH || "1920",
+    videoBitRate: process.env.JELLYFIN_TRANSCODE_BITRATE || "8000000",
+    audioBitRate: "192000",
+    segmentContainer: "ts",
+    api_key: JELLYFIN_API_KEY ?? "",
+  });
+  if (startSeconds && startSeconds > 0) {
+    params.set("startTimeTicks", String(Math.round(startSeconds * 10_000_000)));
+  }
+  if (playSessionId) params.set("PlaySessionId", playSessionId);
+  return `${JELLYFIN_URL}/Videos/${itemId}/master.m3u8?${params.toString()}`;
+}
+
+/**
+ * Raw Jellyfin URL for one HLS sub-resource -- a variant playlist or a media
+ * segment -- referenced from the master playlist above. Only ever reached
+ * through the hls catch-all proxy route, which rewrites the master/variant
+ * playlists so the browser's own requests for these come back through us
+ * instead of going straight to Jellyfin (see proxyJellyfinHlsResource).
+ */
+export function jellyfinHlsResourceUrl(itemId: string, path: string, query: URLSearchParams): string {
+  query.set("api_key", JELLYFIN_API_KEY ?? "");
+  return `${JELLYFIN_URL}/Videos/${itemId}/${path}?${query.toString()}`;
+}
+
+export type JellyfinSubtitleTrack = {
+  index: number;
+  label: string;
+  language: string | null;
+};
+
+/**
+ * Subtitle tracks Jellyfin already knows about for one item (embedded in the
+ * file or sitting alongside it as an external .srt/.vtt -- Jellyfin scans
+ * both the same way). Returns null if the item has no subtitle streams at
+ * all, so the player can skip rendering a subtitle control entirely rather
+ * than showing an empty menu.
+ */
+export async function getJellyfinSubtitleTracks(
+  itemId: string
+): Promise<{ mediaSourceId: string; tracks: JellyfinSubtitleTrack[] } | null> {
+  if (!isJellyfinConfigured()) return null;
+  try {
+    const item = await jellyfinFetch<{
+      MediaSources?: { Id: string }[];
+      MediaStreams?: {
+        Type: string;
+        Index: number;
+        DisplayTitle?: string;
+        Language?: string;
+        IsExternal?: boolean;
+        Codec?: string;
+      }[];
+    }>(`/Items/${itemId}?Fields=MediaStreams,MediaSources`);
+    const mediaSourceId = item.MediaSources?.[0]?.Id ?? itemId;
+    const tracks = (item.MediaStreams ?? [])
+      .filter((s) => s.Type === "Subtitle")
+      .map((s) => ({
+        index: s.Index,
+        label: s.DisplayTitle || s.Language || `Track ${s.Index}`,
+        language: s.Language ?? null,
+      }));
+    if (tracks.length === 0) return null;
+    return { mediaSourceId, tracks };
+  } catch (err) {
+    console.error(`[jellyfin] getJellyfinSubtitleTracks failed for item ${itemId}:`, err);
+    return null;
+  }
+}
+
+/** Jellyfin transcodes any subtitle format to WebVTT on request -- a plain <track> element can use this directly. */
+export function jellyfinSubtitleStreamUrl(itemId: string, mediaSourceId: string, index: number): string {
+  return `${JELLYFIN_URL}/Videos/${itemId}/${mediaSourceId}/Subtitles/${index}/Stream.vtt?api_key=${JELLYFIN_API_KEY}`;
+}
+
+/**
  * Kills the ffmpeg job behind one transcode session. Call this before asking
  * for a new position in the same playback (see jellyfinTranscodeStreamUrl) --
  * without it, Jellyfin can leave the old encode running and just keep serving

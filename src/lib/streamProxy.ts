@@ -1,4 +1,9 @@
-import { jellyfinTranscodeStreamUrl, jellyfinUpstreamStreamUrl } from "./jellyfin";
+import {
+  jellyfinTranscodeStreamUrl,
+  jellyfinUpstreamStreamUrl,
+  jellyfinHlsResourceUrl,
+  jellyfinSubtitleStreamUrl,
+} from "./jellyfin";
 
 // Headers that must survive the hop for video playback to behave: the browser
 // relies on them for seeking (Range/Content-Range/Accept-Ranges), for knowing
@@ -51,4 +56,105 @@ export async function proxyJellyfinStream(
   if (!headers.has("accept-ranges")) headers.set("accept-ranges", "bytes");
 
   return new Response(upstream.body, { status: upstream.status, headers });
+}
+
+const HLS_PLAYLIST_CONTENT_TYPES = [
+  "mpegurl", // covers application/vnd.apple.mpegurl and (audio|application)/x-mpegurl
+];
+
+/**
+ * Proxies one HLS resource for a transcode session -- the master/variant
+ * playlist, or a media segment -- reached via the hls/[...path] catch-all
+ * routes. Segments are piped through unchanged. Playlists are rewritten
+ * first: left alone, they'd either leak JELLYFIN_API_KEY straight to the
+ * browser (Jellyfin embeds it in every URL it emits) or point at Jellyfin's
+ * Tailscale-only address, which a viewer's browser can't route to and an
+ * HTTPS page can't load anyway (mixed content) -- same reasons the plain
+ * proxyJellyfinStream above exists. Every reference gets turned into a
+ * relative path, so the browser's next request for it lands back on this
+ * same route, which re-attaches the real api_key server-side.
+ */
+export async function proxyJellyfinHlsResource(
+  itemId: string,
+  jellyfinPath: string,
+  proxyBasePath: string,
+  request: Request
+): Promise<Response> {
+  const incoming = new URL(request.url);
+  const upstreamUrl = jellyfinHlsResourceUrl(itemId, jellyfinPath, new URLSearchParams(incoming.searchParams));
+  const range = request.headers.get("range");
+  const upstream = await fetch(upstreamUrl, {
+    headers: range ? { Range: range } : {},
+    cache: "no-store",
+  });
+
+  if (!upstream.ok && upstream.status !== 206) {
+    return new Response("Upstream stream unavailable", { status: 502 });
+  }
+
+  const contentType = upstream.headers.get("content-type") || "";
+  const isPlaylist =
+    HLS_PLAYLIST_CONTENT_TYPES.some((t) => contentType.toLowerCase().includes(t)) || jellyfinPath.endsWith(".m3u8");
+
+  const headers = new Headers();
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  if (!headers.has("accept-ranges")) headers.set("accept-ranges", "bytes");
+
+  if (!isPlaylist) {
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
+
+  const text = await upstream.text();
+  const rewritten = text
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+      return rewriteHlsReference(trimmed, itemId, proxyBasePath);
+    })
+    .join("\n");
+  // The rewritten body's byte length differs from upstream's -- let the
+  // runtime compute Content-Length rather than forwarding the stale one.
+  headers.delete("content-length");
+  return new Response(rewritten, { status: upstream.status, headers });
+}
+
+/** Proxies one WebVTT subtitle track -- small text, no range/streaming needed. */
+export async function proxyJellyfinSubtitle(
+  itemId: string,
+  mediaSourceId: string,
+  index: number
+): Promise<Response> {
+  const upstream = await fetch(jellyfinSubtitleStreamUrl(itemId, mediaSourceId, index), { cache: "no-store" });
+  if (!upstream.ok) {
+    return new Response("Subtitle unavailable", { status: 502 });
+  }
+  const body = await upstream.text();
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/vtt; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+/** Exported for testing -- see proxyJellyfinHlsResource for why this exists. */
+export function rewriteHlsReference(ref: string, itemId: string, proxyBasePath: string): string {
+  let path = ref;
+  let query = "";
+  const qIdx = ref.indexOf("?");
+  if (qIdx !== -1) {
+    path = ref.slice(0, qIdx);
+    query = ref.slice(qIdx + 1);
+  }
+  // An absolute Jellyfin URL -- keep only what comes after /Videos/{itemId}/.
+  const marker = `/Videos/${itemId}/`;
+  const markerIdx = path.indexOf(marker);
+  path = markerIdx !== -1 ? path.slice(markerIdx + marker.length) : path.replace(/^\/+/, "");
+  const params = new URLSearchParams(query);
+  params.delete("api_key");
+  params.delete("X-Emby-Token");
+  const qs = params.toString();
+  return `${proxyBasePath}/${path}${qs ? `?${qs}` : ""}`;
 }

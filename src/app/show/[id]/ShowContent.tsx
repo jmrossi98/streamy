@@ -89,6 +89,27 @@ export function ShowContent({
   );
   const [seasonLoading, setSeasonLoading] = useState(false);
   const [overlayEpisode, setOverlayEpisode] = useState<OverlayEpisode | null>(null);
+  const [overlaySubtitleTracks, setOverlaySubtitleTracks] = useState<{ index: number; label: string }[]>([]);
+
+  // The watch pages resolve this server-side (they're server components); this
+  // overlay only exists client-side, so it hits the list route instead. No
+  // need to clear on close -- the overlay unmounts, and the next open's fetch
+  // overwrites this before anything re-renders with it.
+  useEffect(() => {
+    if (!overlayEpisode) return;
+    let cancelled = false;
+    fetch(`/api/stream/episode/${show.id}/${overlayEpisode.seasonNumber}/${overlayEpisode.episodeNumber}/subtitles`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setOverlaySubtitleTracks(data.tracks ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setOverlaySubtitleTracks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [show.id, overlayEpisode?.seasonNumber, overlayEpisode?.episodeNumber]);
 
   useEffect(() => {
     setSeasonNum(initialSeasonNum);
@@ -220,6 +241,7 @@ export function ShowContent({
                 ? `/api/stream/episode/${show.id}/${overlayEpisode.seasonNumber}/${overlayEpisode.episodeNumber}`
                 : null
             }
+            subtitleTracks={overlaySubtitleTracks}
           />
         </div>
       )}
