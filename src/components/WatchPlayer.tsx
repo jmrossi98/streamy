@@ -75,11 +75,17 @@ export function WatchPlayer({
   // before asking for a new position. Without this, Jellyfin can leave the
   // old encode running and just keep serving *that*, ignoring the new
   // startTimeTicks entirely -- which is what made seeking during a transcode
-  // snap back to wherever the transcode first started. Fired, not awaited:
-  // the new request starting a fresh encode doesn't depend on the old one
-  // having finished tearing down.
+  // snap back to wherever the transcode first started.
+  //
+  // Returns the request's promise -- callers must await it before triggering
+  // the new stream request (changing transcodeStartAt/quality). Firing them
+  // in parallel re-introduces the exact race this exists to close: if the new
+  // stream request reaches Jellyfin before the stop does, Jellyfin sees an
+  // already-active session and keeps serving the old encode regardless. That
+  // race doesn't fire every time -- explains why the old fire-and-forget
+  // version "sometimes" still snapped back rather than always.
   const stopCurrentTranscode = () => {
-    fetch("/api/stream/stop", {
+    return fetch("/api/stream/stop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ playSessionId }),
@@ -106,11 +112,15 @@ export function WatchPlayer({
     // requests, no restart needed.
     onExternalSeek: transcoding
       ? (absoluteSeconds: number) => {
-          stopCurrentTranscode();
           resumeAtRef.current = null; // the new stream starts exactly there; nothing more to seek
-          didSwapRef.current = true;
           setVideoLoading(true);
-          setTranscodeStartAt(Math.max(0, absoluteSeconds));
+          // Wait for the old encode to actually be torn down before asking
+          // for the new position -- see stopCurrentTranscode for why racing
+          // the two is what caused the "sometimes still stuck" behaviour.
+          stopCurrentTranscode().finally(() => {
+            didSwapRef.current = true;
+            setTranscodeStartAt(Math.max(0, absoluteSeconds));
+          });
           return true;
         }
       : undefined,
@@ -135,17 +145,24 @@ export function WatchPlayer({
     // Re-picking the current quality is a no-op, unless we'd fallen back to a
     // transcode -- then it's a request to retry direct-play at that quality.
     if (q === quality && !autoFellBack) return;
-    if (transcoding) stopCurrentTranscode(); // leaving or restarting a transcode either way
-    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
-    didSwapRef.current = true;
+    const resumeAt = chrome.currentTime > 0 ? chrome.currentTime : null;
+    resumeAtRef.current = resumeAt;
     setAutoFellBack(false);
     setPlaybackError(false);
     setVideoLoading(true);
-    // Switching to a transcode: start it exactly at the resume position, same
-    // mechanism as a scrub-seek. Switching to direct play: no offset, the
-    // resume seek happens client-side once the file is loaded (below).
-    setTranscodeStartAt(q === "1080p" && resumeAtRef.current ? resumeAtRef.current : 0);
-    setQuality(q);
+    const applyChange = () => {
+      didSwapRef.current = true;
+      // Switching to a transcode: start it exactly at the resume position,
+      // same mechanism as a scrub-seek. Switching to direct play: no offset,
+      // the resume seek happens client-side once the file is loaded (below).
+      setTranscodeStartAt(q === "1080p" && resumeAt ? resumeAt : 0);
+      setQuality(q);
+    };
+    // Leaving or restarting a transcode either way -- wait for the old encode
+    // to actually be torn down first, same race as a scrub-seek (see
+    // stopCurrentTranscode).
+    if (transcoding) stopCurrentTranscode().finally(applyChange);
+    else applyChange();
   };
 
   // Any source swap (quality change, Auto's codec fallback, or a
