@@ -53,11 +53,18 @@ export function WatchPlayer({
   // 1080p transcode only if the browser can't decode the source; 4K forces the
   // raw source; 1080p forces the transcode. `transcoding` is derived from that
   // choice (plus Auto's one-shot fallback) and picks the source URL.
-  // Defaults to 1080p rather than Auto: every title transcodes from the
-  // start now, trading some GPU cost on titles that would've played fine
-  // directly for a consistently smooth stream without waiting on a
-  // direct-play failure to discover it needed to fall back anyway.
-  const [quality, setQuality] = useState<PlaybackQuality>("1080p");
+  // Defaults to Auto, not 1080p. This library is mostly standard H.264/AAC
+  // rips that direct-play fine, and the live-transcode delivery itself
+  // (a fragmented MP4 fed straight into a plain <video src>) turned out to
+  // be unreliable in real testing -- confirmed hanging indefinitely
+  // (readyState never left HAVE_NOTHING) despite Jellyfin correctly
+  // streaming bytes the whole time, while direct play against the exact
+  // same title worked immediately. Forcing every title through that path
+  // by defaulting to 1080p is what turned an occasional issue into
+  // "every title fails." The real fix (routing the transcode through HLS
+  // universally, via hls.js for browsers without native support) is a
+  // separate, more careful follow-up -- this restores the common case now.
+  const [quality, setQuality] = useState<PlaybackQuality>("auto");
   // Set when a direct-play source errors (unplayable codec) and we drop to the
   // transcode. Applies to both Auto and 4K -- a watchable 1080p beats a black
   // screen. Reset whenever the viewer picks a quality.
