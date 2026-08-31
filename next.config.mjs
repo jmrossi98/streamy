@@ -3,6 +3,24 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
 
+  // `next dev` only -- no effect on a production build/start. Playwright's
+  // player-control suite (playwright.config.ts) drives the dev server via
+  // 127.0.0.1, which Next's dev-origin protection otherwise treats as
+  // cross-origin from whatever it expects and silently 403s every JS chunk
+  // request. That doesn't fail the page load or the click -- the DOM still
+  // renders from SSR HTML and looks perfectly clickable -- it just means
+  // React never finishes hydrating, so no click handler is ever attached and
+  // every interaction in the suite silently no-ops. Confirmed live: three
+  // core chunks 403ing, zero console output from inside any onClick handler.
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  // Also `next dev` only. The dev-mode build-activity indicator's portal
+  // covers a click-interceptable area even while not visibly showing
+  // anything, which made every *second* click in the Playwright suite above
+  // (the first already having triggered a re-render) retry-and-fail against
+  // "<nextjs-portal> intercepts pointer events" until its own 30s+ retry
+  // budget ran out.
+  devIndicators: false,
+
   // Node-only libraries the geolocation code uses. Marked external so Next
   // keeps them as runtime requires and traces them (with their transitive
   // deps) into the standalone output, instead of trying to bundle them and
