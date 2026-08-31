@@ -93,12 +93,25 @@ export function WatchPlayer({
       // apply here, which put the play button/spinner in a small box pinned
       // near the top of the page instead of centered in it -- there's
       // nothing below it to make the smaller size meaningful, just empty
-      // background. inset-0 alone (no
-      // h-screen/w-screen) is deliberate -- those are a static 100vh/100vw
-      // snapshot, and mobile browsers resize the *real* viewport as their
-      // address bar collapses/expands, which is what left the scrubber and
-      // expand button sitting below the visible fold on first load.
-      className="relative w-full bg-black fixed inset-0 z-30"
+      // background. inset-0 alone (no h-screen/w-screen) is deliberate --
+      // those are a static 100vh/100vw snapshot, and mobile browsers resize
+      // the *real* viewport as their address bar collapses/expands, which is
+      // what left the scrubber and expand button sitting below the visible
+      // fold on first load.
+      //
+      // fixed/inset-0 ONLY -- no relative, no w-full. Tailwind's own
+      // generated stylesheet orders the position utilities as static, fixed,
+      // absolute, relative, sticky, so a `relative` class alongside `fixed`
+      // on the same element wins the cascade regardless of which comes first
+      // in the class string -- position collapses back to relative, inset-0
+      // becomes a no-op (it only affects absolute/fixed/sticky), and with no
+      // explicit height and every child absolutely positioned (nothing left
+      // to size the box from), the whole element collapsed to ~0px tall,
+      // pinned at the top of the page -- exactly the "clipped to top center"
+      // regression this introduced. `fixed` alone already establishes a
+      // positioning context for the absolutely-positioned children, so
+      // `relative` was never actually needed here.
+      className="bg-black fixed inset-0 z-30"
       onMouseMove={() => showVideo && chrome.revealControls()}
       onTouchStart={() => showVideo && chrome.revealControls()}
     >
