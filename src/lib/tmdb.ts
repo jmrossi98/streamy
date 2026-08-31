@@ -631,6 +631,7 @@ export type TmdbCombinedCreditItem = {
   poster_path: string | null;
   backdrop_path: string | null;
   vote_average: number;
+  popularity?: number;
   release_date?: string;
   first_air_date?: string;
   genre_ids?: number[];
@@ -676,8 +677,12 @@ export const getPersonById = cache(async (id: string) =>
  * Exported (and kept pure -- no fetching) specifically so the dedup/sort
  * behavior has a real test: someone credited as both actor and director on
  * the same title (common for auteurs -- Ben Affleck, the Duffer Brothers)
- * would otherwise appear in the results twice, once from each list. Newest
- * first, matching how a filmography reads everywhere else (IMDb, Letterboxd).
+ * would otherwise appear in the results twice, once from each list. Sorted
+ * by TMDB's popularity score, most popular first -- a prolific character
+ * actor's page led with decades-old TV-movie credits ahead of the film
+ * they're actually known for under a plain newest-first sort; popularity is
+ * what "known for" means on a filmography page (IMDb, Letterboxd sort this
+ * way too), not recency.
  */
 export function mergeCombinedCredits(
   cast: TmdbCombinedCreditItem[],
@@ -693,10 +698,11 @@ export function mergeCombinedCredits(
     seen.add(key);
     deduped.push(item);
   }
-  const byDateDesc = (a: string | undefined, b: string | undefined) => (b || "").localeCompare(a || "");
+  const byPopularityDesc = (a: TmdbCombinedCreditItem, b: TmdbCombinedCreditItem) =>
+    (b.popularity ?? 0) - (a.popularity ?? 0);
   const movies = deduped
     .filter((c): c is TmdbCombinedCreditItem & { title: string } => c.media_type === "movie")
-    .sort((a, b) => byDateDesc(a.release_date, b.release_date))
+    .sort(byPopularityDesc)
     .map((c) =>
       toMovie(
         {
@@ -714,7 +720,7 @@ export function mergeCombinedCredits(
     );
   const shows = deduped
     .filter((c): c is TmdbCombinedCreditItem & { name: string } => c.media_type === "tv")
-    .sort((a, b) => byDateDesc(a.first_air_date, b.first_air_date))
+    .sort(byPopularityDesc)
     .map((c) =>
       toTVShow(
         {

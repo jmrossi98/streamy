@@ -79,6 +79,7 @@ describe("mergeCombinedCredits", () => {
     poster_path: null,
     backdrop_path: null,
     vote_average: 7,
+    popularity: 10,
     release_date: "2020-01-01",
     genre_ids: [18],
     ...over,
@@ -92,6 +93,7 @@ describe("mergeCombinedCredits", () => {
     poster_path: null,
     backdrop_path: null,
     vote_average: 8,
+    popularity: 10,
     first_air_date: "2019-01-01",
     genre_ids: [35],
     ...over,
@@ -125,40 +127,45 @@ describe("mergeCombinedCredits", () => {
     expect(movies.map((m) => m.title)).toEqual(["First", "Second"]);
   });
 
-  it("sorts movies newest first", () => {
+  it("sorts movies most popular first, not by release date", () => {
+    // Deliberately out of date order -- if this ever sorted by date instead,
+    // the assertion below would catch it immediately.
     const { movies } = mergeCombinedCredits(
       [
-        movieCredit({ id: 1, title: "Old", release_date: "2001-01-01" }),
-        movieCredit({ id: 2, title: "New", release_date: "2022-06-01" }),
-        movieCredit({ id: 3, title: "Middle", release_date: "2015-03-01" }),
+        movieCredit({ id: 1, title: "Minor Role", popularity: 5, release_date: "2022-01-01" }),
+        movieCredit({ id: 2, title: "Breakout Hit", popularity: 80, release_date: "2001-01-01" }),
+        movieCredit({ id: 3, title: "Solid Credit", popularity: 20, release_date: "2015-01-01" }),
       ],
       [],
       movieGenres,
       tvGenres
     );
-    expect(movies.map((m) => m.title)).toEqual(["New", "Middle", "Old"]);
+    expect(movies.map((m) => m.title)).toEqual(["Breakout Hit", "Solid Credit", "Minor Role"]);
   });
 
-  it("sorts shows newest first by first air date", () => {
+  it("sorts shows most popular first", () => {
     const { shows } = mergeCombinedCredits(
       [],
       [
-        tvCredit({ id: 1, name: "Old Show", first_air_date: "2005-01-01" }),
-        tvCredit({ id: 2, name: "New Show", first_air_date: "2023-01-01" }),
+        tvCredit({ id: 1, name: "Cult Favorite", popularity: 15, first_air_date: "2023-01-01" }),
+        tvCredit({ id: 2, name: "The Hit Show", popularity: 90, first_air_date: "2005-01-01" }),
       ],
       movieGenres,
       tvGenres
     );
-    expect(shows.map((s) => s.name)).toEqual(["New Show", "Old Show"]);
+    expect(shows.map((s) => s.name)).toEqual(["The Hit Show", "Cult Favorite"]);
   });
 
-  it("doesn't crash on an undated credit -- sorts it last rather than throwing", () => {
+  it("doesn't crash on a credit with no popularity score -- sorts it last rather than throwing", () => {
     const { movies } = mergeCombinedCredits(
-      [movieCredit({ id: 1, title: "Dated", release_date: "2020-01-01" }), movieCredit({ id: 2, title: "Undated", release_date: undefined })],
+      [
+        movieCredit({ id: 1, title: "Scored", popularity: 10 }),
+        movieCredit({ id: 2, title: "Unscored", popularity: undefined }),
+      ],
       [],
       movieGenres,
       tvGenres
     );
-    expect(movies.map((m) => m.title)).toEqual(["Dated", "Undated"]);
+    expect(movies.map((m) => m.title)).toEqual(["Scored", "Unscored"]);
   });
 });
