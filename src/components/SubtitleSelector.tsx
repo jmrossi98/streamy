@@ -50,7 +50,7 @@ export function SubtitleSelector({
         aria-haspopup="listbox"
         aria-expanded={open}
         title={activeLabel ?? "Subtitles"}
-        className={`flex min-h-[32px] items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold tracking-wide backdrop-blur-sm transition-colors touch-manipulation ${
+        className={`flex min-h-[32px] items-center justify-center gap-1 rounded-full px-3 py-1 text-xs font-semibold tracking-wide backdrop-blur-sm transition-colors touch-manipulation ${
           value != null ? "bg-white text-netflix-black" : "bg-black/70 text-white/70 hover:text-white"
         }`}
       >
