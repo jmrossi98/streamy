@@ -65,7 +65,16 @@ export function isPlayable(item: JellyfinItem): boolean {
 const SCAN_COOLDOWN_MS = 60 * 1000;
 let lastScanRequestedAt = 0;
 
-function requestJellyfinLibraryScan(): void {
+// Exported so the Radarr/Sonarr webhooks can call this the moment a
+// download actually completes, rather than only reactively the next time
+// someone happens to load a page and findJellyfinMovieItemId/
+// findJellyfinEpisodeItemId comes up empty. Radarr/Sonarr are *supposed* to
+// notify Jellyfin themselves on import, but when that notification doesn't
+// land, waiting on a viewer to visit the page (and eat the 60s cooldown
+// below every time) is what let a fully-downloaded title sit unplayable for
+// a long stretch -- reported live as "Downloaded -- tap to refresh" doing
+// nothing, repeatedly, including after a real full page reload.
+export function requestJellyfinLibraryScan(): void {
   if (!isJellyfinConfigured()) return;
   if (Date.now() - lastScanRequestedAt < SCAN_COOLDOWN_MS) return;
   lastScanRequestedAt = Date.now();

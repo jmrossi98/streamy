@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requestJellyfinLibraryScan } from "@/lib/jellyfin";
 
 /**
  * Inbound webhook from Radarr (Settings -> Connect -> Webhook).
@@ -44,6 +45,11 @@ export async function POST(request: Request) {
       where: { tmdbId, mediaType: "movie" },
       data: { status: "available" },
     });
+    // Radarr/Sonarr are supposed to notify Jellyfin themselves on import,
+    // but that notification doesn't always land -- ask Jellyfin to rescan
+    // right away rather than waiting on a viewer's page load to notice the
+    // gap and trigger the same (cooldown-limited) request reactively.
+    requestJellyfinLibraryScan();
   }
   // Unrecognized event types (Test, MovieDelete, Health, etc.) no-op so
   // Radarr's "Test" button and other lifecycle events don't error out.

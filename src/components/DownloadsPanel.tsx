@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { DownloadProtocol } from "@/lib/radarr";
+import { formatFileSize } from "@/lib/formatBytes";
 
 export type DownloadRow = {
   /** Unique per row. A show can have several episodes downloading at once,
@@ -24,6 +25,10 @@ export type DownloadRow = {
    *  (Radarr/Sonarr's own `protocol` field); absent for completed/searching
    *  rows, which never carry it. */
   protocol?: DownloadProtocol;
+  /** Total release size in bytes. Known for an active queue entry (its own
+   *  `size`) and a completed file (movieFile/episodefile's `size`); absent
+   *  while still only searching, since there's no release chosen yet. */
+  sizeBytes?: number | null;
 };
 
 /**
@@ -57,9 +62,14 @@ export function rowKey(d: DownloadRow): string {
 // request itself is fast (~200ms for the Radarr round trip), so the delay
 // was purely this interval; halving it halves the worst case.
 const REFRESH_INTERVAL_MS = 2500;
-const VISIBLE_ROWS = 5;
+// Was 5 -- confirmed live as too cramped once a season's worth of episodes
+// (or several titles) were downloading at once, hiding most of them behind
+// a scrollbar by default. 12 covers a full season's typical batch without
+// scrolling; still capped so a genuinely huge backlog doesn't push the rest
+// of the admin page off-screen.
+const VISIBLE_ROWS = 12;
 // ~52px per row (text line + progress bar + gaps) + list gaps, tuned so a
-// sixth row is visibly cut off rather than the panel just guessing.
+// row past the cap is visibly cut off rather than the panel just guessing.
 const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
 // Radarr/Sonarr can briefly report a download as neither an active queue
 // entry nor a completed file while they're mid-import -- the queue entry is
@@ -213,6 +223,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                     }`}
                   >
                     {d.protocol === "usenet" ? "Usenet" : "Torrent"}
+                  </span>
+                )}
+                {formatFileSize(d.sizeBytes) && (
+                  <span className="shrink-0 text-xs tabular-nums text-white/40">
+                    {formatFileSize(d.sizeBytes)}
                   </span>
                 )}
               </span>

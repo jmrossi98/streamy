@@ -104,6 +104,7 @@ export default async function AdminFeaturesPage() {
       mediaType: "movie" as const,
       completed: true,
       protocol: d.protocol,
+      sizeBytes: d.sizeBytes,
     })),
     ...sonarrCompleted.map((d) => ({
       queueId: null,
@@ -114,6 +115,7 @@ export default async function AdminFeaturesPage() {
       mediaType: "show" as const,
       protocol: d.protocol,
       completed: true,
+      sizeBytes: d.sizeBytes,
     }))
   );
 

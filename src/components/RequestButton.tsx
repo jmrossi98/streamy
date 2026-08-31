@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useTransition } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -42,7 +42,6 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [managing, setManaging] = useState<"cancel" | "delete" | null>(null);
-  const refreshedRef = useRef(false);
   // setLoading(true) doesn't disable the button until the next render commits,
   // leaving a window where a fast double-click fires two concurrent POSTs
   // (both then race Radarr/Sonarr's own duplicate-add check). This ref is
@@ -151,13 +150,37 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   }, [status, id, mediaType]);
 
   // Once available, ask the parent server component to re-check video
-  // availability — if it's synced already, this component unmounts in favor
-  // of the real Play button.
+  // availability -- if it's synced already, this component unmounts in
+  // favor of the real Play button. Radarr/Sonarr mark the *download* done
+  // immediately (this webhook-driven status), but Jellyfin's own scan can
+  // lag behind that -- webhooks now proactively ask Jellyfin to rescan (see
+  // requestJellyfinLibraryScan), but that's still a real scan taking real
+  // time, not instant. A single one-shot refresh used to leave the button
+  // reading "Downloaded -- tap to refresh" with the tap doing nothing
+  // visible whenever that first check landed before the scan finished --
+  // reported live as persisting even through a real full-page reload,
+  // because a normal page load only gets *one* check too. This retries with
+  // backoff instead, so the swap usually just happens on its own; syncingRef
+  // (not the request's own `status`, which the retry itself doesn't change)
+  // is what should stop the run if the viewer navigates away or the status
+  // otherwise leaves "available" from under it.
+  const [checking, startChecking] = useTransition();
+  const [stillSyncing, setStillSyncing] = useState(false);
   useEffect(() => {
-    if (status === "available" && !refreshedRef.current) {
-      refreshedRef.current = true;
-      router.refresh();
-    }
+    if (status !== "available") return;
+    let cancelled = false;
+    const delaysMs = [1500, 3000, 6000, 12000, 20000]; // ~42s total
+    (async () => {
+      for (const delay of delaysMs) {
+        await new Promise((r) => setTimeout(r, delay));
+        if (cancelled) return;
+        setStillSyncing(true);
+        startChecking(() => router.refresh());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [status, router]);
 
   // Status is shared/global library state — show it to anyone viewing the
@@ -227,15 +250,29 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   }
 
   if (status === "available") {
+    // Downloaded (Radarr/Sonarr's own signal) doesn't mean *playable* yet --
+    // Jellyfin still has to scan the file in, which the retry loop above is
+    // actively waiting on. Distinguishing "just landed here" from "checked
+    // and it's still not showing up" is what the one-shot version couldn't
+    // do: a bare "tap to refresh" that visibly did nothing read as broken.
+    const label = checking
+      ? "Checking…"
+      : stillSyncing
+        ? "Still syncing to the library — tap to check again"
+        : "Downloaded — tap to refresh";
     return (
       <div className={DOWNLOADING_BADGE_CLASS}>
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
-            onClick={() => router.refresh()}
-            className="text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal hover:text-white"
+            onClick={() => {
+              setStillSyncing(true);
+              startChecking(() => router.refresh());
+            }}
+            disabled={checking}
+            className="text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal hover:text-white disabled:opacity-70"
           >
-            Downloaded — tap to refresh
+            {label}
           </button>
           {authStatus === "authenticated" && (
             <button

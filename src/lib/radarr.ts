@@ -235,6 +235,9 @@ export type ActiveDownload = {
   title: string;
   progress: number | null;
   protocol: DownloadProtocol;
+  /** Total release size in bytes -- the queue's own `size`, present even
+   *  before anything has downloaded (unlike sizeleft, which only shrinks). */
+  sizeBytes: number | null;
   /** Sonarr only -- undefined for a movie. Threaded through so the UI can key
    *  a downloading episode by something that survives the queue entry itself
    *  disappearing on import, instead of only by queueId (which does not). */
@@ -254,6 +257,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
       title: r.title,
       progress: computeProgress(r.size, r.sizeleft),
       protocol: normalizeProtocol(r.protocol),
+      sizeBytes: r.size > 0 ? r.size : null,
     }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
@@ -275,7 +279,12 @@ export async function cancelRadarrQueueItem(queueId: number): Promise<boolean> {
   }
 }
 
-export type CompletedDownload = { id: number; title: string; protocol?: DownloadProtocol };
+export type CompletedDownload = {
+  id: number;
+  title: string;
+  protocol?: DownloadProtocol;
+  sizeBytes: number | null;
+};
 
 /**
  * Which protocol actually delivered each already-completed movie, keyed by
@@ -326,9 +335,9 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const [movies, protocols] = await Promise.all([
-      radarrFetch<{ id: number; title: string; hasFile: boolean; movieFile?: { relativePath?: string } }[]>(
-        "/api/v3/movie"
-      ),
+      radarrFetch<
+        { id: number; title: string; hasFile: boolean; movieFile?: { relativePath?: string; size?: number } }[]
+      >("/api/v3/movie"),
       getRadarrCompletedProtocols(),
     ]);
     return movies
@@ -337,6 +346,7 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
         id: m.id,
         title: m.movieFile?.relativePath ? fileBaseName(m.movieFile.relativePath) : m.title,
         protocol: protocols.get(m.id),
+        sizeBytes: m.movieFile?.size ?? null,
       }));
   } catch (err) {
     console.error("[radarr] getRadarrCompletedMovies failed:", err);
