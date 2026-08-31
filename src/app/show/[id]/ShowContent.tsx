@@ -4,12 +4,13 @@ import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import type { ShowDetail, TVSeason, TVEpisode } from "@/lib/tmdb";
+import type { ShowDetail, TVSeason, TVEpisode, TVShow } from "@/lib/tmdb";
 import { Credits } from "@/components/Credits";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
+import { TVRow } from "@/components/TVRow";
 import {
   EpisodeDownloadButton,
   useSeasonStatuses,
@@ -35,6 +36,7 @@ type ShowContentProps = {
   initialProgress?: number | null;
   initialEpisodeStatuses?: Record<number, EpisodeState>;
   initialEpisodeStatusSeason?: number;
+  similar?: TVShow[];
 };
 
 type OverlayEpisode = {
@@ -79,6 +81,7 @@ export function ShowContent({
   initialProgress = null,
   initialEpisodeStatuses,
   initialEpisodeStatusSeason,
+  similar = [],
 }: ShowContentProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -475,6 +478,12 @@ export function ShowContent({
           </ul>
         )}
       </div>
+
+      {similar.length > 0 && (
+        <div className="pb-12">
+          <TVRow title="More Like This" shows={similar} />
+        </div>
+      )}
     </div>
   );
 }

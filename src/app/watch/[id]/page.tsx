@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { findJellyfinMovieItemId } from "@/lib/jellyfin";
 import { isRadarrConfigured } from "@/lib/radarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
+import { getSimilarMovies } from "@/lib/tmdb";
 import { WatchPageContent } from "./WatchPageContent";
 
 type Props = { params: Promise<{ id: string }> };
@@ -10,7 +11,7 @@ type Props = { params: Promise<{ id: string }> };
 export default async function WatchPage({ params }: Props) {
   const { id } = await params;
   const session = await getSession();
-  const [watchlistItem, progressRow, jellyfinItemId, requestStatus] = await Promise.all([
+  const [watchlistItem, progressRow, jellyfinItemId, requestStatus, similar] = await Promise.all([
     session?.user?.id
       ? prisma.watchlistItem.findUnique({
           where: { userId_movieId: { userId: session.user.id, movieId: id } },
@@ -25,6 +26,7 @@ export default async function WatchPage({ params }: Props) {
     // Shared/global library state -- not gated behind a session, since it's
     // the same for every viewer regardless of who requested it.
     resolveMediaRequestStatus(id, "movie"),
+    getSimilarMovies(id),
   ]);
 
   const progressSeconds = progressRow?.progressSeconds ?? 0;
@@ -38,6 +40,7 @@ export default async function WatchPage({ params }: Props) {
       requestConfigured={isRadarrConfigured()}
       initialRequestStatus={requestStatus.status}
       initialProgress={requestStatus.progress}
+      similar={similar}
     />
   );
 }
