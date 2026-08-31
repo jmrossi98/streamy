@@ -221,9 +221,16 @@ export function jellyfinTranscodeStreamUrl(
  * default and the most broadly compatible segment format, including with
  * Safari's native HLS decoder.
  */
+/**
+ * Note there is no start-position parameter. Jellyfin's HLS output is always a
+ * complete VOD playlist of the entire title, addressed by segment index --
+ * verified directly against the server, where the playlist came back
+ * byte-identical (891 segments, 2671s) with and without startTimeTicks. Passing
+ * one changed nothing about where playback began, so seeking and resuming are
+ * both done client-side by setting currentTime; see usePlayerEngine's videoSrc.
+ */
 export function jellyfinHlsMasterUrl(
   itemId: string,
-  startSeconds?: number,
   playSessionId?: string,
   mediaSourceId?: string
 ): string {
@@ -242,9 +249,6 @@ export function jellyfinHlsMasterUrl(
     segmentContainer: "ts",
     api_key: JELLYFIN_API_KEY ?? "",
   });
-  if (startSeconds && startSeconds > 0) {
-    params.set("startTimeTicks", String(Math.round(startSeconds * 10_000_000)));
-  }
   if (playSessionId) params.set("PlaySessionId", playSessionId);
   return `${JELLYFIN_URL}/Videos/${itemId}/master.m3u8?${params.toString()}`;
 }

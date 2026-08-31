@@ -15,25 +15,10 @@ export function usePlayerChrome(
   containerRef: RefObject<HTMLElement | null>,
   opts: {
     knownDurationSeconds?: number | null;
-    /**
-     * Where the current source begins in the title's real timeline. Non-zero
-     * for a transcode that was started mid-title (via Jellyfin's
-     * startTimeTicks) -- the video element's own currentTime resets to ~0 in
-     * that case, so the absolute position is offset + the element's time.
-     * Zero for direct play, where the whole file is one seekable source.
-     */
-    timeOffsetSeconds?: number;
-    /**
-     * Called with the requested *absolute* position before the default
-     * client-side seek runs. Returning true means it's been handled (e.g. by
-     * restarting a transcode at that position) and the default seek is
-     * skipped; false/undefined falls through to the normal clamped seek.
-     */
-    onExternalSeek?: (absoluteSeconds: number) => boolean;
   } = {}
 ) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [rawCurrentTime, setRawCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [muted, setMuted] = useState(false);
@@ -46,15 +31,13 @@ export function usePlayerChrome(
   // back to the element's own duration only when we weren't told the runtime.
   const known = opts.knownDurationSeconds && opts.knownDurationSeconds > 0 ? opts.knownDurationSeconds : 0;
   const duration = known || (Number.isFinite(videoDuration) ? videoDuration : 0);
-  const offset = opts.timeOffsetSeconds ?? 0;
-  const currentTime = offset + rawCurrentTime;
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
-    const onTime = () => setRawCurrentTime(v.currentTime);
+    const onTime = () => setCurrentTime(v.currentTime);
     const onDur = () => setVideoDuration(v.duration);
     const onVol = () => {
       setMuted(v.muted);
@@ -119,17 +102,21 @@ export function usePlayerChrome(
     revealControls();
   }, [videoRef, revealControls]);
 
+  // One code path for both direct play and a transcode: a transcode's HLS
+  // playlist spans the whole title, so hls.js just fetches the segment at the
+  // target and Jellyfin encodes it on demand. This used to hand transcodes off
+  // to a caller-supplied handler that tore the stream down and rebuilt it at
+  // the new position, which was both slower and wrong (see usePlayerEngine's
+  // videoSrc).
   const seek = useCallback(
-    (absoluteTime: number) => {
+    (target: number) => {
       revealControls();
-      if (opts.onExternalSeek?.(absoluteTime)) return;
       const v = videoRef.current;
       if (!v) return;
       // Guard against seeking into a range the element can't serve yet -- an
       // out-of-range set can stall a partially-buffered source. Clamp to
       // what's seekable; otherwise leave playback alone.
       try {
-        const target = absoluteTime - offset;
         let clamped = target;
         if (v.seekable && v.seekable.length > 0) {
           const end = v.seekable.end(v.seekable.length - 1);
@@ -137,12 +124,12 @@ export function usePlayerChrome(
           clamped = Math.min(Math.max(target, start), end);
         }
         v.currentTime = clamped;
-        setRawCurrentTime(clamped);
+        setCurrentTime(clamped);
       } catch {
         /* not seekable yet; ignore */
       }
     },
-    [videoRef, revealControls, offset, opts.onExternalSeek]
+    [videoRef, revealControls]
   );
 
   const toggleMute = useCallback(() => {

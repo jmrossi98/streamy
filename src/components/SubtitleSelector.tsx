@@ -103,11 +103,18 @@ export function SubtitleSelector({
   );
 }
 
+/** The two "c" glyphs sit inside the box, centred on it. Worth stating the
+ * geometry, because the previous path looked plausible but measurably wasn't:
+ * its glyphs spanned x 5.0-16.5 (centre 10.7) inside a box spanning 3-21
+ * (centre 12), leaving them visibly ~1.3 units left of centre, and sat 0.3
+ * low. The starts below (8.8 / 17.8, y 10.2) put the pair's real extent --
+ * curve bulge included, not just the endpoints -- at 6.25-17.8 horizontally
+ * and 9.75-14.25 vertically, both centred on 12. */
 function CcIcon() {
   return (
     <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
       <rect x="3" y="5" width="18" height="14" rx="2" strokeWidth={2} />
-      <path strokeLinecap="round" strokeWidth={2} d="M7.5 10.5c-.6-.6-1.5-.6-2.1 0s-.6 3 0 3.6 1.5.6 2.1 0M16.5 10.5c-.6-.6-1.5-.6-2.1 0s-.6 3 0 3.6 1.5.6 2.1 0" />
+      <path strokeLinecap="round" strokeWidth={2} d="M8.8 10.2c-.6-.6-1.5-.6-2.1 0s-.6 3 0 3.6 1.5.6 2.1 0M17.8 10.2c-.6-.6-1.5-.6-2.1 0s-.6 3 0 3.6 1.5.6 2.1 0" />
     </svg>
   );
 }

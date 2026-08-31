@@ -150,20 +150,28 @@ export function VideoChrome({
           {/* Volume -- pointer devices only; on touch the OS handles it. */}
           <div className="hidden items-center gap-2 sm:flex">
             <button type="button" onClick={toggleMute} aria-label={muted ? "Unmute" : "Mute"} className="shrink-0">
+              {/* Each state's glyph is balanced within the 24-unit box rather
+                  than growing rightwards off a fixed speaker. The old set
+                  shared one speaker pinned at x=4 and appended waves per
+                  state, so the three spanned 4-20.5, 4-15.5 and 4-23: the
+                  speaker itself sat well left of centre (centre 8.5 against
+                  the box's 12), which is the leftward shift, and the icon's
+                  weight visibly jumped sideways as the volume crossed a
+                  threshold. */}
               {muted || volume === 0 ? (
-                // Muted / 0: speaker with an X.
+                // Muted / 0: speaker, struck through.
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path d="M4 9v6h4l5 5V4L8 9H4zm12.5 3l2.7-2.7-1.4-1.4L15.1 10.6 12.4 7.9 11 9.3l2.7 2.7L11 14.7l1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z" />
+                  <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
                 </svg>
               ) : volume < 0.5 ? (
                 // Low: speaker with one sound wave.
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path d="M4 9v6h4l5 5V4L8 9H4zm11.5 3a4 4 0 00-2-3.5v7a4 4 0 002-3.5z" />
+                  <path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z" />
                 </svg>
               ) : (
                 // High: speaker with two sound waves.
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path d="M4 9v6h4l5 5V4L8 9H4zm11.5 3a4 4 0 00-2-3.5v7a4 4 0 002-3.5zM16 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                 </svg>
               )}
             </button>
