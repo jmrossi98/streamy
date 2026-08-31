@@ -1,0 +1,60 @@
+# Download -> playback end-to-end check.
+#
+# Hits the app's own cron endpoint, which requests a known-safe public-domain
+# title through Radarr, waits for it to land, exercises the real HLS/seek
+# chain a viewer's player uses, then deletes it again -- see
+# src/lib/playbackCheck.ts for the full rationale and every stage.
+#
+# Real infrastructure on every run: a real download, a real transcode. Daily
+# is enough to catch a regression within a day without meaningfully taxing a
+# tracker or costing much transcode time on the box.
+#
+# Never a deploy gate -- this walks the live system, not the code about to
+# ship, so it runs on its own schedule rather than blocking anything.
+name: Playback Check
+
+on:
+  schedule:
+    - cron: "0 9 * * *" # ~4-5am US Eastern, off-peak for anyone actually watching
+  workflow_dispatch:
+
+concurrency:
+  group: playback-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Run the check
+        env:
+          BASE_URL: ${{ secrets.NEXTAUTH_URL }}
+          CHECK_SECRET: ${{ secrets.PLAYBACK_CHECK_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CHECK_SECRET}" ]; then
+            echo "PLAYBACK_CHECK_SECRET is not set -- the endpoint fails closed, so this would 401."
+            exit 1
+          fi
+
+          # Generous ceiling: the check itself can legitimately wait up to
+          # ~10 minutes for a download plus ~90s for Jellyfin's scan before it
+          # even gets to the playback stages.
+          curl --silent --show-error --fail-with-body \
+            --max-time 780 \
+            -X POST \
+            "${BASE_URL%/}/api/cron/playback-check?secret=${CHECK_SECRET}" \
+          | tee response.json
+
+          echo
+
+          if grep -q '"ok":false' response.json; then
+            echo "Endpoint reported an internal failure (see the app logs / admin panel for detail)."
+            exit 1
+          fi
+          if grep -q '"success":false' response.json; then
+            echo "Playback check itself failed a stage (see the admin panel for which one)."
+            exit 1
+          fi

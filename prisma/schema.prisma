@@ -245,3 +245,30 @@ model Setting {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// One row per run of the download -> playback end-to-end check: grabs a
+/// known-safe public-domain title through Radarr, waits for it to land, and
+/// exercises the exact same HLS/seek chain a real viewer's player does,
+/// before deleting it again. See lib/playbackCheck.ts.
+///
+/// A history table, not a single "last result" row (which Setting would have
+/// been enough for) -- one bad run next to a long green streak reads very
+/// differently from one bad run next to a week of red ones, and only a
+/// history shows the difference.
+model PlaybackCheckRun {
+  id       String   @id @default(cuid())
+  ranAt    DateTime @default(now())
+  success  Boolean
+  /// One line, e.g. "5/5 stages passed" or "failed at HLS transcode chain".
+  summary  String
+  /// Per-stage pass/fail detail, newline-separated.
+  detail   String
+  /// What this run downloaded and tested, e.g. "Night of the Living Dead (1968)".
+  testTitle String?
+  durationMs Int?
+  /// False when the failure alert was skipped or failed to send, so that is
+  /// visible in the admin panel rather than assumed to have gone out.
+  notified Boolean  @default(false)
+
+  @@index([ranAt])
+}

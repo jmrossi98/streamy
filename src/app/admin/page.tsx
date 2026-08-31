@@ -25,6 +25,8 @@ import { BlogEditor } from "@/components/BlogEditor";
 import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
 import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
+import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
+import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -55,6 +57,7 @@ export default async function AdminFeaturesPage() {
     visitors,
     blogPosts,
     pageWatch,
+    playbackCheckRuns,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -84,6 +87,7 @@ export default async function AdminFeaturesPage() {
     // warning, not the page.
     blogConfigured ? listPosts() : Promise.resolve([]),
     getPageWatchSummary(),
+    getPlaybackCheckHistory(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -168,6 +172,13 @@ export default async function AdminFeaturesPage() {
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <ServicesPanel services={services} />
           <TestAlertButton configured={isNotifyConfigured()} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Playback check</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PlaybackCheckPanel runs={playbackCheckRuns} />
         </div>
       </section>
 
