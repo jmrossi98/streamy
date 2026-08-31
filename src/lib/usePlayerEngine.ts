@@ -464,6 +464,34 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     chrome.revealControls();
   };
 
+  // forceTranscode can arrive *after* mount: the show-page overlay renders
+  // the player immediately (so an episode tap feels instant) and only learns
+  // forceTranscode from an async fetch a moment later -- unlike the two
+  // standalone watch pages, which resolve it server-side before the player
+  // ever mounts. autoFellBack above only seeds from the prop's value at
+  // mount, so a forceTranscode that flips true afterward would otherwise be
+  // silently missed and the player would sit on a direct-play attempt
+  // already known to fail (this is why the HLS/HEVC fixes alone didn't
+  // change anything for titles opened this way -- the transcode path they
+  // fixed was never actually being requested). Mirror onVideoError's
+  // swap-to-transcode path so a late-arriving forceTranscode behaves exactly
+  // like a direct-play failure caught in flight. Guarded by identityKey (not
+  // a plain boolean) so switching titles without unmounting -- this
+  // component isn't remounted per episode -- re-arms it for the next one.
+  const forceTranscodeAppliedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!forceTranscode || transcoding) return;
+    if (forceTranscodeAppliedForRef.current === identityKey) return;
+    forceTranscodeAppliedForRef.current = identityKey;
+    const at = chrome.currentTime > 0 ? chrome.currentTime : null;
+    resumeAtRef.current = at;
+    didSwapRef.current = true;
+    setTranscodeStartAt(at ?? initialProgressSeconds);
+    setAutoFellBack(true);
+    setVideoLoading(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceTranscode, identityKey, transcoding]);
+
   return {
     hasSource,
     transcoding,
