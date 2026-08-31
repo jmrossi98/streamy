@@ -24,9 +24,12 @@ services:
 
   # Continuous SQLite backup to S3 (see litestream.yml for the why).
   #
-  # Reads the same volume the app writes; SQLite's WAL is designed for exactly
-  # this kind of concurrent reader, so it never blocks the app. It only ever
-  # reads the database -- it cannot corrupt what it is backing up.
+  # Shares the same volume the app writes -- NOT read-only. Confirmed directly
+  # (litestream refused to start against a :ro mount, "attempt to write a
+  # readonly database"): it maintains its own tracking table inside the
+  # database file to detect changes, not just passive WAL copying. It never
+  # touches the app's own tables, and SQLite's WAL mode is built for exactly
+  # this concurrent-access pattern, so it doesn't block the app either way.
   #
   # NOT `restart: always`, following the same hard-won rule as gluetun below: a
   # container that cannot start must not be able to crash-loop this small
