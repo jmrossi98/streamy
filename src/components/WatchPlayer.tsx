@@ -82,20 +82,23 @@ export function WatchPlayer({
   });
 
   const showVideo = playing && !showOverlay;
-  // Fills the viewport via CSS on every size, not just desktop -- this is
-  // what stands in for real fullscreen on mobile (fullscreen itself is
-  // opt-in via the chrome's own button): it keeps the chrome on screen as a
-  // sibling of the <video>, which native video fullscreen can never do.
-  // inset-0 alone (no h-screen/w-screen) is deliberate -- those are a static
-  // 100vh/100vw snapshot, and mobile browsers resize the *real* viewport as
-  // their address bar collapses/expands, which is what left the scrubber
-  // and expand button sitting below the visible fold on first load.
-  const containerClass = showVideo ? "fixed inset-0 z-30 bg-black" : "min-h-[400px] h-[60vh]";
 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full bg-black ${containerClass}`}
+      // Fixed full-viewport always, not just once playback starts -- the
+      // only caller, /watch/[id]/play, is a dedicated full-page watch route
+      // with nothing else on it, never an inline preview embedded in more
+      // page. A pre-play "min-h-[400px] h-[60vh]" placeholder size used to
+      // apply here, which put the play button/spinner in a small box pinned
+      // near the top of the page instead of centered in it -- there's
+      // nothing below it to make the smaller size meaningful, just empty
+      // background. inset-0 alone (no
+      // h-screen/w-screen) is deliberate -- those are a static 100vh/100vw
+      // snapshot, and mobile browsers resize the *real* viewport as their
+      // address bar collapses/expands, which is what left the scrubber and
+      // expand button sitting below the visible fold on first load.
+      className="relative w-full bg-black fixed inset-0 z-30"
       onMouseMove={() => showVideo && chrome.revealControls()}
       onTouchStart={() => showVideo && chrome.revealControls()}
     >
