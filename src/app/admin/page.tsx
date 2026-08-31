@@ -103,6 +103,7 @@ export default async function AdminFeaturesPage() {
       progress: null,
       mediaType: "movie" as const,
       completed: true,
+      protocol: d.protocol,
     })),
     ...sonarrCompleted.map((d) => ({
       queueId: null,
@@ -111,6 +112,7 @@ export default async function AdminFeaturesPage() {
       title: d.title,
       progress: null,
       mediaType: "show" as const,
+      protocol: d.protocol,
       completed: true,
     }))
   );

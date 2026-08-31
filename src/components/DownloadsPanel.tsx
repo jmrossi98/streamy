@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DownloadProtocol } from "@/lib/radarr";
 
 export type DownloadRow = {
@@ -26,13 +26,29 @@ export type DownloadRow = {
   protocol?: DownloadProtocol;
 };
 
-/** Stable and unique per row -- queue entries, completed titles, and
- *  searching requests can't collide even for the same show/movie. */
+/**
+ * Stable across a download's *entire* lifecycle (searching -> queued ->
+ * completed), not just unique within one snapshot -- deliberately not keyed
+ * by queueId. The queue entry is deleted the moment Radarr/Sonarr finishes
+ * importing a file, and a completed row has no queueId at all, so keying by
+ * it made a download's row change identity mid-transfer: React saw a
+ * disappearing `q12345` and an unrelated new `movie-done-67`, unmounted one
+ * and mounted the other, and the row visually reset -- reported live as
+ * "showed 14%, then reverted to starting, then later showed as downloaded"
+ * for a title that, underneath, was progressing the entire time.
+ *
+ * A movie only ever has one active download at a time, so its externalId
+ * alone is already a stable identity across every state. A show is
+ * per-episode, so episodeId is preferred once it's known (threaded through
+ * from Sonarr's own queue records now, not only completed episodes) --
+ * queueId remains a fallback for the rare case it genuinely isn't (multiple
+ * simultaneous episodes of the same show, before episodeId was available).
+ */
 export function rowKey(d: DownloadRow): string {
+  if (d.mediaType === "movie") return `movie-${d.externalId}`;
+  if (d.episodeId != null) return `ep-${d.episodeId}`;
   if (d.queueId != null) return `q${d.queueId}`;
-  if (d.episodeId != null) return `ep-done-${d.episodeId}`;
-  if (d.searching) return `${d.mediaType}-searching-${d.externalId}`;
-  return `${d.mediaType}-done-${d.externalId}`;
+  return `show-searching-${d.externalId}`;
 }
 
 // A new request happens on a different page/tab than this panel, so there's
@@ -45,6 +61,16 @@ const VISIBLE_ROWS = 5;
 // ~52px per row (text line + progress bar + gaps) + list gaps, tuned so a
 // sixth row is visibly cut off rather than the panel just guessing.
 const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
+// Radarr/Sonarr can briefly report a download as neither an active queue
+// entry nor a completed file while they're mid-import -- the queue entry is
+// gone and the library hasn't registered the new file yet. Bridging over
+// that gap with the last real snapshot (rather than letting the row vanish
+// for a poll or two) is what actually fixes the "reverted to starting"
+// report on top of the rowKey fix above: even with a stable key, a real gap
+// in the data would still make the row disappear and reappear. 20s covers
+// several poll cycles; if a title is genuinely gone after that (deleted
+// elsewhere), the bridge lapses and it drops out, same as before.
+const BRIDGE_GRACE_MS = 20_000;
 
 export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const router = useRouter();
@@ -55,7 +81,41 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // cancel, so waiting for the *real* state to reflect it before hiding the
   // row read as broken ("I need to refresh"). Rolled back on failure.
   const [removedKeys, setRemovedKeys] = useState<Set<string>>(new Set());
-  const visibleDownloads = downloads.filter((d) => !removedKeys.has(rowKey(d)));
+
+  // Last real (non-bridged) snapshot seen for each key, so a download that
+  // drops out of both the active-queue and completed lists for a moment
+  // keeps showing its last known progress instead of disappearing. Only
+  // in-progress rows are worth bridging -- a completed one has nothing to
+  // lose by just showing up whenever the next poll catches it.
+  //
+  // Bookkeeping lives in a ref (no need to re-render just because a snapshot
+  // was recorded) and the derived, render-visible result in state -- both
+  // updated from an effect, never read or written during render itself
+  // (React Compiler's purity rules reject that outright, and rightly so: a
+  // ref can change between a component's renders in ways the render itself
+  // must not depend on).
+  const lastSeenRef = useRef<Map<string, { row: DownloadRow; seenAt: number }>>(new Map());
+  const [bridged, setBridged] = useState<DownloadRow[]>([]);
+  useEffect(() => {
+    const now = Date.now();
+    for (const d of downloads) {
+      if (!d.completed) lastSeenRef.current.set(rowKey(d), { row: d, seenAt: now });
+    }
+    const freshKeys = new Set(downloads.map(rowKey));
+    const next: DownloadRow[] = [];
+    for (const [key, entry] of lastSeenRef.current) {
+      if (freshKeys.has(key) || removedKeys.has(key)) continue;
+      if (now - entry.seenAt > BRIDGE_GRACE_MS) continue;
+      next.push(entry.row);
+    }
+    setBridged(next);
+    // Every poll re-runs this (downloads is a fresh array each time, even
+    // when unchanged), which is what lets a bridged row's grace period
+    // actually expire rather than only being re-evaluated when something
+    // changes.
+  }, [downloads, removedKeys]);
+
+  const visibleDownloads = [...downloads, ...bridged].filter((d) => !removedKeys.has(rowKey(d)));
 
   // Once the server's own list no longer contains a key, there's nothing
   // left to hide -- prune it so the set doesn't grow across a long session.
