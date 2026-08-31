@@ -45,4 +45,27 @@ describe("rowKey", () => {
     const d = row({ queueId: 42, externalId: 1 });
     expect(rowKey(d)).toBe(rowKey({ ...d }));
   });
+
+  // Regression: a title's row was keyed by its queue entry, which Radarr/
+  // Sonarr delete the moment a download finishes importing -- so the same
+  // title's key changed shape at exactly the queued -> completed instant.
+  // React saw a disappearing key and an unrelated new one, unmounted one row
+  // and mounted the other, and the download visually reset mid-transfer.
+  // Reported live: "showed 14%, then reverted to starting, then later
+  // showed as downloaded" for a title that was progressing the whole time.
+  describe("stays the same key across a download's whole lifecycle", () => {
+    it("for a show episode, once its episodeId is known", () => {
+      const downloading = row({ queueId: 111, episodeId: 22, externalId: 1, completed: false });
+      const completed = row({ queueId: null, episodeId: 22, externalId: 1, completed: true });
+      expect(rowKey(downloading)).toBe(rowKey(completed));
+    });
+
+    it("for a movie, across searching -> downloading -> completed", () => {
+      const searching = row({ mediaType: "movie", externalId: 9, queueId: null, searching: true });
+      const downloading = row({ mediaType: "movie", externalId: 9, queueId: 55, completed: false });
+      const completed = row({ mediaType: "movie", externalId: 9, queueId: null, completed: true });
+      expect(rowKey(searching)).toBe(rowKey(downloading));
+      expect(rowKey(downloading)).toBe(rowKey(completed));
+    });
+  });
 });

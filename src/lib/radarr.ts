@@ -214,9 +214,19 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
  *  "unknown" rather than silently mis-labeling it as one of the two. */
 export type DownloadProtocol = "usenet" | "torrent" | "unknown";
 
+// The live queue endpoint (`/api/v3/queue`) reports protocol as the word
+// itself ("usenet"/"torrent"); the history endpoint (`/api/v3/history`)
+// reports the same underlying value as Radarr/Sonarr's internal numeric
+// enum instead ("1"/"2") -- confirmed by cross-referencing real grabbed
+// events against their own known download client (SABnzbd vs qBittorrent)
+// and indexer (NZBgeek vs a torrent tracker), which agreed on every row
+// checked. Both call sites feed this one function rather than each
+// hand-rolling their own mapping.
 export function normalizeProtocol(raw: string | undefined): DownloadProtocol {
   const p = raw?.toLowerCase();
-  return p === "usenet" || p === "torrent" ? p : "unknown";
+  if (p === "usenet" || p === "1") return "usenet";
+  if (p === "torrent" || p === "2") return "torrent";
+  return "unknown";
 }
 
 export type ActiveDownload = {
@@ -225,6 +235,10 @@ export type ActiveDownload = {
   title: string;
   progress: number | null;
   protocol: DownloadProtocol;
+  /** Sonarr only -- undefined for a movie. Threaded through so the UI can key
+   *  a downloading episode by something that survives the queue entry itself
+   *  disappearing on import, instead of only by queueId (which does not). */
+  episodeId?: number;
 };
 
 /** Every movie currently in Radarr's active download queue, with live progress. */
@@ -261,7 +275,35 @@ export async function cancelRadarrQueueItem(queueId: number): Promise<boolean> {
   }
 }
 
-export type CompletedDownload = { id: number; title: string };
+export type CompletedDownload = { id: number; title: string; protocol?: DownloadProtocol };
+
+/**
+ * Which protocol actually delivered each already-completed movie, keyed by
+ * Radarr's own movie id. The completed list itself (`/api/v3/movie`) has no
+ * protocol field -- that only exists on a queue entry, which stops existing
+ * once the download finishes, which is exactly why the badge used to vanish
+ * the moment a download completed. History keeps a permanent record of it
+ * (the `grabbed` event, which is what carries `protocol` -- confirmed
+ * against real data), so one bulk history fetch here recovers it after the
+ * fact instead of needing a live queue entry. Keeps the most recent grab per
+ * movie, in case of a re-grab/repack.
+ */
+export async function getRadarrCompletedProtocols(): Promise<Map<number, DownloadProtocol>> {
+  const result = new Map<number, DownloadProtocol>();
+  if (!isRadarrConfigured()) return result;
+  try {
+    const history = await radarrFetch<{
+      records: { movieId?: number; date: string; data?: { protocol?: string } }[];
+    }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending");
+    for (const r of history.records) {
+      if (r.movieId == null || result.has(r.movieId)) continue; // newest first -- first hit per movie wins
+      result.set(r.movieId, normalizeProtocol(r.data?.protocol));
+    }
+  } catch (err) {
+    console.error("[radarr] getRadarrCompletedProtocols failed:", err);
+  }
+  return result;
+}
 
 /** Basename of a path, minus its extension -- "Movie.2024.1080p.BluRay.mkv" -> "Movie.2024.1080p.BluRay".
  * Exported for the Sonarr side too -- same file-naming convention, same need. */
@@ -283,14 +325,18 @@ export function fileBaseName(relativePath: string): string {
 export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
-    const movies = await radarrFetch<
-      { id: number; title: string; hasFile: boolean; movieFile?: { relativePath?: string } }[]
-    >("/api/v3/movie");
+    const [movies, protocols] = await Promise.all([
+      radarrFetch<{ id: number; title: string; hasFile: boolean; movieFile?: { relativePath?: string } }[]>(
+        "/api/v3/movie"
+      ),
+      getRadarrCompletedProtocols(),
+    ]);
     return movies
       .filter((m) => m.hasFile)
       .map((m) => ({
         id: m.id,
         title: m.movieFile?.relativePath ? fileBaseName(m.movieFile.relativePath) : m.title,
+        protocol: protocols.get(m.id),
       }));
   } catch (err) {
     console.error("[radarr] getRadarrCompletedMovies failed:", err);

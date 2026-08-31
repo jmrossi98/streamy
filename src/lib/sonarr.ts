@@ -10,7 +10,7 @@ import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { expireBlocklist } from "./radarr";
 import { computeProgress } from "./radarr";
-import { normalizeProtocol } from "./radarr";
+import { normalizeProtocol, type DownloadProtocol } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
@@ -150,11 +150,20 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isSonarrConfigured()) return [];
   try {
     const queue = await sonarrFetch<{
-      records: { id: number; seriesId: number; title: string; size: number; sizeleft: number; protocol?: string }[];
+      records: {
+        id: number;
+        seriesId: number;
+        episodeId?: number;
+        title: string;
+        size: number;
+        sizeleft: number;
+        protocol?: string;
+      }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
       queueId: r.id,
       externalId: r.seriesId,
+      episodeId: r.episodeId,
       title: r.title,
       progress: computeProgress(r.size, r.sizeleft),
       protocol: normalizeProtocol(r.protocol),
@@ -170,7 +179,28 @@ export type CompletedEpisode = {
   episodeId: number;
   seriesId: number;
   title: string;
+  protocol?: DownloadProtocol;
 };
+
+/** See getRadarrCompletedProtocols for the rationale -- same recovery, keyed
+ *  by episode rather than series, since a show's episodes can each have come
+ *  from either protocol. */
+export async function getSonarrCompletedProtocols(): Promise<Map<number, DownloadProtocol>> {
+  const result = new Map<number, DownloadProtocol>();
+  if (!isSonarrConfigured()) return result;
+  try {
+    const history = await sonarrFetch<{
+      records: { episodeId?: number; date: string; data?: { protocol?: string } }[];
+    }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending");
+    for (const r of history.records) {
+      if (r.episodeId == null || result.has(r.episodeId)) continue;
+      result.set(r.episodeId, normalizeProtocol(r.data?.protocol));
+    }
+  } catch (err) {
+    console.error("[sonarr] getSonarrCompletedProtocols failed:", err);
+  }
+  return result;
+}
 
 /**
  * Every downloaded episode, listed individually.
@@ -183,9 +213,12 @@ export type CompletedEpisode = {
 export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> {
   if (!isSonarrConfigured()) return [];
   try {
-    const series = await sonarrFetch<
-      { id: number; title: string; statistics?: { episodeFileCount?: number } }[]
-    >("/api/v3/series");
+    const [series, protocols] = await Promise.all([
+      sonarrFetch<{ id: number; title: string; statistics?: { episodeFileCount?: number } }[]>(
+        "/api/v3/series"
+      ),
+      getSonarrCompletedProtocols(),
+    ]);
 
     const withFiles = series.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0);
     const perSeries = await Promise.all(
@@ -211,6 +244,7 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
               title: relativePath
                 ? fileBaseName(relativePath)
                 : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
+              protocol: protocols.get(e.id),
             };
           });
       })
