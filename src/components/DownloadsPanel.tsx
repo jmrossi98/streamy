@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import type { DownloadProtocol } from "@/lib/radarr";
 
 export type DownloadRow = {
   /** Unique per row. A show can have several episodes downloading at once,
@@ -19,6 +20,10 @@ export type DownloadRow = {
    *  searching for a release. Distinct from `completed`; both false means
    *  actively downloading with a real queue entry. */
   searching?: boolean;
+  /** Which source this came from -- only known for an active queue entry
+   *  (Radarr/Sonarr's own `protocol` field); absent for completed/searching
+   *  rows, which never carry it. */
+  protocol?: DownloadProtocol;
 };
 
 /** Stable and unique per row -- queue entries, completed titles, and
@@ -137,7 +142,20 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
         return (
           <li key={key} className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="text-white/90 truncate">{d.title}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="text-white/90 truncate">{d.title}</span>
+                {d.protocol && d.protocol !== "unknown" && (
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      d.protocol === "usenet"
+                        ? "bg-sky-500/15 text-sky-300"
+                        : "bg-emerald-500/15 text-emerald-300"
+                    }`}
+                  >
+                    {d.protocol === "usenet" ? "Usenet" : "Torrent"}
+                  </span>
+                )}
+              </span>
               <div className="flex shrink-0 items-center gap-3">
                 <span className="text-white/50 tabular-nums">
                   {d.completed
