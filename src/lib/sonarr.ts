@@ -10,6 +10,8 @@ import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { expireBlocklist } from "./radarr";
 import { computeProgress } from "./radarr";
+import { normalizeProtocol } from "./radarr";
+import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
 import type {
@@ -148,13 +150,14 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isSonarrConfigured()) return [];
   try {
     const queue = await sonarrFetch<{
-      records: { id: number; seriesId: number; title: string; size: number; sizeleft: number }[];
+      records: { id: number; seriesId: number; title: string; size: number; sizeleft: number; protocol?: string }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
       queueId: r.id,
       externalId: r.seriesId,
       title: r.title,
       progress: computeProgress(r.size, r.sizeleft),
+      protocol: normalizeProtocol(r.protocol),
     }));
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);
@@ -889,6 +892,20 @@ export async function getSonarrHealthIssues(): Promise<RadarrHealthIssue[]> {
       .map((i) => ({ source: i.source, message: i.message, type: i.type as "error" | "warning" }));
   } catch (err) {
     console.error("[sonarr] getSonarrHealthIssues failed:", err);
+    return [];
+  }
+}
+
+/** See getRadarrStuckImports/isConfidenceBlockedQueueItem for the rationale -- the same check, on Sonarr's queue. */
+export async function getSonarrStuckImports(): Promise<string[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const queue = await sonarrFetch<{
+      records: (QueueItemForImportCheck & { title: string })[];
+    }>("/api/v3/queue?pageSize=250");
+    return queue.records.filter(isConfidenceBlockedQueueItem).map((r) => r.title);
+  } catch (err) {
+    console.error("[sonarr] getSonarrStuckImports failed:", err);
     return [];
   }
 }

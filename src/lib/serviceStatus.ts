@@ -9,8 +9,8 @@
  * Read-only, like everything else in the ops surface.
  */
 
-import { isRadarrConfigured, getRadarrHealthIssues } from "./radarr";
-import { isSonarrConfigured, getSonarrHealthIssues } from "./sonarr";
+import { isRadarrConfigured, getRadarrHealthIssues, getRadarrStuckImports } from "./radarr";
+import { isSonarrConfigured, getSonarrHealthIssues, getSonarrStuckImports } from "./sonarr";
 import { isJellyfinConfigured } from "./jellyfin";
 import { isQbittorrentConfigured } from "./qbittorrent";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
@@ -250,24 +250,36 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
 async function arrIntegrationStatus(
   name: "Radarr" | "Sonarr",
   configured: boolean,
-  getIssues: () => Promise<{ source: string; message: string; type: "error" | "warning" }[]>
+  getIssues: () => Promise<{ source: string; message: string; type: "error" | "warning" }[]>,
+  // Titles sitting on a Manual Import confirmation the app couldn't safely
+  // resolve itself (see getRadarrStuckImports) -- a different class of thing
+  // from a health-check error/warning (which are usually persistent config
+  // problems), so it's appended to whatever detail is already being shown
+  // rather than treated as its own error tier.
+  getStuckImports: () => Promise<string[]>
 ): Promise<ServiceStatus> {
   const group = "Downloads" as const;
   const label = `${name} integrations`;
   if (!configured) {
     return { name: label, group, state: "unconfigured", detail: "Not configured" };
   }
-  const issues = await getIssues();
+  const [issues, stuckImports] = await Promise.all([getIssues(), getStuckImports()]);
+  const stuckDetail =
+    stuckImports.length > 0
+      ? `${stuckImports.length} title${stuckImports.length > 1 ? "s" : ""} need${
+          stuckImports.length > 1 ? "" : "s"
+        } Manual Import in ${name}: ${stuckImports.join(", ")}`
+      : null;
+
   const errors = issues.filter((i) => i.type === "error");
   if (errors.length > 0) {
-    const detail = errors.map((i) => i.message).join("; ");
+    const detail = [errors.map((i) => i.message).join("; "), stuckDetail].filter(Boolean).join(" — ");
     return { name: label, group, state: "down", detail };
   }
   const warnings = issues.filter((i) => i.type === "warning");
-  if (warnings.length > 0) {
-    return { name: label, group, state: "up", detail: warnings.map((i) => i.message).join("; ") };
-  }
-  return { name: label, group, state: "up", detail: "healthy" };
+  const warningDetail = warnings.length > 0 ? warnings.map((i) => i.message).join("; ") : null;
+  const combined = [warningDetail, stuckDetail].filter(Boolean).join(" — ");
+  return { name: label, group, state: "up", detail: combined || "healthy" };
 }
 
 async function ollamaServiceStatus(): Promise<ServiceStatus> {
@@ -518,8 +530,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     databaseStatus(),
     tourWatchStatus(),
     egressStatus(),
-    arrIntegrationStatus("Radarr", isRadarrConfigured(), getRadarrHealthIssues),
-    arrIntegrationStatus("Sonarr", isSonarrConfigured(), getSonarrHealthIssues),
+    arrIntegrationStatus("Radarr", isRadarrConfigured(), getRadarrHealthIssues, getRadarrStuckImports),
+    arrIntegrationStatus("Sonarr", isSonarrConfigured(), getSonarrHealthIssues, getSonarrStuckImports),
   ]);
 
   return [

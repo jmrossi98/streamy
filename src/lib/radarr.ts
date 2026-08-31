@@ -208,11 +208,23 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
 // movie/series it belongs to. They have to be separate: a series can have
 // several episodes downloading at once, so keying rows by the series id
 // alone collapsed every episode of a show into a single row.
+/** Normalizes Radarr/Sonarr's own `protocol` field ("usenet" | "torrent") into
+ *  a type the UI can render without trusting arbitrary API string values --
+ *  anything else (a future protocol, an unexpected casing) reports as
+ *  "unknown" rather than silently mis-labeling it as one of the two. */
+export type DownloadProtocol = "usenet" | "torrent" | "unknown";
+
+export function normalizeProtocol(raw: string | undefined): DownloadProtocol {
+  const p = raw?.toLowerCase();
+  return p === "usenet" || p === "torrent" ? p : "unknown";
+}
+
 export type ActiveDownload = {
   queueId: number;
   externalId: number;
   title: string;
   progress: number | null;
+  protocol: DownloadProtocol;
 };
 
 /** Every movie currently in Radarr's active download queue, with live progress. */
@@ -220,13 +232,14 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const queue = await radarrFetch<{
-      records: { id: number; movieId: number; title: string; size: number; sizeleft: number }[];
+      records: { id: number; movieId: number; title: string; size: number; sizeleft: number; protocol?: string }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
       queueId: r.id,
       externalId: r.movieId,
       title: r.title,
       progress: computeProgress(r.size, r.sizeleft),
+      protocol: normalizeProtocol(r.protocol),
     }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
@@ -533,6 +546,50 @@ export async function getRadarrHealthIssues(): Promise<RadarrHealthIssue[]> {
       .map((i) => ({ source: i.source, message: i.message, type: i.type as "error" | "warning" }));
   } catch (err) {
     console.error("[radarr] getRadarrHealthIssues failed:", err);
+    return [];
+  }
+}
+
+// Same detection the mediabox's own auto-import-safe.py cron uses to decide
+// what it can safely confirm on its own (see mediabox-infra) -- a release
+// finished downloading, but the app's parser couldn't self-confirm which
+// movie/episode it is from the filename alone, so it's sitting in the queue
+// waiting for a human. That cron auto-resolves the unambiguous case every 15
+// minutes; what survives here is specifically the harder case it also
+// declined to touch (multiple candidates, a mismatched title, a real quality
+// rejection) -- exactly the kind of thing that otherwise needs a viewer to
+// notice a title stuck at 100% and ask about it before anyone finds out.
+//
+// Exported (and kept pure) so this specific matching logic -- shared by both
+// Radarr's and Sonarr's version of this check -- has a real test, the same
+// way mergeCombinedCredits in tmdb.ts does for its own easy-to-silently-break
+// logic.
+export type QueueItemForImportCheck = {
+  trackedDownloadState?: string;
+  status?: string;
+  sizeleft?: number;
+  statusMessages?: { messages?: string[] }[];
+};
+
+const CONFIDENCE_BLOCK_PATTERN = /matched to \w+ by ID.*Manual Import required/i;
+
+export function isConfidenceBlockedQueueItem(item: QueueItemForImportCheck): boolean {
+  if (item.trackedDownloadState !== "importBlocked") return false;
+  if (item.status !== "completed" || (item.sizeleft ?? 1) !== 0) return false;
+  const messages = (item.statusMessages ?? []).flatMap((sm) => sm.messages ?? []);
+  return messages.some((m) => CONFIDENCE_BLOCK_PATTERN.test(m));
+}
+
+/** Titles genuinely stuck on a Manual Import confirmation only a person can make. */
+export async function getRadarrStuckImports(): Promise<string[]> {
+  if (!isRadarrConfigured()) return [];
+  try {
+    const queue = await radarrFetch<{
+      records: (QueueItemForImportCheck & { title: string })[];
+    }>("/api/v3/queue?pageSize=250");
+    return queue.records.filter(isConfidenceBlockedQueueItem).map((r) => r.title);
+  } catch (err) {
+    console.error("[radarr] getRadarrStuckImports failed:", err);
     return [];
   }
 }
