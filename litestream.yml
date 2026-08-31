@@ -1,0 +1,25 @@
+# Continuous replication of the SQLite database to S3.
+#
+# The database is a single file on one Lightsail instance's Docker volume. It
+# holds the things that cannot be regenerated from TMDB or Jellyfin -- accounts,
+# watch progress, watchlists, visit history. Nothing backed it up: losing the
+# instance lost all of it. This ships every write to S3 within seconds, so the
+# worst case becomes "restore to a point in time" instead of "start over".
+#
+# Deliberately not a nightly dump: a dump loses up to a day, and a dump taken
+# while SQLite is mid-write can be torn. Litestream copies the WAL itself, which
+# is both crash-consistent and near-continuous.
+#
+# Requires the database to be in WAL mode -- see scripts/enable-wal.sh.
+dbs:
+  - path: /data/prod.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: prod.db
+        region: us-east-1
+        # A full snapshot daily, with the WAL between them kept for 30 days, so
+        # any point in the last month is recoverable. The database is well under
+        # a megabyte, so this costs cents per month.
+        snapshot-interval: 24h
+        retention: 720h

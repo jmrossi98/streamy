@@ -22,6 +22,42 @@ services:
     volumes:
       - streamy-data:/app/data
 
+  # Continuous SQLite backup to S3 (see litestream.yml for the why).
+  #
+  # Shares the same volume the app writes -- NOT read-only. Confirmed directly
+  # (litestream refused to start against a :ro mount, "attempt to write a
+  # readonly database"): it maintains its own tracking table inside the
+  # database file to detect changes, not just passive WAL copying. It never
+  # touches the app's own tables, and SQLite's WAL mode is built for exactly
+  # this concurrent-access pattern, so it doesn't block the app either way.
+  #
+  # NOT `restart: always`, following the same hard-won rule as gluetun below: a
+  # container that cannot start must not be able to crash-loop this small
+  # instance into the ground. Litestream retries S3 failures internally rather
+  # than exiting, so the only thing that makes it exit is a genuine misconfig --
+  # exactly the case where stopping after a few tries is the right answer. If it
+  # is not running, the site is unaffected and backups are simply stale, which
+  # the restore drill in docs/backup-restore.md is meant to catch.
+  litestream:
+    image: litestream/litestream:0.3
+    restart: on-failure:5
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - LITESTREAM_ACCESS_KEY_ID=${LITESTREAM_ACCESS_KEY_ID}
+      - LITESTREAM_SECRET_ACCESS_KEY=${LITESTREAM_SECRET_ACCESS_KEY}
+      - LITESTREAM_BUCKET=${LITESTREAM_BUCKET}
+    volumes:
+      - streamy-data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+    command: replicate
+    depends_on:
+      - app
+
   # VPN egress for the tour watcher, so its requests exit from the VPN
   # provider's IP rather than this box's -- which DNS ties to the site and its
   # owner. Only the watcher's traffic uses this; the public site keeps serving
