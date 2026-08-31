@@ -57,8 +57,25 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
-RUN npm install prisma --no-save --ignore-scripts
+# The migrate CLI, copied rather than installed. `npm install prisma` here cost
+# 1.01GB of the image -- and almost none of it was Prisma. Next's standalone
+# output above already ships the node_modules it traced, so running npm in that
+# directory re-resolved the whole of package.json and reinstalled next,
+# @next/swc, hls.js and the rest on top of it, then left 647MB of npm's own
+# cache behind in the same layer. All to obtain an 11MB CLI that the builder
+# stage already has. That gigabyte was pulled onto the server on every single
+# deploy (and two concurrent pulls of it once wedged the instance).
+#
+# @prisma above carries the schema-engine binary this needs; the copy is inert
+# at runtime and only runs when RUN_MIGRATE=1 (see CMD).
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "mkdir -p /app/data /app/.next/cache && if [ \"$RUN_MIGRATE\" = '1' ]; then npx prisma migrate deploy; fi && chown -R nextjs:nodejs /app/data /app/.next/cache && exec runuser -u nextjs -- node server.js"]
+# Prisma is invoked by its real entry point, not `npx prisma`. npx resolves via
+# node_modules/.bin, which npm used to create here; copying the package (above)
+# doesn't, and npx's fallback is to *fetch* prisma from the registry at boot --
+# turning container start into a network dependency that fails closed on a bad
+# link. The direct path has no such fallback: it either exists or the container
+# tells us immediately.
+CMD ["sh", "-c", "mkdir -p /app/data /app/.next/cache && if [ \"$RUN_MIGRATE\" = '1' ]; then node node_modules/prisma/build/index.js migrate deploy; fi && chown -R nextjs:nodejs /app/data /app/.next/cache && exec runuser -u nextjs -- node server.js"]
