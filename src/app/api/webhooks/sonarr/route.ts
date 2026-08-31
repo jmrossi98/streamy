@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requestJellyfinLibraryScan } from "@/lib/jellyfin";
 
 /**
  * Inbound webhook from Sonarr (Settings -> Connect -> Webhook).
@@ -46,6 +47,9 @@ export async function POST(request: Request) {
       where: { tvdbId, mediaType: "show" },
       data: { status: "available" },
     });
+    // See the Radarr twin -- Sonarr's own Jellyfin notification doesn't
+    // always land either.
+    requestJellyfinLibraryScan();
   }
   // Unrecognized event types (Test, SeriesDelete, Health, etc.) no-op so
   // Sonarr's "Test" button and other lifecycle events don't error out.

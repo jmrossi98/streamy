@@ -38,6 +38,37 @@ export function isSonarrConfigured(): boolean {
   );
 }
 
+// Bridges the gap between "we just told Sonarr to search this episode" and
+// Sonarr actually updating the episode's own lastSearchTime, which lags
+// behind the request -- confirmed live: EpisodeSearch is a queued async
+// command, so lastSearchTime still reads whenever the *previous* search
+// happened until this new one is actually processed. For an episode that had
+// already gone stale from an earlier failed attempt, that meant a fresh
+// "Search again" (or a first-time request landing on an episode Sonarr's own
+// RSS pass had already tried) read isSearchStale() as true again for as long
+// as the new command took to get to it -- reported live as "Severance E5
+// said no releases found, then a few moments later showed 68%" for a search
+// that had been running the entire time. Cleared lazily (checked on read, no
+// separate sweep needed): each check either uses an entry or evicts it once
+// stale, so this never grows unbounded over a long-running process.
+const RECENT_SEARCH_GRACE_MS = 3 * 60 * 1000;
+const recentlyTriggeredSearches = new Map<number, number>();
+
+// Exported for tests only -- every real call site is in this file.
+export function markEpisodeSearchTriggered(episodeId: number): void {
+  recentlyTriggeredSearches.set(episodeId, Date.now());
+}
+
+export function hasRecentlyTriggeredSearch(episodeId: number): boolean {
+  const at = recentlyTriggeredSearches.get(episodeId);
+  if (at == null) return false;
+  if (Date.now() - at > RECENT_SEARCH_GRACE_MS) {
+    recentlyTriggeredSearches.delete(episodeId);
+    return false;
+  }
+  return true;
+}
+
 // Unbounded before this. A large legacy show (e.g. a hundred-plus episode
 // back catalog) makes Sonarr do real synchronous work fetching metadata for
 // every episode when it's added, which can genuinely take a while -- but with
@@ -167,6 +198,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
       title: r.title,
       progress: computeProgress(r.size, r.sizeleft),
       protocol: normalizeProtocol(r.protocol),
+      sizeBytes: r.size > 0 ? r.size : null,
     }));
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);
@@ -180,6 +212,7 @@ export type CompletedEpisode = {
   seriesId: number;
   title: string;
   protocol?: DownloadProtocol;
+  sizeBytes: number | null;
 };
 
 /** See getRadarrCompletedProtocols for the rationale -- same recovery, keyed
@@ -231,9 +264,12 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
           // this is what the movie side gets straight from movieFile. Same
           // fix as there: show the actual file name, not a synthesised
           // "show · SxxEyy · title" label that isn't what's really on disk.
-          sonarrFetch<{ id: number; relativePath: string }[]>(`/api/v3/episodefile?seriesId=${s.id}`),
+          sonarrFetch<{ id: number; relativePath: string; size?: number }[]>(
+            `/api/v3/episodefile?seriesId=${s.id}`
+          ),
         ]);
         const pathById = new Map(files.map((f) => [f.id, f.relativePath]));
+        const sizeById = new Map(files.map((f) => [f.id, f.size ?? null]));
         return episodes
           .filter((e) => e.hasFile)
           .map((e) => {
@@ -245,6 +281,7 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
                 ? fileBaseName(relativePath)
                 : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
               protocol: protocols.get(e.id),
+              sizeBytes: sizeById.get(e.episodeFileId) ?? null,
             };
           });
       })
@@ -597,9 +634,14 @@ export async function getSonarrSeasonStatuses(
         // "requested" (still searching) vs "noReleaseFound" (searched, came
         // up empty) -- see isSearchStale for the rationale. Without this an
         // episode with nothing available looked identical to one about to
-        // succeed any second.
+        // succeed any second. hasRecentlyTriggeredSearch covers the window
+        // right after *we* asked Sonarr to search, before its own
+        // lastSearchTime has actually updated to reflect that -- see its doc.
         statuses[ep.episodeNumber] = {
-          status: isSearchStale(ep.lastSearchTime) ? "noReleaseFound" : "requested",
+          status:
+            isSearchStale(ep.lastSearchTime) && !hasRecentlyTriggeredSearch(ep.id)
+              ? "noReleaseFound"
+              : "requested",
           progress: null,
         };
       }
@@ -636,6 +678,7 @@ export async function requestEpisode(
       method: "POST",
       body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [episode.id] }),
     });
+    markEpisodeSearchTriggered(episode.id);
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestEpisode failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err);
@@ -649,6 +692,14 @@ export async function requestEpisode(
  * episode order. Runs detached from the request that started it.
  */
 async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
+  // Marked for the whole batch up front, not just as each one's own turn
+  // comes up below: this chain runs sequentially and can take minutes for a
+  // full season, so an episode still waiting its turn -- monitored and
+  // genuinely queued, just not searched yet -- would otherwise show
+  // whatever its lastSearchTime said before this request (stale, for one
+  // that had already failed once), i.e. "no releases found" for a season
+  // that had, in reality, only just been asked for.
+  for (const id of episodeIds) markEpisodeSearchTriggered(id);
   for (const id of episodeIds) {
     try {
       // Re-check before each search rather than trusting the list we started
@@ -666,6 +717,7 @@ async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
         method: "POST",
         body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [id] }),
       });
+      markEpisodeSearchTriggered(id);
       await waitForSonarrCommand(cmd.id);
     } catch (err) {
       // One episode failing shouldn't strand the rest of the season.
