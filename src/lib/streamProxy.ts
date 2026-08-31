@@ -96,7 +96,17 @@ export async function proxyJellyfinHlsResource(
   // Everything else here (variant playlists, segments) *is* a reference
   // Jellyfin already emitted inside the master playlist's own body, rewritten
   // only to relative + re-keyed through us (see rewriteHlsReference) -- those
-  // already carry the right params and should keep being forwarded as-is.
+  // already carry the right params and should keep being forwarded as-is,
+  // with one exception: a resumed title (or any transcode-seek restart)
+  // passes `t`/startTimeTicks on the master request, and Jellyfin's own
+  // segment/variant URLs echo it back into every reference they contain --
+  // but the per-segment endpoint (GetHlsVideoSegment) then rejects that exact
+  // same param outright: "System.ArgumentException: StartTimeTicks is not
+  // allowed", a 400 confirmed live against Jellyfin's own logs. Jellyfin only
+  // wants startTimeTicks on the initial master request, never on what it
+  // itself tells the player to fetch next -- strip it back out here.
+  const forwardedParams = new URLSearchParams(incoming.searchParams);
+  forwardedParams.delete("startTimeTicks");
   const upstreamUrl =
     jellyfinPath === "master.m3u8"
       ? jellyfinHlsMasterUrl(
@@ -104,7 +114,7 @@ export async function proxyJellyfinHlsResource(
           Number(incoming.searchParams.get("t")) || undefined,
           incoming.searchParams.get("session") || undefined
         )
-      : jellyfinHlsResourceUrl(itemId, jellyfinPath, new URLSearchParams(incoming.searchParams));
+      : jellyfinHlsResourceUrl(itemId, jellyfinPath, forwardedParams);
   const range = request.headers.get("range");
   const upstream = await fetch(upstreamUrl, {
     headers: range ? { Range: range } : {},
