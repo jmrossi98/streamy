@@ -161,6 +161,32 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   const [playbackError, setPlaybackError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Real, DOM-event-driven play/pause intent -- distinct from `playing`
+  // above, which only ever means "has playback started successfully" and is
+  // never reset by a manual pause. Several play() calls in this file are
+  // deferred behind a real event (loadedmetadata in seekThenRun, canplay for
+  // hls.js/a source swap) that can resolve *after* the viewer already
+  // clicked pause; without this, that late event calls v.play() anyway and
+  // silently undoes the pause. Reported live as "clicking the pause button
+  // doesn't actually pause the video." usePlayerChrome's togglePlay() calls
+  // v.pause()/v.play() directly on the element with no way to cancel a
+  // callback already scheduled here, so the guard has to be a real
+  // 'pause'/'play' listener on the element itself, set fresh at the start of
+  // every play attempt (see doPlay()/onReady below) and checked again right
+  // before each deferred play() actually runs.
+  const playIntentRef = useRef<"play" | "pause">("pause");
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onPause = () => { playIntentRef.current = "pause"; };
+    const onPlayEvt = () => { playIntentRef.current = "play"; };
+    v.addEventListener("pause", onPause);
+    v.addEventListener("play", onPlayEvt);
+    return () => {
+      v.removeEventListener("pause", onPause);
+      v.removeEventListener("play", onPlayEvt);
+    };
+  }, []);
   // Seeking is the same operation for both delivery paths now: set
   // currentTime. Direct play seeks via Range requests; a transcode seeks
   // within its full-timeline HLS playlist (see videoSrc). Neither needs the
@@ -250,6 +276,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
     if (!v) return;
+    // Fresh intent: this reload represents continuing playback across a
+    // forced source swap (Auto's codec fallback, or a late forceTranscode),
+    // not a new user click -- but it still must not fight a pause that
+    // lands while the swap is in flight and canplay hasn't fired yet.
+    playIntentRef.current = "play";
     if (!needsHlsJs) v.load();
     const onReady = () => {
       const target = resumeAtRef.current;
@@ -273,7 +304,10 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       // v.load() reset every text track back to its <track> default -- reassert
       // whichever one the viewer had picked.
       applySubtitleMode(v, subtitleTracks, selectedSubtitle);
-      v.play().catch(() => {});
+      // Skip resuming if a real pause landed while the swap was in flight --
+      // the seek/subtitle restoration above still applies regardless, so the
+      // paused frame lands in the right place rather than the swap's start.
+      if (playIntentRef.current === "play") v.play().catch(() => {});
       setVideoLoading(false);
     };
     v.addEventListener("canplay", onReady, { once: true });
@@ -300,6 +334,13 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     const v = videoRef.current;
     setVideoLoading(true);
     const startPlayback = () => {
+      // The wait above (loadedmetadata or canplay) can resolve after the
+      // viewer already clicked pause -- don't fight a pause that landed
+      // while this was still loading.
+      if (playIntentRef.current !== "play") {
+        setVideoLoading(false);
+        return;
+      }
       v.play()
         .then(() => {
           setVideoLoading(false);
@@ -313,6 +354,9 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
         });
     };
     const doPlay = () => {
+      // Fresh intent: about to attempt a real play, whether it resolves
+      // immediately or after a deferred wait below.
+      playIntentRef.current = "play";
       // Both paths resume the same way. A transcode used to be skipped here on
       // the assumption its URL already started at the right place -- it never
       // did (see videoSrc), which is why resuming a transcoded title replayed
@@ -340,6 +384,13 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     setVideoLoading(true);
     setPlaybackError(false);
     const startPlayback = () => {
+      // Same guard as the mount effect's startPlayback -- a click here can
+      // still be waiting on hls.js's manifest when a *later* pause click
+      // lands; don't let this one override that.
+      if (playIntentRef.current !== "play") {
+        setVideoLoading(false);
+        return;
+      }
       v.play()
         .then(() => {
           setVideoLoading(false);
@@ -352,6 +403,8 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
         });
     };
     const doPlay = () => {
+      // Fresh intent -- see the mount effect's doPlay.
+      playIntentRef.current = "play";
       // Same for both paths -- see the mount effect's doPlay.
       if (initialProgressSeconds > 0) seekThenRun(v, initialProgressSeconds, startPlayback);
       else startPlayback();

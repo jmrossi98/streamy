@@ -37,3 +37,9 @@ Thumbs.db
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Playwright (e2e/player.spec.ts)
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
