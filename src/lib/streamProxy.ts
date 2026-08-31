@@ -109,11 +109,7 @@ export async function proxyJellyfinHlsResource(
   forwardedParams.delete("startTimeTicks");
   const upstreamUrl =
     jellyfinPath === "master.m3u8"
-      ? jellyfinHlsMasterUrl(
-          itemId,
-          Number(incoming.searchParams.get("t")) || undefined,
-          incoming.searchParams.get("session") || undefined
-        )
+      ? jellyfinHlsMasterUrl(itemId, incoming.searchParams.get("session") || undefined)
       : jellyfinHlsResourceUrl(itemId, jellyfinPath, forwardedParams);
   const range = request.headers.get("range");
   const upstream = await fetch(upstreamUrl, {

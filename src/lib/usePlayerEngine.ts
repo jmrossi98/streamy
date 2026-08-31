@@ -90,18 +90,6 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // direct play altogether (see the option's own doc).
   const [autoFellBack, setAutoFellBack] = useState(forceTranscode);
   const transcoding = autoFellBack;
-  // Where the *current* transcode source begins in the title's real
-  // timeline (Jellyfin's startTimeTicks). A transcode can only be played
-  // from where ffmpeg has already encoded to, so scrubbing ahead has to
-  // restart the transcode at the target instead of setting currentTime on
-  // the same stream -- which does nothing there, since those bytes don't
-  // exist yet. Always 0 for direct play, where the whole file is one
-  // seekable source. Initialised from the saved position, not 0 -- if the
-  // viewer resumes straight into a forced transcode, the encode should
-  // start where they left off, the same as a scrub-seek does. Only ever
-  // read while transcoding (see timeOffsetSeconds/videoSrc below), so it's
-  // harmless for direct play.
-  const [transcodeStartAt, setTranscodeStartAt] = useState(initialProgressSeconds);
   // One id for this whole viewing, sent as Jellyfin's PlaySessionId on every
   // transcode request so a seek is recognised as "move this session", not a
   // brand new independent stream. Generated once, lazily, on first render.
@@ -119,13 +107,22 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   const needsHlsJs = transcoding && !nativeHlsSupport;
   const hlsRef = useRef<Hls | null>(null);
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
-  const videoSrc = !videoUrl
-    ? ""
-    : transcoding
-      ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${
-          transcodeStartAt > 0 ? `&t=${Math.floor(transcodeStartAt)}` : ""
-        }`
-      : videoUrl;
+  // No start-position parameter, deliberately. Jellyfin's HLS output is a
+  // complete VOD playlist of the *whole* title (verified directly against the
+  // server: 891 segments / 2671s, byte-identical with and without
+  // startTimeTicks), and its segments are addressed purely by index. So
+  // startTimeTicks never moved the stream -- the player still began at
+  // segment 0, i.e. the title's start, while the chrome displayed the
+  // requested position on top of it. That mismatch is what "seeking restarts
+  // the episode" and "resume plays from the beginning" both were.
+  //
+  // Because the playlist covers the entire title up front, seeking needs no
+  // new stream at all: setting currentTime makes hls.js fetch the segment at
+  // that position and Jellyfin transcodes it on demand (measured: 0.65s for a
+  // cold seek 10 minutes in, 0.13s for the next segment). That is both correct
+  // and far faster than tearing the transcode down and rebuilding it, which is
+  // what this used to do on every scrub.
+  const videoSrc = !videoUrl ? "" : transcoding ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}` : videoUrl;
   // Best-effort: tell Jellyfin to kill the ffmpeg job for the current session
   // before asking for a new position. Without this, Jellyfin can leave the
   // old encode running and just keep serving *that*, ignoring the new
@@ -164,25 +161,12 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   const [playbackError, setPlaybackError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Seeking is the same operation for both delivery paths now: set
+  // currentTime. Direct play seeks via Range requests; a transcode seeks
+  // within its full-timeline HLS playlist (see videoSrc). Neither needs the
+  // stream rebuilt, so there's no offset to add and nothing to intercept.
   const chrome = usePlayerChrome(videoRef, containerRef, {
     knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
-    timeOffsetSeconds: transcoding ? transcodeStartAt : 0,
-    // Only wired up while transcoding -- direct play seeks for free via Range
-    // requests, no restart needed.
-    onExternalSeek: transcoding
-      ? (absoluteSeconds: number) => {
-          resumeAtRef.current = null; // the new stream starts exactly there; nothing more to seek
-          setVideoLoading(true);
-          // Wait for the old encode to actually be torn down before asking
-          // for the new position -- see stopCurrentTranscode for why racing
-          // the two is what caused the "sometimes still stuck" behaviour.
-          stopCurrentTranscode().finally(() => {
-            didSwapRef.current = true;
-            setTranscodeStartAt(Math.max(0, absoluteSeconds));
-          });
-          return true;
-        }
-      : undefined,
   });
 
   // On mobile, hold at the play button instead of autoplaying. Fullscreen can
@@ -252,11 +236,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     };
   }, [needsHlsJs, videoSrc]);
 
-  // Any source swap (Auto's codec fallback, or a transcode-seek restart)
-  // flips `transcoding` and/or `transcodeStartAt`, which change the src.
-  // Force the element to load the new URL and resume -- changing src alone
-  // can leave a browser sitting on the media it just gave up on. Wait for
-  // `canplay`, not just metadata.
+  // The one remaining source swap: Auto's codec fallback flipping
+  // `transcoding`, which changes the src. (Seeking no longer swaps the source
+  // -- see videoSrc.) Force the element to load the new URL and resume --
+  // changing src alone can leave a browser sitting on the media it just gave
+  // up on. Wait for `canplay`, not just metadata.
   //
   // Skips v.load() when hls.js owns the element (needsHlsJs) -- the effect
   // above already tears down and recreates the hls.js instance on the same
@@ -270,11 +254,12 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     const onReady = () => {
       const target = resumeAtRef.current;
       resumeAtRef.current = null;
-      // A transcode restart already begins at the right position (via
-      // startTimeTicks) -- nothing left to seek. Only direct play needs a
-      // client-side seek here, and only within what's actually seekable, so
-      // an out-of-range set can't stall a partially-buffered file.
-      if (target != null && !transcoding) {
+      // Applies to a transcode too, not just direct play: the HLS playlist
+      // covers the whole title, so restoring the position after a source swap
+      // is the same client-side seek in both cases (see videoSrc). Clamped to
+      // what's actually seekable so an out-of-range set can't stall a
+      // partially-buffered source.
+      if (target != null) {
         try {
           const seekable =
             v.seekable && v.seekable.length > 0
@@ -293,7 +278,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding, transcodeStartAt, subtitleTracks, selectedSubtitle, needsHlsJs]);
+  }, [transcoding, subtitleTracks, selectedSubtitle, needsHlsJs]);
 
   // Viewer picked a subtitle track (or turned them off).
   useEffect(() => {
@@ -328,10 +313,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
         });
     };
     const doPlay = () => {
-      // Only direct play needs a client-side seek -- a transcode already
-      // begins at transcodeStartAt (initialised from this same value), via
-      // the URL, same as a scrub-seek.
-      if (initialProgressSeconds > 0 && !transcoding) seekThenRun(v, initialProgressSeconds, startPlayback);
+      // Both paths resume the same way. A transcode used to be skipped here on
+      // the assumption its URL already started at the right place -- it never
+      // did (see videoSrc), which is why resuming a transcoded title replayed
+      // it from the beginning.
+      if (initialProgressSeconds > 0) seekThenRun(v, initialProgressSeconds, startPlayback);
       else startPlayback();
     };
     if (needsHlsJs) {
@@ -366,7 +352,8 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
         });
     };
     const doPlay = () => {
-      if (initialProgressSeconds > 0 && !transcoding) seekThenRun(v, initialProgressSeconds, startPlayback);
+      // Same for both paths -- see the mount effect's doPlay.
+      if (initialProgressSeconds > 0) seekThenRun(v, initialProgressSeconds, startPlayback);
       else startPlayback();
     };
     // Fullscreen is opt-in via the chrome's own button (usePlayerChrome), not
@@ -444,10 +431,10 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // straight onto the <video>'s onError.
   const onVideoError = () => {
     if (hasSource && !transcoding) {
-      const at = chrome.currentTime > 0 ? chrome.currentTime : null;
-      resumeAtRef.current = at;
+      // resumeAtRef alone carries the position across the swap now -- the
+      // reload effect seeks the new source there once it's ready.
+      resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
       didSwapRef.current = true;
-      setTranscodeStartAt(at ?? 0);
       setAutoFellBack(true);
       setVideoLoading(true);
       return;
@@ -483,10 +470,10 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     if (!forceTranscode || transcoding) return;
     if (forceTranscodeAppliedForRef.current === identityKey) return;
     forceTranscodeAppliedForRef.current = identityKey;
-    const at = chrome.currentTime > 0 ? chrome.currentTime : null;
-    resumeAtRef.current = at;
+    // Keep whatever position playback had reached, falling back to the saved
+    // one when it hasn't started yet -- the reload effect seeks there.
+    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : initialProgressSeconds || null;
     didSwapRef.current = true;
-    setTranscodeStartAt(at ?? initialProgressSeconds);
     setAutoFellBack(true);
     setVideoLoading(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -50,8 +50,16 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+  # Deliberately NOT `needs: test` -- the image build is the long pole (~3min
+  # against the test job's ~25s), so gating it behind the tests just adds that
+  # 25s to every deploy's critical path. Running them side by side is still
+  # safe because `deploy` below needs *both*: a failing test never reaches the
+  # server. The one tradeoff is that a failed run can leave GHCR's `latest`
+  # pointing at an image that was built but never validated -- nothing pulls it
+  # automatically (the server only pulls during a gated deploy), but a manual
+  # `docker compose pull` on the box would pick it up, so check the run status
+  # before doing that by hand.
   build-and-push:
-    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -94,7 +102,9 @@ jobs:
             NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
 
   deploy:
-    needs: build-and-push
+    # Both, so the tests still gate what actually reaches the server even
+    # though they no longer gate the build (see build-and-push above).
+    needs: [test, build-and-push]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
