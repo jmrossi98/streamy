@@ -60,14 +60,18 @@ export type WatchProviderItem = {
 };
 
 export type CastMember = { id: number; name: string; character: string; profile: string | null };
+export type CrewMember = { id: number; name: string };
 
 // The people worth surfacing on a title page, in the IMDb/Letterboxd sense.
-// director doubles as "creator(s)" for TV (TMDB's created_by).
+// director doubles as "creator(s)" for TV (TMDB's created_by). Every credit
+// keeps the person's TMDB id, not just their name, so each one can link to
+// /person/[id] -- names alone can't (TMDB has no per-title "this name means
+// this person" shortcut; the id is the only stable reference).
 export type Credits = {
   cast: CastMember[];
-  director: string[];
-  writer: string[];
-  producer: string[];
+  director: CrewMember[];
+  writer: CrewMember[];
+  producer: CrewMember[];
 };
 
 export type MovieDetail = Movie & {
@@ -85,15 +89,24 @@ type TmdbCrewRaw = { id: number; name: string; job?: string; department?: string
 // pass createdBy (TMDB `created_by`) -- shows have creators rather than a single
 // director, and the show-level crew list is usually empty. The full cast is
 // kept (TMDB already orders it by billing), so the title page can show everyone.
-function extractCredits(
+export function extractCredits(
   credits: { cast?: TmdbCastRaw[]; crew?: TmdbCrewRaw[] } | undefined,
-  createdBy?: { name: string }[]
+  createdBy?: { id: number; name: string }[]
 ): Credits {
   const crew = credits?.crew ?? [];
-  const namesForJobs = (jobs: string[]) =>
-    Array.from(new Set(crew.filter((c) => c.job && jobs.includes(c.job)).map((c) => c.name)));
-  const creators = (createdBy ?? []).map((c) => c.name);
-  const director = creators.length ? creators : namesForJobs(["Director"]);
+  const forJobs = (jobs: string[]) => {
+    const seen = new Set<number>();
+    const out: CrewMember[] = [];
+    for (const c of crew) {
+      if (c.job && jobs.includes(c.job) && !seen.has(c.id)) {
+        seen.add(c.id);
+        out.push({ id: c.id, name: c.name });
+      }
+    }
+    return out;
+  };
+  const creators = (createdBy ?? []).map((c) => ({ id: c.id, name: c.name }));
+  const director = creators.length ? creators : forJobs(["Director"]);
   return {
     cast: (credits?.cast ?? []).map((c) => ({
       id: c.id,
@@ -102,8 +115,8 @@ function extractCredits(
       profile: c.profile_path ? imageUrl(c.profile_path, "w185") : null,
     })),
     director,
-    writer: namesForJobs(["Writer", "Screenplay", "Story", "Teleplay"]),
-    producer: namesForJobs(["Producer", "Executive Producer"]),
+    writer: forJobs(["Writer", "Screenplay", "Story", "Teleplay"]),
+    producer: forJobs(["Producer", "Executive Producer"]),
   };
 }
 
@@ -118,7 +131,7 @@ type TmdbMovieResult = {
   genre_ids?: number[];
 };
 
-type TmdbGenre = { id: number; name: string };
+export type TmdbGenre = { id: number; name: string };
 
 type TmdbWatchProvider = { provider_id: number; provider_name: string; logo_path: string };
 
@@ -259,6 +272,29 @@ export async function searchMovies(query: string, limit = 12, page = 1): Promise
   );
 }
 
+// TMDB's "recommendations" over "similar": similar is mostly genre/keyword
+// overlap and skews toward obscure matches; recommendations factor in what
+// people who liked this title also liked, which is closer to what "More like
+// this" means on every other streaming site.
+export async function getSimilarMovies(id: string, limit = 12): Promise<Movie[]> {
+  return withMemoryCache(
+    ["tmdb-movie-recs", id, String(limit)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbMovieResult[] }>(`movie/${id}/recommendations`),
+            getGenresUncached(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toMovie(r, genres));
+        },
+        ["tmdb-movie-recs", id, String(limit)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
+}
+
 // --- TV types and helpers ---
 export type TVShow = {
   id: string;
@@ -299,7 +335,7 @@ type TmdbTVResult = {
   genre_ids?: number[];
 };
 
-type TmdbGenreTV = { id: number; name: string };
+export type TmdbGenreTV = { id: number; name: string };
 
 async function getTVGenresUncached(): Promise<TmdbGenreTV[]> {
   const data = await fetchTmdb<{ genres: TmdbGenreTV[] }>("genre/tv/list");
@@ -345,7 +381,7 @@ async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
     vote_average: number;
     genres: { id: number; name: string }[];
     number_of_seasons: number;
-    created_by?: { name: string }[];
+    created_by?: { id: number; name: string }[];
     credits?: { cast?: TmdbCastRaw[]; crew?: TmdbCrewRaw[] };
   }>(`tv/${id}`, { append_to_response: "credits" });
   if (!data) return null;
@@ -490,6 +526,25 @@ export async function getDiscoverTVByGenre(genreId: number, limit = 12): Promise
   );
 }
 
+export async function getSimilarTV(id: string, limit = 12): Promise<TVShow[]> {
+  return withMemoryCache(
+    ["tmdb-tv-recs", id, String(limit)],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, genres] = await Promise.all([
+            fetchTmdb<{ results: TmdbTVResult[] }>(`tv/${id}/recommendations`),
+            getTVGenresUncached(),
+          ]);
+          return data.results.slice(0, limit).map((r) => toTVShow(r, genres));
+        },
+        ["tmdb-tv-recs", id, String(limit)],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  );
+}
+
 async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
   const key = getApiKey();
   const [movieRes, providersRes] = await Promise.all([
@@ -553,4 +608,149 @@ export const getMovieById = cache(async (id: string) =>
         ONE_DAY_MS,
         () => unstable_cache(() => getMovieByIdUncached(id), ["tmdb-movie", id], { revalidate: CACHE_REVALIDATE })()
       )
+);
+
+// --- People ---
+
+export type PersonDetail = {
+  id: string;
+  name: string;
+  biography: string;
+  photo: string | null;
+  birthday: string | null;
+  placeOfBirth: string | null;
+  knownFor: string | null; // TMDB's known_for_department, e.g. "Acting", "Directing"
+};
+
+export type TmdbCombinedCreditItem = {
+  id: number;
+  media_type: "movie" | "tv";
+  title?: string;
+  name?: string;
+  overview: string | null;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  vote_average: number;
+  release_date?: string;
+  first_air_date?: string;
+  genre_ids?: number[];
+};
+
+async function getPersonByIdUncached(id: string): Promise<PersonDetail | null> {
+  try {
+    const p = await fetchTmdb<{
+      id: number;
+      name: string;
+      biography: string | null;
+      profile_path: string | null;
+      birthday: string | null;
+      place_of_birth: string | null;
+      known_for_department: string | null;
+    }>(`person/${id}`);
+    return {
+      id: String(p.id),
+      name: p.name,
+      biography: p.biography || "",
+      photo: p.profile_path ? imageUrl(p.profile_path, "w500") : null,
+      birthday: p.birthday,
+      placeOfBirth: p.place_of_birth,
+      knownFor: p.known_for_department,
+    };
+  } catch {
+    // A bad/deleted TMDB person id -- treat like any other "not found" title.
+    return null;
+  }
+}
+
+export const getPersonById = cache(async (id: string) =>
+  withMemoryCache(
+    ["tmdb-person", id],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(() => getPersonByIdUncached(id), ["tmdb-person", id], { revalidate: CACHE_REVALIDATE })()
+  )
+);
+
+/**
+ * Merges a person's cast + crew credits into a deduped, sorted filmography.
+ * Exported (and kept pure -- no fetching) specifically so the dedup/sort
+ * behavior has a real test: someone credited as both actor and director on
+ * the same title (common for auteurs -- Ben Affleck, the Duffer Brothers)
+ * would otherwise appear in the results twice, once from each list. Newest
+ * first, matching how a filmography reads everywhere else (IMDb, Letterboxd).
+ */
+export function mergeCombinedCredits(
+  cast: TmdbCombinedCreditItem[],
+  crew: TmdbCombinedCreditItem[],
+  movieGenres: TmdbGenre[],
+  tvGenres: TmdbGenreTV[]
+): { movies: Movie[]; shows: TVShow[] } {
+  const seen = new Set<string>();
+  const deduped: TmdbCombinedCreditItem[] = [];
+  for (const item of [...cast, ...crew]) {
+    const key = `${item.media_type}:${item.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  const byDateDesc = (a: string | undefined, b: string | undefined) => (b || "").localeCompare(a || "");
+  const movies = deduped
+    .filter((c): c is TmdbCombinedCreditItem & { title: string } => c.media_type === "movie")
+    .sort((a, b) => byDateDesc(a.release_date, b.release_date))
+    .map((c) =>
+      toMovie(
+        {
+          id: c.id,
+          title: c.title,
+          overview: c.overview,
+          poster_path: c.poster_path,
+          backdrop_path: c.backdrop_path,
+          release_date: c.release_date,
+          vote_average: c.vote_average,
+          genre_ids: c.genre_ids,
+        },
+        movieGenres
+      )
+    );
+  const shows = deduped
+    .filter((c): c is TmdbCombinedCreditItem & { name: string } => c.media_type === "tv")
+    .sort((a, b) => byDateDesc(a.first_air_date, b.first_air_date))
+    .map((c) =>
+      toTVShow(
+        {
+          id: c.id,
+          name: c.name,
+          overview: c.overview,
+          poster_path: c.poster_path,
+          backdrop_path: c.backdrop_path,
+          first_air_date: c.first_air_date,
+          vote_average: c.vote_average,
+          genre_ids: c.genre_ids,
+        },
+        tvGenres
+      )
+    );
+  return { movies, shows };
+}
+
+export const getPersonCredits = cache(async (id: string): Promise<{ movies: Movie[]; shows: TVShow[] }> =>
+  withMemoryCache(
+    ["tmdb-person-credits", id],
+    ONE_DAY_MS,
+    () =>
+      unstable_cache(
+        async () => {
+          const [data, movieGenres, tvGenres] = await Promise.all([
+            fetchTmdb<{ cast?: TmdbCombinedCreditItem[]; crew?: TmdbCombinedCreditItem[] }>(
+              `person/${id}/combined_credits`
+            ),
+            getGenresUncached(),
+            getTVGenresUncached(),
+          ]);
+          return mergeCombinedCredits(data.cast ?? [], data.crew ?? [], movieGenres, tvGenres);
+        },
+        ["tmdb-person-credits", id],
+        { revalidate: CACHE_REVALIDATE }
+      )()
+  )
 );

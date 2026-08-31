@@ -7,6 +7,7 @@ import { InfoHero } from "@/components/InfoHero";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
 import { Credits } from "@/components/Credits";
+import { MovieRow } from "@/components/MovieRow";
 
 const FALLBACK_BACKDROP = "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
@@ -18,6 +19,7 @@ type Props = {
   requestConfigured?: boolean;
   initialRequestStatus?: string | null;
   initialProgress?: number | null;
+  similar?: Movie[];
 };
 
 function buildMetaLine(movie: Movie | MovieDetail): string {
@@ -38,6 +40,7 @@ export function WatchPageContent({
   requestConfigured = false,
   initialRequestStatus = null,
   initialProgress = null,
+  similar = [],
 }: Props) {
   const cached = getMovieFromCache(id);
   const [movie, setMovie] = useState<MovieDetail | Movie | null>(cached ?? null);
@@ -157,8 +160,14 @@ export function WatchPageContent({
       </div>
 
       {"credits" in movie && movie.credits && (
-        <div className="mx-auto max-w-4xl px-4 pb-12 text-left sm:px-6">
+        <div className="mx-auto max-w-4xl px-4 pb-6 text-left sm:px-6">
           <Credits credits={movie.credits} />
+        </div>
+      )}
+
+      {similar.length > 0 && (
+        <div className="pb-12">
+          <MovieRow title="More Like This" movies={similar} />
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { getShowById, getSeason } from "@/lib/tmdb";
+import { getShowById, getSeason, getSimilarTV } from "@/lib/tmdb";
 import { isJellyfinShowAvailable } from "@/lib/jellyfin";
 import { isSonarrConfigured, getSonarrSeasonStatuses } from "@/lib/sonarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
@@ -36,6 +36,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
     hasVideo,
     requestStatus,
     initialEpisodeStatuses,
+    similar,
   ] = await Promise.all([
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
@@ -64,6 +65,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
       // first paint, instead of every row briefly looking un-downloaded
       // until the client's first poll lands.
       getSonarrSeasonStatuses(id, initialSeasonNum),
+      getSimilarTV(id),
     ]);
   if (!season1) notFound();
 
@@ -128,6 +130,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
       initialProgress={requestStatus.progress}
       initialEpisodeStatuses={initialEpisodeStatuses}
       initialEpisodeStatusSeason={initialSeasonNum}
+      similar={similar}
     />
   );
 }
