@@ -11,7 +11,7 @@
 #
 # Never a deploy gate -- this walks the live system, not the code about to
 # ship, so it runs on its own schedule rather than blocking anything.
-name: Playback Check
+name: Download & Playback Check
 
 on:
   schedule:
@@ -55,6 +55,6 @@ jobs:
             exit 1
           fi
           if grep -q '"success":false' response.json; then
-            echo "Playback check itself failed a stage (see the admin panel for which one)."
+            echo "The check itself failed a stage (see the admin panel for which one)."
             exit 1
           fi

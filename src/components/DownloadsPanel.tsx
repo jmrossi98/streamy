@@ -152,10 +152,21 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // a panel with nothing active still needs to notice a fresh request (from
   // this admin or anyone else) land and start searching, not sit static
   // until someone happens to reload the page.
+  //
+  // Skipped while a manual refresh (below) is already in flight -- confirmed
+  // live that without this, the manual button's spinner never stopped.
+  // router.refresh() calls aren't queued; a second one fired from this
+  // interval while the manual click's own startTransition was still
+  // tracking its call replaces it at the router level, and the original
+  // transition then has nothing to resolve against -- isPending just never
+  // flips back. Every REFRESH_INTERVAL_MS (2.5s) was frequent enough that
+  // essentially any manual click landed in that window.
   useEffect(() => {
-    const interval = setInterval(() => router.refresh(), REFRESH_INTERVAL_MS);
+    const interval = setInterval(() => {
+      if (!refreshing) router.refresh();
+    }, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [router]);
+  }, [router, refreshing]);
 
   async function handleManage(d: DownloadRow) {
     const key = rowKey(d);

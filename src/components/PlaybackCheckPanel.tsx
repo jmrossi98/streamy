@@ -17,7 +17,10 @@ function timeAgo(iso: string): string {
  * History of the download -> playback end-to-end check (see
  * lib/playbackCheck.ts and .github/workflows/playback-check.yml, which runs
  * it daily). Read-only, like the rest of the ops surface -- there's nothing
- * to configure here, just what happened on each run.
+ * to configure here, just what happened on each run. Embedded in the
+ * Services section of the admin page (see admin/page.tsx) rather than its
+ * own section -- it's itself a health check, just one that exercises the
+ * whole download -> playback pipeline instead of probing one service.
  */
 export function PlaybackCheckPanel({ runs }: { runs: PlaybackCheckRunSummary[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -26,7 +29,7 @@ export function PlaybackCheckPanel({ runs }: { runs: PlaybackCheckRunSummary[] }
     return (
       <p className="text-white/50 text-sm">
         No runs yet. Triggers daily via GitHub Actions, or run it manually from the Actions tab
-        (&ldquo;Playback Check&rdquo;).
+        (&ldquo;Download &amp; Playback Check&rdquo;).
       </p>
     );
   }
