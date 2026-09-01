@@ -16,9 +16,12 @@ vi.mock("react", async (importOriginal) => {
 import {
   extractCredits,
   mergeCombinedCredits,
+  mergeSearchResults,
   type TmdbCombinedCreditItem,
   type TmdbGenre,
   type TmdbGenreTV,
+  type Movie,
+  type TVShow,
 } from "../tmdb";
 
 // Every credit needs to link to /person/[id] -- clicking a cast or crew name
@@ -167,5 +170,78 @@ describe("mergeCombinedCredits", () => {
       tvGenres
     );
     expect(movies.map((m) => m.title)).toEqual(["Scored", "Unscored"]);
+  });
+});
+
+function movie(overrides: Partial<Movie> & { id: string }): Movie {
+  return {
+    id: overrides.id,
+    title: overrides.title ?? "A Movie",
+    overview: "",
+    poster: "",
+    backdrop: "",
+    year: "2020",
+    rating: 7,
+    duration: "",
+    genres: [],
+    popularity: overrides.popularity,
+  };
+}
+
+function show(overrides: Partial<TVShow> & { id: string }): TVShow {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? "A Show",
+    overview: "",
+    poster: "",
+    backdrop: "",
+    year: "2020",
+    rating: 7,
+    genres: [],
+    popularity: overrides.popularity,
+  };
+}
+
+// Regression: search used to render "every movie, then every show" -- a
+// highly relevant show buried below a page of lower-relevance movies purely
+// because of media type. mergeSearchResults is what fixed that.
+describe("mergeSearchResults", () => {
+  it("interleaves movies and shows by popularity rather than grouping by type", () => {
+    const results = mergeSearchResults(
+      [movie({ id: "m1", title: "Mid Movie", popularity: 50 })],
+      [
+        show({ id: "s1", name: "Top Show", popularity: 90 }),
+        show({ id: "s2", name: "Low Show", popularity: 10 }),
+      ]
+    );
+    expect(results.map((r) => (r.mediaType === "movie" ? r.title : r.name))).toEqual([
+      "Top Show",
+      "Mid Movie",
+      "Low Show",
+    ]);
+  });
+
+  it("tags each result with its media type", () => {
+    const results = mergeSearchResults(
+      [movie({ id: "m1", popularity: 10 })],
+      [show({ id: "s1", popularity: 5 })]
+    );
+    expect(results.find((r) => r.id === "m1")?.mediaType).toBe("movie");
+    expect(results.find((r) => r.id === "s1")?.mediaType).toBe("show");
+  });
+
+  it("treats a missing popularity score as lowest rather than throwing", () => {
+    const results = mergeSearchResults(
+      [movie({ id: "m1", title: "Scored", popularity: 10 }), movie({ id: "m2", title: "Unscored" })],
+      []
+    );
+    expect(results.map((r) => (r.mediaType === "movie" ? r.title : r.name))).toEqual([
+      "Scored",
+      "Unscored",
+    ]);
+  });
+
+  it("returns an empty list when both inputs are empty", () => {
+    expect(mergeSearchResults([], [])).toEqual([]);
   });
 });
