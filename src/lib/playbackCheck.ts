@@ -245,7 +245,7 @@ export async function runPlaybackCheck(): Promise<PlaybackCheckResult> {
 
   if (!success && isNotifyConfigured()) {
     const sent = await notify(
-      `Playback check failed: ${summary}`,
+      `Download & playback check failed: ${summary}`,
       `${TEST_MOVIE_LABEL}\n\n${detail}\n\nRan in ${Math.round(durationMs / 1000)}s.`
     );
     if (sent) {

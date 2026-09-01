@@ -173,16 +173,19 @@ export default async function AdminFeaturesPage() {
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6 space-y-6">
           <ServicesPanel services={services} />
           <TestAlertButton configured={isNotifyConfigured()} />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Playback check</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PlaybackCheckPanel runs={playbackCheckRuns} />
+          {/* Same section, not its own -- this is itself a health check (the
+              one real end-to-end signal: request a title, wait for it to
+              actually download, then exercise real playback), so it belongs
+              alongside the rest of Services rather than off on its own. */}
+          <div className="border-t border-white/10 pt-5">
+            <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
+              Download &amp; playback check
+            </h3>
+            <PlaybackCheckPanel runs={playbackCheckRuns} />
+          </div>
         </div>
       </section>
 
