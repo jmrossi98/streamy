@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type { DownloadProtocol } from "@/lib/radarr";
 import { formatFileSize } from "@/lib/formatBytes";
 
@@ -84,6 +84,12 @@ const BRIDGE_GRACE_MS = 20_000;
 
 export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const router = useRouter();
+  // The panel already polls every REFRESH_INTERVAL_MS (below) -- this is for
+  // the gap right after taking an action somewhere the poll doesn't cover
+  // (e.g. cancelling directly in Radarr/Sonarr instead of from here), where
+  // sitting on stale data for up to the full interval read as "I need to
+  // reload the page" even though a refresh was always only moments away.
+  const [refreshing, startRefresh] = useTransition();
   const [managingKey, setManagingKey] = useState<string | null>(null);
   // Rows the viewer just cancelled/deleted, hidden immediately rather than
   // waiting for the server round trip + a fresh page render to catch up.
@@ -151,10 +157,6 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     return () => clearInterval(interval);
   }, [router]);
 
-  if (downloads.length === 0) {
-    return <p className="text-white/50 text-sm">Nothing downloading right now.</p>;
-  }
-
   async function handleManage(d: DownloadRow) {
     const key = rowKey(d);
     const action = d.completed ? "delete" : "cancel";
@@ -197,75 +199,101 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     }
   }
 
-  if (visibleDownloads.length === 0) {
-    return <p className="text-white/50 text-sm">Nothing downloading right now.</p>;
-  }
-
   return (
-    <ul
-      className="space-y-3 overflow-y-auto pr-1"
-      style={{ maxHeight: visibleDownloads.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
-    >
-      {visibleDownloads.map((d) => {
-        const key = rowKey(d);
-        const isManaging = managingKey === key;
-        return (
-          <li key={key} className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="text-white/90 truncate">{d.title}</span>
-                {d.protocol && d.protocol !== "unknown" && (
-                  <span
-                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                      d.protocol === "usenet"
-                        ? "bg-sky-500/15 text-sky-300"
-                        : "bg-emerald-500/15 text-emerald-300"
-                    }`}
-                  >
-                    {d.protocol === "usenet" ? "Usenet" : "Torrent"}
+    <div>
+      <div className="mb-3 flex justify-end">
+        <button
+          type="button"
+          onClick={() => startRefresh(() => router.refresh())}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-white/50 hover:text-white disabled:opacity-50"
+        >
+          <svg
+            className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      {visibleDownloads.length === 0 ? (
+        <p className="text-white/50 text-sm">Nothing downloading right now.</p>
+      ) : (
+        <ul
+          className="space-y-3 overflow-y-auto pr-1"
+          style={{ maxHeight: visibleDownloads.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
+        >
+          {visibleDownloads.map((d) => {
+            const key = rowKey(d);
+            const isManaging = managingKey === key;
+            return (
+              <li key={key} className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="text-white/90 truncate">{d.title}</span>
+                    {d.protocol && d.protocol !== "unknown" && (
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                          d.protocol === "usenet"
+                            ? "bg-sky-500/15 text-sky-300"
+                            : "bg-emerald-500/15 text-emerald-300"
+                        }`}
+                      >
+                        {d.protocol === "usenet" ? "Usenet" : "Torrent"}
+                      </span>
+                    )}
+                    {formatFileSize(d.sizeBytes) && (
+                      <span className="shrink-0 text-xs tabular-nums text-white/40">
+                        {formatFileSize(d.sizeBytes)}
+                      </span>
+                    )}
                   </span>
-                )}
-                {formatFileSize(d.sizeBytes) && (
-                  <span className="shrink-0 text-xs tabular-nums text-white/40">
-                    {formatFileSize(d.sizeBytes)}
-                  </span>
-                )}
-              </span>
-              <div className="flex shrink-0 items-center gap-3">
-                <span className="text-white/50 tabular-nums">
-                  {d.completed
-                    ? "Downloaded"
-                    : d.searching
-                      ? "Searching…"
-                      : d.progress != null
-                        ? `${d.progress}%`
-                        : "metadata…"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleManage(d)}
-                  disabled={isManaging}
-                  className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
-                >
-                  {isManaging ? "…" : d.completed ? "Delete" : "Cancel"}
-                </button>
-              </div>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-              {d.completed ? (
-                <div className="h-full w-full rounded-full bg-netflix-red" />
-              ) : d.progress != null ? (
-                <div
-                  className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
-                  style={{ width: `${d.progress}%` }}
-                />
-              ) : (
-                <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="text-white/50 tabular-nums">
+                      {d.completed
+                        ? "Downloaded"
+                        : d.searching
+                          ? "Searching…"
+                          : d.progress != null
+                            ? `${d.progress}%`
+                            : "metadata…"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleManage(d)}
+                      disabled={isManaging}
+                      className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
+                    >
+                      {isManaging ? "…" : d.completed ? "Delete" : "Cancel"}
+                    </button>
+                  </div>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  {d.completed ? (
+                    <div className="h-full w-full rounded-full bg-netflix-red" />
+                  ) : d.progress != null ? (
+                    <div
+                      className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
+                      style={{ width: `${d.progress}%` }}
+                    />
+                  ) : (
+                    <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
