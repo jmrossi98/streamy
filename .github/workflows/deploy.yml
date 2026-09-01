@@ -95,7 +95,22 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=max exports every intermediate layer of every stage, not just
+          # what the final image needs -- for a straightforward two-stage
+          # builder->runner Dockerfile like this one (a direct COPY --from
+          # chain, no throwaway stages), that meant re-uploading the entire
+          # builder stage's node_modules layer (700MB+) to the GHA cache
+          # backend on nearly every build regardless of whether its content
+          # had actually changed. Confirmed live: "sending cache export" and
+          # several individual "writing layer" steps together accounted for
+          # 70-95s of a ~100-140s build -- most of the job. mode=min still
+          # caches every layer that's genuinely an ancestor of the final
+          # image (which is all of them here, since node_modules/.prisma,
+          # @prisma, and prisma are subdirectories of that same builder
+          # layer) -- it only stops re-exporting the extra per-stage cache
+          # manifests mode=max adds on top, which is where the actual growth
+          # was coming from.
+          cache-to: type=gha,mode=min
           # Middleware (Edge) bakes NEXTAUTH_* at build — must match runtime .env or sessions break.
           build-args: |
             NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
