@@ -51,6 +51,11 @@ export type Movie = {
   rating: number;
   duration: string;
   genres: string[];
+  /** TMDB's own relevance/popularity score. Optional -- only threaded
+   *  through by callers that need to rank movies against shows (search); a
+   *  row-listing endpoint that never mixes media types has no reason to
+   *  carry it. */
+  popularity?: number;
 };
 
 export type WatchProviderItem = {
@@ -129,6 +134,7 @@ type TmdbMovieResult = {
   release_date?: string;
   vote_average: number;
   genre_ids?: number[];
+  popularity?: number;
 };
 
 export type TmdbGenre = { id: number; name: string };
@@ -185,6 +191,7 @@ function toMovie(r: TmdbMovieResult, genres: TmdbGenre[]): Movie {
     rating: Math.round(r.vote_average * 10) / 10,
     duration: "", // filled in detail
     genres: genreNames,
+    popularity: r.popularity,
   };
 }
 
@@ -305,6 +312,8 @@ export type TVShow = {
   year: string;
   rating: number;
   genres: string[];
+  /** See Movie.popularity -- same rationale. */
+  popularity?: number;
 };
 
 export type TVSeason = {
@@ -333,6 +342,7 @@ type TmdbTVResult = {
   first_air_date?: string;
   vote_average: number;
   genre_ids?: number[];
+  popularity?: number;
 };
 
 export type TmdbGenreTV = { id: number; name: string };
@@ -365,6 +375,7 @@ function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
     year,
     rating: Math.round(r.vote_average * 10) / 10,
     genres: genreNames,
+    popularity: r.popularity,
   };
 }
 
@@ -482,6 +493,28 @@ export async function searchTVShows(query: string, limit = 12, page = 1): Promis
         { revalidate: SEARCH_CACHE_REVALIDATE }
       )()
   );
+}
+
+export type SearchResultItem =
+  | (Movie & { mediaType: "movie" })
+  | (TVShow & { mediaType: "show" });
+
+/**
+ * One mixed, popularity-ranked list rather than "every movie, then every
+ * show" -- that grouping buried a highly relevant show below a page of
+ * lower-relevance movies purely because of which media type it was. TMDB's
+ * own search results aren't popularity-sorted (its relevance ranking
+ * factors in title-match quality, which discover/multi's ranking would lose
+ * -- deliberately still calling search/movie and search/tv separately, not
+ * switching endpoints), so sorting the two lists together here keeps that
+ * per-type relevance ordering as the tiebreak while still surfacing the
+ * more popular title first across types.
+ */
+export function mergeSearchResults(movies: Movie[], shows: TVShow[]): SearchResultItem[] {
+  return [
+    ...movies.map((m): SearchResultItem => ({ ...m, mediaType: "movie" })),
+    ...shows.map((s): SearchResultItem => ({ ...s, mediaType: "show" })),
+  ].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
 }
 
 export async function getTrendingTV(limit = 10): Promise<TVShow[]> {

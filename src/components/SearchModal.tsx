@@ -4,15 +4,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
-import type { Movie, TVShow } from "@/lib/tmdb";
+import type { SearchResultItem } from "@/lib/tmdb";
 
 type SearchModalProps = { open: boolean; onClose: () => void };
 
 export function SearchModal({ open, onClose }: SearchModalProps) {
   const [mounted, setMounted] = useState(false);
   const [query, setQuery] = useState("");
-  const [movies, setMovies] = useState<Movie[]>([]);
-  const [shows, setShows] = useState<TVShow[]>([]);
+  // One mixed, popularity-ranked list -- see the API route for why this
+  // isn't movies-then-shows anymore. Each page is sorted server-side within
+  // itself; "load more" appends a page rather than re-sorting the whole
+  // list, so results already on screen don't reshuffle under the viewer.
+  const [results, setResults] = useState<SearchResultItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -22,8 +25,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
   const search = useCallback(async (q: string, pageNum: number = 1, append: boolean = false) => {
     if (!q.trim()) {
       if (!append) {
-        setMovies([]);
-        setShows([]);
+        setResults([]);
         setHasMore(false);
       }
       return;
@@ -35,21 +37,14 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
         `/api/search?q=${encodeURIComponent(q)}&page=${pageNum}`
       );
       const data = await res.json();
-      const nextMovies = Array.isArray(data.movies) ? data.movies : [];
-      const nextShows = Array.isArray(data.shows) ? data.shows : [];
-      if (append) {
-        setMovies((prev) => [...prev, ...nextMovies]);
-        setShows((prev) => [...prev, ...nextShows]);
-      } else {
-        setMovies(nextMovies);
-        setShows(nextShows);
-      }
+      const next: SearchResultItem[] = Array.isArray(data.results) ? data.results : [];
+      if (append) setResults((prev) => [...prev, ...next]);
+      else setResults(next);
       setHasMore(!!data.hasMore);
       setPage(pageNum);
     } catch {
       if (!append) {
-        setMovies([]);
-        setShows([]);
+        setResults([]);
         setHasMore(false);
       }
     } finally {
@@ -67,16 +62,14 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
     if (!open) return;
     inputRef.current?.focus();
     setQuery("");
-    setMovies([]);
-    setShows([]);
+    setResults([]);
     setHasMore(false);
     setPage(1);
   }, [open]);
 
   useEffect(() => {
     if (!query.trim()) {
-      setMovies([]);
-      setShows([]);
+      setResults([]);
       setHasMore(false);
       return;
     }
@@ -105,7 +98,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
 
   if (!open || !mounted) return null;
 
-  const hasResults = movies.length > 0 || shows.length > 0;
+  const hasResults = results.length > 0;
 
   /* Portal to body: modal was inside <header class="z-50">, so z-[100] was trapped and painted under <main>. */
   return createPortal(
@@ -152,40 +145,41 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
             {!loading && hasResults && (
               <>
                 <ul className="py-2">
-                  {movies.map((movie) => (
-                    <li key={`m-${movie.id}`}>
-                      <Link
-                        href={`/watch/${movie.id}`}
-                        onClick={onClose}
-                        className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
-                      >
-                        <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
-                          <Image src={movie.poster} alt="" fill className="object-cover" sizes="64px" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-white font-medium truncate">{movie.title}</p>
-                          <p className="text-white/60 text-sm">{movie.year} · Movie</p>
-                        </div>
-                      </Link>
-                    </li>
-                  ))}
-                  {shows.map((show) => (
-                    <li key={`s-${show.id}`}>
-                      <Link
-                        href={`/show/${show.id}`}
-                        onClick={onClose}
-                        className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
-                      >
-                        <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
-                          <Image src={show.poster} alt="" fill className="object-cover" sizes="64px" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-white font-medium truncate">{show.name}</p>
-                          <p className="text-white/60 text-sm">{show.year} · TV Show</p>
-                        </div>
-                      </Link>
-                    </li>
-                  ))}
+                  {results.map((item) =>
+                    item.mediaType === "movie" ? (
+                      <li key={`m-${item.id}`}>
+                        <Link
+                          href={`/watch/${item.id}`}
+                          onClick={onClose}
+                          className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
+                        >
+                          <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
+                            <Image src={item.poster} alt="" fill className="object-cover" sizes="64px" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-white font-medium truncate">{item.title}</p>
+                            <p className="text-white/60 text-sm">{item.year} · Movie</p>
+                          </div>
+                        </Link>
+                      </li>
+                    ) : (
+                      <li key={`s-${item.id}`}>
+                        <Link
+                          href={`/show/${item.id}`}
+                          onClick={onClose}
+                          className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
+                        >
+                          <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
+                            <Image src={item.poster} alt="" fill className="object-cover" sizes="64px" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-white font-medium truncate">{item.name}</p>
+                            <p className="text-white/60 text-sm">{item.year} · TV Show</p>
+                          </div>
+                        </Link>
+                      </li>
+                    )
+                  )}
                 </ul>
                 {hasMore && (
                   <div className="p-3 border-t border-white/10">
