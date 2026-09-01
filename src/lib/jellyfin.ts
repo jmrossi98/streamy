@@ -14,14 +14,23 @@
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
+// Streamy talks to Jellyfin as one shared service account (JELLYFIN_API_KEY),
+// not per-viewer -- there's no Jellyfin login tied to any individual Streamy
+// profile. Progress sync (below) needs a concrete Jellyfin user to read/write
+// UserData against, so it's addressed explicitly rather than guessed at (the
+// account the household's Roku app(s) actually sign into -- confirmed live,
+// this box only has one Jellyfin user at all). Unset means sync is simply
+// skipped, same fail-closed posture as every other optional integration here.
+const JELLYFIN_USER_ID = process.env.JELLYFIN_USER_ID;
 
 export function isJellyfinConfigured(): boolean {
   return !!(JELLYFIN_URL && JELLYFIN_API_KEY);
 }
 
-async function jellyfinFetch<T>(path: string): Promise<T> {
+async function jellyfinFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${JELLYFIN_URL}${path}`, {
-    headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    ...init,
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY!, ...(init?.headers ?? {}) },
     // Library contents change as downloads land; never serve a stale "not
     // available yet" answer from Next's fetch cache.
     cache: "no-store",
@@ -29,7 +38,8 @@ async function jellyfinFetch<T>(path: string): Promise<T> {
   if (!res.ok) {
     throw new Error(`Jellyfin API error: ${res.status}`);
   }
-  return res.json();
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export type JellyfinItem = {
@@ -391,5 +401,54 @@ export async function stopJellyfinTranscode(playSessionId: string): Promise<void
     );
   } catch (err) {
     console.error(`[jellyfin] stopJellyfinTranscode failed for session ${playSessionId}:`, err);
+  }
+}
+
+// Jellyfin stores position as 100ns "ticks" -- its own long-standing unit,
+// shared with .NET's TimeSpan. 10,000,000 ticks per second.
+const TICKS_PER_SECOND = 10_000_000;
+
+/**
+ * Reads how far the shared Jellyfin account (JELLYFIN_USER_ID -- e.g. the
+ * household's Roku app) has gotten into a title, so a Streamy web session
+ * can resume from there instead of restarting something already watched
+ * further on the Roku app. Null whenever there's nothing to report: sync
+ * unconfigured, never played, or the lookup itself fails -- callers just
+ * fall back to Streamy's own stored progress in every one of those cases.
+ */
+export async function getJellyfinPlaybackPositionSeconds(itemId: string): Promise<number | null> {
+  if (!isJellyfinConfigured() || !JELLYFIN_USER_ID) return null;
+  try {
+    const data = await jellyfinFetch<{ PlaybackPositionTicks?: number; Played?: boolean }>(
+      `/UserItems/${itemId}/UserData?userId=${JELLYFIN_USER_ID}`
+    );
+    // A fully-played item's position ticks are reset to 0 once Played flips
+    // true -- reporting that as "resume at 0" would be worse than not
+    // syncing at all (it would restart something already finished).
+    if (data.Played || !data.PlaybackPositionTicks) return null;
+    return Math.floor(data.PlaybackPositionTicks / TICKS_PER_SECOND);
+  } catch (err) {
+    console.error(`[jellyfin] getJellyfinPlaybackPositionSeconds failed for item ${itemId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Writes Streamy's own saved progress back to the shared Jellyfin account,
+ * so a later Roku session picks up where a Streamy web session left off --
+ * the other half of the sync getJellyfinPlaybackPositionSeconds reads.
+ * Fire-and-forget from callers (saveProgress already is): a failure here
+ * shouldn't affect Streamy's own, already-saved progress.
+ */
+export async function setJellyfinPlaybackPositionSeconds(itemId: string, seconds: number): Promise<void> {
+  if (!isJellyfinConfigured() || !JELLYFIN_USER_ID || seconds < 0) return;
+  try {
+    await jellyfinFetch(`/UserItems/${itemId}/UserData?userId=${JELLYFIN_USER_ID}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ PlaybackPositionTicks: Math.floor(seconds * TICKS_PER_SECOND) }),
+    });
+  } catch (err) {
+    console.error(`[jellyfin] setJellyfinPlaybackPositionSeconds failed for item ${itemId}:`, err);
   }
 }

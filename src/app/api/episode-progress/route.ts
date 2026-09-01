@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { findJellyfinEpisodeItemId, setJellyfinPlaybackPositionSeconds } from "@/lib/jellyfin";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -63,5 +64,11 @@ export async function POST(request: Request) {
     update: { progressSeconds: sec },
   });
   revalidatePath("/");
+  // Fire-and-forget -- see the movie progress route for the rationale.
+  findJellyfinEpisodeItemId(showId.trim(), seasonNumber, episodeNumber)
+    .then((itemId) => {
+      if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, sec);
+    })
+    .catch(() => {});
   return NextResponse.json({ saved: true });
 }
