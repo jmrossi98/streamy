@@ -452,3 +452,56 @@ export async function setJellyfinPlaybackPositionSeconds(itemId: string, seconds
     console.error(`[jellyfin] setJellyfinPlaybackPositionSeconds failed for item ${itemId}:`, err);
   }
 }
+
+/**
+ * When the "Scan Media Library" scheduled task last completed, straight from
+ * Jellyfin's own /ScheduledTasks -- confirmed live against the real server
+ * (Key: "RefreshLibrary", on a 12h IntervalTrigger; requestJellyfinLibraryScan
+ * above triggers extra ad-hoc runs on top of that, so in practice it's
+ * usually more recent than 12h). Null on any failure -- unconfigured,
+ * unreachable, or the task genuinely missing from this Jellyfin version --
+ * so the health check can report "unknown" rather than a false "down".
+ */
+export async function getJellyfinLibraryScanStatus(): Promise<{
+  lastCompletedAt: Date | null;
+  running: boolean;
+} | null> {
+  if (!isJellyfinConfigured()) return null;
+  try {
+    const tasks = await jellyfinFetch<
+      { Key: string; State: string; LastExecutionResult?: { EndTimeUtc?: string; Status?: string } }[]
+    >("/ScheduledTasks");
+    const task = tasks.find((t) => t.Key === "RefreshLibrary");
+    if (!task) return null;
+    const completed = task.LastExecutionResult?.Status === "Completed";
+    return {
+      lastCompletedAt:
+        completed && task.LastExecutionResult?.EndTimeUtc ? new Date(task.LastExecutionResult.EndTimeUtc) : null,
+      running: task.State === "Running",
+    };
+  } catch (err) {
+    console.error("[jellyfin] getJellyfinLibraryScanStatus failed:", err);
+    return null;
+  }
+}
+
+/**
+ * How many of Jellyfin's active sessions are currently transcoding, as a
+ * proxy for GPU load on the mediabox's 1050 Ti -- there's no direct GPU
+ * metrics exporter running there, but every transcode is NVENC work on that
+ * one card, so this session count is a faithful stand-in without needing to
+ * add one. TranscodingInfo is only present on a session actively
+ * transcoding (confirmed against Jellyfin's documented session shape --
+ * absent on idle/direct-play sessions, both seen live). Null on failure, not
+ * 0, so "nothing transcoding" and "couldn't check" stay distinguishable.
+ */
+export async function getJellyfinActiveTranscodeCount(): Promise<number | null> {
+  if (!isJellyfinConfigured()) return null;
+  try {
+    const sessions = await jellyfinFetch<{ TranscodingInfo?: unknown }[]>("/Sessions");
+    return sessions.filter((s) => s.TranscodingInfo != null).length;
+  } catch (err) {
+    console.error("[jellyfin] getJellyfinActiveTranscodeCount failed:", err);
+    return null;
+  }
+}

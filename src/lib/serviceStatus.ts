@@ -11,7 +11,11 @@
 
 import { isRadarrConfigured, getRadarrHealthIssues, getRadarrStuckImports } from "./radarr";
 import { isSonarrConfigured, getSonarrHealthIssues, getSonarrStuckImports } from "./sonarr";
-import { isJellyfinConfigured } from "./jellyfin";
+import {
+  isJellyfinConfigured,
+  getJellyfinLibraryScanStatus,
+  getJellyfinActiveTranscodeCount,
+} from "./jellyfin";
 import { isQbittorrentConfigured } from "./qbittorrent";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
 import { isWebSearchConfigured } from "./webSearch";
@@ -433,6 +437,53 @@ async function databaseStatus(): Promise<ServiceStatus> {
   }
 }
 
+// The "Scan Media Library" task's own IntervalTrigger is 12h (confirmed live
+// against /ScheduledTasks); requestJellyfinLibraryScan also fires extra ad-hoc
+// runs on top of that whenever a title comes up missing, so in practice a
+// healthy setup scans far more often than this. Generous grace on top of the
+// scheduled interval before calling it stale, so this doesn't flag red for a
+// perfectly normal gap between scheduled runs.
+const LIBRARY_SCAN_STALE_MS = 16 * 60 * 60 * 1000;
+
+/** Catches "Radarr/Sonarr say it's downloaded, but Jellyfin hasn't scanned it in yet" before a viewer does. */
+async function libraryScanStatus(): Promise<ServiceStatus> {
+  const name = "Library scan";
+  if (!isJellyfinConfigured()) return { name, group: SYSTEM, state: "unconfigured", detail: "Jellyfin not configured" };
+  const result = await getJellyfinLibraryScanStatus();
+  if (!result) return { name, group: SYSTEM, state: "unknown", detail: "couldn't reach Jellyfin" };
+  if (result.running) return { name, group: SYSTEM, state: "up", detail: "scanning now" };
+  if (!result.lastCompletedAt) return { name, group: SYSTEM, state: "unknown", detail: "never completed" };
+  const ageMs = Date.now() - result.lastCompletedAt.getTime();
+  const ageHrs = (ageMs / 3_600_000).toFixed(1);
+  return {
+    name,
+    group: SYSTEM,
+    state: ageMs > LIBRARY_SCAN_STALE_MS ? "down" : "up",
+    detail: `last completed ${ageHrs}h ago`,
+  };
+}
+
+/**
+ * Active transcode count, as a proxy for whether the mediabox's one GPU
+ * (1050 Ti) is what's making playback feel slow right now, rather than a
+ * per-title bug. Purely informational (always "up" when the count itself
+ * was readable) -- the card's real concurrent-NVENC-session ceiling isn't
+ * verified for this specific driver/setup, so asserting a "down" threshold
+ * here would be a guess dressed up as a health verdict.
+ */
+async function transcodeLoadStatus(): Promise<ServiceStatus> {
+  const name = "Transcode load";
+  if (!isJellyfinConfigured()) return { name, group: SYSTEM, state: "unconfigured", detail: "Jellyfin not configured" };
+  const count = await getJellyfinActiveTranscodeCount();
+  if (count == null) return { name, group: SYSTEM, state: "unknown", detail: "couldn't reach Jellyfin" };
+  return {
+    name,
+    group: SYSTEM,
+    state: "up",
+    detail: count === 0 ? "idle" : `${count} active transcode${count === 1 ? "" : "s"}`,
+  };
+}
+
 /** Email alerting wiring -- presence only; a live send would spam a real topic. */
 /**
  * VPN egress for the tour watcher: is its traffic actually leaving through the
@@ -490,6 +541,135 @@ async function tourWatchStatus(): Promise<ServiceStatus> {
   }
 }
 
+// Litestream ships a snapshot at most every 24h (litestream.yml's own
+// snapshot-interval) plus near-continuous WAL segments in between. A quiet
+// site can legitimately go a while with no *new* WAL segment (no writes
+// happened), so this deliberately doesn't treat "no recent object" as
+// failure on its own -- only past the daily-snapshot cadence plus grace,
+// which means even the scheduled snapshot itself failed to land.
+const BACKUP_STALE_MS = 26 * 60 * 60 * 1000;
+
+/**
+ * Freshness of the Litestream → S3 backup, by the most recently modified
+ * object in the bucket -- not Litestream's own metrics (0.3 doesn't expose a
+ * metrics port in this deployment, and there's no other way to reach the
+ * sidecar container from here), and not guessing at its internal S3 key
+ * layout (generations/segments/snapshots) beyond "some object under this
+ * bucket got written recently". Read-only ListObjectsV2 against the same
+ * bucket + credentials Litestream itself already writes with -- see
+ * litestream.yml.
+ */
+async function backupStatus(): Promise<ServiceStatus> {
+  const name = "Backup (Litestream)";
+  const bucket = process.env.LITESTREAM_BUCKET;
+  const accessKeyId = process.env.LITESTREAM_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.LITESTREAM_SECRET_ACCESS_KEY;
+  if (!bucket || !accessKeyId || !secretAccessKey) {
+    return { name, group: SYSTEM, state: "unconfigured", detail: "No LITESTREAM_* set" };
+  }
+  try {
+    // Imported lazily, matching notify.ts's SNS client: the SDK is only
+    // needed when the backup itself is actually configured.
+    const { S3Client, ListObjectsV2Command } = await import("@aws-sdk/client-s3");
+    const client = new S3Client({
+      region: process.env.AWS_REGION ?? "us-east-1",
+      credentials: { accessKeyId, secretAccessKey },
+    });
+    let newest: Date | null = null;
+    let token: string | undefined;
+    // Small bucket ("well under a megabyte" per litestream.yml), but paginate
+    // anyway rather than assume it stays that way -- the newest object could
+    // be on any page depending on S3's listing order.
+    do {
+      const page = await client.send(
+        new ListObjectsV2Command({ Bucket: bucket, ContinuationToken: token, MaxKeys: 1000 })
+      );
+      for (const obj of page.Contents ?? []) {
+        if (obj.LastModified && (!newest || obj.LastModified > newest)) newest = obj.LastModified;
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+
+    if (!newest) return { name, group: SYSTEM, state: "down", detail: "bucket is empty" };
+    const ageMs = Date.now() - newest.getTime();
+    const ageHrs = (ageMs / 3_600_000).toFixed(1);
+    return {
+      name,
+      group: SYSTEM,
+      state: ageMs > BACKUP_STALE_MS ? "down" : "up",
+      detail: `newest object ${ageHrs}h ago`,
+    };
+  } catch (err) {
+    return { name, group: SYSTEM, state: "unknown", detail: err instanceof Error ? err.message : "check failed" };
+  }
+}
+
+/**
+ * Month-to-date AWS spend against a fixed dollar ceiling, via Cost Explorer.
+ * No baked-in default threshold -- this account's actual expected spend
+ * isn't something to guess at, so the check stays "unconfigured" (not a
+ * false "down") until AWS_COST_ALERT_THRESHOLD_USD is set deliberately.
+ *
+ * Needs its own IAM permission: ce:GetCostAndUsage, which the existing
+ * alerting credential (secrets.ALERT_AWS_ACCESS_KEY_ID/SECRET, written into
+ * the container's real env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY --
+ * see deploy.yml -- and scoped to sns:Publish only, per .env.example) does
+ * NOT have -- add it to that same IAM user's policy rather than minting a
+ * new credential pair for one read-only call. Cost Explorer must also be
+ * enabled once for the account (AWS Console -> Billing -> Cost Explorer)
+ * before this API answers at all; unconfigured/unknown either way until
+ * both are done, never a false failure.
+ */
+async function awsCostStatus(): Promise<ServiceStatus> {
+  const name = "AWS spend";
+  const thresholdStr = process.env.AWS_COST_ALERT_THRESHOLD_USD;
+  const threshold = thresholdStr ? Number(thresholdStr) : NaN;
+  if (!thresholdStr || Number.isNaN(threshold)) {
+    return { name, group: SYSTEM, state: "unconfigured", detail: "No AWS_COST_ALERT_THRESHOLD_USD set" };
+  }
+  const accessKeyId = process.env.ALERT_AWS_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.ALERT_AWS_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
+  if (!accessKeyId || !secretAccessKey) {
+    return { name, group: SYSTEM, state: "unconfigured", detail: "No AWS credentials available" };
+  }
+  try {
+    // Imported lazily, matching notify.ts's SNS client.
+    const { CostExplorerClient, GetCostAndUsageCommand } = await import("@aws-sdk/client-cost-explorer");
+    // Cost Explorer is us-east-1 only, regardless of where the resources
+    // themselves live -- it's a billing-account-wide, not per-region, API.
+    const client = new CostExplorerClient({ region: "us-east-1", credentials: { accessKeyId, secretAccessKey } });
+    const now = new Date();
+    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const tomorrow = new Date(now.getTime() + 24 * 3_600_000);
+    // TimePeriod.End must be strictly after Start and is exclusive -- a
+    // Start=End=today request (asking for "today alone") is rejected by the
+    // API, confirmed against Cost Explorer's own documented constraints.
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const result = await client.send(
+      new GetCostAndUsageCommand({
+        TimePeriod: { Start: iso(startOfMonth), End: iso(tomorrow) },
+        Granularity: "MONTHLY",
+        Metrics: ["UnblendedCost"],
+      })
+    );
+    const mtd = result.ResultsByTime?.reduce(
+      (sum, r) => sum + Number(r.Total?.UnblendedCost?.Amount ?? 0),
+      0
+    );
+    if (mtd == null || Number.isNaN(mtd)) {
+      return { name, group: SYSTEM, state: "unknown", detail: "no cost data returned" };
+    }
+    return {
+      name,
+      group: SYSTEM,
+      state: mtd > threshold ? "down" : "up",
+      detail: `$${mtd.toFixed(2)} MTD (ceiling $${threshold.toFixed(2)})`,
+    };
+  } catch (err) {
+    return { name, group: SYSTEM, state: "unknown", detail: err instanceof Error ? err.message : "check failed" };
+  }
+}
+
 export async function getServiceStatuses(): Promise<ServiceStatus[]> {
   const [
     radarr,
@@ -508,6 +688,10 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     egress,
     radarrIntegrations,
     sonarrIntegrations,
+    libraryScan,
+    transcodeLoad,
+    backup,
+    awsCost,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -532,6 +716,10 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     egressStatus(),
     arrIntegrationStatus("Radarr", isRadarrConfigured(), getRadarrHealthIssues, getRadarrStuckImports),
     arrIntegrationStatus("Sonarr", isSonarrConfigured(), getSonarrHealthIssues, getSonarrStuckImports),
+    libraryScanStatus(),
+    transcodeLoadStatus(),
+    backupStatus(),
+    awsCostStatus(),
   ]);
 
   return [
@@ -548,6 +736,10 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     disk,
     tls,
     database,
+    backup,
+    awsCost,
+    libraryScan,
+    transcodeLoad,
     blogToken,
     geoip,
     tourWatch,
