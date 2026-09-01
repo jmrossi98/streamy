@@ -2,7 +2,12 @@ import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason } from "@/lib/tmdb";
-import { findJellyfinEpisodeItemId, getJellyfinSubtitleTracks, needsForcedTranscode } from "@/lib/jellyfin";
+import {
+  findJellyfinEpisodeItemId,
+  getJellyfinPlaybackPositionSeconds,
+  getJellyfinSubtitleTracks,
+  needsForcedTranscode,
+} from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 
 type Props = {
@@ -47,7 +52,11 @@ export default async function EpisodeWatchPage({ params }: Props) {
     ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId)])
     : [null, false];
 
-  const initialProgressSeconds = progressRow?.progressSeconds ?? 0;
+  // Furthest-along wins -- see the movie watch page for the rationale.
+  const jellyfinProgressSeconds = jellyfinItemId
+    ? await getJellyfinPlaybackPositionSeconds(jellyfinItemId)
+    : null;
+  const initialProgressSeconds = Math.max(progressRow?.progressSeconds ?? 0, jellyfinProgressSeconds ?? 0);
 
   const currentIndex = season.episodes.findIndex((e) => e.episodeNumber === episodeNum);
   let nextEpisodeHref: string | null = null;
