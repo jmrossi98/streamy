@@ -3,16 +3,23 @@ export type StorageChartProps = {
   freeSpace: number;
   moviesSize: number;
   tvSize: number;
+  /** Optional: omitted (not 0) when gamarr isn't configured, same as the
+   *  other three genuinely can be zero without meaning "no data". */
+  gamesSize?: number;
 };
 
-// Categorical slots 1/2/3 for the three content types, validated against this
-// chart's dark surface (#141414) with the dataviz validator: lightness band,
-// chroma floor, adjacent-pair CVD separation, normal-vision floor and contrast
-// all pass. Free space is deliberately NOT categorical -- it's the absence of
-// data rather than a series, so it stays a neutral surface-adjacent gray.
+// Categorical slots for each content type, validated against this chart's
+// dark surface (#141414) with the dataviz validator: lightness band, chroma
+// floor, adjacent-pair CVD separation, normal-vision floor and contrast all
+// pass. Games' magenta sits at a distinct hue from all three neighbors
+// (blue/orange/green), so it stays separable from every existing slice, not
+// just the one next to it. Free space is deliberately NOT categorical --
+// it's the absence of data rather than a series, so it stays a neutral
+// surface-adjacent gray.
 const COLORS = {
   movies: "#3987e5",
   tv: "#d95926",
+  games: "#c026d3",
   other: "#199e70",
   free: "#3a3a3a",
 } as const;
@@ -50,15 +57,17 @@ export function buildStorageSegments(
   totalSpace: number,
   freeSpace: number,
   moviesSize: number,
-  tvSize: number
+  tvSize: number,
+  gamesSize: number = 0
 ): { bars: StorageBar[]; used: number; usedPercent: number; usedWidth: number } {
-  const other = Math.max(totalSpace - freeSpace - moviesSize - tvSize, 0);
+  const other = Math.max(totalSpace - freeSpace - moviesSize - tvSize - gamesSize, 0);
   const used = Math.max(totalSpace - freeSpace, 0);
   const usedPercent = totalSpace > 0 ? (used / totalSpace) * 100 : 0;
 
   const bars = [
     { key: "movies", label: "Movies", value: moviesSize, color: COLORS.movies },
     { key: "tv", label: "TV Shows", value: tvSize, color: COLORS.tv },
+    { key: "games", label: "Games", value: gamesSize, color: COLORS.games },
     { key: "other", label: "Other", value: other, color: COLORS.other },
   ]
     .filter((s) => s.value > 0)
@@ -71,7 +80,13 @@ export function buildStorageSegments(
   return { bars, used, usedPercent, usedWidth };
 }
 
-export function StorageChart({ totalSpace, freeSpace, moviesSize, tvSize }: StorageChartProps) {
+export function StorageChart({
+  totalSpace,
+  freeSpace,
+  moviesSize,
+  tvSize,
+  gamesSize = 0,
+}: StorageChartProps) {
   if (!totalSpace) {
     return <p className="text-white/50 text-sm">Storage info unavailable.</p>;
   }
@@ -80,7 +95,8 @@ export function StorageChart({ totalSpace, freeSpace, moviesSize, tvSize }: Stor
     totalSpace,
     freeSpace,
     moviesSize,
-    tvSize
+    tvSize,
+    gamesSize
   );
 
   return (

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { romStemOf, romSearchTitle } from "../romNames";
+import { romStemOf, romSearchTitle, gameKeyOf } from "../romNames";
 import { decodeEntities } from "../gamarr";
 
 // romStemOf is the key an artwork override is stored under, and the whole
@@ -66,5 +66,40 @@ describe("decodeEntities", () => {
 
   it("leaves text with no entities untouched", () => {
     expect(decodeEntities("Spyro the Dragon (USA)")).toBe("Spyro the Dragon (USA)");
+  });
+});
+
+// gameKeyOf is what getGamesList() merges gamarr's wishlist, active-downloads,
+// and library-scan surfaces on -- none of which share any other common id.
+// Getting this wrong either splits one game into two rows (wishlist entry
+// never disappears once the download completes) or, worse, silently
+// collapses two different games into one.
+describe("gameKeyOf", () => {
+  it("matches the same game across gamarr's title-formatting differences", () => {
+    // The exact real-world case this exists for: Vimm's Lair result vs.
+    // gamarr's own downloads-list title for the same release.
+    expect(gameKeyOf("ps1", "Crash Bash & Spyro: Year of the Dragon (PS1)")).toBe(
+      gameKeyOf("ps1", "Crash Bash and Spyro Year of the Dragon PS1")
+    );
+  });
+
+  it("is case-insensitive and punctuation-insensitive", () => {
+    expect(gameKeyOf("psx", "Spyro the Dragon (USA)")).toBe(
+      gameKeyOf("psx", "SPYRO THE DRAGON (usa)!!!")
+    );
+  });
+
+  it("does not collapse different games with similar titles", () => {
+    expect(gameKeyOf("ps2", "DreamWorks Madagascar")).not.toBe(
+      gameKeyOf("ps2", "DreamWorks Madagascar 2")
+    );
+  });
+
+  it("treats the same title on different platforms as different games", () => {
+    expect(gameKeyOf("psx", "Spyro the Dragon")).not.toBe(gameKeyOf("ps2", "Spyro the Dragon"));
+  });
+
+  it("produces a URL-safe route segment (no slashes)", () => {
+    expect(gameKeyOf("ps2", "Ratchet & Clank / Multi5")).not.toMatch(/\//);
   });
 });

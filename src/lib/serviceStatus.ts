@@ -17,6 +17,7 @@ import {
   getJellyfinActiveTranscodeCount,
 } from "./jellyfin";
 import { isQbittorrentConfigured } from "./qbittorrent";
+import { isGamarrConfigured } from "./gamarr";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
 import { isWebSearchConfigured } from "./webSearch";
 import { connect } from "node:tls";
@@ -670,11 +671,60 @@ async function awsCostStatus(): Promise<ServiceStatus> {
   }
 }
 
+/** Basic reachability -- gamarr's own /api/health, no API key involved. */
+async function gamarrStatus(): Promise<ServiceStatus> {
+  const group = "Downloads" as const;
+  if (!isGamarrConfigured()) {
+    return { name: "gamarr", group, state: "unconfigured", detail: "Not configured" };
+  }
+  const res = await probe(`${env("GAMARR_URL")}/api/health`);
+  if (!res.ok) {
+    return { name: "gamarr", group, state: "down", detail: res.error ?? `HTTP ${res.status}` };
+  }
+  const version = (res.json as { version?: string } | undefined)?.version;
+  return { name: "gamarr", group, state: "up", detail: version ? `v${version}` : "reachable" };
+}
+
+/**
+ * gamarr's self-reported health for its own configured sources (Prowlarr,
+ * Myrient, Vimm's) -- same spirit as arrIntegrationStatus above (Radarr's
+ * own health check can see things Streamy's mere reachability probe can't,
+ * like one indexer's circuit breaker having tripped). /api/sources/health
+ * returns `{ sources: {} }` when nothing has tripped; entries only appear
+ * once something has -- the endpoint reports problems, not a full roster, so
+ * an empty object is read as "no known issues" rather than "no sources
+ * configured" (that distinction already comes from gamarrStatus above).
+ */
+async function gamarrSourcesStatus(): Promise<ServiceStatus> {
+  const group = "Downloads" as const;
+  const label = "gamarr sources";
+  if (!isGamarrConfigured()) {
+    return { name: label, group, state: "unconfigured", detail: "Not configured" };
+  }
+  const res = await probe(`${env("GAMARR_URL")}/api/sources/health`);
+  if (!res.ok) {
+    return { name: label, group, state: "unknown", detail: res.error ?? `HTTP ${res.status}` };
+  }
+  const sources = (res.json as { sources?: Record<string, unknown> } | undefined)?.sources ?? {};
+  const names = Object.keys(sources);
+  if (names.length === 0) {
+    return { name: label, group, state: "up", detail: "all sources healthy" };
+  }
+  return {
+    name: label,
+    group,
+    state: "down",
+    detail: `${names.length} source${names.length > 1 ? "s" : ""} degraded: ${names.join(", ")}`,
+  };
+}
+
 export async function getServiceStatuses(): Promise<ServiceStatus[]> {
   const [
     radarr,
     sonarr,
     prowlarr,
+    gamarr,
+    gamarrSources,
     jellyfin,
     downloads,
     ollama,
@@ -703,6 +753,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
       !!env("PROWLARR_URL") && !!process.env.PROWLARR_API_KEY,
       "v1"
     ),
+    gamarrStatus(),
+    gamarrSourcesStatus(),
     jellyfinStatus(),
     qbittorrentStatus(),
     ollamaServiceStatus(),
@@ -730,6 +782,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     radarrIntegrations,
     sonarrIntegrations,
     prowlarr,
+    gamarr,
+    gamarrSources,
     ollama,
     searxng,
     // System group, in rough order of "how loudly does this failing matter".

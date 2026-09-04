@@ -11,6 +11,7 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/movies", label: "Movies" },
   { href: "/tv", label: "TV Shows" },
+  { href: "/games", label: "Games", adminOnly: true },
   { href: "/watchlist", label: "My List", authOnly: true },
 ];
 
@@ -106,6 +107,7 @@ export function Navbar() {
             <div className="hidden md:flex items-center gap-6">
               {navLinks.map((link) => {
                 if ("authOnly" in link && link.authOnly && !session) return null;
+                if ("adminOnly" in link && link.adminOnly && !session.user?.isAdmin) return null;
                 return (
                   <Link
                     key={link.href}
@@ -158,6 +160,7 @@ export function Navbar() {
                       <nav className="flex-1 overflow-y-auto py-4">
                         {navLinks.map((link) => {
                           if ("authOnly" in link && link.authOnly) return null;
+                          if ("adminOnly" in link && link.adminOnly) return null;
                           return (
                             <Link
                               key={link.href}
@@ -171,6 +174,17 @@ export function Navbar() {
                             </Link>
                           );
                         })}
+                        {session.user?.isAdmin && (
+                          <Link
+                            href="/games"
+                            onClick={() => setHamburgerOpen(false)}
+                            className={`block px-4 py-3 text-base font-medium transition-colors ${
+                              pathname === "/games" ? "text-white bg-white/10" : "text-white/90 hover:bg-white/10 hover:text-white"
+                            }`}
+                          >
+                            Games
+                          </Link>
+                        )}
                         <Link
                           href="/watchlist"
                           onClick={() => setHamburgerOpen(false)}

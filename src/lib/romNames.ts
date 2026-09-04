@@ -41,3 +41,34 @@ export function romSearchTitle(stem: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * Lowercase, punctuation-stripped comparison form of a title -- for matching
+ * the *same* game across gamarr's three separate surfaces (wishlist, active
+ * downloads, library scan), which don't share any other common id. "Crash
+ * Bash & Spyro: Year of the Dragon" and "Crash Bash and Spyro Year of the
+ * Dragon" collapse to the same key.
+ */
+function normalizeGameTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, "-");
+}
+
+/**
+ * Stable identity for a game across its whole lifecycle -- wishlisted, then
+ * downloading, then in the library -- none of which share a common id from
+ * gamarr itself. Used for routing (/games/[key]), the games watchlist, and
+ * merging the three gamarr surfaces into one list.
+ *
+ * Deliberately NOT the same key GameArtwork uses (system+ROM-stem): that key
+ * only exists once a real file is on disk, so it can't identify a wishlisted
+ * game that hasn't downloaded yet. The two are unrelated identity schemes for
+ * two different concerns -- this module never touches GameArtwork's key.
+ */
+export function gameKeyOf(platformSlug: string, title: string): string {
+  return `${platformSlug || "unknown"}::${normalizeGameTitle(title)}`;
+}
