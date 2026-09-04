@@ -2,6 +2,14 @@
 # Secrets DATABASE_URL, TMDB_API_KEY, NEXTAUTH_SECRET, NEXTAUTH_URL, ADMIN_NAME,
 # RADARR_URL, RADARR_API_KEY, SONARR_URL, SONARR_API_KEY, MEDIA_WEBHOOK_SECRET,
 # JELLYFIN_URL, JELLYFIN_API_KEY must be set in the repo — they sync to the server each deploy.
+#
+# Adding a new one takes THREE edits below, not one: the deploy step's `env:`
+# block, the `envs:` list (appleboy/ssh-action only forwards what's named
+# there), and the `printf` that writes .env. Miss any and the variable silently
+# arrives empty -- the app just reports that integration as unconfigured, with
+# nothing in the logs to say why. This .env is rewritten from scratch on every
+# deploy, so editing it by hand on the server (or `export`ing in an SSH shell,
+# which the container never sees anyway) does not survive.
 name: Build and Deploy
 
 on:
@@ -202,6 +210,13 @@ jobs:
           QBITTORRENT_URL: ${{ secrets.QBITTORRENT_URL }}
           QBITTORRENT_USER: ${{ secrets.QBITTORRENT_USER }}
           QBITTORRENT_PASSWORD: ${{ secrets.QBITTORRENT_PASSWORD }}
+          # gamarr (games/ROMs) on mediabox, reachable over Tailscale. Optional:
+          # the admin Games panel reports itself unconfigured when unset.
+          GAMARR_URL: ${{ secrets.GAMARR_URL }}
+          # SteamGridDB key for that panel's artwork picker only. Optional:
+          # the picker hides itself when unset, and the Deck's own steam_sync.py
+          # keeps auto-fetching art with its own separately-held key.
+          SGDB_API_KEY: ${{ secrets.SGDB_API_KEY }}
           ALERT_SNS_TOPIC_ARN: ${{ secrets.ALERT_SNS_TOPIC_ARN }}
           ALERT_AWS_ACCESS_KEY_ID: ${{ secrets.ALERT_AWS_ACCESS_KEY_ID }}
           ALERT_AWS_SECRET_ACCESS_KEY: ${{ secrets.ALERT_AWS_SECRET_ACCESS_KEY }}
@@ -248,7 +263,7 @@ jobs:
           # extraction leaves the box thrashing -- which is exactly how a deploy
           # took the site down. 20m gives a slow pull room to finish.
           command_timeout: 20m
-          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,PROWLARR_URL,PROWLARR_API_KEY,MAXMIND_LICENSE_KEY,PAGE_WATCH_SECRET,PAGE_WATCH_PROXY_URL,PAGE_WATCH_REQUIRE_PROXY,PAGE_WATCH_USER_AGENT,VPN_ENABLED,VPN_SERVICE_PROVIDER,VPN_TYPE,OPENVPN_USER,OPENVPN_PASSWORD,WIREGUARD_PRIVATE_KEY,WIREGUARD_ADDRESSES,VPN_SERVER_REGIONS,VPN_SERVER_COUNTRIES,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,JELLYFIN_USER_ID,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,AWS_COST_ALERT_THRESHOLD_USD,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH,LITESTREAM_ACCESS_KEY_ID,LITESTREAM_SECRET_ACCESS_KEY,LITESTREAM_BUCKET,PLAYBACK_CHECK_SECRET
+          envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,PROWLARR_URL,PROWLARR_API_KEY,MAXMIND_LICENSE_KEY,PAGE_WATCH_SECRET,PAGE_WATCH_PROXY_URL,PAGE_WATCH_REQUIRE_PROXY,PAGE_WATCH_USER_AGENT,VPN_ENABLED,VPN_SERVICE_PROVIDER,VPN_TYPE,OPENVPN_USER,OPENVPN_PASSWORD,WIREGUARD_PRIVATE_KEY,WIREGUARD_ADDRESSES,VPN_SERVER_REGIONS,VPN_SERVER_COUNTRIES,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,JELLYFIN_USER_ID,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,GAMARR_URL,SGDB_API_KEY,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,AWS_COST_ALERT_THRESHOLD_USD,OLLAMA_URL,OLLAMA_MODEL,SEARXNG_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH,LITESTREAM_ACCESS_KEY_ID,LITESTREAM_SECRET_ACCESS_KEY,LITESTREAM_BUCKET,PLAYBACK_CHECK_SECRET
           script: |
             set -e
             # docker-compose-plugin is only in Docker's apt repo on many systems; fallback = official v2 binary
@@ -327,6 +342,8 @@ jobs:
               "QBITTORRENT_URL=${QBITTORRENT_URL}" \
               "QBITTORRENT_USER=${QBITTORRENT_USER}" \
               "QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD}" \
+              "GAMARR_URL=${GAMARR_URL}" \
+              "SGDB_API_KEY=${SGDB_API_KEY}" \
               "OLLAMA_URL=${OLLAMA_URL}" \
               "OLLAMA_MODEL=${OLLAMA_MODEL}" \
               "SEARXNG_URL=${SEARXNG_URL}" \
