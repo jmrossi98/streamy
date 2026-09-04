@@ -49,4 +49,14 @@ describe("buildStorageSegments", () => {
     const { usedWidth } = buildStorageSegments(100 * GB, 40 * GB, 30 * GB, 10 * GB);
     expect(usedWidth).toBeLessThanOrEqual(100);
   });
+
+  it("folds games into Other's calculation when provided", () => {
+    // 100 total, 40 free => 60 used; 30 movies + 10 tv + 15 games leaves 5 as
+    // Other -- omitting the new gamesSize arg entirely (every call above)
+    // must keep behaving exactly as before, which the other tests already
+    // pin; this one is the case where it's actually passed.
+    const { bars } = buildStorageSegments(100 * GB, 40 * GB, 30 * GB, 10 * GB, 15 * GB);
+    expect(bars.find((b) => b.key === "games")?.value).toBe(15 * GB);
+    expect(bars.find((b) => b.key === "other")?.value).toBe(5 * GB);
+  });
 });

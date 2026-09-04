@@ -27,14 +27,7 @@ import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
-import { GamesPanel } from "@/components/GamesPanel";
-import {
-  getGameDownloads,
-  getGameLibrary,
-  getGamePlatforms,
-  isGamarrConfigured,
-} from "@/lib/gamarr";
-import { isSgdbConfigured } from "@/lib/steamgriddb";
+import { getGamesStorageSize } from "@/lib/games";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -66,6 +59,7 @@ export default async function AdminFeaturesPage() {
     blogPosts,
     pageWatch,
     playbackCheckRuns,
+    gamesSize,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -96,21 +90,11 @@ export default async function AdminFeaturesPage() {
     blogConfigured ? listPosts() : Promise.resolve([]),
     getPageWatchSummary(),
     getPlaybackCheckHistory(),
+    // Kept out of the array above and defaulted to 0 on failure (it already
+    // swallows its own errors) so an unreachable gamarr can't hold up the
+    // rest of this page -- same reasoning the old embedded Games panel used.
+    getGamesStorageSize().catch(() => 0),
   ]);
-
-  // Games (gamarr + SteamGridDB). Kept out of the Promise.all above so an
-  // unreachable gamarr can't slow every other panel on the page down to its
-  // own timeout -- each of these already swallows its own failures and
-  // returns empty, and the panel renders a "not configured" state from that.
-  const gamesConfigured = isGamarrConfigured();
-  const [gamePlatforms, gameDownloads, gameLibrary, artworkPicks] = gamesConfigured
-    ? await Promise.all([
-        getGamePlatforms(),
-        getGameDownloads(),
-        getGameLibrary(),
-        prisma.gameArtwork.findMany({ select: { system: true, romStem: true } }),
-      ])
-    : [[], [], [], []];
 
   const downloads: DownloadRow[] = [
     ...radarrDownloads.map((d) => ({ ...d, mediaType: "movie" as const, completed: false })),
@@ -262,22 +246,6 @@ export default async function AdminFeaturesPage() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Games</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <GamesPanel
-            configured={gamesConfigured}
-            sgdbConfigured={isSgdbConfigured()}
-            platforms={gamePlatforms}
-            downloads={gameDownloads}
-            library={gameLibrary}
-            customizedKeys={Array.from(
-              new Set(artworkPicks.map((a) => `${a.system}/${a.romStem}`))
-            )}
-          />
-        </div>
-      </section>
-
-      <section>
         <div className="mb-4 flex items-baseline justify-between gap-3">
           <h2 className="text-lg font-semibold text-white">Assistant</h2>
           <Link
@@ -306,6 +274,7 @@ export default async function AdminFeaturesPage() {
               freeSpace={storageInfo.freeSpace}
               moviesSize={storageInfo.moviesSize}
               tvSize={tvSize ?? 0}
+              gamesSize={gamesSize}
             />
           ) : (
             <p className="text-white/50 text-sm">

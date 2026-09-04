@@ -34,6 +34,7 @@ model User {
 
   watchlist       WatchlistItem[]
   watchlistShows  WatchlistShowItem[]
+  watchlistGames  WatchlistGameItem[]
   progress        WatchProgress[]
   episodeProgress EpisodeProgress[]
 }
@@ -307,4 +308,28 @@ model GameArtwork {
   updatedAt DateTime @updatedAt
 
   @@id([system, romStem, kind])
+}
+
+/// A game saved to a user's My List, alongside WatchlistItem (movies) and
+/// WatchlistShowItem (shows).
+///
+/// Keyed by gameKey (see romNames.ts's gameKeyOf), not GameArtwork's
+/// system+romStem: a game can be added to My List while still queued or
+/// downloading, before either of those exist. gameKey is derived from title
+/// alone and stays stable across a game's whole lifecycle (wishlisted ->
+/// downloading -> owned), which is exactly what a list entry needs to survive.
+model WatchlistGameItem {
+  userId  String
+  gameKey String
+  /// Display title snapshot, so a row still shows something sensible if the
+  /// game is later removed from gamarr entirely (unlike movies/shows, there's
+  /// no external catalog left to re-look the title up from).
+  title   String
+  platform String
+  addedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, gameKey])
+  @@index([userId])
 }
