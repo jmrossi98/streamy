@@ -27,7 +27,8 @@ import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
-import { getGamesStorageSize } from "@/lib/games";
+import { getGamesList, getGamesStorageSize } from "@/lib/games";
+import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
 
 export default async function AdminFeaturesPage() {
@@ -62,6 +63,7 @@ export default async function AdminFeaturesPage() {
     playbackCheckRuns,
     gamesSize,
     auditLog,
+    gamesList,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -97,7 +99,24 @@ export default async function AdminFeaturesPage() {
     // rest of this page -- same reasoning the old embedded Games panel used.
     getGamesStorageSize().catch(() => 0),
     getRecentAuditLog(),
+    // Same defensive default as getGamesStorageSize above -- an unreachable
+    // gamarr shouldn't hold up the rest of this page.
+    getGamesList().catch(() => []),
   ]);
+
+  const gameDownloads: GameDownloadRow[] = gamesList
+    .filter((g) => g.status === "downloading" || g.status === "failed" || g.status === "queued")
+    .map((g) => ({
+      gameKey: g.gameKey,
+      title: g.displayTitle,
+      platform: g.platform,
+      status: g.status,
+      progress: g.progress,
+      error: g.error,
+      sizeBytes: g.sizeBytes,
+      jobId: g.jobId,
+      wishlistId: g.wishlistId,
+    }));
 
   const downloads: DownloadRow[] = [
     ...radarrDownloads.map((d) => ({ ...d, mediaType: "movie" as const, completed: false })),
@@ -246,6 +265,13 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <DownloadsPanel downloads={downloads} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Game downloads</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <GameDownloadsPanel downloads={gameDownloads} />
         </div>
       </section>
 

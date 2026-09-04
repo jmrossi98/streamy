@@ -77,6 +77,41 @@ function normalizeForSimilarity(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+// Numbered-sequel markers. Roman numerals are a fixed allowlist rather than
+// a general pattern, so a stray standalone "i" or "x" from somewhere else in
+// a title never gets misread as a sequel number.
+const ROMAN_NUMERALS = new Set(["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"]);
+
+function numberingTokens(normalized: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of normalized.split(" ")) {
+    if (/^\d+$/.test(t) || ROMAN_NUMERALS.has(t)) out.add(t);
+  }
+  return out;
+}
+
+/**
+ * True when the two titles carry different sequel numbering -- "Super Mario
+ * Bros" vs "Super Mario Bros 2", or "Mega Man 2" vs "Mega Man 3". Confirmed
+ * live (2026-09-04): without this, titleSimilarity alone scored "super mario
+ * bros" against "super mario bros 2" at ~0.94 (both the char-ratio and the
+ * token-overlap signal are dominated by everything the two titles share,
+ * with no way to weigh the one token that actually makes them different
+ * games) -- comfortably clearing the 0.72 match threshold and merging three
+ * separate NES titles into one in the Games UI. Either side having a number
+ * the other lacks counts as a mismatch too, not just conflicting numbers --
+ * being unsure is exactly when two different games are more likely than a
+ * coincidence, so refusing the match is the safer default either way.
+ */
+function numberingMismatch(na: string, nb: string): boolean {
+  const numsA = numberingTokens(na);
+  const numsB = numberingTokens(nb);
+  if (numsA.size === 0 && numsB.size === 0) return false;
+  if (numsA.size !== numsB.size) return true;
+  for (const n of numsA) if (!numsB.has(n)) return true;
+  return false;
+}
+
 /**
  * Character-level ratio (via a simple LCS-based similarity) combined with
  * token-set overlap -- mirrors, in spirit, the same two-signal combination
@@ -98,6 +133,7 @@ export function titleSimilarity(a: string, b: string): number {
   const nb = normalizeForSimilarity(b);
   if (!na || !nb) return 0;
   if (na === nb) return 1;
+  if (numberingMismatch(na, nb)) return 0;
 
   // Longest common subsequence length, normalized by the longer string --
   // cheap, dependency-free stand-in for difflib.SequenceMatcher.ratio()

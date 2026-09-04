@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
-import { isGamarrConfigured, queueGame, removeWishlistItem, retryGameDownload } from "@/lib/gamarr";
+import {
+  cancelGameDownload,
+  isGamarrConfigured,
+  queueGame,
+  removeWishlistItem,
+  retryGameDownload,
+} from "@/lib/gamarr";
 import { logAudit } from "@/lib/auditLog";
 
 /**
@@ -50,6 +56,15 @@ export async function POST(request: Request) {
     const ok = await retryGameDownload(jobId);
     if (!ok) return NextResponse.json({ error: "Couldn't retry that download" }, { status: 502 });
     logAudit(admin.name, "game.download.retry", logTitle ?? `job ${jobId}`);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "cancel") {
+    const jobId = typeof body.jobId === "string" ? body.jobId : null;
+    if (!jobId) return NextResponse.json({ error: "jobId required" }, { status: 400 });
+    const ok = await cancelGameDownload(jobId);
+    if (!ok) return NextResponse.json({ error: "Couldn't cancel that download" }, { status: 502 });
+    logAudit(admin.name, "game.download.cancel", logTitle ?? `job ${jobId}`);
     return NextResponse.json({ ok: true });
   }
 

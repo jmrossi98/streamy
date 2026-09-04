@@ -376,11 +376,21 @@ export async function getGameDownloads(): Promise<GameDownload[]> {
 
 export type LibraryGame = {
   id: number;
-  /** Filename as it sits on disk, e.g. "Spyro the Dragon (USA).bin". */
+  /** Filename as it sits on disk, e.g. "Spyro the Dragon (USA).bin". Comes
+   *  from gamarr's own "title" field, which strips extensions inconsistently
+   *  (confirmed live: a compound ".nkit.rvz" wasn't stripped at all while a
+   *  sibling ".nkit.iso" had only ".iso" cut) -- never rely on it to recover
+   *  the real extension. filePath is the one place that's always accurate. */
   fileName: string;
   /** Filename minus its extension -- the stable identity an artwork override
    *  is keyed by. See romStemOf() for why the extension is dropped. */
   romStem: string;
+  /** Full path as gamarr reports it, e.g.
+   *  "/data/roms/ps3/Demon's Souls (USA)/PS3_GAME/USRDIR". The only
+   *  reliable source for the real extension and for recovering a game's
+   *  real name when gamarr's own title is a generic container folder
+   *  (PS3's USRDIR) rather than the game itself. */
+  filePath: string;
   /** ES-DE system directory name, e.g. "psx" -- taken from the file's own
    *  path rather than gamarr's platform_slug, since the path is what the Deck
    *  actually organizes by and the two can disagree. */
@@ -416,6 +426,7 @@ export async function getGameLibrary(
         id: Number(i.id ?? 0),
         fileName,
         romStem: romStemOf(fileName),
+        filePath,
         system,
         platform: String(i.platform ?? ""),
         sizeBytes: size && size > 0 ? size : null,
@@ -435,6 +446,21 @@ export async function retryGameDownload(jobId: string): Promise<boolean> {
     return true;
   } catch (err) {
     console.error(`[gamarr] retryGameDownload failed for ${jobId}:`, err);
+    return false;
+  }
+}
+
+/** Cancels/removes one job outright -- for a stuck retry loop or a download
+ *  no longer wanted. Not in gamarr's published OpenAPI spec; found the same
+ *  way /api/downloads/organize/<hash> was (reading gamarr's own frontend JS,
+ *  where its "remove" button calls exactly this): `DELETE /api/downloads/{id}`. */
+export async function cancelGameDownload(jobId: string): Promise<boolean> {
+  if (!isGamarrConfigured()) return false;
+  try {
+    await gamarrFetch(`/api/downloads/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    return true;
+  } catch (err) {
+    console.error(`[gamarr] cancelGameDownload failed for ${jobId}:`, err);
     return false;
   }
 }

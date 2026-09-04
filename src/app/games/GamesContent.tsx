@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { GameCard } from "@/components/GameCard";
 import type { GameListItem } from "@/lib/games";
@@ -18,6 +18,7 @@ export type GamesContentProps = {
 
 export function GamesContent({ configured, items, platforms, watchlistKeys }: GamesContentProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const watchlist = new Set(watchlistKeys);
 
   const downloading = items.filter((i) => i.status === "downloading" || i.status === "failed");
@@ -28,7 +29,23 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   // the library is meant to be browsed like a shelf, not scrolled through a
   // few titles at a time) with a system filter, since there's no natural
   // "genre" grouping for ROMs the way Movies/TV rows have.
-  const [systemFilter, setSystemFilter] = useState("all");
+  //
+  // Kept in the URL (?system=...) rather than plain useState so it survives
+  // clicking into a game and back -- back navigation restores the previous
+  // URL, so reading the filter from it on mount means the grid reopens
+  // exactly where you left it instead of resetting to "All systems".
+  const [systemFilter, setSystemFilterState] = useState(() => searchParams.get("system") ?? "all");
+  const setSystemFilter = useCallback(
+    (slug: string) => {
+      setSystemFilterState(slug);
+      const params = new URLSearchParams(searchParams.toString());
+      if (slug === "all") params.delete("system");
+      else params.set("system", slug);
+      const qs = params.toString();
+      router.replace(qs ? `/games?${qs}` : "/games", { scroll: false });
+    },
+    [router, searchParams]
+  );
   const systems = Array.from(new Set(library.map((i) => i.platformSlug)))
     .sort()
     .map((slug) => ({
