@@ -272,3 +272,39 @@ model PlaybackCheckRun {
 
   @@index([ranAt])
 }
+
+/// A hand-picked artwork override for one ROM's Steam tile.
+///
+/// The Deck's steam_sync.py already auto-fetches artwork from SteamGridDB for
+/// any game missing it, choosing the top-scoring match on its own. That's the
+/// right default for an unattended import, but it has no way to be told "not
+/// that one" -- and it picked wrong often enough to matter (a SpongeBob title
+/// matching a 4-game compilation, "DreamWorks Madagascar" matching an
+/// unrelated VR game) that overriding it needed to be possible without
+/// editing files on the Deck by hand.
+///
+/// Keyed by the ROM's own identity (system + filename stem) rather than a
+/// Steam appid: the appid is derived from the exe+name pair on the Deck and
+/// isn't knowable here, and a ROM keeps this identity across re-imports and
+/// across the .iso -> .chd conversion the compressor does. steam_sync.py
+/// reads these via /api/games/artwork-overrides and prefers them over its own
+/// automatic pick.
+model GameArtwork {
+  /// ES-DE system directory name, e.g. "ps2", "psx", "gamecube".
+  system    String
+  /// ROM filename without its extension, e.g. "DreamWorks Madagascar (USA) (v3.01)".
+  romStem   String
+  /// "grid" | "hero" | "logo" | "icon" -- the four assets a Steam tile uses.
+  kind      String
+  /// Full-size SteamGridDB asset URL to apply.
+  imageUrl  String
+  /// Which SteamGridDB game the picker resolved this ROM to, so the UI can
+  /// reopen on the same game rather than re-searching by title every time.
+  sgdbGameId Int?
+  /// Display title shown in the admin list -- the ROM stem is not always
+  /// readable on its own.
+  title     String?
+  updatedAt DateTime @updatedAt
+
+  @@id([system, romStem, kind])
+}

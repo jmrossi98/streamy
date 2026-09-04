@@ -11,7 +11,51 @@ A Netflix-style discovery app built with **Next.js 14** (App Router), **TypeScri
 - **My List**: add/remove movies from your watchlist (per-user, stored in DB)
 - **Progress**: save and resume “minutes watched” per movie per user
 - **Navbar** and **footer** (Netflix-style UI)
+- **Games (admin)**: search/queue ROM downloads via gamarr, and pick Steam tile
+  artwork per title — see below
 - **AWS Amplify**–ready for deployment
+
+## Games panel (admin)
+
+Optional, admin-only section for the homelab's ROM pipeline. Needs `GAMARR_URL`;
+the artwork picker additionally needs `SGDB_API_KEY` (see `.env.example`). With
+neither set, the section renders a short "not configured" note and nothing else
+in Streamy changes.
+
+Three tabs:
+
+- **Search** — queries gamarr, which fans out across every configured Prowlarr
+  indexer plus Vimm's. This is genuinely slow (~30s measured live, vs Radarr's
+  ~200ms), so the UI shows a running elapsed counter rather than a bare spinner,
+  and the route's timeout is sized for it. Queueing adds the title to gamarr's
+  wishlist and kicks its scheduler so it acts now instead of at its next tick.
+- **Downloads** — live job progress, polled every 5s. gamarr's own error text is
+  shown verbatim on a failed job, because it's usually the actionable part
+  ("Could not find download form on Vimm"), with a retry button.
+- **Artwork** — the picker. Browse SteamGridDB candidates for any library title
+  and choose the cover/banner/logo/icon.
+
+### How an artwork pick reaches the Steam Deck
+
+Streamy runs off-box, so it can't write to the ROM library directly. Instead a
+pick is stored as a `GameArtwork` row and exposed at
+`/api/games/artwork-overrides?secret=<MEDIA_WEBHOOK_SECRET>` — the same shared
+secret and fail-closed rule as the Radarr/Sonarr webhooks, rather than a second
+machine credential. The Deck's `rom-auto-import.sh` (every 20 min) passes that
+URL to `steam_sync.py`, which applies overrides *before* its own SteamGridDB
+gap-filling, so a human choice always beats the automatic match. An unreachable
+Streamy costs the overrides, never the import.
+
+Overrides are keyed by `(system, ROM filename without extension)` — deliberately
+without the extension, because mediabox's hourly `rom-compress.sh` rewrites
+`.bin`/`.iso` to `.chd` in place, and a key that included the extension would
+silently stop matching an hour after a game was downloaded. There's a test
+locking exactly that in (`src/lib/__tests__/romNames.test.ts`).
+
+This exists because the Deck's automatic matching, good as it is, still picks a
+confidently wrong game sometimes — a SpongeBob title matching a 4-game
+compilation, "DreamWorks Madagascar" matching an unrelated VR game — and before
+this the only fix was editing files on the Deck by hand.
 
 ## Setup
 
