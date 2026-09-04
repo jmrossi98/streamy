@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { titleSimilarity } from "../gameArtworkAuto";
+import { titleSimilarity } from "../romNames";
 
 // Same threshold value as mediabox-infra's deck/steam_sync.py (SGDB_MIN_SIMILARITY
 // = 0.72), chosen against these exact real observed cases -- not because the two

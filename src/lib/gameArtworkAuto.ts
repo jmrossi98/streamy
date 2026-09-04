@@ -16,7 +16,7 @@
  */
 
 import { prisma } from "./db";
-import { romSearchTitle } from "./romNames";
+import { romSearchTitle, titleSimilarity } from "./romNames";
 import {
   ARTWORK_KINDS,
   getArtworkCandidates,
@@ -24,51 +24,6 @@ import {
   searchSgdbGames,
   type ArtworkKind,
 } from "./steamgriddb";
-
-function normalize(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-/**
- * Character-level ratio (via a simple LCS-based similarity) combined with
- * token-set overlap -- the same two-signal combination steam_sync.py uses
- * and for the same reason: character ratio alone misses "the query merely
- * appears inside a much longer title" (a compilation listing the game among
- * several), and token overlap alone misses reordering/punctuation noise.
- * Exported for testing.
- */
-export function titleSimilarity(a: string, b: string): number {
-  const na = normalize(a);
-  const nb = normalize(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-
-  // Longest common subsequence length, normalized by the longer string --
-  // cheap, dependency-free stand-in for difflib.SequenceMatcher.ratio()
-  // that's plenty accurate for this threshold gate (it doesn't need to be
-  // exact, just consistent).
-  const m = na.length;
-  const n = nb.length;
-  const dp = new Array(n + 1).fill(0);
-  for (let i = 1; i <= m; i++) {
-    let prev = 0;
-    for (let j = 1; j <= n; j++) {
-      const temp = dp[j];
-      dp[j] = na[i - 1] === nb[j - 1] ? prev + 1 : Math.max(dp[j], dp[j - 1]);
-      prev = temp;
-    }
-  }
-  const lcs = dp[n];
-  const charRatio = (2 * lcs) / (m + n);
-
-  const ta = new Set(na.split(" ").filter(Boolean));
-  const tb = new Set(nb.split(" ").filter(Boolean));
-  const intersection = [...ta].filter((t) => tb.has(t)).length;
-  const union = new Set([...ta, ...tb]).size;
-  const jaccard = union > 0 ? intersection / union : 0;
-
-  return Math.max(charRatio, jaccard);
-}
 
 // Same value as steam_sync.py's SGDB_MIN_SIMILARITY, and for the same
 // reason -- chosen against real observed misses ("DreamWorks Madagascar" vs
