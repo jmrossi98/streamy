@@ -305,6 +305,15 @@ model GameArtwork {
   /// Display title shown in the admin list -- the ROM stem is not always
   /// readable on its own.
   title     String?
+  /// True for a deliberate pick made through the artwork picker; false for
+  /// a background auto-match (see resolveAutoArt in src/lib/gameArtworkAuto.ts).
+  /// Load-bearing for /api/games/artwork-overrides: only pickedManually rows
+  /// are sent to the Deck, so an auto-match made here can never silently
+  /// replace steam_sync.py's own, independently-computed automatic pick --
+  /// only an actual human choice ever overrides what the Deck decides on its
+  /// own. Defaults true so every row saved before this column existed (real
+  /// picks, all of them) is correctly read as manual.
+  pickedManually Boolean @default(true)
   updatedAt DateTime @updatedAt
 
   @@id([system, romStem, kind])
@@ -332,4 +341,43 @@ model WatchlistGameItem {
 
   @@id([userId, gameKey])
   @@index([userId])
+}
+
+/// Who did what, admin-mutating-action side: every write an admin makes
+/// through Streamy's own routes (request/cancel/delete a title, approve a
+/// user, queue/retry/remove a game download, save or clear a pick of
+/// artwork) gets one row here. Read-only, surfaced in the Security panel --
+/// same spirit as LoginAttempt (who's trying to get in) but for what an
+/// already-admitted admin actually did once inside.
+///
+/// Exists because gamarr itself kept no such record: a real download
+/// ("Ratchet and Clank") turned out to be explainable only by chance --
+/// happened to still have a scheduler-attributed row in gamarr's own
+/// activity_log -- and every *other* admin-mutating surface here had
+/// exactly the same blind spot. This is deliberately Streamy-side rather
+/// than trying to retrofit auditing into every third-party app on
+/// mediabox individually; the routes here are the one place every one of
+/// those apps' mutations already funnels through.
+model AuditLogEntry {
+  id        String   @id @default(cuid())
+  /// Admin's own name -- not their user id, so a row still reads clearly
+  /// after an account is renamed or deleted, same reasoning LoginAttempt's
+  /// own `name` field uses.
+  actorName String
+  /// Short, stable, dot-namespaced verb: "game.queue", "game.artwork.save",
+  /// "movie.request", "approval.approve", etc. -- grep-able, and stable
+  /// across a UI label rewrite in a way a free-text summary wouldn't be.
+  action    String
+  /// The thing acted on, human-readable: a game/movie/show title, a
+  /// username being approved. Not an id -- ids need a second lookup to
+  /// mean anything, titles read directly in the panel.
+  target    String
+  /// Free text for whatever's specific to that action: platform, which
+  /// artwork kind, old/new values. Empty string, not null, so every
+  /// consumer can treat it uniformly.
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
 }

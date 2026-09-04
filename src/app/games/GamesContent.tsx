@@ -23,6 +23,22 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   const queued = items.filter((i) => i.status === "queued");
   const library = items.filter((i) => i.status === "library");
 
+  // ── My Games: a full grid (everything at once, no horizontal scroll --
+  // the library is meant to be browsed like a shelf, not scrolled through a
+  // few titles at a time) with a system filter, since there's no natural
+  // "genre" grouping for ROMs the way Movies/TV rows have.
+  const [systemFilter, setSystemFilter] = useState("all");
+  const systems = Array.from(new Set(library.map((i) => i.platformSlug)))
+    .sort()
+    .map((slug) => ({
+      slug,
+      // First matching item's platform is the display name for this slug --
+      // every item sharing a slug shares the same platform name in practice.
+      label: library.find((i) => i.platformSlug === slug)?.platform || slug,
+    }));
+  const filteredLibrary =
+    systemFilter === "all" ? library : library.filter((i) => i.platformSlug === systemFilter);
+
   // ── Search, to add a game not already known to gamarr ───────────
   const [query, setQuery] = useState("");
   const [platform, setPlatform] = useState("all");
@@ -30,6 +46,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   const [searchStartedAt, setSearchStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [results, setResults] = useState<GameSearchResult[] | null>(null);
+  const [resultsCached, setResultsCached] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [queuedTitles, setQueuedTitles] = useState<Set<string>>(new Set());
   const [queueingTitle, setQueueingTitle] = useState<string | null>(null);
@@ -58,6 +75,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
         return;
       }
       setResults(data.results ?? []);
+      setResultsCached(!!data.cached);
     } catch {
       setSearchError("Search failed — Streamy couldn't reach gamarr.");
     } finally {
@@ -138,40 +156,45 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
           <p className="text-sm text-white/50">No results. Try a shorter title or a different platform.</p>
         )}
         {results && results.length > 0 && (
-          <ul className="max-h-[24rem] space-y-2 overflow-y-auto pr-1">
-            {results.map((r, i) => {
-              const isQueued = queuedTitles.has(r.title);
-              return (
-                <li key={`${r.guid}-${i}`} className="rounded border border-white/10 bg-black/20 px-3 py-2.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm text-white/90">{r.title}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-white/40">
-                        {r.platform && <span className="text-white/60">{r.platform}</span>}
-                        <span>{r.indexer}</span>
-                        {(r.sizeHuman ?? formatFileSize(r.sizeBytes)) && (
-                          <span className="tabular-nums">{r.sizeHuman ?? formatFileSize(r.sizeBytes)}</span>
-                        )}
-                        {r.inLibrary && (
-                          <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
-                            In library
-                          </span>
-                        )}
+          <>
+            {resultsCached && (
+              <p className="text-xs text-white/30">⚡ Instant — same search in the last 5 minutes.</p>
+            )}
+            <ul className="max-h-[24rem] space-y-2 overflow-y-auto pr-1">
+              {results.map((r, i) => {
+                const isQueued = queuedTitles.has(r.title);
+                return (
+                  <li key={`${r.guid}-${i}`} className="rounded border border-white/10 bg-black/20 px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-white/90">{r.title}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-white/40">
+                          {r.platform && <span className="text-white/60">{r.platform}</span>}
+                          <span>{r.indexer}</span>
+                          {(r.sizeHuman ?? formatFileSize(r.sizeBytes)) && (
+                            <span className="tabular-nums">{r.sizeHuman ?? formatFileSize(r.sizeBytes)}</span>
+                          )}
+                          {r.inLibrary && (
+                            <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                              In library
+                            </span>
+                          )}
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => queueResult(r)}
+                        disabled={isQueued || queueingTitle === r.title}
+                        className="shrink-0 rounded border border-white/20 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:border-white/40 hover:text-white disabled:opacity-40"
+                      >
+                        {isQueued ? "Queued" : queueingTitle === r.title ? "Queueing…" : "Download"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => queueResult(r)}
-                      disabled={isQueued || queueingTitle === r.title}
-                      className="shrink-0 rounded border border-white/20 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:border-white/40 hover:text-white disabled:opacity-40"
-                    >
-                      {isQueued ? "Queued" : queueingTitle === r.title ? "Queueing…" : "Download"}
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
       </section>
 
@@ -192,11 +215,45 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
       )}
 
       {library.length > 0 ? (
-        <ScrollableRow title="My Games">
-          {library.map((item) => (
-            <GameCard key={item.gameKey} item={item} inWatchlist={watchlist.has(item.gameKey)} />
-          ))}
-        </ScrollableRow>
+        <section>
+          <div className="mb-4 flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-2xl font-bold text-white">
+              My Games
+              <span className="ml-2 text-sm font-normal text-white/40">
+                {filteredLibrary.length}
+                {systemFilter !== "all" ? ` of ${library.length}` : ""}
+              </span>
+            </h2>
+            <select
+              value={systemFilter}
+              onChange={(e) => setSystemFilter(e.target.value)}
+              className="rounded border border-white/15 bg-black/40 px-3 py-1.5 text-sm text-white focus:border-white/30 focus:outline-none"
+            >
+              <option value="all" className="bg-netflix-dark">
+                All systems
+              </option>
+              {systems.map((s) => (
+                <option key={s.slug} value={s.slug} className="bg-netflix-dark">
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {filteredLibrary.length === 0 ? (
+            <p className="text-sm text-white/50">No games on this system.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10">
+              {filteredLibrary.map((item) => (
+                <GameCard
+                  key={item.gameKey}
+                  item={item}
+                  inWatchlist={watchlist.has(item.gameKey)}
+                  fixedWidth={false}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       ) : (
         downloading.length === 0 &&
         queued.length === 0 && (

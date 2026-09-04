@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { logAudit } from "@/lib/auditLog";
 
 export async function POST(request: Request) {
   // requireAdmin re-reads approved + isAdmin from the database, so this single
   // call replaces the old pair of checks (a JWT claim plus an approval lookup)
   // and closes the gap where the JWT alone decided who was an admin.
-  if (!(await requireAdmin(await getSession()))) {
+  const admin = await requireAdmin(await getSession());
+  if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
@@ -16,6 +18,10 @@ export async function POST(request: Request) {
   if (!userId || !action) {
     return NextResponse.json({ error: "userId and action required" }, { status: 400 });
   }
+
+  // Fetched before acting -- a deny deletes the row outright, so the name
+  // wouldn't be recoverable afterward for the log entry.
+  const target = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
 
   if (action === "approve") {
     const result = await prisma.user.updateMany({
@@ -34,5 +40,6 @@ export async function POST(request: Request) {
     }
   }
 
+  logAudit(admin.name, `approval.${action}`, target?.name ?? userId);
   return NextResponse.json({ ok: true });
 }

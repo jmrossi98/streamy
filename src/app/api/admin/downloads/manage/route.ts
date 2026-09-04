@@ -8,10 +8,12 @@ import {
   deleteSonarrSeries,
   deleteSonarrEpisode,
 } from "@/lib/sonarr";
+import { logAudit } from "@/lib/auditLog";
 
 export async function POST(request: Request) {
   // Re-read from the database rather than trusting the JWT's isAdmin claim.
-  if (!(await requireAdmin(await getSession()))) {
+  const admin = await requireAdmin(await getSession());
+  if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
@@ -21,6 +23,8 @@ export async function POST(request: Request) {
   const episodeId = typeof body?.episodeId === "number" ? body.episodeId : null;
   const mediaType = body?.mediaType === "movie" || body?.mediaType === "show" ? body.mediaType : null;
   const action = body?.action === "cancel" || body?.action === "delete" ? body.action : null;
+  // Audit-log display only -- never used for the action itself.
+  const title = typeof body?.title === "string" && body.title ? body.title : `${mediaType ?? "?"} ${externalId ?? "?"}`;
   if (externalId === null || !mediaType || !action) {
     return NextResponse.json(
       { error: "externalId, mediaType, and action required" },
@@ -60,5 +64,6 @@ export async function POST(request: Request) {
   // admin panel looked like it hadn't taken effect.
   await prisma.mediaRequest.deleteMany({ where: { mediaType, externalId: id } });
 
+  logAudit(admin.name, `${mediaType}.admin.${action}`, title);
   return NextResponse.json({ ok: true });
 }

@@ -3,16 +3,21 @@ import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cancelRadarrDownload, deleteRadarrMovie } from "@/lib/radarr";
 import { cancelSonarrDownload, deleteSonarrSeries } from "@/lib/sonarr";
+import { getMovieById, getShowById } from "@/lib/tmdb";
+import { logAudit } from "@/lib/auditLog";
 
 // Cancelling/deleting is intentionally available to any signed-in approved
 // user (not just admins) from the title page -- so a stuck or unwanted
-// download never requires the admin to step in.
+// download never requires the admin to step in. Exactly why this is one of
+// the routes most worth auditing: it's real power (deletes a library title)
+// held by every approved user, not gated behind isAdmin.
 export async function POST(request: Request) {
   const session = await getSession();
   const userId = await getValidSessionUserId(session);
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const actorName = session?.user?.name ?? "unknown";
 
   const body = await request.json();
   const tmdbId = body?.tmdbId != null ? String(body.tmdbId).trim() : "";
@@ -45,5 +50,9 @@ export async function POST(request: Request) {
   }
 
   await prisma.mediaRequest.delete({ where: { tmdbId_mediaType: { tmdbId, mediaType } } });
+  const title =
+    (mediaType === "movie" ? (await getMovieById(tmdbId))?.title : (await getShowById(tmdbId))?.name) ??
+    `${mediaType} ${tmdbId}`;
+  logAudit(actorName, `${mediaType}.${action}`, title);
   return NextResponse.json({ ok: true });
 }

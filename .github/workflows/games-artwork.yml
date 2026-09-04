@@ -1,0 +1,51 @@
+# Gives every library game a default cover/banner/logo/icon automatically,
+# so the Games grid shows real art instead of the generic placeholder without
+# anyone clicking through the picker for each one -- see
+# src/lib/gameArtworkAuto.ts for the matching approach and why it's safe
+# (never touches a kind that already has a row, manual or auto).
+#
+# Hourly is enough: a newly-downloaded game sitting on the placeholder for up
+# to an hour is a fine tradeoff against the cost of running this more often,
+# and the endpoint is cheap on every run after a game's first pass anyway
+# (one DB read, no SGDB calls, once all four kinds are filled).
+
+name: Games Artwork Auto-Fill
+
+on:
+  schedule:
+    - cron: "23 * * * *" # hourly, off the exact hour so it doesn't stack with other crons
+  workflow_dispatch:
+
+concurrency:
+  group: games-artwork
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run the auto-fill
+        env:
+          BASE_URL: ${{ secrets.NEXTAUTH_URL }}
+          CRON_SECRET: ${{ secrets.GAMES_ARTWORK_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "GAMES_ARTWORK_CRON_SECRET is not set -- the endpoint fails closed, so this would 401."
+            exit 1
+          fi
+
+          curl --silent --show-error --fail-with-body \
+            --max-time 280 \
+            -X POST \
+            "${BASE_URL%/}/api/cron/games-artwork?secret=${CRON_SECRET}" \
+          | tee response.json
+
+          echo
+
+          if grep -q '"ok":false' response.json; then
+            echo "Endpoint reported an internal failure (see the app logs for detail)."
+            exit 1
+          fi

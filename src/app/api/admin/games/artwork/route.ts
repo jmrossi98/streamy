@@ -7,6 +7,7 @@ import {
   isSgdbConfigured,
   searchSgdbGames,
 } from "@/lib/steamgriddb";
+import { logAudit } from "@/lib/auditLog";
 
 /**
  * The artwork picker's backend: resolve a ROM to a SteamGridDB game, list
@@ -65,7 +66,8 @@ export async function GET(request: Request) {
  * automatic choice instead of pinning it to nothing.
  */
 export async function POST(request: Request) {
-  if (!(await requireAdmin(await getSession()))) {
+  const admin = await requireAdmin(await getSession());
+  if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
@@ -90,6 +92,7 @@ export async function POST(request: Request) {
 
   if (!imageUrl) {
     await prisma.gameArtwork.deleteMany({ where: { system, romStem, kind } });
+    logAudit(admin.name, "game.artwork.clear", `${system}/${romStem}`, kind);
     return NextResponse.json({ ok: true, cleared: true });
   }
 
@@ -116,9 +119,10 @@ export async function POST(request: Request) {
 
   await prisma.gameArtwork.upsert({
     where: { system_romStem_kind: { system, romStem, kind } },
-    create: { system, romStem, kind, imageUrl, sgdbGameId, title },
-    update: { imageUrl, sgdbGameId, title },
+    create: { system, romStem, kind, imageUrl, sgdbGameId, title, pickedManually: true },
+    update: { imageUrl, sgdbGameId, title, pickedManually: true },
   });
 
+  logAudit(admin.name, "game.artwork.save", title ?? `${system}/${romStem}`, kind);
   return NextResponse.json({ ok: true });
 }

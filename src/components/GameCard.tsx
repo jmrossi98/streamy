@@ -10,7 +10,20 @@ import { GameWatchlistButton } from "./GameWatchlistButton";
  * MovieRow's cards, but portrait (Steam cover-art aspect) instead of the
  * landscape thumbnail movies/shows use.
  */
-export function GameCard({ item, inWatchlist }: { item: GameListItem; inWatchlist: boolean }) {
+export function GameCard({
+  item,
+  inWatchlist,
+  fixedWidth = true,
+}: {
+  item: GameListItem;
+  inWatchlist: boolean;
+  /** Default: a fixed pixel width, for a horizontally-scrolling ScrollableRow
+   *  (which needs real widths on its children to size its own scroll math).
+   *  false fills the parent instead -- for a CSS grid, which already sizes
+   *  each cell itself; a fixed width there would fight the grid's own column
+   *  width rather than filling it. */
+  fixedWidth?: boolean;
+}) {
   const href = `/games/${encodeURIComponent(item.gameKey)}`;
   const statusLabel =
     item.status === "downloading"
@@ -24,7 +37,11 @@ export function GameCard({ item, inWatchlist }: { item: GameListItem; inWatchlis
           : null;
 
   return (
-    <div className="group relative block w-[140px] shrink-0 touch-manipulation overflow-hidden rounded bg-netflix-dark sm:w-[160px] md:w-[180px]">
+    <div
+      className={`group relative block touch-manipulation overflow-hidden rounded bg-netflix-dark ${
+        fixedWidth ? "w-[140px] shrink-0 sm:w-[160px] md:w-[180px]" : "w-full"
+      }`}
+    >
       <div className="relative aspect-[2/3] w-full">
         <Link href={href} prefetch className="absolute inset-0 z-0 block">
           {item.posterUrl ? (
@@ -33,7 +50,11 @@ export function GameCard({ item, inWatchlist }: { item: GameListItem; inWatchlis
               alt={item.title}
               fill
               className="object-cover"
-              sizes="(max-width: 640px) 140px, (max-width: 768px) 160px, 180px"
+              sizes={
+                fixedWidth
+                  ? "(max-width: 640px) 140px, (max-width: 768px) 160px, 180px"
+                  : "(max-width: 640px) 33vw, (max-width: 1024px) 16vw, 10vw"
+              }
               unoptimized
             />
           ) : (

@@ -28,6 +28,7 @@ import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
 import { getGamesStorageSize } from "@/lib/games";
+import { getRecentAuditLog } from "@/lib/auditLog";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -60,6 +61,7 @@ export default async function AdminFeaturesPage() {
     pageWatch,
     playbackCheckRuns,
     gamesSize,
+    auditLog,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -94,6 +96,7 @@ export default async function AdminFeaturesPage() {
     // swallows its own errors) so an unreachable gamarr can't hold up the
     // rest of this page -- same reasoning the old embedded Games panel used.
     getGamesStorageSize().catch(() => 0),
+    getRecentAuditLog(),
   ]);
 
   const downloads: DownloadRow[] = [
@@ -173,6 +176,7 @@ export default async function AdminFeaturesPage() {
             activity={security.activity}
             findings={security.findings}
             generatedAt={security.generatedAt}
+            auditLog={auditLog}
           />
         </div>
       </section>
