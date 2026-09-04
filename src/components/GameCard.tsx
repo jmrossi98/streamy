@@ -93,7 +93,22 @@ export function GameCard({
         )}
       </div>
       <Link href={href} prefetch className="block p-2">
-        <p className="truncate text-sm font-medium text-white">{item.displayTitle}</p>
+        {/* Single-line truncate in the narrow grid (10 columns at xl) cut
+            titles off right around "Super Mario Bros." for both 1, 2, and 3
+            -- the ellipsis landed before the one character that actually
+            distinguishes them, so all three visually read identically.
+            line-clamp-2 in the grid gives a short suffix like " 2" a second
+            line to land on instead of losing it to the same cutoff point;
+            ScrollableRow's wider fixed-width cards keep single-line, since
+            they don't have this problem. */}
+        <p
+          className={`text-sm font-medium text-white ${
+            fixedWidth ? "truncate" : "line-clamp-2 leading-tight"
+          }`}
+          title={item.displayTitle}
+        >
+          {item.displayTitle}
+        </p>
         <p className="text-xs text-white/60">{item.platform}</p>
       </Link>
     </div>
