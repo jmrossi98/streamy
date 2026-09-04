@@ -31,16 +31,20 @@ export default async function GameDetailPage({ params }: Props) {
     item.system && item.romStem
       ? prisma.gameArtwork.findMany({
           where: { system: item.system, romStem: item.romStem },
-          select: { kind: true },
+          select: { kind: true, imageUrl: true },
         })
       : Promise.resolve([]),
   ]);
+
+  const savedArtwork: Partial<Record<string, string>> = {};
+  for (const row of artworkRows) savedArtwork[row.kind] = row.imageUrl;
 
   return (
     <GameDetailContent
       item={item}
       initialInWatchlist={!!watchlistRow}
       savedArtworkKinds={artworkRows.map((r) => r.kind)}
+      savedArtwork={savedArtwork}
     />
   );
 }

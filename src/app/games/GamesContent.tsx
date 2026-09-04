@@ -40,6 +40,18 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   const filteredLibrary =
     systemFilter === "all" ? library : library.filter((i) => i.platformSlug === systemFilter);
 
+  type SortOption = "title" | "system" | "size";
+  const [sortBy, setSortBy] = useState<SortOption>("title");
+  const sortedLibrary = [...filteredLibrary].sort((a, b) => {
+    if (sortBy === "system") {
+      return a.platform.localeCompare(b.platform) || a.displayTitle.localeCompare(b.displayTitle);
+    }
+    if (sortBy === "size") {
+      return (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0);
+    }
+    return a.displayTitle.localeCompare(b.displayTitle);
+  });
+
   // ── Search, to add a game not already known to gamarr ───────────
   const [query, setQuery] = useState("");
   const [platform, setPlatform] = useState("all");
@@ -236,37 +248,65 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
                 {systemFilter !== "all" ? ` of ${library.length}` : ""}
               </span>
             </h2>
-            <div className="relative">
-              <select
-                value={systemFilter}
-                onChange={(e) => setSystemFilter(e.target.value)}
-                className="appearance-none rounded border border-white/15 bg-black/40 py-1.5 pl-3 pr-9 text-sm text-white focus:border-white/30 focus:outline-none"
-              >
-                <option value="all" className="bg-netflix-dark">
-                  All systems
-                </option>
-                {systems.map((s) => (
-                  <option key={s.slug} value={s.slug} className="bg-netflix-dark">
-                    {s.label}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <select
+                  value={systemFilter}
+                  onChange={(e) => setSystemFilter(e.target.value)}
+                  className="appearance-none rounded border border-white/15 bg-black/40 py-1.5 pl-3 pr-9 text-sm text-white focus:border-white/30 focus:outline-none"
+                >
+                  <option value="all" className="bg-netflix-dark">
+                    All systems
                   </option>
-                ))}
-              </select>
-              <svg
-                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
+                  {systems.map((s) => (
+                    <option key={s.slug} value={s.slug} className="bg-netflix-dark">
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+              <div className="relative">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortOption)}
+                  className="appearance-none rounded border border-white/15 bg-black/40 py-1.5 pl-3 pr-9 text-sm text-white focus:border-white/30 focus:outline-none"
+                >
+                  <option value="title" className="bg-netflix-dark">
+                    Sort: A–Z
+                  </option>
+                  <option value="system" className="bg-netflix-dark">
+                    Sort: System
+                  </option>
+                  <option value="size" className="bg-netflix-dark">
+                    Sort: Size
+                  </option>
+                </select>
+                <svg
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
             </div>
           </div>
           {filteredLibrary.length === 0 ? (
             <p className="text-sm text-white/50">No games on this system.</p>
           ) : (
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10">
-              {filteredLibrary.map((item) => (
+              {sortedLibrary.map((item) => (
                 <GameCard
                   key={item.gameKey}
                   item={item}

@@ -31,6 +31,13 @@ export type GameArtworkPickerProps = {
   /** Which kinds already have a saved pick, so the tab strip and initial
    *  "cleared" affordance reflect real state on load, not just this session. */
   savedKinds: ArtworkKind[];
+  /** The actual saved image URL per kind, so a matching candidate tile can
+   *  show a "this one's picked" outline instead of leaving every tile
+   *  looking identical once you've already chosen one. */
+  initialArtwork?: Partial<Record<ArtworkKind, string>>;
+  /** Fired the instant a save succeeds, so a parent preview (banner/cover/
+   *  logo/icon laid out together) can update without a page reload. */
+  onArtworkSaved?: (kind: ArtworkKind, url: string | null) => void;
 };
 
 /**
@@ -40,7 +47,13 @@ export type GameArtworkPickerProps = {
  * grid and My List read the same saved pick) and reaches the Steam Deck on
  * its next rom-auto-import.sh run via /api/games/artwork-overrides.
  */
-export function GameArtworkPicker({ system, romStem, savedKinds }: GameArtworkPickerProps) {
+export function GameArtworkPicker({
+  system,
+  romStem,
+  savedKinds,
+  initialArtwork,
+  onArtworkSaved,
+}: GameArtworkPickerProps) {
   const initialTerm = romSearchTitle(romStem);
   const [term, setTerm] = useState(initialTerm);
   const [activeTerm, setActiveTerm] = useState(initialTerm);
@@ -50,6 +63,9 @@ export function GameArtworkPicker({ system, romStem, savedKinds }: GameArtworkPi
   const [artResult, setArtResult] = useState<ArtResult | null>(null);
   const [saving, setSaving] = useState<number | "clear" | null>(null);
   const [saved, setSaved] = useState<Set<ArtworkKind>>(new Set(savedKinds));
+  const [savedUrls, setSavedUrls] = useState<Partial<Record<ArtworkKind, string>>>(
+    initialArtwork ?? {}
+  );
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const gamesLoading = gamesResult?.term !== activeTerm;
@@ -137,6 +153,13 @@ export function GameArtworkPicker({ system, romStem, savedKinds }: GameArtworkPi
         else next.delete(kind);
         return next;
       });
+      setSavedUrls((prev) => {
+        const next = { ...prev };
+        if (candidate) next[kind] = candidate.url;
+        else delete next[kind];
+        return next;
+      });
+      onArtworkSaved?.(kind, candidate?.url ?? null);
     } catch {
       setSaveError("Couldn't save that choice.");
     } finally {
@@ -235,32 +258,46 @@ export function GameArtworkPicker({ system, romStem, savedKinds }: GameArtworkPi
                   : "grid-cols-2 sm:grid-cols-4"
             }`}
           >
-            {candidates.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => save(c)}
-                disabled={saving !== null}
-                className="group relative overflow-hidden rounded border border-white/10 transition-colors hover:border-netflix-red disabled:opacity-50"
-                style={{ aspectRatio: kind === "grid" ? "2 / 3" : kind === "icon" ? "1 / 1" : "16 / 9" }}
-              >
-                <Image
-                  src={c.thumb}
-                  alt=""
-                  fill
-                  // Dense pick-once grid of one-off SteamGridDB thumbnails --
-                  // not worth pushing through the image optimizer's cache.
-                  unoptimized
-                  className="object-cover"
-                  sizes="(max-width: 640px) 33vw, 200px"
-                />
-                {saving === c.id && (
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-white">
-                    Saving…
-                  </span>
-                )}
-              </button>
-            ))}
+            {candidates.map((c) => {
+              const isChosen = savedUrls[kind] === c.url;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => save(c)}
+                  disabled={saving !== null}
+                  className={`group relative overflow-hidden rounded border-2 transition-colors disabled:opacity-50 ${
+                    isChosen
+                      ? "border-netflix-red"
+                      : "border-white/10 hover:border-netflix-red/60"
+                  }`}
+                  style={{ aspectRatio: kind === "grid" ? "2 / 3" : kind === "icon" ? "1 / 1" : "16 / 9" }}
+                >
+                  <Image
+                    src={c.thumb}
+                    alt=""
+                    fill
+                    // Dense pick-once grid of one-off SteamGridDB thumbnails --
+                    // not worth pushing through the image optimizer's cache.
+                    unoptimized
+                    className="object-cover"
+                    sizes="(max-width: 640px) 33vw, 200px"
+                  />
+                  {isChosen && (
+                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-netflix-red text-white shadow">
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </span>
+                  )}
+                  {saving === c.id && (
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-white">
+                      Saving…
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           {saved.has(kind) && (
             <button
