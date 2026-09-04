@@ -50,7 +50,7 @@ export function GameDetailContent({
       <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
         <div className="relative aspect-[2/3] w-40 shrink-0 overflow-hidden rounded bg-white/5 sm:w-56">
           {item.posterUrl ? (
-            <Image src={item.posterUrl} alt={item.title} fill className="object-cover" unoptimized priority />
+            <Image src={item.posterUrl} alt={item.displayTitle} fill className="object-cover" unoptimized priority />
           ) : (
             <div className="flex h-full w-full items-center justify-center">
               <svg className="h-10 w-10 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,7 +67,7 @@ export function GameDetailContent({
 
         <div className="flex flex-1 flex-col gap-4">
           <div>
-            <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">{item.title}</h1>
+            <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">{item.displayTitle}</h1>
             <p className="mt-1 text-white/50">
               {item.platform}
               {sizeText ? ` · ${sizeText}` : ""}
@@ -76,7 +76,7 @@ export function GameDetailContent({
 
           <div className="flex flex-wrap items-center gap-3">
             <GameDownloadButton
-              title={item.title}
+              title={item.displayTitle}
               platform={item.platform}
               platformSlug={item.platformSlug}
               status={item.status}
@@ -89,7 +89,7 @@ export function GameDetailContent({
             />
             <GameWatchlistButton
               gameKey={item.gameKey}
-              title={item.title}
+              title={item.displayTitle}
               platform={item.platform}
               initialInList={initialInWatchlist}
             />

@@ -698,10 +698,16 @@ async function gamarrStatus(): Promise<ServiceStatus> {
  * Myrient, Vimm's) -- same spirit as arrIntegrationStatus above (Radarr's
  * own health check can see things Streamy's mere reachability probe can't,
  * like one indexer's circuit breaker having tripped). /api/sources/health
- * returns `{ sources: {} }` when nothing has tripped; entries only appear
- * once something has -- the endpoint reports problems, not a full roster, so
- * an empty object is read as "no known issues" rather than "no sources
- * configured" (that distinction already comes from gamarrStatus above).
+ * returns `{ sources: {} }` when nothing has ever failed; entries persist
+ * once a source has recorded *any* failure, ever -- confirmed live, this
+ * panel reported "2 sources degraded" for a full day off one deliberately
+ * garbage test query each, both still sitting at score:90/100 and
+ * circuit_open:false the whole time. Presence in the dict is a lifetime
+ * failure count, not a current-state signal -- circuit_open is: gamarr's
+ * own breaker, tripped only when a source has failed enough to actually
+ * stop using it. That's the one worth alerting on; a single old failure
+ * next to a healthy score is exactly the noise this whole ops surface
+ * exists to filter out; a full history is still shown for context.
  */
 async function gamarrSourcesStatus(): Promise<ServiceStatus> {
   const group = "Downloads" as const;
@@ -713,16 +719,26 @@ async function gamarrSourcesStatus(): Promise<ServiceStatus> {
   if (!res.ok) {
     return { name: label, group, state: "unknown", detail: res.error ?? `HTTP ${res.status}` };
   }
-  const sources = (res.json as { sources?: Record<string, unknown> } | undefined)?.sources ?? {};
+  const sources =
+    (res.json as { sources?: Record<string, { circuit_open?: boolean }> } | undefined)?.sources ?? {};
   const names = Object.keys(sources);
+  const tripped = names.filter((n) => sources[n]?.circuit_open === true);
+  if (tripped.length > 0) {
+    return {
+      name: label,
+      group,
+      state: "down",
+      detail: `${tripped.length} source${tripped.length > 1 ? "s" : ""} circuit-broken (temporarily disabled after repeated failures): ${tripped.join(", ")}`,
+    };
+  }
   if (names.length === 0) {
     return { name: label, group, state: "up", detail: "all sources healthy" };
   }
   return {
     name: label,
     group,
-    state: "down",
-    detail: `${names.length} source${names.length > 1 ? "s" : ""} degraded: ${names.join(", ")}`,
+    state: "up",
+    detail: `all sources healthy (${names.length} with a failure in their history: ${names.join(", ")})`,
   };
 }
 

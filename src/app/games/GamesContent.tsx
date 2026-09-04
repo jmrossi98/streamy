@@ -7,6 +7,7 @@ import { GameCard } from "@/components/GameCard";
 import type { GameListItem } from "@/lib/games";
 import type { GamePlatform, GameSearchResult } from "@/lib/gamarr";
 import { formatFileSize } from "@/lib/formatBytes";
+import { ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
 export type GamesContentProps = {
   configured: boolean;
@@ -102,7 +103,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
 
   if (!configured) {
     return (
-      <p className="text-sm text-white/50">
+      <p className={`text-sm text-white/50 ${ROW_SECTION_CLASS}`}>
         Games are unavailable right now — gamarr isn&apos;t configured or unreachable.
       </p>
     );
@@ -110,7 +111,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
 
   return (
     <div className="space-y-10">
-      <section className="space-y-3">
+      <section className={`space-y-3 ${ROW_SECTION_CLASS}`}>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={query}
@@ -121,17 +122,28 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
             placeholder="Find a game to add…"
             className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder-white/30 focus:border-white/30 focus:outline-none"
           />
-          <select
-            value={platform}
-            onChange={(e) => setPlatform(e.target.value)}
-            className="rounded border border-white/15 bg-black/40 px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
-          >
-            {platforms.map((p) => (
-              <option key={p.id} value={p.id} className="bg-netflix-dark">
-                {p.name}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={platform}
+              onChange={(e) => setPlatform(e.target.value)}
+              className="w-full appearance-none rounded border border-white/15 bg-black/40 py-2 pl-3 pr-9 text-sm text-white focus:border-white/30 focus:outline-none"
+            >
+              {platforms.map((p) => (
+                <option key={p.id} value={p.id} className="bg-netflix-dark">
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <svg
+              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
           <button
             type="button"
             onClick={runSearch}
@@ -215,7 +227,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
       )}
 
       {library.length > 0 ? (
-        <section>
+        <section className={ROW_SECTION_CLASS}>
           <div className="mb-4 flex items-baseline justify-between gap-3">
             <h2 className="font-display text-2xl font-bold text-white">
               My Games
@@ -224,20 +236,31 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
                 {systemFilter !== "all" ? ` of ${library.length}` : ""}
               </span>
             </h2>
-            <select
-              value={systemFilter}
-              onChange={(e) => setSystemFilter(e.target.value)}
-              className="rounded border border-white/15 bg-black/40 px-3 py-1.5 text-sm text-white focus:border-white/30 focus:outline-none"
-            >
-              <option value="all" className="bg-netflix-dark">
-                All systems
-              </option>
-              {systems.map((s) => (
-                <option key={s.slug} value={s.slug} className="bg-netflix-dark">
-                  {s.label}
+            <div className="relative">
+              <select
+                value={systemFilter}
+                onChange={(e) => setSystemFilter(e.target.value)}
+                className="appearance-none rounded border border-white/15 bg-black/40 py-1.5 pl-3 pr-9 text-sm text-white focus:border-white/30 focus:outline-none"
+              >
+                <option value="all" className="bg-netflix-dark">
+                  All systems
                 </option>
-              ))}
-            </select>
+                {systems.map((s) => (
+                  <option key={s.slug} value={s.slug} className="bg-netflix-dark">
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <svg
+                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
           </div>
           {filteredLibrary.length === 0 ? (
             <p className="text-sm text-white/50">No games on this system.</p>
@@ -257,7 +280,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
       ) : (
         downloading.length === 0 &&
         queued.length === 0 && (
-          <p className="text-sm text-white/50">
+          <p className={`text-sm text-white/50 ${ROW_SECTION_CLASS}`}>
             No games yet — search above to find and download your first one.
           </p>
         )
