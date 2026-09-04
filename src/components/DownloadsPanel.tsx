@@ -187,6 +187,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           episodeId: d.episodeId,
           mediaType: d.mediaType,
           action,
+          // For the audit log only -- the route already has everything it
+          // needs to actually perform the action without this, but has no
+          // way to turn a bare Radarr/Sonarr internal id back into a title
+          // (unlike /api/requests/manage, which gets a tmdbId and can).
+          title: d.title,
         }),
       });
       if (!res.ok) {

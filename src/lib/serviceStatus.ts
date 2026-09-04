@@ -671,13 +671,21 @@ async function awsCostStatus(): Promise<ServiceStatus> {
   }
 }
 
-/** Basic reachability -- gamarr's own /api/health, no API key involved. */
+// Sent whenever set; gamarr accepts unauthenticated calls until its own
+// AUTH_USERNAME/PASSWORD or API_KEY is configured, but once any of those
+// exist it locks its *entire* API, not just its web UI (confirmed live,
+// 2026-09-04 -- every one of these probes went from open to a flat 401 the
+// moment mediabox's gamarr got an API_KEY, before this line existed here).
+const gamarrHeaders = (): Record<string, string> =>
+  process.env.GAMARR_API_KEY ? { "X-Api-Key": process.env.GAMARR_API_KEY } : {};
+
+/** Basic reachability -- gamarr's own /api/health. */
 async function gamarrStatus(): Promise<ServiceStatus> {
   const group = "Downloads" as const;
   if (!isGamarrConfigured()) {
     return { name: "gamarr", group, state: "unconfigured", detail: "Not configured" };
   }
-  const res = await probe(`${env("GAMARR_URL")}/api/health`);
+  const res = await probe(`${env("GAMARR_URL")}/api/health`, gamarrHeaders());
   if (!res.ok) {
     return { name: "gamarr", group, state: "down", detail: res.error ?? `HTTP ${res.status}` };
   }
@@ -701,7 +709,7 @@ async function gamarrSourcesStatus(): Promise<ServiceStatus> {
   if (!isGamarrConfigured()) {
     return { name: label, group, state: "unconfigured", detail: "Not configured" };
   }
-  const res = await probe(`${env("GAMARR_URL")}/api/sources/health`);
+  const res = await probe(`${env("GAMARR_URL")}/api/sources/health`, gamarrHeaders());
   if (!res.ok) {
     return { name: label, group, state: "unknown", detail: res.error ?? `HTTP ${res.status}` };
   }

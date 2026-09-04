@@ -3,6 +3,8 @@ import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { requestMovie, isRadarrConfigured, searchRadarrMovie } from "@/lib/radarr";
 import { requestShow, isSonarrConfigured, searchSonarrSeries } from "@/lib/sonarr";
+import { getMovieById, getShowById } from "@/lib/tmdb";
+import { logAudit } from "@/lib/auditLog";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -10,6 +12,7 @@ export async function POST(request: Request) {
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const actorName = session?.user?.name ?? "unknown";
 
   const body = await request.json();
   const tmdbId = body?.tmdbId != null ? String(body.tmdbId).trim() : "";
@@ -31,6 +34,13 @@ export async function POST(request: Request) {
   if (existing && existing.status !== "noReleaseFound") {
     return NextResponse.json({ status: existing.status });
   }
+  // Best-effort, and only once we know a request is actually about to
+  // mutate something -- the early "already requested" return above skips
+  // it entirely, so a repeated click doesn't cost a TMDB round trip.
+  const titleFor = async () =>
+    (mediaType === "movie" ? (await getMovieById(tmdbId))?.title : (await getShowById(tmdbId))?.name) ??
+    `${mediaType} ${tmdbId}`;
+
   if (existing && existing.externalId != null) {
     if (mediaType === "movie") await searchRadarrMovie(existing.externalId);
     else await searchSonarrSeries(existing.externalId);
@@ -38,6 +48,7 @@ export async function POST(request: Request) {
       where: { tmdbId_mediaType: { tmdbId, mediaType } },
       data: { status: "requested" },
     });
+    logAudit(actorName, `${mediaType}.request.retry`, await titleFor());
     return NextResponse.json({ status: "requested" });
   }
 
@@ -69,5 +80,6 @@ export async function POST(request: Request) {
     });
   }
 
+  logAudit(actorName, `${mediaType}.request`, await titleFor());
   return NextResponse.json({ status });
 }

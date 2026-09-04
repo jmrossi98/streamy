@@ -72,3 +72,56 @@ function normalizeGameTitle(title: string): string {
 export function gameKeyOf(platformSlug: string, title: string): string {
   return `${platformSlug || "unknown"}::${normalizeGameTitle(title)}`;
 }
+
+function normalizeForSimilarity(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Character-level ratio (via a simple LCS-based similarity) combined with
+ * token-set overlap -- mirrors, in spirit, the same two-signal combination
+ * mediabox-infra's deck/steam_sync.py uses for its own SGDB matching, and
+ * for the same reason: character ratio alone misses "the query merely
+ * appears inside a much longer title" (a compilation listing the game among
+ * several), and token overlap alone misses reordering/punctuation noise.
+ *
+ * Used by gameArtworkAuto.ts's SGDB matching -- lives here rather than
+ * there specifically so it (and its test) never pull in that module's
+ * Prisma import. That import broke CI once already: this repo's unit-test
+ * job runs `npm ci --ignore-scripts` (skips `prisma generate`, since these
+ * tests are pure and don't touch the database), so any module a pure-logic
+ * test imports has to actually stay import-free of Prisma, not just
+ * logically independent of it.
+ */
+export function titleSimilarity(a: string, b: string): number {
+  const na = normalizeForSimilarity(a);
+  const nb = normalizeForSimilarity(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+
+  // Longest common subsequence length, normalized by the longer string --
+  // cheap, dependency-free stand-in for difflib.SequenceMatcher.ratio()
+  // that's plenty accurate for this threshold gate (it doesn't need to be
+  // exact, just consistent).
+  const m = na.length;
+  const n = nb.length;
+  const dp = new Array(n + 1).fill(0);
+  for (let i = 1; i <= m; i++) {
+    let prev = 0;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] = na[i - 1] === nb[j - 1] ? prev + 1 : Math.max(dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  const lcs = dp[n];
+  const charRatio = (2 * lcs) / (m + n);
+
+  const ta = new Set(na.split(" ").filter(Boolean));
+  const tb = new Set(nb.split(" ").filter(Boolean));
+  const intersection = [...ta].filter((t) => tb.has(t)).length;
+  const union = new Set([...ta, ...tb]).size;
+  const jaccard = union > 0 ? intersection / union : 0;
+
+  return Math.max(charRatio, jaccard);
+}

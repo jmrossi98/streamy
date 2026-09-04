@@ -92,7 +92,7 @@ export function GameDownloadButton({
       <div className="flex flex-col items-start gap-2">
         <button
           type="button"
-          onClick={() => jobId && act({ action: "retry", jobId })}
+          onClick={() => jobId && act({ action: "retry", jobId, title })}
           disabled={busy || !jobId}
           className={PRIMARY_CLASS}
         >
@@ -111,7 +111,7 @@ export function GameDownloadButton({
         </span>
         <button
           type="button"
-          onClick={() => wishlistId != null && act({ action: "remove", id: wishlistId })}
+          onClick={() => wishlistId != null && act({ action: "remove", id: wishlistId, title })}
           disabled={busy || wishlistId == null}
           className="text-sm text-white/50 hover:text-white disabled:opacity-50"
         >

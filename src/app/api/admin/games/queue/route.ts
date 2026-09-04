@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isGamarrConfigured, queueGame, removeWishlistItem, retryGameDownload } from "@/lib/gamarr";
+import { logAudit } from "@/lib/auditLog";
 
 /**
  * Queues a game for download, and the two management actions that go with it
@@ -14,7 +15,8 @@ import { isGamarrConfigured, queueGame, removeWishlistItem, retryGameDownload } 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  if (!(await requireAdmin(await getSession()))) {
+  const admin = await requireAdmin(await getSession());
+  if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
   if (!isGamarrConfigured()) {
@@ -29,23 +31,26 @@ export async function POST(request: Request) {
   }
 
   const action = body.action;
+  // Audit-log display only, when the caller has it in scope -- never used
+  // to identify what to act on.
+  const logTitle = typeof body.title === "string" && body.title ? body.title : null;
 
   if (action === "remove") {
     const id = typeof body.id === "number" ? body.id : null;
     if (id === null) return NextResponse.json({ error: "id required" }, { status: 400 });
     const ok = await removeWishlistItem(id);
-    return ok
-      ? NextResponse.json({ ok: true })
-      : NextResponse.json({ error: "Couldn't remove that item" }, { status: 502 });
+    if (!ok) return NextResponse.json({ error: "Couldn't remove that item" }, { status: 502 });
+    logAudit(admin.name, "game.queue.remove", logTitle ?? `wishlist #${id}`);
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "retry") {
     const jobId = typeof body.jobId === "string" ? body.jobId : null;
     if (!jobId) return NextResponse.json({ error: "jobId required" }, { status: 400 });
     const ok = await retryGameDownload(jobId);
-    return ok
-      ? NextResponse.json({ ok: true })
-      : NextResponse.json({ error: "Couldn't retry that download" }, { status: 502 });
+    if (!ok) return NextResponse.json({ error: "Couldn't retry that download" }, { status: 502 });
+    logAudit(admin.name, "game.download.retry", logTitle ?? `job ${jobId}`);
+    return NextResponse.json({ ok: true });
   }
 
   // Default action: queue a search result.
@@ -60,5 +65,6 @@ export async function POST(request: Request) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 502 });
   }
+  logAudit(admin.name, "game.queue", title, platform);
   return NextResponse.json({ ok: true });
 }

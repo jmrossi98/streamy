@@ -26,6 +26,13 @@
 import { romStemOf } from "./romNames";
 
 const GAMARR_URL = process.env.GAMARR_URL?.replace(/\/$/, "");
+// Optional: unset means gamarr has no auth configured, and every call here
+// goes out with no key, exactly as it always did before gamarr had one.
+// Once gamarr's own AUTH_USERNAME/PASSWORD or API_KEY is set (see
+// mediabox-infra's docker-compose.yml, 2026-09-04), it locks its whole API
+// down -- not just its web UI -- so this becomes required at that point, not
+// just nice to have.
+const GAMARR_API_KEY = process.env.GAMARR_API_KEY;
 
 export function isGamarrConfigured(): boolean {
   return !!GAMARR_URL;
@@ -49,6 +56,7 @@ async function gamarrFetch<T>(
     ...rest,
     headers: {
       "Content-Type": "application/json",
+      ...(GAMARR_API_KEY ? { "X-Api-Key": GAMARR_API_KEY } : {}),
       ...(rest.headers ?? {}),
     },
     signal: rest.signal ?? AbortSignal.timeout(timeoutMs ?? FETCH_TIMEOUT_MS),

@@ -1,10 +1,38 @@
 import type { Finding, LoginActivity, Severity } from "@/lib/securityRules";
 import { overallSeverity } from "@/lib/securityRules";
+import type { AuditLogRow } from "@/lib/auditLog";
 
 type Props = {
   activity: LoginActivity;
   findings: Finding[];
   generatedAt: string;
+  auditLog: AuditLogRow[];
+};
+
+// "movie.request" -> "Requested"; "game.artwork.save" -> "Saved artwork";
+// falls back to the raw action for anything not in this list rather than
+// hiding it, since a genuinely new action type is exactly what an admin
+// reading an audit log should still be able to see, just less prettily.
+const ACTION_LABELS: Record<string, string> = {
+  "movie.request": "Requested",
+  "movie.request.retry": "Searched again",
+  "movie.cancel": "Cancelled",
+  "movie.delete": "Deleted",
+  "movie.admin.cancel": "Cancelled (admin)",
+  "movie.admin.delete": "Deleted (admin)",
+  "show.request": "Requested",
+  "show.request.retry": "Searched again",
+  "show.cancel": "Cancelled",
+  "show.delete": "Deleted",
+  "show.admin.cancel": "Cancelled (admin)",
+  "show.admin.delete": "Deleted (admin)",
+  "game.queue": "Queued",
+  "game.queue.remove": "Removed from queue",
+  "game.download.retry": "Retried download",
+  "game.artwork.save": "Saved artwork",
+  "game.artwork.clear": "Cleared artwork",
+  "approval.approve": "Approved user",
+  "approval.deny": "Denied user",
 };
 
 // Status colour is paired with a text label everywhere it appears, so severity
@@ -26,7 +54,7 @@ function Stat({ label, value, muted }: { label: string; value: number; muted?: b
   );
 }
 
-export function SecurityPanel({ activity, findings, generatedAt }: Props) {
+export function SecurityPanel({ activity, findings, generatedAt, auditLog }: Props) {
   // Actionable findings first; the informational ones are reassurance, not news.
   const actionable = findings.filter((f) => f.severity !== "info");
   const healthy = findings.filter((f) => f.severity === "info");
@@ -105,6 +133,38 @@ export function SecurityPanel({ activity, findings, generatedAt }: Props) {
           </ul>
         </details>
       )}
+
+      <div className="border-t border-white/10 pt-4">
+        <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
+          Recent admin activity
+        </h3>
+        {auditLog.length === 0 ? (
+          <p className="text-sm text-white/50">Nothing recorded yet.</p>
+        ) : (
+          <ul className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+            {auditLog.map((e) => (
+              <li key={e.id} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 text-white/70">{e.actorName}</span>
+                <span className="shrink-0 text-white/40">
+                  {ACTION_LABELS[e.action] ?? e.action}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-white/90">{e.target}</span>
+                {e.detail && (
+                  <span className="shrink-0 text-xs text-white/30">{e.detail}</span>
+                )}
+                <span className="shrink-0 text-xs tabular-nums text-white/30">
+                  {new Date(e.createdAt).toLocaleString(undefined, {
+                    month: "numeric",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
