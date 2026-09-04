@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { GameListItem } from "@/lib/games";
 import type { ArtworkKind } from "@/lib/steamgriddb";
@@ -18,13 +18,32 @@ export function GameDetailContent({
   item,
   initialInWatchlist,
   savedArtworkKinds,
+  savedArtwork,
 }: {
   item: GameListItem;
   initialInWatchlist: boolean;
   savedArtworkKinds: string[];
+  savedArtwork: Partial<Record<string, string>>;
 }) {
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
+
+  const validKinds: ArtworkKind[] = ["grid", "hero", "logo", "icon"];
+  const savedKinds = savedArtworkKinds.filter((k): k is ArtworkKind =>
+    (validKinds as string[]).includes(k)
+  );
+
+  // Local copy of the four artwork kinds so picking new art -- cover,
+  // banner, logo, or icon -- shows up immediately (main poster included)
+  // instead of waiting for a full page reload to re-read the saved rows.
+  const [artwork, setArtwork] = useState<Partial<Record<ArtworkKind, string>>>(() => {
+    const initial: Partial<Record<ArtworkKind, string>> = { grid: item.posterUrl ?? undefined };
+    for (const k of savedKinds) {
+      const url = savedArtwork[k];
+      if (url) initial[k] = url;
+    }
+    return initial;
+  });
 
   // Auto-refresh while this game is actively moving through gamarr's
   // pipeline, so progress/status update without a manual reload -- same
@@ -40,17 +59,13 @@ export function GameDetailContent({
   }, [item.status, router, refreshing]);
 
   const sizeText = formatFileSize(item.sizeBytes);
-  const validKinds: ArtworkKind[] = ["grid", "hero", "logo", "icon"];
-  const savedKinds = savedArtworkKinds.filter((k): k is ArtworkKind =>
-    (validKinds as string[]).includes(k)
-  );
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16 pt-24 sm:px-6">
       <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
         <div className="relative aspect-[2/3] w-40 shrink-0 overflow-hidden rounded bg-white/5 sm:w-56">
-          {item.posterUrl ? (
-            <Image src={item.posterUrl} alt={item.displayTitle} fill className="object-cover" unoptimized priority />
+          {artwork.grid ? (
+            <Image src={artwork.grid} alt={item.displayTitle} fill className="object-cover" unoptimized priority />
           ) : (
             <div className="flex h-full w-full items-center justify-center">
               <svg className="h-10 w-10 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -105,7 +120,58 @@ export function GameDetailContent({
               Pick real cover art from SteamGridDB. Choosing here updates this game&apos;s poster in
               Streamy immediately, and reaches the Steam Deck the next time it checks in.
             </p>
-            <GameArtworkPicker system={item.system} romStem={item.romStem} savedKinds={savedKinds} />
+
+            {/* Live layout preview -- banner behind, logo over it, cover
+                overlapping bottom-left, icon badged bottom-right, roughly
+                matching how Steam's own Big Picture library card is built
+                out of these same four asset kinds. Updates the instant a
+                pick is saved below, no reload needed. */}
+            <div className="relative mb-6 aspect-video w-full max-w-xl overflow-hidden rounded-lg border border-white/10 bg-white/5">
+              {artwork.hero ? (
+                <Image src={artwork.hero} alt="" fill unoptimized className="object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-xs text-white/25">
+                  No banner picked yet
+                </div>
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+              {artwork.logo && (
+                <Image
+                  src={artwork.logo}
+                  alt=""
+                  width={200}
+                  height={80}
+                  unoptimized
+                  className="absolute bottom-4 right-4 max-h-16 w-auto object-contain drop-shadow"
+                />
+              )}
+              <div className="absolute bottom-3 left-3 flex items-end gap-2">
+                <div className="relative aspect-[2/3] w-16 shrink-0 overflow-hidden rounded border border-white/20 bg-black/40 shadow-lg">
+                  {artwork.grid ? (
+                    <Image src={artwork.grid} alt="" fill unoptimized className="object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[9px] text-white/30">
+                      No cover
+                    </div>
+                  )}
+                </div>
+                {artwork.icon && (
+                  <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-white/20 bg-black/40 shadow-lg">
+                    <Image src={artwork.icon} alt="" fill unoptimized className="object-cover" />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <GameArtworkPicker
+              system={item.system}
+              romStem={item.romStem}
+              savedKinds={savedKinds}
+              initialArtwork={artwork}
+              onArtworkSaved={(kind, url) =>
+                setArtwork((prev) => ({ ...prev, [kind]: url ?? undefined }))
+              }
+            />
           </>
         ) : (
           <p className="text-sm text-white/50">
