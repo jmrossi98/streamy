@@ -51,6 +51,8 @@ const nextConfig = {
       { protocol: "https", hostname: "image.tmdb.org", pathname: "/**" },
       { protocol: "https", hostname: "images.unsplash.com", pathname: "/**" },
       { protocol: "https", hostname: "placehold.co", pathname: "/**" },
+      // ROM artwork candidates in the admin games panel's picker.
+      { protocol: "https", hostname: "cdn2.steamgriddb.com", pathname: "/**" },
     ],
     dangerouslyAllowSVG: true,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",

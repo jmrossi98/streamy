@@ -27,6 +27,14 @@ import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
+import { GamesPanel } from "@/components/GamesPanel";
+import {
+  getGameDownloads,
+  getGameLibrary,
+  getGamePlatforms,
+  isGamarrConfigured,
+} from "@/lib/gamarr";
+import { isSgdbConfigured } from "@/lib/steamgriddb";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -89,6 +97,20 @@ export default async function AdminFeaturesPage() {
     getPageWatchSummary(),
     getPlaybackCheckHistory(),
   ]);
+
+  // Games (gamarr + SteamGridDB). Kept out of the Promise.all above so an
+  // unreachable gamarr can't slow every other panel on the page down to its
+  // own timeout -- each of these already swallows its own failures and
+  // returns empty, and the panel renders a "not configured" state from that.
+  const gamesConfigured = isGamarrConfigured();
+  const [gamePlatforms, gameDownloads, gameLibrary, artworkPicks] = gamesConfigured
+    ? await Promise.all([
+        getGamePlatforms(),
+        getGameDownloads(),
+        getGameLibrary(),
+        prisma.gameArtwork.findMany({ select: { system: true, romStem: true } }),
+      ])
+    : [[], [], [], []];
 
   const downloads: DownloadRow[] = [
     ...radarrDownloads.map((d) => ({ ...d, mediaType: "movie" as const, completed: false })),
@@ -236,6 +258,22 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <DownloadsPanel downloads={downloads} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Games</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <GamesPanel
+            configured={gamesConfigured}
+            sgdbConfigured={isSgdbConfigured()}
+            platforms={gamePlatforms}
+            downloads={gameDownloads}
+            library={gameLibrary}
+            customizedKeys={Array.from(
+              new Set(artworkPicks.map((a) => `${a.system}/${a.romStem}`))
+            )}
+          />
         </div>
       </section>
 
