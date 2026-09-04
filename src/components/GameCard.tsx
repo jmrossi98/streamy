@@ -47,7 +47,7 @@ export function GameCard({
           {item.posterUrl ? (
             <Image
               src={item.posterUrl}
-              alt={item.title}
+              alt={item.displayTitle}
               fill
               className="object-cover"
               sizes={
@@ -67,7 +67,7 @@ export function GameCard({
                   d="M6 12h4m-2-2v4m7-3h.01M17 13h.01M9 18h6a3 3 0 003-3v-2a5 5 0 00-5-5H8a5 5 0 00-5 5v2a3 3 0 003 3z"
                 />
               </svg>
-              <span className="text-[11px] leading-tight text-white/40">{item.title}</span>
+              <span className="text-[11px] leading-tight text-white/40">{item.displayTitle}</span>
             </div>
           )}
         </Link>
@@ -75,7 +75,7 @@ export function GameCard({
         <div className="absolute right-2 top-2 z-[5] pointer-events-auto opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
           <GameWatchlistButton
             gameKey={item.gameKey}
-            title={item.title}
+            title={item.displayTitle}
             platform={item.platform}
             initialInList={inWatchlist}
             variant="circle"
@@ -93,7 +93,7 @@ export function GameCard({
         )}
       </div>
       <Link href={href} prefetch className="block p-2">
-        <p className="truncate text-sm font-medium text-white">{item.title}</p>
+        <p className="truncate text-sm font-medium text-white">{item.displayTitle}</p>
         <p className="text-xs text-white/60">{item.platform}</p>
       </Link>
     </div>

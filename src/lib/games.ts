@@ -9,13 +9,23 @@
 
 import { prisma } from "./db";
 import { getGameLibrary, getGameDownloads, getWishlist } from "./gamarr";
-import { gameKeyOf } from "./romNames";
+import { gameKeyOf, romSearchTitle } from "./romNames";
 
 export type GameStatus = "library" | "downloading" | "failed" | "queued";
 
 export type GameListItem = {
   gameKey: string;
+  /** Raw title as gamarr reports it -- a ROM filename for a library item
+   *  ("Final Fantasy VIII (USA) (Disc 4)", sometimes literally a filename
+   *  like "tomb_raider"), or a release name for a wishlist/download entry.
+   *  Kept around because it's what search/matching logic actually needs;
+   *  never shown to a user directly -- see displayTitle for that. */
   title: string;
+  /** What to actually show someone: title with region/version/release-tag
+   *  noise stripped (romSearchTitle). Still imperfect for a raw filename
+   *  with no formatting at all ("tomb_raider" stays "tomb_raider"), but
+   *  strictly better than showing the noise verbatim. */
+  displayTitle: string;
   platform: string;
   platformSlug: string;
   status: GameStatus;
@@ -71,6 +81,10 @@ export async function getGamesList(): Promise<GameListItem[]> {
     items.set(key, {
       gameKey: key,
       title: g.fileName,
+      // romStem, not fileName -- fileName still carries the extension for a
+      // raw (not-yet-compressed) file, and romSearchTitle only strips
+      // parenthesized/bracketed noise, not extensions.
+      displayTitle: romSearchTitle(g.romStem),
       platform: g.platform,
       platformSlug: g.system,
       status: "library",
@@ -91,6 +105,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
     items.set(key, {
       gameKey: key,
       title: d.title,
+      displayTitle: romSearchTitle(d.title),
       platform: d.platform,
       platformSlug: platformToSlug(d.platform),
       status: d.status === "completed" ? "library" : d.status,
@@ -111,6 +126,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
     items.set(key, {
       gameKey: key,
       title: w.title,
+      displayTitle: romSearchTitle(w.title),
       platform: w.platform,
       platformSlug: w.platformSlug,
       status: "queued",

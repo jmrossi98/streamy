@@ -132,6 +132,74 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+// gamarr's own search fans out to Prowlarr's general torrent trackers, not
+// just game-specific sources, and its category scoping only works against
+// indexers that actually respect a Torznab category filter server-side --
+// several of the general public trackers configured here (1337x, The Pirate
+// Bay, Knaben, NZBgeek) don't, and just full-text match across their whole
+// catalog. Confirmed live searching "spyro": movies, TV episodes, and a jazz
+// fusion band (Spyro Gyra) all came back mixed in with real game results --
+// and gamarr's own relevance score doesn't discriminate content *type* at
+// all, so the jazz album scored *higher* (79, "high" confidence) than a
+// genuine PSX game hit (62, "medium"). Score can't be the filter; the
+// release-tag conventions those non-game rips carry can.
+//
+// Deliberately conservative: every pattern here is a naming convention real
+// game releases essentially never use (movie/TV rip formats, TV episode
+// numbering, music-release audio-format tags), chosen against the specific
+// false positives observed live rather than a generic "looks weird" guess.
+// A real miss here (a game wrongly filtered) is far less costly than the
+// problem this exists to fix (a viewer skimming search results expecting
+// games and finding a random movie or jazz album instead).
+const NON_GAME_RELEASE_PATTERNS = [
+  /\bS\d{1,2}\.?E\d{1,2}(-\d{1,2})?\b/i, // TV episode numbering: S01E16, S03.E05-06
+  /\b(DVDRip|BDRip|BRRip|WEBRip|HDTV|XviD|x264|x265|HEVC|AC3|SweSub)\b/i, // video-rip release tags
+  /\b(FLAC|MP3|WAV|CDRip|Vinyl|\d{2}Bit|\d{2,3}kHz|\d{3}kbps)\b/i, // audio-release tags
+  /\b(Soundtrack|Original\s*Score)\b/i, // OST/score rip, not the game itself
+];
+
+/** Exported for testing. */
+export function looksLikeNonGameRelease(title: string): boolean {
+  return NON_GAME_RELEASE_PATTERNS.some((p) => p.test(title));
+}
+
+// Second signal: console/format markers that show up almost exclusively in
+// real ROM/disc-image release names. Confirmed live that the tag patterns
+// above alone still let plenty through -- P2P music-scene releases mostly
+// follow an "Artist-Title-WEB-YYYY-GROUP" convention with no audio-format
+// keyword in the title at all ("Rick Arter-Spyro-WEB-2024-AFO", a real
+// result for a "spyro" search that carries none of the FLAC/MP3/etc tags).
+const ROM_FORMAT_MARKERS =
+  /\b(ISO|ROM|WBFS|RVZ|CHD|NKIT|XCI|NSP|CIA|3DS|NDS|N64|PSX|PS[1-4]|NTSC|PAL|GameCube|Wii|Xbox)\b/i;
+
+/**
+ * The real filter searchGames() applies. DDL sources (Vimm's Lair,
+ * Myrient) are trusted outright regardless of title shape -- they are
+ * single-purpose ROM archives, incapable of returning a movie or an album
+ * in the first place, unlike Prowlarr's general torrent trackers. For
+ * anything else, a result gamarr itself couldn't assign a platform to
+ * *and* whose title carries no recognizable console/disc-image marker is
+ * very rarely a real game -- confirmed live, that combination is exactly
+ * the shape most of the false positives took (score/soundtrack rips aside,
+ * already caught by looksLikeNonGameRelease above). Exported for testing.
+ */
+export function isLikelyNonGameResult(r: {
+  title: string;
+  platform: string;
+  sourceType: GameSearchResult["sourceType"];
+}): boolean {
+  // A stub, not a real result -- confirmed live, gamarr's Vimm's Lair
+  // driver returned ten identical "9" titles (guid vault/999999, an
+  // obviously sentinel-looking id) for a real search. Real game titles are
+  // essentially never under 3 characters; this is a cheap, safe guard
+  // against that specific class of placeholder regardless of source.
+  if (r.title.trim().length < 3) return true;
+  if (looksLikeNonGameRelease(r.title)) return true;
+  if (r.sourceType === "ddl") return false;
+  if ((!r.platform || r.platform === "Unknown") && !ROM_FORMAT_MARKERS.test(r.title)) return true;
+  return false;
+}
+
 /**
  * Searches every configured source for a title. `platform` is a gamarr
  * platform slug ("ps2", "psx", ...) or "all".
@@ -153,29 +221,31 @@ export async function searchGames(
     `/api/search?${params}`,
     { timeoutMs: SEARCH_TIMEOUT_MS }
   );
-  return (data.results ?? []).map((r) => {
-    const size = num(r.size);
-    const breakdown = r.score_breakdown as { confidence?: unknown } | undefined;
-    return {
-      title: decodeEntities(String(r.title ?? "")),
-      // gamarr reports 0 for "unknown size" on DDL sources that don't publish
-      // one (confirmed live on Vimm's results), not an actually-empty file --
-      // so 0 becomes null here and the UI omits the size rather than claiming
-      // a 0 B download.
-      sizeBytes: size && size > 0 ? size : null,
-      sizeHuman: typeof r.size_human === "string" && r.size_human !== "?" ? r.size_human : null,
-      seeders: num(r.seeders),
-      indexer: String(r.indexer ?? "unknown"),
-      platform: String(r.platform ?? ""),
-      platformSlug: String(r.platform_slug ?? ""),
-      sourceType: normalizeSourceType(r.source_type),
-      safetyScore: num(r.safety_score),
-      score: num(r.score),
-      confidence: typeof breakdown?.confidence === "string" ? breakdown.confidence : null,
-      inLibrary: r.in_library === true,
-      guid: String(r.guid ?? ""),
-    };
-  });
+  return (data.results ?? [])
+    .map((r) => {
+      const size = num(r.size);
+      const breakdown = r.score_breakdown as { confidence?: unknown } | undefined;
+      return {
+        title: decodeEntities(String(r.title ?? "")),
+        // gamarr reports 0 for "unknown size" on DDL sources that don't publish
+        // one (confirmed live on Vimm's results), not an actually-empty file --
+        // so 0 becomes null here and the UI omits the size rather than claiming
+        // a 0 B download.
+        sizeBytes: size && size > 0 ? size : null,
+        sizeHuman: typeof r.size_human === "string" && r.size_human !== "?" ? r.size_human : null,
+        seeders: num(r.seeders),
+        indexer: String(r.indexer ?? "unknown"),
+        platform: String(r.platform ?? ""),
+        platformSlug: String(r.platform_slug ?? ""),
+        sourceType: normalizeSourceType(r.source_type),
+        safetyScore: num(r.safety_score),
+        score: num(r.score),
+        confidence: typeof breakdown?.confidence === "string" ? breakdown.confidence : null,
+        inLibrary: r.in_library === true,
+        guid: String(r.guid ?? ""),
+      };
+    })
+    .filter((r) => !isLikelyNonGameResult(r));
 }
 
 export type WishlistItem = { id: number; title: string; platform: string; platformSlug: string };
