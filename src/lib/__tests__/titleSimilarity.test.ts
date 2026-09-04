@@ -35,6 +35,22 @@ describe("titleSimilarity", () => {
     );
   });
 
+  it("rejects two different numbered sequels sharing everything but the number", () => {
+    // Confirmed live (2026-09-04): Super Mario Bros., Bros. 2, and Bros. 3
+    // were showing as if they were the same game in the Games UI --
+    // titleSimilarity alone scored these ~0.94 with no signal weighing the
+    // one token that actually distinguishes them.
+    expect(titleSimilarity("Super Mario Bros", "Super Mario Bros 2")).toBeLessThan(MIN_SIMILARITY);
+    expect(titleSimilarity("Mega Man 2", "Mega Man 3")).toBeLessThan(MIN_SIMILARITY);
+    expect(titleSimilarity("Dragon Warrior II", "Dragon Warrior III")).toBeLessThan(MIN_SIMILARITY);
+  });
+
+  it("still matches the same numbered sequel across formatting noise", () => {
+    expect(
+      titleSimilarity("Mega Man 2 (USA)", "Mega Man 2")
+    ).toBeGreaterThanOrEqual(MIN_SIMILARITY);
+  });
+
   it("rejects a compilation merely containing the real title as a substring", () => {
     // Confirmed live: all three SpongeBob titles matched a 4-game compilation
     // listing before a similarity gate existed.

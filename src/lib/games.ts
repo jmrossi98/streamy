@@ -9,7 +9,8 @@
 
 import { prisma } from "./db";
 import { getGameLibrary, getGameDownloads, getWishlist } from "./gamarr";
-import { gameKeyOf, romSearchTitle } from "./romNames";
+import { gameKeyOf, romSearchTitle, titleSimilarity } from "./romNames";
+import { cleanLibrary } from "./gameLibraryCleanup";
 
 export type GameStatus = "library" | "downloading" | "failed" | "queued";
 
@@ -61,14 +62,41 @@ async function getPosterMap(): Promise<Map<string, string>> {
   return map;
 }
 
+// Same confidence bar gameArtworkAuto.ts uses for a real match, not a
+// coincidental one. Needed because a job/wishlist title and a library title
+// for the exact same game don't always share gameKeyOf's exact-match key --
+// confirmed live (2026-09-04): a stuck "DreamWorks Madagascar (PS2)" retry
+// job sat forever alongside the already-owned "DreamWorks Madagascar (USA)
+// (v3.01)" library copy, since gameKeyOf saw those as two different titles.
+// Comparing cleaned titles catches this without a real duplicate-title
+// collision (two different games rarely score this high).
+const ALREADY_OWNED_SIMILARITY = 0.72;
+
+function findOwnedMatch(
+  items: Map<string, GameListItem>,
+  platformSlug: string,
+  rawTitle: string
+): GameListItem | undefined {
+  const cleaned = romSearchTitle(rawTitle);
+  for (const item of items.values()) {
+    if (item.status !== "library" || item.platformSlug !== platformSlug) continue;
+    if (titleSimilarity(cleaned, item.displayTitle) >= ALREADY_OWNED_SIMILARITY) return item;
+  }
+  return undefined;
+}
+
 /** Everything gamarr currently knows about, merged into one list. */
 export async function getGamesList(): Promise<GameListItem[]> {
-  const [library, downloads, wishlist, posters] = await Promise.all([
+  const [rawLibrary, downloads, wishlist, posters] = await Promise.all([
     getGameLibrary(),
     getGameDownloads(),
     getWishlist(),
     getPosterMap(),
   ]);
+  // Junk entries (a BIOS file), mislabeled ones (PS3's own USRDIR folder
+  // standing in for the game), and raw+compressed duplicate pairs -- see
+  // gameLibraryCleanup.ts for why gamarr's own scan can't be trusted as-is.
+  const library = cleanLibrary(rawLibrary);
 
   const items = new Map<string, GameListItem>();
 
@@ -100,8 +128,10 @@ export async function getGamesList(): Promise<GameListItem[]> {
   }
 
   for (const d of downloads) {
-    const key = gameKeyOf(platformToSlug(d.platform), d.title);
+    const platformSlug = platformToSlug(d.platform);
+    const key = gameKeyOf(platformSlug, d.title);
     if (items.has(key)) continue; // already-owned copy takes precedence
+    if (findOwnedMatch(items, platformSlug, d.title)) continue;
     items.set(key, {
       gameKey: key,
       title: d.title,
@@ -123,6 +153,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
   for (const w of wishlist) {
     const key = gameKeyOf(w.platformSlug, w.title);
     if (items.has(key)) continue; // already represented by a job or a file
+    if (findOwnedMatch(items, w.platformSlug, w.title)) continue;
     items.set(key, {
       gameKey: key,
       title: w.title,
