@@ -319,6 +319,25 @@ model GameArtwork {
   @@id([system, romStem, kind])
 }
 
+/// A manually-corrected display title for one game, alongside GameArtwork.
+///
+/// Same identity as GameArtwork (system+romStem) rather than gameKey --
+/// deliberately, since this is specifically for fixing a bad *library* title
+/// (a raw ROM filename gamarr reports with no real title cleanup, or noise
+/// romSearchTitle's generic stripping can't know is noise), and that only
+/// ever exists once a real file is on disk. Survives gamarr rescans and
+/// restarts same as GameArtwork does, since it lives in Streamy's own DB,
+/// not gamarr's -- "across systems" in the sense that matters here: it isn't
+/// wiped by anything gamarr does to its own library_items table.
+model GameTitleOverride {
+  system  String
+  romStem String
+  title   String
+  updatedAt DateTime @updatedAt
+
+  @@id([system, romStem])
+}
+
 /// A game saved to a user's My List, alongside WatchlistItem (movies) and
 /// WatchlistShowItem (shows).
 ///

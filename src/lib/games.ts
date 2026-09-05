@@ -62,6 +62,18 @@ async function getPosterMap(): Promise<Map<string, string>> {
   return map;
 }
 
+/** Manually-corrected display titles, same one-query-per-render shape as
+ *  getPosterMap. See GameTitleOverride's own doc comment for why this is
+ *  keyed the same way as artwork rather than by gameKey. */
+async function getTitleOverrideMap(): Promise<Map<string, string>> {
+  const rows = await prisma.gameTitleOverride.findMany({
+    select: { system: true, romStem: true, title: true },
+  });
+  const map = new Map<string, string>();
+  for (const r of rows) map.set(`${r.system}/${r.romStem}`, r.title);
+  return map;
+}
+
 // Same confidence bar gameArtworkAuto.ts uses for a real match, not a
 // coincidental one. Needed because a job/wishlist title and a library title
 // for the exact same game don't always share gameKeyOf's exact-match key --
@@ -87,11 +99,12 @@ function findOwnedMatch(
 
 /** Everything gamarr currently knows about, merged into one list. */
 export async function getGamesList(): Promise<GameListItem[]> {
-  const [rawLibrary, downloads, wishlist, posters] = await Promise.all([
+  const [rawLibrary, downloads, wishlist, posters, titleOverrides] = await Promise.all([
     getGameLibrary(),
     getGameDownloads(),
     getWishlist(),
     getPosterMap(),
+    getTitleOverrideMap(),
   ]);
   // Junk entries (a BIOS file), mislabeled ones (PS3's own USRDIR folder
   // standing in for the game), and raw+compressed duplicate pairs -- see
@@ -109,10 +122,11 @@ export async function getGamesList(): Promise<GameListItem[]> {
     items.set(key, {
       gameKey: key,
       title: g.fileName,
-      // romStem, not fileName -- fileName still carries the extension for a
-      // raw (not-yet-compressed) file, and romSearchTitle only strips
-      // parenthesized/bracketed noise, not extensions.
-      displayTitle: romSearchTitle(g.romStem),
+      // A manual title edit always wins; otherwise romStem, not fileName --
+      // fileName still carries the extension for a raw (not-yet-compressed)
+      // file, and romSearchTitle only strips parenthesized/bracketed noise,
+      // not extensions.
+      displayTitle: titleOverrides.get(`${g.system}/${g.romStem}`) ?? romSearchTitle(g.romStem),
       platform: g.platform,
       platformSlug: g.system,
       status: "library",

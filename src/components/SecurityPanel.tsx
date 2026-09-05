@@ -31,6 +31,9 @@ const ACTION_LABELS: Record<string, string> = {
   "game.download.retry": "Retried download",
   "game.artwork.save": "Saved artwork",
   "game.artwork.clear": "Cleared artwork",
+  "game.download.cancel": "Cancelled download",
+  "game.title.save": "Edited title",
+  "game.title.clear": "Cleared title override",
   "approval.approve": "Approved user",
   "approval.deny": "Denied user",
 };

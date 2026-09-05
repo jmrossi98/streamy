@@ -60,12 +60,53 @@ export function GameDetailContent({
 
   const sizeText = formatFileSize(item.sizeBytes);
 
+  // Local override so a title edit shows immediately, same pattern as
+  // `artwork` above -- only meaningful once system/romStem exist (a real
+  // file on disk), same gate the artwork picker uses.
+  const [displayTitle, setDisplayTitle] = useState(item.displayTitle);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(item.displayTitle);
+  const [savingTitle, setSavingTitle] = useState(false);
+  const [titleError, setTitleError] = useState<string | null>(null);
+
+  async function saveTitle(title: string) {
+    if (!item.system || !item.romStem) return;
+    setSavingTitle(true);
+    setTitleError(null);
+    try {
+      const res = await fetch("/api/admin/games/title", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system: item.system, romStem: item.romStem, title }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTitleError(data?.error ?? "Couldn't save that title");
+        return;
+      }
+      if (title) {
+        setDisplayTitle(title);
+        setEditingTitle(false);
+      } else {
+        // Cleared -- there's no client-side way to know what romSearchTitle
+        // would derive on its own without duplicating that logic here, so
+        // let the server figure it out fresh.
+        startRefresh(() => router.refresh());
+        setEditingTitle(false);
+      }
+    } catch {
+      setTitleError("Couldn't save that title.");
+    } finally {
+      setSavingTitle(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16 pt-24 sm:px-6">
       <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
         <div className="relative aspect-[2/3] w-40 shrink-0 overflow-hidden rounded bg-white/5 sm:w-56">
           {artwork.grid ? (
-            <Image src={artwork.grid} alt={item.displayTitle} fill className="object-cover" unoptimized priority />
+            <Image src={artwork.grid} alt={displayTitle} fill className="object-cover" unoptimized priority />
           ) : (
             <div className="flex h-full w-full items-center justify-center">
               <svg className="h-10 w-10 text-white/20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -82,7 +123,76 @@ export function GameDetailContent({
 
         <div className="flex flex-1 flex-col gap-4">
           <div>
-            <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">{item.displayTitle}</h1>
+            {editingTitle ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveTitle(titleDraft.trim());
+                    if (e.key === "Escape") {
+                      setTitleDraft(displayTitle);
+                      setEditingTitle(false);
+                    }
+                  }}
+                  autoFocus
+                  placeholder="Title"
+                  className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-1.5 font-display text-xl font-bold text-white focus:border-white/30 focus:outline-none sm:text-2xl"
+                />
+                <button
+                  type="button"
+                  onClick={() => saveTitle(titleDraft.trim())}
+                  disabled={savingTitle || !titleDraft.trim()}
+                  className="rounded bg-netflix-red px-3 py-1.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                >
+                  {savingTitle ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTitleDraft(displayTitle);
+                    setEditingTitle(false);
+                  }}
+                  disabled={savingTitle}
+                  className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/70 hover:border-white/40 hover:text-white disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveTitle("")}
+                  disabled={savingTitle}
+                  className="text-xs text-white/40 underline-offset-2 hover:text-white hover:underline disabled:opacity-50"
+                >
+                  Reset to default
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">{displayTitle}</h1>
+                {item.system && item.romStem && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTitleDraft(displayTitle);
+                      setEditingTitle(true);
+                    }}
+                    title="Edit title"
+                    className="text-white/30 hover:text-white"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )}
+            {titleError && <p className="mt-1 text-xs text-red-400">{titleError}</p>}
             <p className="mt-1 text-white/50">
               {item.platform}
               {sizeText ? ` · ${sizeText}` : ""}
@@ -91,7 +201,7 @@ export function GameDetailContent({
 
           <div className="flex flex-wrap items-center gap-3">
             <GameDownloadButton
-              title={item.displayTitle}
+              title={displayTitle}
               platform={item.platform}
               platformSlug={item.platformSlug}
               status={item.status}
@@ -104,7 +214,7 @@ export function GameDetailContent({
             />
             <GameWatchlistButton
               gameKey={item.gameKey}
-              title={item.displayTitle}
+              title={displayTitle}
               platform={item.platform}
               initialInList={initialInWatchlist}
             />
