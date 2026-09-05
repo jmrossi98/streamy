@@ -27,7 +27,9 @@ import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
-import { getGamesList, getGamesStorageSize } from "@/lib/games";
+import { getGamesStorageSize, platformToSlug } from "@/lib/games";
+import { getGameDownloads, getWishlist } from "@/lib/gamarr";
+import { gameKeyOf } from "@/lib/romNames";
 import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
 
@@ -63,7 +65,8 @@ export default async function AdminFeaturesPage() {
     playbackCheckRuns,
     gamesSize,
     auditLog,
-    gamesList,
+    gameJobs,
+    gameWishlist,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -101,22 +104,44 @@ export default async function AdminFeaturesPage() {
     getRecentAuditLog(),
     // Same defensive default as getGamesStorageSize above -- an unreachable
     // gamarr shouldn't hold up the rest of this page.
-    getGamesList().catch(() => []),
+    getGameDownloads().catch(() => []),
+    getWishlist().catch(() => []),
   ]);
 
-  const gameDownloads: GameDownloadRow[] = gamesList
-    .filter((g) => g.status === "downloading" || g.status === "failed" || g.status === "queued")
-    .map((g) => ({
-      gameKey: g.gameKey,
-      title: g.displayTitle,
-      platform: g.platform,
-      status: g.status,
-      progress: g.progress,
-      error: g.error,
-      sizeBytes: g.sizeBytes,
-      jobId: g.jobId,
-      wishlistId: g.wishlistId,
-    }));
+  // Straight from gamarr's own downloads/wishlist, not the deduped public
+  // games list -- that list deliberately folds a *completed* job into
+  // "library" status (it's just an owned game there), but this admin panel
+  // needs to keep showing it so a finished download can still be cleared
+  // from history, matching the movie/TV downloads panel's own behavior.
+  const jobKeys = new Set(gameJobs.map((d) => gameKeyOf(platformToSlug(d.platform), d.title)));
+  const gameDownloads: GameDownloadRow[] = [
+    ...gameJobs.map((d) => ({
+      key: `job-${d.jobId}`,
+      title: d.title,
+      platform: d.platform,
+      status: d.status,
+      progress: d.progress,
+      error: d.error,
+      sizeText: d.sizeHuman,
+      jobId: d.jobId,
+      wishlistId: null,
+    })),
+    // A wishlist entry gamarr has already turned into a job would otherwise
+    // show up twice -- skip any already represented above.
+    ...gameWishlist
+      .filter((w) => !jobKeys.has(gameKeyOf(w.platformSlug, w.title)))
+      .map((w) => ({
+        key: `wishlist-${w.id}`,
+        title: w.title,
+        platform: w.platform,
+        status: "queued" as const,
+        progress: null,
+        error: null,
+        sizeText: null,
+        jobId: null,
+        wishlistId: w.id,
+      })),
+  ];
 
   const downloads: DownloadRow[] = [
     ...radarrDownloads.map((d) => ({ ...d, mediaType: "movie" as const, completed: false })),

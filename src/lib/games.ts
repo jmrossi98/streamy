@@ -194,7 +194,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
 // a best-effort recovery (lowercase, strip spaces) since /api/downloads
 // carries no slug field at all; wrong only skews which key a download
 // de-dupes against, never which game it's about (title still identifies it).
-function platformToSlug(platform: string): string {
+export function platformToSlug(platform: string): string {
   return platform.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
