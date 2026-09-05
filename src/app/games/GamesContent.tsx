@@ -16,6 +16,14 @@ export type GamesContentProps = {
   watchlistKeys: string[];
 };
 
+/** Vimm's Lair results can't be fetched automatically -- see the render
+ *  comment on the "Open Vimm" link. Matched on the guid (always a
+ *  vimm.net/vault/... URL) rather than the indexer's display name, since
+ *  that's the field the link actually needs to be valid anyway. */
+function isVimmResult(r: GameSearchResult): boolean {
+  return r.guid.includes("vimm.net/vault/");
+}
+
 export function GamesContent({ configured, items, platforms, watchlistKeys }: GamesContentProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -196,6 +204,16 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
         {results?.length === 0 && !searching && (
           <p className="text-sm text-white/50">No results. Try a shorter title or a different platform.</p>
         )}
+        {results && results.some(isVimmResult) && (
+          <p className="rounded border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
+            <strong className="font-semibold">Vimm results need one manual step.</strong> Vimm now
+            requires a browser check, so it can&apos;t be fetched automatically. Click{" "}
+            <span className="whitespace-nowrap">Open Vimm ↗</span>, download the file, then drop it
+            into <code className="rounded bg-black/30 px-1">roms/_inbox/&lt;system&gt;</code> on the
+            mediabox share. Everything after that is automatic — it gets filed, compressed, synced
+            to the Deck, and given cover art within the hour.
+          </p>
+        )}
         {results && results.length > 0 && (
           <>
             {resultsCached && (
@@ -222,14 +240,34 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
                           )}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => queueResult(r)}
-                        disabled={isQueued || queueingTitle === r.title}
-                        className="shrink-0 rounded border border-white/20 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:border-white/40 hover:text-white disabled:opacity-40"
-                      >
-                        {isQueued ? "Queued" : queueingTitle === r.title ? "Queueing…" : "Download"}
-                      </button>
+                      {/* Vimm's Lair sits behind Cloudflare Turnstile as of
+                          2026-09-05, so gamarr can't fetch from it at all --
+                          every queue attempt fails with "Could not find
+                          download form on Vimm". Myrient, its only other DDL
+                          source, shut down 31 March 2026. So for a Vimm
+                          result the honest affordance is a link to click
+                          through by hand, not a Download button that always
+                          fails. Everything after the click is still
+                          automated -- see the drop-folder note below. */}
+                      {isVimmResult(r) ? (
+                        <a
+                          href={r.guid}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 rounded border border-white/20 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:border-white/40 hover:text-white"
+                        >
+                          Open Vimm ↗
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => queueResult(r)}
+                          disabled={isQueued || queueingTitle === r.title}
+                          className="shrink-0 rounded border border-white/20 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:border-white/40 hover:text-white disabled:opacity-40"
+                        >
+                          {isQueued ? "Queued" : queueingTitle === r.title ? "Queueing…" : "Download"}
+                        </button>
+                      )}
                     </div>
                   </li>
                 );
