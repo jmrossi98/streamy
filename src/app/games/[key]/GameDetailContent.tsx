@@ -222,6 +222,26 @@ export function GameDetailContent({
         </div>
       </div>
 
+      {item.discs && item.discs.length > 0 && (
+        <div className="mt-10 border-t border-white/10 pt-8">
+          <h2 className="mb-3 text-lg font-semibold text-white">
+            Discs
+            <span className="ml-2 text-sm font-normal text-white/40">{item.discs.length}</span>
+          </h2>
+          <ul className="space-y-1.5">
+            {item.discs.map((d) => (
+              <li
+                key={d.romStem}
+                className="flex items-center justify-between rounded border border-white/10 bg-black/20 px-3 py-2 text-sm"
+              >
+                <span className="text-white/80">{d.label}</span>
+                <span className="text-white/40 tabular-nums">{formatFileSize(d.sizeBytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="mt-10 border-t border-white/10 pt-8">
         <h2 className="mb-1 text-lg font-semibold text-white">Artwork</h2>
         {item.system && item.romStem ? (

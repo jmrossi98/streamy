@@ -86,6 +86,11 @@ export function GameCard({
             {statusLabel}
           </span>
         )}
+        {!statusLabel && item.discs && item.discs.length > 1 && (
+          <span className="absolute bottom-2 left-2 z-[2] rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70">
+            {item.discs.length} discs
+          </span>
+        )}
         {item.status === "downloading" && item.progress != null && (
           <div className="absolute bottom-0 left-0 right-0 z-[2] h-1 bg-white/30">
             <div className="h-full bg-netflix-red transition-all" style={{ width: `${item.progress}%` }} />
