@@ -422,10 +422,21 @@ export async function getGameLibrary(
       const parts = filePath.split("/").filter(Boolean);
       const system = parts.length >= 2 ? parts[parts.length - 2] : String(i.platform_slug ?? "");
       const size = num(i.file_size);
+      // romStem specifically -- not fileName -- has to come from the real
+      // on-disk basename (filePath), not gamarr's own title. Confirmed live
+      // (2026-09-04): gamarr's title field already has its extension
+      // stripped, so for a game whose actual name contains a period ("Super
+      // Mario Bros." itself, no sequel number) romStemOf's last-dot logic
+      // wrongly treated *that* period as an extension boundary and chopped
+      // everything after it -- "Super Mario Bros. 2 (USA) (Rev 1)" collapsed
+      // to "Super Mario Bros", identically for 1, 2, and 3. The real
+      // basename always has a genuine extension after every in-title period,
+      // so the same last-dot logic lands on the right boundary there.
+      const realBaseName = parts[parts.length - 1] || fileName;
       return {
         id: Number(i.id ?? 0),
         fileName,
-        romStem: romStemOf(fileName),
+        romStem: romStemOf(realBaseName),
         filePath,
         system,
         platform: String(i.platform ?? ""),
