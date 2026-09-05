@@ -2,19 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { formatFileSize } from "@/lib/formatBytes";
-import type { GameStatus } from "@/lib/games";
 
 export type GameDownloadRow = {
-  gameKey: string;
+  /** jobId, wishlist id, or a fallback -- unique per row, not gamesList's
+   *  own gameKey (this deliberately shows a *completed* job too, which
+   *  gamesList already folded into "library" status). */
+  key: string;
   title: string;
   platform: string;
-  status: GameStatus;
+  status: "downloading" | "completed" | "failed" | "queued";
   progress: number | null;
   error: string | null;
-  sizeBytes: number | null;
-  /** Set once gamarr has picked up a real job -- lets Cancel actually stop
-   *  it. A still-queued wishlist entry with no job yet has none of these. */
+  /** gamarr reports size as a formatted string ("650 MB"), not bytes, for
+   *  a job -- pass it straight through rather than re-deriving. */
+  sizeText: string | null;
+  /** Set once gamarr has picked up a real job -- lets Cancel/Clear actually
+   *  act on it. A still-queued wishlist entry with no job yet has none. */
   jobId: string | null;
   /** Set for a not-yet-downloading wishlist entry -- lets Remove drop it
    *  before gamarr ever starts searching for it. */
@@ -34,10 +37,10 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
   // actually process a cancel/remove, and there's nothing to gain from
   // making the viewer stare at a row that's already been acted on.
   const [removedKeys, setRemovedKeys] = useState<Set<string>>(new Set());
-  const visible = downloads.filter((d) => !removedKeys.has(d.gameKey));
+  const visible = downloads.filter((d) => !removedKeys.has(d.key));
 
   useEffect(() => {
-    const present = new Set(downloads.map((d) => d.gameKey));
+    const present = new Set(downloads.map((d) => d.key));
     setRemovedKeys((prev) => {
       let changed = false;
       const next = new Set<string>();
@@ -57,8 +60,8 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
   }, [router, refreshing]);
 
   async function handleManage(d: GameDownloadRow) {
-    setManagingKey(d.gameKey);
-    setRemovedKeys((prev) => new Set(prev).add(d.gameKey));
+    setManagingKey(d.key);
+    setRemovedKeys((prev) => new Set(prev).add(d.key));
     try {
       const body = d.jobId
         ? { action: "cancel", jobId: d.jobId, title: d.title }
@@ -71,7 +74,7 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
       if (!res.ok) {
         setRemovedKeys((prev) => {
           const next = new Set(prev);
-          next.delete(d.gameKey);
+          next.delete(d.key);
           return next;
         });
       } else {
@@ -80,7 +83,7 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
     } catch {
       setRemovedKeys((prev) => {
         const next = new Set(prev);
-        next.delete(d.gameKey);
+        next.delete(d.key);
         return next;
       });
     } finally {
@@ -95,30 +98,30 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
   return (
     <ul className="space-y-3">
       {visible.map((d) => {
-        const isManaging = managingKey === d.gameKey;
+        const isManaging = managingKey === d.key;
         return (
-          <li key={d.gameKey} className="flex flex-col gap-1.5">
+          <li key={d.key} className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-white/90">{d.title}</span>
                 <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
                   {d.platform}
                 </span>
-                {formatFileSize(d.sizeBytes) && (
-                  <span className="shrink-0 text-xs tabular-nums text-white/40">
-                    {formatFileSize(d.sizeBytes)}
-                  </span>
+                {d.sizeText && (
+                  <span className="shrink-0 text-xs tabular-nums text-white/40">{d.sizeText}</span>
                 )}
               </span>
               <div className="flex shrink-0 items-center gap-3">
                 <span className="tabular-nums text-white/50">
-                  {d.status === "failed"
-                    ? "Failed"
-                    : d.status === "queued"
-                      ? "Queued"
-                      : d.progress != null
-                        ? `${d.progress}%`
-                        : "Downloading…"}
+                  {d.status === "completed"
+                    ? "Downloaded"
+                    : d.status === "failed"
+                      ? "Failed"
+                      : d.status === "queued"
+                        ? "Queued"
+                        : d.progress != null
+                          ? `${d.progress}%`
+                          : "Downloading…"}
                 </span>
                 <button
                   type="button"
@@ -126,7 +129,13 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
                   disabled={isManaging}
                   className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
                 >
-                  {isManaging ? "…" : d.jobId ? "Cancel" : "Remove"}
+                  {isManaging
+                    ? "…"
+                    : !d.jobId
+                      ? "Remove"
+                      : d.status === "completed"
+                        ? "Clear"
+                        : "Cancel"}
                 </button>
               </div>
             </div>
@@ -134,6 +143,8 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
               {d.status === "failed" ? (
                 <div className="h-full w-full rounded-full bg-red-500/60" />
+              ) : d.status === "completed" ? (
+                <div className="h-full w-full rounded-full bg-netflix-red" />
               ) : d.progress != null ? (
                 <div
                   className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
