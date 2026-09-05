@@ -24,6 +24,24 @@ function isVimmResult(r: GameSearchResult): boolean {
   return r.guid.includes("vimm.net/vault/");
 }
 
+/**
+ * Which `roms/_inbox/<system>/` folder a manually-downloaded Vimm file
+ * belongs in.
+ *
+ * gamarr routinely reports no platform at all for a Vimm result (confirmed
+ * live: all five "Nicktoons Unite!" hits came back with platform "Unknown"
+ * and an empty slug, even though they were five genuinely different
+ * consoles), so the result alone often can't answer this. The platform
+ * picked in the search dropdown is the next-best signal, and when that's
+ * "all" too there's nothing honest left to show but the placeholder --
+ * better than naming a specific wrong folder.
+ */
+function dropSystemFor(r: GameSearchResult, searchPlatform: string): string {
+  if (r.platformSlug) return r.platformSlug;
+  if (searchPlatform && searchPlatform !== "all") return searchPlatform;
+  return "<system>";
+}
+
 export function GamesContent({ configured, items, platforms, watchlistKeys }: GamesContentProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -209,9 +227,10 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
             <strong className="font-semibold">Vimm results need one manual step.</strong> Vimm now
             requires a browser check, so it can&apos;t be fetched automatically. Click{" "}
             <span className="whitespace-nowrap">Open Vimm ↗</span>, download the file, then drop it
-            into <code className="rounded bg-black/30 px-1">roms/_inbox/&lt;system&gt;</code> on the
-            mediabox share. Everything after that is automatic — it gets filed, compressed, synced
-            to the Deck, and given cover art within the hour.
+            in the folder shown under each result (on the{" "}
+            <code className="rounded bg-black/30 px-1">\\mediabox\roms</code> share). Everything
+            after that is automatic — filed, compressed, synced to the Deck, and given cover art
+            within the hour.
           </p>
         )}
         {results && results.length > 0 && (
@@ -239,6 +258,14 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
                             </span>
                           )}
                         </div>
+                        {isVimmResult(r) && (
+                          <p className="mt-1.5 text-xs text-white/40">
+                            After downloading, drop it in{" "}
+                            <code className="rounded bg-black/40 px-1 text-white/70">
+                              roms/_inbox/{dropSystemFor(r, platform)}
+                            </code>
+                          </p>
+                        )}
                       </div>
                       {/* Vimm's Lair sits behind Cloudflare Turnstile as of
                           2026-09-05, so gamarr can't fetch from it at all --
