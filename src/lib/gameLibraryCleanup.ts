@@ -24,8 +24,25 @@ const JUNK_TITLE_PATTERNS = [/(?<![a-z0-9])bios(?![a-z0-9])/i];
  *  recursed one level too far into a folder-structured game. */
 const GENERIC_CONTAINER_NAMES = new Set(["USRDIR", "PS3_GAME", "PS3_UPDATE", "PS3_DISC.SFB"]);
 
+// Standalone emulator installers/executables that land in a ROMs folder
+// (Cemu.exe was found sitting directly in /data/roms/wiiu/, presumably
+// left behind by a bundled "game + emulator" download like the Red Dead
+// Redemption Switch one from earlier) -- gamarr's scanner has no concept
+// of "this is a program, not a ROM", it just sees a recognized extension.
+const KNOWN_EMULATOR_NAMES = new Set([
+  "cemu", "ryujinx", "yuzu", "dolphin", "pcsx2", "rpcs3", "retroarch",
+  "duckstation", "ppsspp", "citra", "vita3k", "xemu", "redream", "mgba", "bizhawk",
+]);
+
+function isEmulatorExecutable(filePath: string): boolean {
+  const name = filePath.split(/[\\/]/).pop() ?? filePath;
+  const m = name.match(/^(.+?)\.(exe|app|appimage|dmg|zip|rar|7z)$/i);
+  return !!m && KNOWN_EMULATOR_NAMES.has(m[1].toLowerCase());
+}
+
 export function isJunkLibraryItem(item: LibraryGame): boolean {
-  return JUNK_TITLE_PATTERNS.some((p) => p.test(item.fileName) || p.test(item.filePath));
+  if (JUNK_TITLE_PATTERNS.some((p) => p.test(item.fileName) || p.test(item.filePath))) return true;
+  return isEmulatorExecutable(item.filePath);
 }
 
 /**
@@ -91,10 +108,84 @@ export function dedupeCompressedSiblings(items: LibraryGame[]): LibraryGame[] {
   return out;
 }
 
-/** Applies every cleanup pass above, in the order that makes sense:
- *  junk out first so it never has to be considered for dedup, then title
- *  repair, then dedup last since it needs the (now-repaired) real names. */
-export function cleanLibrary(items: LibraryGame[]): LibraryGame[] {
+export type DiscInfo = { label: string; romStem: string; sizeBytes: number | null };
+
+/** A grouped multi-disc game carries the rest of LibraryGame from its lowest
+ *  (representative) disc, plus every disc it was assembled from. Absent
+ *  entirely for a single-disc game -- checking `"discs" in item` (or just
+ *  truthiness) is how a caller tells the two apart. */
+export type LibraryGameWithDiscs = LibraryGame & { discs?: DiscInfo[] };
+
+const DISC_PATTERN = /\(disc\s*(\d+)\)/i;
+
+/**
+ * Groups "Final Fantasy VIII (USA) (Disc 1)".."(Disc 4)" into one entry
+ * instead of four separate tiles. This was already happening *visually* by
+ * accident -- romSearchTitle strips every parenthesized group, so all four
+ * already rendered as the identical text "Final Fantasy VIII" -- but each
+ * still got its own tile, its own (independently auto-matched, sometimes
+ * inconsistent) artwork, and its own gameKey. Grouping makes that one real
+ * game everywhere, not just in the label.
+ *
+ * The lowest-numbered disc becomes the representative: its system/romStem
+ * is what artwork/title overrides and the gameKey are keyed by, so an
+ * override already saved against "(Disc 1)" (the common case -- disc 1 is
+ * what most matching/picking has always pointed at) keeps working with no
+ * migration needed. sizeBytes is summed across every disc, since that's a
+ * more honest answer to "how much space does this game use" than disc 1's
+ * size alone.
+ */
+export function groupMultiDiscGames(items: LibraryGame[]): LibraryGameWithDiscs[] {
+  const groups = new Map<string, LibraryGame[]>();
+  const singles: LibraryGameWithDiscs[] = [];
+  for (const item of items) {
+    const m = item.fileName.match(DISC_PATTERN);
+    if (!m) {
+      singles.push(item);
+      continue;
+    }
+    const groupTitle = item.fileName.replace(DISC_PATTERN, "").replace(/\s+/g, " ").trim();
+    const key = `${item.system}::${groupTitle.toLowerCase()}`;
+    const list = groups.get(key) ?? [];
+    list.push(item);
+    groups.set(key, list);
+  }
+
+  const out = [...singles];
+  for (const discs of groups.values()) {
+    if (discs.length < 2) {
+      // A lone "(Disc 1)" with no siblings -- nothing to group, leave it as
+      // its own (still disc-labeled) entry rather than inventing a group.
+      out.push(...discs);
+      continue;
+    }
+    const byNumber = [...discs].sort((a, b) => {
+      const na = Number(a.fileName.match(DISC_PATTERN)?.[1] ?? 0);
+      const nb = Number(b.fileName.match(DISC_PATTERN)?.[1] ?? 0);
+      return na - nb;
+    });
+    const representative = byNumber[0];
+    const discInfos: DiscInfo[] = byNumber.map((d) => ({
+      label: `Disc ${d.fileName.match(DISC_PATTERN)?.[1] ?? "?"}`,
+      romStem: d.romStem,
+      sizeBytes: d.sizeBytes,
+    }));
+    const totalSize = byNumber.reduce((sum, d) => sum + (d.sizeBytes ?? 0), 0);
+    out.push({
+      ...representative,
+      sizeBytes: totalSize > 0 ? totalSize : representative.sizeBytes,
+      discs: discInfos,
+    });
+  }
+  return out;
+}
+
+/** Applies every cleanup pass above, in the order that makes sense: junk out
+ *  first so it never has to be considered for dedup or grouping, then title
+ *  repair, then dedup, then disc grouping last since it needs the
+ *  (now-deduped) real files -- a raw+compressed duplicate pair on one disc
+ *  would otherwise turn into a group with a spurious extra "disc". */
+export function cleanLibrary(items: LibraryGame[]): LibraryGameWithDiscs[] {
   const withoutJunk = items.filter((i) => !isJunkLibraryItem(i));
   const withRepairedTitles = withoutJunk.map((i) => {
     const fileName = repairGenericTitle(i);
@@ -104,5 +195,5 @@ export function cleanLibrary(items: LibraryGame[]): LibraryGame[] {
     // here from the repaired name is a real fix, not just cosmetic.
     return fileName === i.fileName ? i : { ...i, fileName, romStem: romStemOf(fileName) };
   });
-  return dedupeCompressedSiblings(withRepairedTitles);
+  return groupMultiDiscGames(dedupeCompressedSiblings(withRepairedTitles));
 }

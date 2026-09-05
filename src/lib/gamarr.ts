@@ -183,6 +183,41 @@ const ROM_FORMAT_MARKERS =
  * the shape most of the false positives took (score/soundtrack rips aside,
  * already caught by looksLikeNonGameRelease above). Exported for testing.
  */
+/**
+ * Collapses results that are literally indistinguishable in the UI down to
+ * one row each.
+ *
+ * Confirmed live (2026-09-05): a "final fantasy vii" search returned 20
+ * results, *all from Vimm's Lair alone* -- six of them the byte-identical
+ * label "Final Fantasy VII (PS1)", differing only by vault id (50601-50604,
+ * 50843, 2826: separate regional/disc/revision entries whose distinguishing
+ * detail gamarr's own scraper already dropped before Streamy sees them).
+ * Ten more were the same "9" placeholder isLikelyNonGameResult already
+ * catches. So this is *not* a too-many-indexers problem -- reducing indexer
+ * count would cost niche coverage without removing a single one of these.
+ *
+ * Keyed on what a person can actually see (title + platform + size + a
+ * torrent's seeders), never the guid -- the guid is exactly what differs
+ * between these. Genuinely different releases of the same game keep their
+ * own row as long as anything visible differs; two rows a person could only
+ * pick between by coin flip become one. Stateful, so it must be constructed
+ * per-search (`dedupeIdenticalResults()`), never shared across calls.
+ */
+export function dedupeIdenticalResults(): (r: GameSearchResult) => boolean {
+  const seen = new Set<string>();
+  return (r) => {
+    const key = [
+      r.title.trim().toLowerCase(),
+      r.platform.toLowerCase(),
+      r.sizeBytes ?? "",
+      r.seeders ?? "",
+    ].join("::");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+}
+
 export function isLikelyNonGameResult(r: {
   title: string;
   platform: string;
@@ -245,7 +280,8 @@ export async function searchGames(
         guid: String(r.guid ?? ""),
       };
     })
-    .filter((r) => !isLikelyNonGameResult(r));
+    .filter((r) => !isLikelyNonGameResult(r))
+    .filter(dedupeIdenticalResults());
 }
 
 export type WishlistItem = { id: number; title: string; platform: string; platformSlug: string };

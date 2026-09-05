@@ -10,7 +10,7 @@
 import { prisma } from "./db";
 import { getGameLibrary, getGameDownloads, getWishlist } from "./gamarr";
 import { gameKeyOf, romSearchTitle, titleSimilarity } from "./romNames";
-import { cleanLibrary } from "./gameLibraryCleanup";
+import { cleanLibrary, type DiscInfo } from "./gameLibraryCleanup";
 
 export type GameStatus = "library" | "downloading" | "failed" | "queued";
 
@@ -46,6 +46,11 @@ export type GameListItem = {
   jobId: string | null;
   /** gamarr's own error text for a failed job. */
   error: string | null;
+  /** Present only for a multi-disc game grouped into one tile (Final
+   *  Fantasy VIII, Parasite Eve, ...) -- see groupMultiDiscGames. Absent
+   *  for anything else, including a single disc-labeled file with no
+   *  sibling discs found. */
+  discs?: DiscInfo[];
 };
 
 /**
@@ -138,6 +143,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
       wishlistId: null,
       jobId: null,
       error: null,
+      discs: g.discs,
     });
   }
 

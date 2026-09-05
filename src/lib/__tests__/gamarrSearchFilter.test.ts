@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { looksLikeNonGameRelease, isLikelyNonGameResult } from "../gamarr";
+import { looksLikeNonGameRelease, isLikelyNonGameResult, dedupeIdenticalResults } from "../gamarr";
+import type { GameSearchResult } from "../gamarr";
 
 // Every case here is a real result from a live "spyro" search, not a
 // synthetic example -- gamarr's own search fans out to general torrent
@@ -103,5 +104,60 @@ describe("isLikelyNonGameResult", () => {
         sourceType: "torrent",
       })
     ).toBe(false);
+  });
+});
+
+describe("dedupeIdenticalResults", () => {
+  function result(over: Partial<GameSearchResult>): GameSearchResult {
+    return {
+      title: "Final Fantasy VII (PS1)",
+      sizeBytes: null,
+      sizeHuman: null,
+      seeders: null,
+      indexer: "Vimm's Lair",
+      platform: "PS1",
+      platformSlug: "psx",
+      sourceType: "ddl",
+      safetyScore: null,
+      score: 80,
+      confidence: null,
+      inLibrary: false,
+      guid: "https://vimm.net/vault/50601",
+      ...over,
+    };
+  }
+
+  it("collapses the real Vimm duplicate set to one row", () => {
+    // Verbatim from a live "final fantasy vii" search: six results with a
+    // byte-identical label, differing only by vault id.
+    const rows = ["50601", "50602", "50603", "50604", "50843", "2826"].map((id) =>
+      result({ guid: `https://vimm.net/vault/${id}` })
+    );
+    expect(rows.filter(dedupeIdenticalResults())).toHaveLength(1);
+  });
+
+  it("keeps genuinely different titles from the same indexer", () => {
+    // Also real, from the same search -- these must survive.
+    const rows = [
+      result({}),
+      result({ title: "Final Fantasy VII (Interactive Sampler CD) (PS1)" }),
+      result({ title: "Final Fantasy VII (Square Soft on PlayStation Previews) (PS1)" }),
+    ];
+    expect(rows.filter(dedupeIdenticalResults())).toHaveLength(3);
+  });
+
+  it("keeps same-titled releases that differ in size or seeders", () => {
+    const rows = [
+      result({ sourceType: "torrent", sizeBytes: 100, seeders: 5 }),
+      result({ sourceType: "torrent", sizeBytes: 200, seeders: 5 }),
+      result({ sourceType: "torrent", sizeBytes: 200, seeders: 9 }),
+    ];
+    expect(rows.filter(dedupeIdenticalResults())).toHaveLength(3);
+  });
+
+  it("does not share state between searches", () => {
+    const rows = [result({})];
+    expect(rows.filter(dedupeIdenticalResults())).toHaveLength(1);
+    expect(rows.filter(dedupeIdenticalResults())).toHaveLength(1);
   });
 });
