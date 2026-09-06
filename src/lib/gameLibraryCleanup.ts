@@ -40,8 +40,29 @@ function isEmulatorExecutable(filePath: string): boolean {
   return !!m && KNOWN_EMULATOR_NAMES.has(m[1].toLowerCase());
 }
 
+/**
+ * A Switch *update folder* sitting beside the base game it patches.
+ *
+ * Confirmed live: "Mario Party Superstars" showed twice -- once as the base
+ * game `Mario Party Superstars[01006FE013472000][v0].nsp`, and once as a
+ * bare folder `Mario Party Superstars/` whose contents are the update
+ * (`...[01006FE013472800][v131072].nsp` -- Switch's convention is base
+ * title-id + 0x800 for an update). Same shape for Red Dead Redemption.
+ *
+ * The update is genuinely needed on disk, so this filters it out of the
+ * *list* rather than deleting anything -- only the base game is a game to
+ * show. Detected by the folder having no cartridge extension of its own,
+ * since gamarr reports the directory itself as the item and the version tag
+ * lives on the file inside, not on the folder.
+ */
+function isSwitchUpdateFolder(item: LibraryGame): boolean {
+  if (item.system !== "switch") return false;
+  return !/\.(nsp|xci|nsz)$/i.test(item.filePath);
+}
+
 export function isJunkLibraryItem(item: LibraryGame): boolean {
   if (JUNK_TITLE_PATTERNS.some((p) => p.test(item.fileName) || p.test(item.filePath))) return true;
+  if (isSwitchUpdateFolder(item)) return true;
   return isEmulatorExecutable(item.filePath);
 }
 
