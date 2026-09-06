@@ -31,6 +31,11 @@ export type GameDownloadRow = {
 // pushes a change here, so noticing a fresh queue/cancel/failure means
 // polling, not waiting for someone to reload.
 const REFRESH_INTERVAL_MS = 4000;
+// Same cap and row arithmetic as DownloadsPanel, for the same reason -- but
+// it matters more here: this list now includes every owned game (~150), so
+// without a cap it pushed the whole rest of the admin page off-screen.
+const VISIBLE_ROWS = 12;
+const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
 
 export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[] }) {
   const router = useRouter();
@@ -112,7 +117,10 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
   }
 
   return (
-    <ul className="space-y-3">
+    <ul
+      className="space-y-3 overflow-y-auto pr-1"
+      style={{ maxHeight: visible.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
+    >
       {visible.map((d) => {
         const isManaging = managingKey === d.key;
         return (

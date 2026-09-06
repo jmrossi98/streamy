@@ -179,3 +179,32 @@ describe("groupMultiDiscGames", () => {
     expect(out[0].discs).toBeUndefined();
   });
 });
+
+describe("switch update folders", () => {
+  it("hides the update folder but keeps the base game", () => {
+    // Real shape from the library: the base .nsp beside a bare folder whose
+    // contents are the update (title-id + 0x800).
+    const out = cleanLibrary([
+      item({
+        id: 1,
+        fileName: "Mario Party Superstars",
+        filePath: "/data/roms/switch/Mario Party Superstars",
+        system: "switch",
+      }),
+      item({
+        id: 2,
+        fileName: "Mario Party Superstars[01006FE013472000][v0]",
+        filePath: "/data/roms/switch/Mario Party Superstars[01006FE013472000][v0].nsp",
+        system: "switch",
+      }),
+    ]);
+    expect(out.map((g) => g.id)).toEqual([2]);
+  });
+
+  it("leaves a plain .nsp on another system alone", () => {
+    const out = cleanLibrary([
+      item({ id: 1, fileName: "Some PS2 Game", filePath: "/data/roms/ps2/Some PS2 Game.chd", system: "ps2" }),
+    ]);
+    expect(out.map((g) => g.id)).toEqual([1]);
+  });
+});
