@@ -27,11 +27,12 @@ import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
-import { getGamesStorageSize, platformToSlug } from "@/lib/games";
+import { getGamesList, getGamesStorageSize, platformToSlug } from "@/lib/games";
 import { getGameDownloads, getWishlist } from "@/lib/gamarr";
 import { gameKeyOf } from "@/lib/romNames";
 import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
+import { formatFileSize } from "@/lib/formatBytes";
 
 export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
@@ -67,6 +68,7 @@ export default async function AdminFeaturesPage() {
     auditLog,
     gameJobs,
     gameWishlist,
+    ownedGames,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -106,6 +108,7 @@ export default async function AdminFeaturesPage() {
     // gamarr shouldn't hold up the rest of this page.
     getGameDownloads().catch(() => []),
     getWishlist().catch(() => []),
+    getGamesList().catch(() => []),
   ]);
 
   // Straight from gamarr's own downloads/wishlist, not the deduped public
@@ -125,6 +128,8 @@ export default async function AdminFeaturesPage() {
       sizeText: d.sizeHuman,
       jobId: d.jobId,
       wishlistId: null,
+      system: null,
+      romStem: null,
     })),
     // A wishlist entry gamarr has already turned into a job would otherwise
     // show up twice -- skip any already represented above.
@@ -140,6 +145,28 @@ export default async function AdminFeaturesPage() {
         sizeText: null,
         jobId: null,
         wishlistId: w.id,
+        system: null,
+        romStem: null,
+      })),
+    // Everything actually on disk. The panel is the place to manage what the
+    // ROM library holds, not only what's in flight -- an owned game is the
+    // only thing there is to delete, and a finished download becomes exactly
+    // that. Sorted by title so the list is navigable at ~150 entries.
+    ...ownedGames
+      .filter((g) => g.status === "library")
+      .sort((a, b) => a.displayTitle.localeCompare(b.displayTitle))
+      .map((g) => ({
+        key: `owned-${g.gameKey}`,
+        title: g.displayTitle,
+        platform: g.platform,
+        status: "owned" as const,
+        progress: null,
+        error: null,
+        sizeText: formatFileSize(g.sizeBytes),
+        jobId: null,
+        wishlistId: null,
+        system: g.system,
+        romStem: g.romStem,
       })),
   ];
 

@@ -70,6 +70,15 @@ async function getPosterMap(): Promise<Map<string, string>> {
 /** Manually-corrected display titles, same one-query-per-render shape as
  *  getPosterMap. See GameTitleOverride's own doc comment for why this is
  *  keyed the same way as artwork rather than by gameKey. */
+/** Games marked for deletion -- hidden from the UI immediately, even while
+ *  the file is still on disk waiting for mediabox's cron to pick it up.
+ *  Includes already-deleted rows too, since gamarr can keep serving a
+ *  deleted game until its next container restart. */
+async function getDeletedKeys(): Promise<Set<string>> {
+  const rows = await prisma.gameDeletion.findMany({ select: { system: true, romStem: true } });
+  return new Set(rows.map((r) => `${r.system}/${r.romStem}`));
+}
+
 async function getTitleOverrideMap(): Promise<Map<string, string>> {
   const rows = await prisma.gameTitleOverride.findMany({
     select: { system: true, romStem: true, title: true },
@@ -104,17 +113,23 @@ function findOwnedMatch(
 
 /** Everything gamarr currently knows about, merged into one list. */
 export async function getGamesList(): Promise<GameListItem[]> {
-  const [rawLibrary, downloads, wishlist, posters, titleOverrides] = await Promise.all([
-    getGameLibrary(),
-    getGameDownloads(),
-    getWishlist(),
-    getPosterMap(),
-    getTitleOverrideMap(),
-  ]);
+  const [rawLibrary, downloads, wishlist, posters, titleOverrides, deletedKeys] =
+    await Promise.all([
+      getGameLibrary(),
+      getGameDownloads(),
+      getWishlist(),
+      getPosterMap(),
+      getTitleOverrideMap(),
+      getDeletedKeys(),
+    ]);
   // Junk entries (a BIOS file), mislabeled ones (PS3's own USRDIR folder
   // standing in for the game), and raw+compressed duplicate pairs -- see
   // gameLibraryCleanup.ts for why gamarr's own scan can't be trusted as-is.
-  const library = cleanLibrary(rawLibrary);
+  // Deleted games are filtered here rather than after the merge so they also
+  // can't resurface via the download/wishlist passes below.
+  const library = cleanLibrary(rawLibrary).filter(
+    (g) => !deletedKeys.has(`${g.system}/${g.romStem}`)
+  );
 
   const items = new Map<string, GameListItem>();
 
