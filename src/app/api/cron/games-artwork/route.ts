@@ -27,10 +27,24 @@ export const runtime = "nodejs";
 // hang this indefinitely.
 export const maxDuration = 300;
 
+/**
+ * Accepts either the dedicated cron secret or MEDIA_WEBHOOK_SECRET.
+ *
+ * The second exists so mediabox can fire this the moment a ROM is imported,
+ * instead of the library waiting up to an hour for the next scheduled run --
+ * which is what made new games show up with placeholder art. mediabox already
+ * holds MEDIA_WEBHOOK_SECRET (it uses it for artwork-overrides and
+ * pending-deletions) and has no way to learn GAMES_ARTWORK_CRON_SECRET, which
+ * only ever exists in GitHub Actions and this server's env.
+ *
+ * Still fails closed: an unset secret never matches, and an empty/absent
+ * query param is compared against a non-empty value.
+ */
 function verifySecret(request: Request): boolean {
-  const secret = process.env.GAMES_ARTWORK_CRON_SECRET;
-  if (!secret) return false;
-  return new URL(request.url).searchParams.get("secret") === secret;
+  const provided = new URL(request.url).searchParams.get("secret");
+  if (!provided) return false;
+  const accepted = [process.env.GAMES_ARTWORK_CRON_SECRET, process.env.MEDIA_WEBHOOK_SECRET];
+  return accepted.some((s) => !!s && s === provided);
 }
 
 export async function POST(request: Request) {
