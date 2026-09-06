@@ -51,6 +51,11 @@ export type GameListItem = {
    *  for anything else, including a single disc-labeled file with no
    *  sibling discs found. */
   discs?: DiscInfo[];
+  /** When this game first appeared in the library, as an ISO string --
+   *  recorded by Streamy itself, since gamarr's own added_at resets for
+   *  every game on each container restart (see GameFirstSeen). Null for
+   *  anything without a file on disk yet. */
+  addedAt: string | null;
 };
 
 /**
@@ -67,9 +72,44 @@ async function getPosterMap(): Promise<Map<string, string>> {
   return map;
 }
 
-/** Manually-corrected display titles, same one-query-per-render shape as
- *  getPosterMap. See GameTitleOverride's own doc comment for why this is
- *  keyed the same way as artwork rather than by gameKey. */
+/**
+ * When each library game was first seen, recorded by Streamy rather than
+ * read from gamarr -- see GameFirstSeen for why gamarr's own `added_at` is
+ * unusable here (it resets for every game on each container restart).
+ *
+ * Records any game it hasn't seen before as a side effect, which is what
+ * makes the timestamp exist at all. One extra write only when something is
+ * genuinely new; unseen games are the exception, not the rule.
+ */
+async function getFirstSeenMap(
+  library: { system: string; romStem: string }[]
+): Promise<Map<string, Date>> {
+  const rows = await prisma.gameFirstSeen.findMany({
+    select: { system: true, romStem: true, firstSeenAt: true },
+  });
+  const map = new Map(rows.map((r) => [`${r.system}/${r.romStem}`, r.firstSeenAt]));
+
+  const unseen = library.filter((g) => !map.has(`${g.system}/${g.romStem}`));
+  if (unseen.length > 0) {
+    const now = new Date();
+    // upsert with an empty update, not createMany: SQLite has no
+    // skipDuplicates, and two concurrent renders can genuinely race here.
+    // An empty update means a row that already exists keeps its original
+    // timestamp -- first seen must never move.
+    await Promise.all(
+      unseen.map((g) =>
+        prisma.gameFirstSeen.upsert({
+          where: { system_romStem: { system: g.system, romStem: g.romStem } },
+          create: { system: g.system, romStem: g.romStem, firstSeenAt: now },
+          update: {},
+        })
+      )
+    );
+    for (const g of unseen) map.set(`${g.system}/${g.romStem}`, now);
+  }
+  return map;
+}
+
 /** Games marked for deletion -- hidden from the UI immediately, even while
  *  the file is still on disk waiting for mediabox's cron to pick it up.
  *  Includes already-deleted rows too, since gamarr can keep serving a
@@ -79,6 +119,9 @@ async function getDeletedKeys(): Promise<Set<string>> {
   return new Set(rows.map((r) => `${r.system}/${r.romStem}`));
 }
 
+/** Manually-corrected display titles, same one-query-per-render shape as
+ *  getPosterMap. See GameTitleOverride's own doc comment for why this is
+ *  keyed the same way as artwork rather than by gameKey. */
 async function getTitleOverrideMap(): Promise<Map<string, string>> {
   const rows = await prisma.gameTitleOverride.findMany({
     select: { system: true, romStem: true, title: true },
@@ -127,6 +170,9 @@ export async function getGamesList(): Promise<GameListItem[]> {
   // gameLibraryCleanup.ts for why gamarr's own scan can't be trusted as-is.
   // Deleted games are filtered here rather than after the merge so they also
   // can't resurface via the download/wishlist passes below.
+  const firstSeen = await getFirstSeenMap(
+    cleanLibrary(rawLibrary).map((g) => ({ system: g.system, romStem: g.romStem }))
+  );
   const library = cleanLibrary(rawLibrary).filter(
     (g) => !deletedKeys.has(`${g.system}/${g.romStem}`)
   );
@@ -159,6 +205,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
       jobId: null,
       error: null,
       discs: g.discs,
+      addedAt: firstSeen.get(`${g.system}/${g.romStem}`)?.toISOString() ?? null,
     });
   }
 
@@ -182,6 +229,8 @@ export async function getGamesList(): Promise<GameListItem[]> {
       wishlistId: null,
       jobId: d.jobId,
       error: d.error,
+      // No file on disk yet, so nothing has been "added" to sort by.
+      addedAt: null,
     });
   }
 
@@ -204,6 +253,7 @@ export async function getGamesList(): Promise<GameListItem[]> {
       wishlistId: w.id,
       jobId: null,
       error: null,
+      addedAt: null,
     });
   }
 
