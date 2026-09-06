@@ -83,14 +83,23 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   const filteredLibrary =
     systemFilter === "all" ? library : library.filter((i) => i.platformSlug === systemFilter);
 
-  type SortOption = "title" | "system" | "size";
-  const [sortBy, setSortBy] = useState<SortOption>("title");
+  type SortOption = "recent" | "title" | "system" | "size";
+  // Newest first by default: the common reason to open this page is to check
+  // on something just added, and with ~150 games alphabetical buries it.
+  const [sortBy, setSortBy] = useState<SortOption>("recent");
   const sortedLibrary = [...filteredLibrary].sort((a, b) => {
     if (sortBy === "system") {
       return a.platform.localeCompare(b.platform) || a.displayTitle.localeCompare(b.displayTitle);
     }
     if (sortBy === "size") {
       return (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0);
+    }
+    if (sortBy === "recent") {
+      // Anything without a recorded date sorts last rather than jumping to
+      // the top -- an unknown date is not a recent one.
+      const ta = a.addedAt ? Date.parse(a.addedAt) : -Infinity;
+      const tb = b.addedAt ? Date.parse(b.addedAt) : -Infinity;
+      return tb - ta || a.displayTitle.localeCompare(b.displayTitle);
     }
     return a.displayTitle.localeCompare(b.displayTitle);
   });
@@ -362,6 +371,9 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
                   onChange={(e) => setSortBy(e.target.value as SortOption)}
                   className="appearance-none rounded border border-white/15 bg-black/40 py-1.5 pl-3 pr-9 text-sm text-white focus:border-white/30 focus:outline-none"
                 >
+                  <option value="recent" className="bg-netflix-dark">
+                    Sort: Recently added
+                  </option>
                   <option value="title" className="bg-netflix-dark">
                     Sort: A–Z
                   </option>

@@ -319,6 +319,26 @@ model GameArtwork {
   @@id([system, romStem, kind])
 }
 
+/// When a game first appeared in the library, recorded by Streamy itself.
+///
+/// Exists because gamarr's own `added_at` cannot answer this: gamarr only
+/// rebuilds its library on container restart, and that restart deletes and
+/// re-inserts every scanned row -- so every game's timestamp collapses to
+/// the moment of the last restart. Confirmed live: 162 games shared exactly
+/// two `added_at` values, one minute apart, making "sort by date added"
+/// effectively random.
+///
+/// Keyed like GameArtwork (system + romStem) rather than gameKey, since this
+/// only means anything for a real file on disk. Rows are never updated after
+/// insert -- first seen is first seen, and a gamarr restart must not move it.
+model GameFirstSeen {
+  system      String
+  romStem     String
+  firstSeenAt DateTime @default(now())
+
+  @@id([system, romStem])
+}
+
 /// A game the admin has asked to delete, and whether mediabox has actually
 /// removed the file yet.
 ///
