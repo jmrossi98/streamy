@@ -10,7 +10,7 @@ export type GameDownloadRow = {
   key: string;
   title: string;
   platform: string;
-  status: "downloading" | "completed" | "failed" | "queued";
+  status: "downloading" | "completed" | "failed" | "queued" | "owned";
   progress: number | null;
   error: string | null;
   /** gamarr reports size as a formatted string ("650 MB"), not bytes, for
@@ -22,6 +22,9 @@ export type GameDownloadRow = {
   /** Set for a not-yet-downloading wishlist entry -- lets Remove drop it
    *  before gamarr ever starts searching for it. */
   wishlistId: number | null;
+  /** Set for an owned library game -- what a delete acts on. */
+  system: string | null;
+  romStem: string | null;
 };
 
 // Same reasoning as DownloadsPanel's own interval: nothing else on this page
@@ -60,13 +63,26 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
   }, [router, refreshing]);
 
   async function handleManage(d: GameDownloadRow) {
+    // Deleting an owned game removes the ROM from disk and is not
+    // recoverable without re-downloading, unlike cancelling a job or
+    // dropping a wishlist entry -- so it's the one action here that asks
+    // first. Confirmed inline rather than with a custom modal to keep the
+    // affordance impossible to miss or mis-click past.
+    const isDelete = d.status === "owned";
+    if (isDelete && !confirm(`Delete "${d.title}" from disk?\n\nThis frees the space and removes it from Streamy and the Steam Deck. You'd have to download it again to get it back.`)) {
+      return;
+    }
+
     setManagingKey(d.key);
     setRemovedKeys((prev) => new Set(prev).add(d.key));
     try {
-      const body = d.jobId
-        ? { action: "cancel", jobId: d.jobId, title: d.title }
-        : { action: "remove", id: d.wishlistId, title: d.title };
-      const res = await fetch("/api/admin/games/queue", {
+      const url = isDelete ? "/api/admin/games/delete" : "/api/admin/games/queue";
+      const body = isDelete
+        ? { system: d.system, romStem: d.romStem, title: d.title }
+        : d.jobId
+          ? { action: "cancel", jobId: d.jobId, title: d.title }
+          : { action: "remove", id: d.wishlistId, title: d.title };
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -113,15 +129,17 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
               </span>
               <div className="flex shrink-0 items-center gap-3">
                 <span className="tabular-nums text-white/50">
-                  {d.status === "completed"
-                    ? "Downloaded"
-                    : d.status === "failed"
-                      ? "Failed"
-                      : d.status === "queued"
-                        ? "Queued"
-                        : d.progress != null
-                          ? `${d.progress}%`
-                          : "Downloading…"}
+                  {d.status === "owned"
+                    ? "In library"
+                    : d.status === "completed"
+                      ? "Downloaded"
+                      : d.status === "failed"
+                        ? "Failed"
+                        : d.status === "queued"
+                          ? "Queued"
+                          : d.progress != null
+                            ? `${d.progress}%`
+                            : "Downloading…"}
                 </span>
                 <button
                   type="button"
@@ -131,17 +149,21 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
                 >
                   {isManaging
                     ? "…"
-                    : !d.jobId
-                      ? "Remove"
-                      : d.status === "completed"
-                        ? "Clear"
-                        : "Cancel"}
+                    : d.status === "owned"
+                      ? "Delete"
+                      : !d.jobId
+                        ? "Remove"
+                        : d.status === "completed"
+                          ? "Clear"
+                          : "Cancel"}
                 </button>
               </div>
             </div>
             {d.error && <p className="truncate text-xs text-red-400">{d.error}</p>}
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-              {d.status === "failed" ? (
+              {d.status === "owned" ? (
+                <div className="h-full w-full rounded-full bg-white/15" />
+              ) : d.status === "failed" ? (
                 <div className="h-full w-full rounded-full bg-red-500/60" />
               ) : d.status === "completed" ? (
                 <div className="h-full w-full rounded-full bg-netflix-red" />

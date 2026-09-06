@@ -319,6 +319,35 @@ model GameArtwork {
   @@id([system, romStem, kind])
 }
 
+/// A game the admin has asked to delete, and whether mediabox has actually
+/// removed the file yet.
+///
+/// Exists because Streamy runs on a different host from the ROM library and
+/// has no filesystem access to it, while gamarr offers no delete endpoint at
+/// all (only downloads and wishlist). So a delete is recorded here, takes
+/// effect in the UI immediately (getGamesList filters these out), and
+/// mediabox's own cron polls /api/games/pending-deletions and does the real
+/// removal -- the same pull pattern already proven by artwork-overrides,
+/// which avoids exposing a file-deletion endpoint on the network.
+///
+/// Rows are kept after deletion rather than removed: gamarr only rebuilds its
+/// library on container restart, so a deleted game can briefly reappear in
+/// its API afterwards, and a surviving row is what keeps it filtered out of
+/// the UI in the meantime.
+model GameDeletion {
+  system      String
+  romStem     String
+  /// Display title at the time of deletion, for the audit log and for the
+  /// mediabox-side log to name what it removed.
+  title       String
+  requestedBy String
+  requestedAt DateTime @default(now())
+  /// Set once mediabox reports the files actually gone.
+  deletedAt   DateTime?
+
+  @@id([system, romStem])
+}
+
 /// A manually-corrected display title for one game, alongside GameArtwork.
 ///
 /// Same identity as GameArtwork (system+romStem) rather than gameKey --
