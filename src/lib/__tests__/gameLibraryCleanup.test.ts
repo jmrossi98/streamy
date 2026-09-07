@@ -208,3 +208,43 @@ describe("switch update folders", () => {
     expect(out.map((g) => g.id)).toEqual([1]);
   });
 });
+
+describe("multi-track disc images", () => {
+  it("keeps only the .cue when a game is split across .bin tracks", () => {
+    // Real shape: Mega Man 8 surfaced three times, Nights into Dreams 21.
+    const out = cleanLibrary([
+      item({ id: 1, fileName: "Mega Man 8 (USA)", filePath: "/data/roms/psx/Mega Man 8 (USA).cue", system: "psx" }),
+      item({ id: 2, fileName: "Mega Man 8 (USA) (Track 1)", filePath: "/data/roms/psx/Mega Man 8 (USA) (Track 1).bin", system: "psx" }),
+      item({ id: 3, fileName: "Mega Man 8 (USA) (Track 2)", filePath: "/data/roms/psx/Mega Man 8 (USA) (Track 2).bin", system: "psx" }),
+      item({ id: 4, fileName: "Mega Man 8 (USA) (Track 3)", filePath: "/data/roms/psx/Mega Man 8 (USA) (Track 3).bin", system: "psx" }),
+    ]);
+    expect(out.map((g) => g.id)).toEqual([1]);
+  });
+
+  it("keeps a lone .bin that has no sibling .cue", () => {
+    const out = cleanLibrary([
+      item({ id: 1, fileName: "Some Game", filePath: "/data/roms/psx/Some Game.bin", system: "psx" }),
+    ]);
+    expect(out.map((g) => g.id)).toEqual([1]);
+  });
+
+  it("does not drop a track whose sibling cue belongs to a different game", () => {
+    const out = cleanLibrary([
+      item({ id: 1, fileName: "Other Game", filePath: "/data/roms/psx/Other Game.cue", system: "psx" }),
+      item({ id: 2, fileName: "Mega Man 8 (USA) (Track 1)", filePath: "/data/roms/psx/Mega Man 8 (USA) (Track 1).bin", system: "psx" }),
+    ]);
+    expect(out.map((g) => g.id).sort()).toEqual([1, 2]);
+  });
+});
+
+describe("staging paths", () => {
+  it("hides the drop folder's own system subdirectories", () => {
+    // gamarr indexed /data/roms/_inbox/ps2 etc. as games titled "ps2" on a
+    // platform called "_INBOX".
+    const out = cleanLibrary([
+      item({ id: 1, fileName: "ps2", filePath: "/data/roms/_inbox/ps2", system: "_inbox" }),
+      item({ id: 2, fileName: "Real Game", filePath: "/data/roms/ps2/Real Game.chd", system: "ps2" }),
+    ]);
+    expect(out.map((g) => g.id)).toEqual([2]);
+  });
+});
