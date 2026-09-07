@@ -60,9 +60,45 @@ function isSwitchUpdateFolder(item: LibraryGame): boolean {
   return !/\.(nsp|xci|nsz)$/i.test(item.filePath);
 }
 
+/**
+ * One track of a multi-track disc image, which is part of a game rather than
+ * a game.
+ *
+ * A CD rip is a single `.cue` alongside `<title> (Track NN).bin` for every
+ * track, and gamarr's scanner indexes each `.bin` as its own library entry --
+ * so one game appears as many identical tiles. Confirmed live twice: Nights
+ * into Dreams showed up 21 times (21 tracks) and Mega Man 8 three times.
+ *
+ * Filtered here rather than only at the source because *anything* writing
+ * rows into gamarr's table can reintroduce them -- gamarr's own scanner did
+ * exactly that after the importer was fixed -- and this is the one place
+ * every path into the UI goes through.
+ *
+ * Deliberately requires the `(Track NN)` marker: a lone `.bin` with a
+ * sibling `.cue` and no track suffix is the whole disc, not a fragment.
+ */
+function isDiscTrackFragment(item: LibraryGame, all: LibraryGame[]): boolean {
+  const name = item.filePath.split(/[\\/]/).pop() ?? "";
+  const m = name.match(/^(.*?)\s*\(Track\s*\d+\)\.bin$/i);
+  if (!m) return false;
+  const cuePath = item.filePath.slice(0, item.filePath.length - name.length) + `${m[1]}.cue`;
+  return all.some((o) => o.filePath === cuePath);
+}
+
+/** The staging area, if it ever ends up inside the scanned tree again.
+ *  gamarr indexes every directory under the ROM root, so a drop folder there
+ *  surfaces its own per-system subdirectories as games ("ps2", "ps3" on a
+ *  platform called "_INBOX"). The real fix moved the folder out of
+ *  /data/roms entirely; this makes a regression invisible rather than
+ *  user-facing. */
+function isStagingPath(filePath: string): boolean {
+  return /(^|\/)_inbox(\/|$)|(^|\/)roms-inbox(\/|$)/i.test(filePath);
+}
+
 export function isJunkLibraryItem(item: LibraryGame): boolean {
   if (JUNK_TITLE_PATTERNS.some((p) => p.test(item.fileName) || p.test(item.filePath))) return true;
   if (isSwitchUpdateFolder(item)) return true;
+  if (isStagingPath(item.filePath)) return true;
   return isEmulatorExecutable(item.filePath);
 }
 
@@ -207,7 +243,11 @@ export function groupMultiDiscGames(items: LibraryGame[]): LibraryGameWithDiscs[
  *  (now-deduped) real files -- a raw+compressed duplicate pair on one disc
  *  would otherwise turn into a group with a spurious extra "disc". */
 export function cleanLibrary(items: LibraryGame[]): LibraryGameWithDiscs[] {
-  const withoutJunk = items.filter((i) => !isJunkLibraryItem(i));
+  // Track fragments need the whole list to find their sibling .cue, so they
+  // are filtered separately from the per-item junk checks.
+  const withoutJunk = items.filter(
+    (i) => !isJunkLibraryItem(i) && !isDiscTrackFragment(i, items)
+  );
   const withRepairedTitles = withoutJunk.map((i) => {
     const fileName = repairGenericTitle(i);
     // romStem is what an artwork pick is keyed by (see LibraryGame) -- every
