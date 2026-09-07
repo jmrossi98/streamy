@@ -79,10 +79,17 @@ function isSwitchUpdateFolder(item: LibraryGame): boolean {
  */
 function isDiscTrackFragment(item: LibraryGame, all: LibraryGame[]): boolean {
   const name = item.filePath.split(/[\\/]/).pop() ?? "";
-  const m = name.match(/^(.*?)\s*\(Track\s*\d+\)\.bin$/i);
-  if (!m) return false;
-  const cuePath = item.filePath.slice(0, item.filePath.length - name.length) + `${m[1]}.cue`;
-  return all.some((o) => o.filePath === cuePath);
+  if (!/\.bin$/i.test(name)) return false;
+  // Two shapes, both one game: a multi-track rip ("<title> (Track 01).bin"
+  // beside a single "<title>.cue"), and the plain single-track pair
+  // ("<title>.bin" beside "<title>.cue"). An earlier version required the
+  // track marker on the reasoning that a lone .bin was a whole disc -- that
+  // was wrong, and Ico showed up twice because of it. In both shapes the
+  // .cue is the entry point and the .bin is its data.
+  const stem = name.replace(/\.bin$/i, "");
+  const base = stem.replace(/\s*\(Track\s*\d+\)\s*$/i, "");
+  const dir = item.filePath.slice(0, item.filePath.length - name.length);
+  return all.some((o) => o.filePath === `${dir}${base}.cue`);
 }
 
 /** The staging area, if it ever ends up inside the scanned tree again.

@@ -221,6 +221,16 @@ describe("multi-track disc images", () => {
     expect(out.map((g) => g.id)).toEqual([1]);
   });
 
+  it("keeps only the .cue for a plain single-track bin/cue pair", () => {
+    // Ico shipped as one .bin + one .cue with no track markers, and showed
+    // up twice until this case was covered.
+    const out = cleanLibrary([
+      item({ id: 1, fileName: "Ico (USA)", filePath: "/data/roms/ps2/Ico (USA).cue", system: "ps2" }),
+      item({ id: 2, fileName: "Ico (USA)", filePath: "/data/roms/ps2/Ico (USA).bin", system: "ps2" }),
+    ]);
+    expect(out.map((g) => g.id)).toEqual([1]);
+  });
+
   it("keeps a lone .bin that has no sibling .cue", () => {
     const out = cleanLibrary([
       item({ id: 1, fileName: "Some Game", filePath: "/data/roms/psx/Some Game.bin", system: "psx" }),
