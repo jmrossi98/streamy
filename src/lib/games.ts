@@ -90,22 +90,40 @@ async function getFirstSeenMap(
   const map = new Map(rows.map((r) => [`${r.system}/${r.romStem}`, r.firstSeenAt]));
 
   const unseen = library.filter((g) => !map.has(`${g.system}/${g.romStem}`));
-  if (unseen.length > 0) {
-    const now = new Date();
-    // upsert with an empty update, not createMany: SQLite has no
-    // skipDuplicates, and two concurrent renders can genuinely race here.
-    // An empty update means a row that already exists keeps its original
-    // timestamp -- first seen must never move.
-    await Promise.all(
-      unseen.map((g) =>
-        prisma.gameFirstSeen.upsert({
-          where: { system_romStem: { system: g.system, romStem: g.romStem } },
-          create: { system: g.system, romStem: g.romStem, firstSeenAt: now },
-          update: {},
-        })
-      )
-    );
-    for (const g of unseen) map.set(`${g.system}/${g.romStem}`, now);
+  if (unseen.length === 0) return map;
+
+  const now = new Date();
+  // Sequential, not Promise.all -- and this is load-bearing, not style.
+  //
+  // The first render after this table was introduced had every game unseen
+  // (~164), and Promise.all fired that many concurrent upserts at SQLite,
+  // which is single-writer. Under that contention Prisma throws, Promise.all
+  // rejects on the first failure, and every other in-flight promise then
+  // rejects with no handler attached -- an unhandled rejection, which Node
+  // terminates the process on. That took the whole app down (port refused,
+  // not 500s) until the next deploy. Sequential writes cost nothing here
+  // (SQLite serialises them anyway) and cannot produce an orphan rejection.
+  //
+  // Bounded per render so a large first pass can't stall a page load; the
+  // remainder is picked up by subsequent renders.
+  const MAX_PER_RENDER = 200;
+  for (const g of unseen.slice(0, MAX_PER_RENDER)) {
+    try {
+      // upsert with an empty update: SQLite has no createMany
+      // skipDuplicates, and two concurrent renders can genuinely race. An
+      // empty update leaves an existing row's timestamp alone -- first seen
+      // must never move.
+      await prisma.gameFirstSeen.upsert({
+        where: { system_romStem: { system: g.system, romStem: g.romStem } },
+        create: { system: g.system, romStem: g.romStem, firstSeenAt: now },
+        update: {},
+      });
+      map.set(`${g.system}/${g.romStem}`, now);
+    } catch {
+      // Recording when a game first appeared is a nicety for one sort
+      // option. It must never be able to break the games list, let alone
+      // the process -- skip this one and carry on.
+    }
   }
   return map;
 }
