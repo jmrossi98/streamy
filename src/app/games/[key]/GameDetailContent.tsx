@@ -137,7 +137,16 @@ export function GameDetailContent({
                   }}
                   autoFocus
                   placeholder="Title"
-                  className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-1.5 font-display text-xl font-bold text-white focus:border-white/30 focus:outline-none sm:text-2xl"
+                  // Deliberately not font-display (Bebas Neue) here, unlike
+                  // the read-only <h1> below -- Bebas Neue has no true
+                  // lowercase letterforms, so typing "Contra" rendered
+                  // exactly like "CONTRA" while editing, even though what
+                  // actually gets saved (saveTitle -> POST
+                  // /api/admin/games/title, which only trims) always was
+                  // whatever case was typed. This isn't a case
+                  // *restriction* being lifted, just the input showing the
+                  // real value that was already being saved all along.
+                  className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-1.5 font-sans text-xl font-bold text-white focus:border-white/30 focus:outline-none sm:text-2xl"
                 />
                 <button
                   type="button"
