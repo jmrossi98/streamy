@@ -11,6 +11,7 @@ import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
 import { OpsChat } from "@/components/OpsChat";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
+import { isOpenRouterConfigured, openRouterModel } from "@/lib/openrouter";
 import { isWebSearchConfigured } from "@/lib/webSearch";
 import { runSecurityChecks } from "@/lib/securityChecks";
 import { SecurityPanel } from "@/components/SecurityPanel";
@@ -339,8 +340,11 @@ export default async function AdminFeaturesPage() {
         </div>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <OpsChat
-            configured={isOllamaConfigured()}
-            model={ollamaModel()}
+            localAvailable={isOllamaConfigured()}
+            remoteAvailable={isOpenRouterConfigured()}
+            localModel={ollamaModel()}
+            openModel={openRouterModel("open")}
+            claudeModel={openRouterModel("claude")}
             statusError={ollamaStatus && !ollamaStatus.ok ? ollamaStatus.error : null}
             searchAvailable={isWebSearchConfigured()}
           />

@@ -12,18 +12,32 @@
  */
 
 import type { ChatMessage } from "./ollama";
+import type { ChatBackendId } from "./chatModels";
 
 /** Characters per message. Roughly 2k tokens -- well clear of a typed question. */
 export const MAX_MESSAGE_CHARS = 8000;
 
-/** Prior turns kept, newest first. Beyond this the context starts evicting. */
+/**
+ * Prior turns kept, newest first. Beyond this the context starts evicting.
+ *
+ * Sized for the 8k the 4GB card can hold, and left at that for the cloud
+ * backends too even though they could take far more: on a metered backend the
+ * history is re-sent and re-billed on every single turn, so an unbounded
+ * transcript is a bill that grows quadratically with the conversation.
+ */
 export const MAX_HISTORY_MESSAGES = 20;
 
-export const SYSTEM_PROMPT =
+/** Shared by every backend: what this panel is and what it may not do. */
+const BASE_PROMPT =
   "You are a concise assistant embedded in Streamy, a self-hosted media server " +
-  "admin panel. Answer briefly and directly. You are a small 3B model: when you " +
-  "are not confident about a fact, say so plainly rather than guessing. You have " +
-  "no live access to the server's state unless it appears in the conversation.\n\n" +
+  "admin panel. Answer briefly and directly. You have no live access to the " +
+  "server's state unless it appears in the conversation.\n\n" +
+  // The read-only rule is enforced by there being no tools wired up at all --
+  // this paragraph only stops the model from *claiming* it will go do things,
+  // which reads as a promise the admin then waits on.
+  "You are strictly read-only. You cannot run commands, edit configuration, " +
+  "restart services, or take any action on any machine. Diagnose, explain, and " +
+  "suggest what the admin should run themselves -- never claim to have done it.\n\n" +
   // Without this the model used search results while insisting it couldn't
   // search, because nothing told it the results block was its own lookup.
   "You DO have web search, run for you automatically when the user enables it. " +
@@ -31,6 +45,34 @@ export const SYSTEM_PROMPT =
   "just performed on the user's behalf -- treat it as your own and answer from " +
   "it. When no results appear, search was off or found nothing: answer from " +
   "memory and say that you didn't search.";
+
+/**
+ * The 3B model needs to be told it is small.
+ *
+ * Without it, it answers homelab questions with confident invented specifics,
+ * which is worse than useless when the whole point is troubleshooting.
+ */
+const LOCAL_CAVEAT =
+  "\n\nYou are a small 3B model running on the admin's own hardware. When you " +
+  "are not confident about a fact, say so plainly rather than guessing.";
+
+/**
+ * The default prompt, and the one the local backend uses.
+ *
+ * Kept as a named export because it is what the panel runs by default and what
+ * most of the tests assert against.
+ */
+export const SYSTEM_PROMPT = BASE_PROMPT + LOCAL_CAVEAT;
+
+/**
+ * The instructions for a given backend.
+ *
+ * The cloud models get the base prompt without the small-model caveat --
+ * telling a frontier model to hedge like a 3B one just makes it hedge.
+ */
+export function systemPromptFor(backend: ChatBackendId): string {
+  return backend === "local" ? SYSTEM_PROMPT : BASE_PROMPT;
+}
 
 /**
  * Messages too trivial to be worth a lookup.
@@ -91,9 +133,14 @@ export type IncomingMessage = { role?: unknown; content?: unknown };
  *
  * The system prompt is prepended here and only here. Client-supplied roles are
  * collapsed to user/assistant, so `{role: "system"}` from the browser arrives
- * as an ordinary user turn instead of new instructions.
+ * as an ordinary user turn instead of new instructions. That matters more now
+ * that one of the backends is metered: the browser picks which model answers,
+ * so it must not also get to pick what that model is told to do.
  */
-export function prepareChatMessages(incoming: unknown): ChatMessage[] {
+export function prepareChatMessages(
+  incoming: unknown,
+  systemPrompt: string = SYSTEM_PROMPT
+): ChatMessage[] {
   const list = Array.isArray(incoming) ? incoming : [];
 
   const cleaned: ChatMessage[] = [];
@@ -112,7 +159,7 @@ export function prepareChatMessages(incoming: unknown): ChatMessage[] {
   // evicted anyway.
   const trimmed = cleaned.slice(-MAX_HISTORY_MESSAGES);
 
-  return [{ role: "system", content: SYSTEM_PROMPT }, ...trimmed];
+  return [{ role: "system", content: systemPrompt }, ...trimmed];
 }
 
 /** A request with nothing to answer -- the route rejects rather than calling out. */
