@@ -3,7 +3,7 @@ import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
 import {
   isOpenRouterConfigured,
-  openRouterModel,
+  modelChain,
   streamOpenRouterChat,
 } from "@/lib/openrouter";
 import { isRemoteBackend, normalizeBackend } from "@/lib/chatModels";
@@ -125,7 +125,7 @@ export async function POST(request: Request) {
     // local card that frees the GPU, and on a metered backend it stops paying
     // for tokens nobody will read.
     const stream = remote
-      ? await streamOpenRouterChat(messages, openRouterModel(backend), request.signal)
+      ? await streamOpenRouterChat(messages, modelChain(backend), request.signal)
       : await streamOllamaChat(messages, request.signal);
 
     return new Response(stream, {

@@ -87,6 +87,15 @@ export const DEFAULT_OPEN_MODEL = "deepseek/deepseek-v3.2";
 export const DEFAULT_CLAUDE_MODEL = "anthropic/claude-sonnet-4.6";
 
 /**
+ * Same-tier failover for the Claude slot only.
+ *
+ * The open slot has no default chain on purpose: the strong open-weight ids
+ * move faster than this repo, and a stale id is a silent skip rather than an
+ * error. Set OPENROUTER_OPEN_FALLBACKS (comma-separated) to add one.
+ */
+export const DEFAULT_CLAUDE_FALLBACKS = "anthropic/claude-sonnet-4.5";
+
+/**
  * Coerces the browser's requested backend to a known one.
  *
  * The panel sends this, and the panel is data -- an unrecognised value must
