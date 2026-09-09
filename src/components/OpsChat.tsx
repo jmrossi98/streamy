@@ -40,6 +40,10 @@ export function OpsChat({
   // 8k context, and it pulls untrusted web text into the prompt. Turning it on
   // is an explicit choice.
   const [webSearch, setWebSearch] = useState(false);
+  // On by default, unlike search: the panel's reason to exist is questions
+  // about this stack, and without it the model correctly but uselessly
+  // explains that it can't see any of it.
+  const [stackStatus, setStackStatus] = useState(true);
   // The open-weight slot when the key is there, local when it isn't -- opening
   // on a backend the server would reject is worse than opening on a weaker one.
   const [backend, setBackend] = useState<ChatBackendId>(
@@ -97,7 +101,7 @@ export function OpsChat({
       const res = await fetch("/api/admin/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, webSearch, backend }),
+        body: JSON.stringify({ messages: history, webSearch, backend, stackStatus }),
         signal: controller.signal,
       });
 
@@ -207,17 +211,32 @@ export function OpsChat({
           })}
         </div>
 
-        {searchAvailable && (
-          <label className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80">
+        <div className="flex items-center gap-3">
+          <label
+            className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80"
+            title="Include a live probe of every service in the stack with your question."
+          >
             <input
               type="checkbox"
-              checked={webSearch}
-              onChange={(e) => setWebSearch(e.target.checked)}
+              checked={stackStatus}
+              onChange={(e) => setStackStatus(e.target.checked)}
               className="accent-netflix-red"
             />
-            Search the web
+            Stack status
           </label>
-        )}
+
+          {searchAvailable && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80">
+              <input
+                type="checkbox"
+                checked={webSearch}
+                onChange={(e) => setWebSearch(e.target.checked)}
+                className="accent-netflix-red"
+              />
+              Search the web
+            </label>
+          )}
+        </div>
       </div>
 
       <p className="-mt-1 text-xs text-white/40">
@@ -248,7 +267,8 @@ export function OpsChat({
       >
         {turns.length === 0 && (
           <p className="py-6 text-center text-sm text-white/30">
-            Ask about the stack, or paste a health check to summarise.
+            Ask about the stack — with “Stack status” on it can see live service
+            health, disk, and backups.
             {searchAvailable ? " Tick “Search the web” for anything current." : ""}
           </p>
         )}
