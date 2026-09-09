@@ -17,12 +17,29 @@
 export type ChatBackendId = "local" | "open" | "claude";
 
 /**
- * Local by default. It costs nothing per token and it is the one backend that
- * keeps working when the card is offline or the OpenRouter key is unset, so a
- * fresh panel should never start out spending money the admin didn't ask to
- * spend.
+ * What the picker starts on: the open-weight slot.
+ *
+ * It is the point of the hybrid -- strong enough to be worth asking, cheap
+ * enough (fractions of a cent per exchange) that the panel is not something to
+ * think twice about opening. Local is a better *fallback* than it is a
+ * default: a 3B model answering a real question confidently and wrongly costs
+ * more time than the tokens saved.
+ *
+ * Deliberately the slot, not the model. Which open-weight model this resolves
+ * to is OPENROUTER_OPEN_MODEL's business (see openrouter.ts), so swapping
+ * DeepSeek for something else never touches this file.
  */
-export const DEFAULT_BACKEND: ChatBackendId = "local";
+export const DEFAULT_BACKEND: ChatBackendId = "open";
+
+/**
+ * Where an unrecognised backend lands, which is NOT the default above.
+ *
+ * The panel names the backend on every request, so a value that isn't one of
+ * ours means a malformed or stale request -- and resolving that to a metered
+ * model would let junk input spend money. The free local model is the only
+ * safe place for it to land, whatever the picker happens to start on.
+ */
+export const FALLBACK_BACKEND: ChatBackendId = "local";
 
 export type ChatBackend = {
   id: ChatBackendId;
@@ -73,13 +90,16 @@ export const DEFAULT_CLAUDE_MODEL = "anthropic/claude-sonnet-4.6";
  * Coerces the browser's requested backend to a known one.
  *
  * The panel sends this, and the panel is data -- an unrecognised value must
- * land on the cheap local default rather than being passed through to a
- * provider, which is how a typo'd model id turns into a billing surprise.
+ * land on the free local model rather than being passed through to a provider,
+ * which is how a typo'd model id turns into a billing surprise. Note this
+ * resolves to FALLBACK_BACKEND, not DEFAULT_BACKEND: what the picker opens on
+ * and where junk input lands are different questions, and only the second one
+ * is a spending decision made by something other than a person.
  */
 export function normalizeBackend(value: unknown): ChatBackendId {
   return CHAT_BACKENDS.some((b) => b.id === value)
     ? (value as ChatBackendId)
-    : DEFAULT_BACKEND;
+    : FALLBACK_BACKEND;
 }
 
 export function backendById(id: ChatBackendId): ChatBackend {

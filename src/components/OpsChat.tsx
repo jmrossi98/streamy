@@ -40,10 +40,10 @@ export function OpsChat({
   // 8k context, and it pulls untrusted web text into the prompt. Turning it on
   // is an explicit choice.
   const [webSearch, setWebSearch] = useState(false);
-  // Local first when it's there. Starting on a metered backend would mean an
-  // idle "hey" costs money before anyone chose to spend any.
+  // The open-weight slot when the key is there, local when it isn't -- opening
+  // on a backend the server would reject is worse than opening on a weaker one.
   const [backend, setBackend] = useState<ChatBackendId>(
-    localAvailable ? DEFAULT_BACKEND : "open"
+    remoteAvailable ? DEFAULT_BACKEND : "local"
   );
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
