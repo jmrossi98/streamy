@@ -6,6 +6,7 @@ import {
   buildSearchContext,
   withSearchContext,
   shouldSearch,
+  shouldIncludeStatus,
   systemPromptFor,
   MAX_HISTORY_MESSAGES,
   MAX_MESSAGE_CHARS,
@@ -212,6 +213,62 @@ describe("withSearchContext", () => {
   it("returns the input unchanged when there is no user turn", () => {
     const msgs = prepareChatMessages([]);
     expect(withSearchContext(msgs, ctx)).toEqual(msgs);
+  });
+});
+
+describe("shouldIncludeStatus", () => {
+  // The bug: "hi" came back as a full service-health summary, because the
+  // status block sits immediately before the final user turn and a model
+  // reading 22 lines of probe output then "hi" answers about the probes.
+  it("skips greetings and acknowledgements", () => {
+    for (const q of ["hi", "hey", "hello", "thanks", "ok", "cool", "yes", "no", "bye"]) {
+      expect(shouldIncludeStatus(q)).toBe(false);
+    }
+  });
+
+  it("skips a message made only of filler words", () => {
+    for (const q of ["ok thanks", "yes cool", "hey hi", "thank you!", "ok, great"]) {
+      expect(shouldIncludeStatus(q)).toBe(false);
+    }
+  });
+
+  it("skips questions about the assistant itself", () => {
+    expect(shouldIncludeStatus("what are you")).toBe(false);
+    expect(shouldIncludeStatus("what can you do")).toBe(false);
+  });
+
+  it("includes anything that could be about the stack", () => {
+    for (const q of [
+      "is anything broken",
+      "how's jellyfin",
+      "is it up?",
+      "summarise my homelab health",
+      "why are my downloads stuck",
+      "what's my disk usage",
+    ]) {
+      expect(shouldIncludeStatus(q)).toBe(true);
+    }
+  });
+
+  // The two predicates are not inverses and must not be merged. shouldSearch
+  // skips homelab questions because the web knows nothing about this stack --
+  // those are exactly the ones that most need the status block.
+  it("includes the infrastructure questions that shouldSearch deliberately skips", () => {
+    for (const q of ["summarize my homelab health", "is jellyfin up", "what is wrong with radarr"]) {
+      expect(shouldSearch(q)).toBe(false);
+      expect(shouldIncludeStatus(q)).toBe(true);
+    }
+  });
+
+  it("skips an empty or whitespace-only turn", () => {
+    expect(shouldIncludeStatus("")).toBe(false);
+    expect(shouldIncludeStatus("   ")).toBe(false);
+  });
+
+  // "no" alone is filler; "no space left on device" is a real report.
+  it("does not treat a filler word starting a real sentence as filler", () => {
+    expect(shouldIncludeStatus("no space left on device")).toBe(true);
+    expect(shouldIncludeStatus("ok so why is radarr failing")).toBe(true);
   });
 });
 

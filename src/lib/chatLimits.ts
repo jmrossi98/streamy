@@ -123,6 +123,41 @@ const CAPABILITY_QUESTION = /^(can|do|are|will) you\b.*\b(web|internet|online|se
  */
 const MAX_CAPABILITY_QUESTION_WORDS = 6;
 
+/**
+ * Conversational filler: a whole message made of greetings and
+ * acknowledgements, in any combination ("hi", "ok thanks", "yes cool").
+ */
+const FILLER_ONLY =
+  /^(?:(?:hi|hey|hello|yo|sup|thanks|thank you|ta|ok|okay|k|cool|nice|great|lol|haha|yes|yeah|yep|no|nope|nvm|bye|goodbye|morning|good morning|good night)[\s!.?,]*)+$/i;
+
+/** Questions about the assistant rather than about the stack. */
+const ABOUT_ITSELF = /^(what|who) are you\b|^what can you do\b/i;
+
+/**
+ * Whether a user turn should carry the live stack status.
+ *
+ * The bug: "hi" was answered with a full service-health summary, because the
+ * status block is injected immediately before the final user turn and a model
+ * reading 22 lines of probe output followed by "hi" reasonably concludes it
+ * was asked about them.
+ *
+ * Exactly the failure `shouldSearch` already exists to prevent -- "hey" once
+ * came back as a dictionary definition of the word -- so it gets the same
+ * treatment rather than a second discovery of the same lesson.
+ *
+ * Note this is NOT the inverse of shouldSearch, and the two must not be
+ * merged. shouldSearch skips questions about this homelab because the web
+ * knows nothing about it; those are precisely the questions that most need the
+ * status block. Only filler is common to both.
+ */
+export function shouldIncludeStatus(query: string): boolean {
+  const q = query.trim();
+  if (!q) return false;
+  if (FILLER_ONLY.test(q)) return false;
+  if (ABOUT_ITSELF.test(q)) return false;
+  return true;
+}
+
 /** Whether a user turn is worth spending a search on. */
 export function shouldSearch(query: string): boolean {
   const q = query.trim();

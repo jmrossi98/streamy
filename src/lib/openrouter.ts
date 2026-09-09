@@ -24,6 +24,7 @@
 
 import type { ChatMessage } from "./ollama";
 import {
+  DEFAULT_CLAUDE_FALLBACKS,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_OPEN_MODEL,
   type ChatBackendId,
@@ -38,15 +39,63 @@ const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
  */
 const REQUEST_TIMEOUT_MS = 180_000;
 
+/**
+ * Ceiling on a single reply.
+ *
+ * Load-bearing, not a tidy-up. Omitting max_tokens makes OpenRouter default to
+ * the model's full output ceiling -- 65536 on DeepSeek -- and it reserves the
+ * cost of *all* of it against the balance before generating a single token.
+ * On a small balance that is an instant 402 ("You requested up to 65536 tokens,
+ * but can only afford 2627"), regardless of how short the answer would have
+ * been. A bounded ceiling is what makes the panel usable without a large
+ * prepaid balance.
+ *
+ * 2048 is roughly 1500 words, well past what this panel's "answer briefly and
+ * directly" prompt should ever produce.
+ */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
+
 export function isOpenRouterConfigured(): boolean {
   return !!process.env.OPENROUTER_API_KEY;
 }
 
-/** The upstream model id for a backend choice. */
+export function maxOutputTokens(): number {
+  const raw = Number(process.env.OPENROUTER_MAX_TOKENS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/** The upstream model id for a backend choice -- the head of its chain. */
 export function openRouterModel(backend: ChatBackendId): string {
   return backend === "claude"
     ? process.env.OPENROUTER_CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL
     : process.env.OPENROUTER_OPEN_MODEL || DEFAULT_OPEN_MODEL;
+}
+
+/**
+ * Models to try in order, for when the first is unavailable or rate-limited.
+ *
+ * Fallbacks stay **within the same tier**, deliberately. Falling from Claude to
+ * a cheap open model would answer a question the admin specifically escalated
+ * with the model they escalated away from, and the panel would still be
+ * displaying "Claude" while it happened. A quieter failure than an error.
+ *
+ * Env-configured (comma-separated) rather than a hardcoded list: model ids move
+ * on OpenRouter, and a stale id in a chain is a silent skip nobody would think
+ * to check. Only ids verified to exist are defaulted.
+ */
+export function modelChain(backend: ChatBackendId): string[] {
+  const extra = (
+    backend === "claude"
+      ? process.env.OPENROUTER_CLAUDE_FALLBACKS ?? DEFAULT_CLAUDE_FALLBACKS
+      : process.env.OPENROUTER_OPEN_FALLBACKS ?? ""
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // De-duplicated: repeating the head as a fallback would retry a model that
+  // just failed, which for a 402 is guaranteed to fail identically.
+  return [...new Set([openRouterModel(backend), ...extra])];
 }
 
 export type SseEvent =
@@ -140,7 +189,7 @@ function sseToNdjson(): TransformStream<Uint8Array, Uint8Array> {
  */
 export async function streamOpenRouterChat(
   messages: ChatMessage[],
-  model: string,
+  models: string[],
   signal?: AbortSignal
 ): Promise<ReadableStream<Uint8Array>> {
   const key = process.env.OPENROUTER_API_KEY;
@@ -158,7 +207,14 @@ export async function streamOpenRouterChat(
       // rather than as one undifferentiated total.
       "X-Title": "Streamy",
     },
-    body: JSON.stringify({ model, messages, stream: true }),
+    // `models` (plural), not `model`: an ordered list tried until one succeeds.
+    // There is no separate fallbacks field -- the primary is simply the head.
+    body: JSON.stringify({
+      models,
+      messages,
+      stream: true,
+      max_tokens: maxOutputTokens(),
+    }),
     signal: combined,
   });
 
