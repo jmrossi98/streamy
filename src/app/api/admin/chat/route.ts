@@ -12,6 +12,7 @@ import {
   hasUserTurn,
   latestUserQuery,
   prepareChatMessages,
+  shouldIncludeStatus,
   shouldSearch,
   systemPromptFor,
   withContext,
@@ -84,7 +85,10 @@ export async function POST(request: Request) {
   // questions about this stack, and the common case is wanting the answer to
   // be about the real one. Snapshots are memoised for a few seconds so a
   // back-and-forth doesn't re-probe every service per message.
-  if (body.stackStatus !== false) {
+  // Filler is answered from the transcript. Handing a model 22 lines of probe
+  // output followed by "hi" gets a health summary in reply to a greeting.
+  const statusQuery = latestUserQuery(messages);
+  if (body.stackStatus !== false && statusQuery && shouldIncludeStatus(statusQuery)) {
     try {
       messages = withContext(messages, buildStatusContext(await getStatusSnapshot()));
     } catch (err) {
