@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { OpsChat } from "@/components/OpsChat";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
+import { isOpenRouterConfigured, openRouterModel } from "@/lib/openrouter";
 import { isWebSearchConfigured } from "@/lib/webSearch";
 
 /**
@@ -35,8 +36,11 @@ export default async function AdminChatPage() {
 
         <div className="min-h-0 flex-1 rounded-lg border border-white/10 bg-netflix-dark/80 p-4">
           <OpsChat
-            configured={isOllamaConfigured()}
-            model={ollamaModel()}
+            localAvailable={isOllamaConfigured()}
+            remoteAvailable={isOpenRouterConfigured()}
+            localModel={ollamaModel()}
+            openModel={openRouterModel("open")}
+            claudeModel={openRouterModel("claude")}
             statusError={status && !status.ok ? status.error : null}
             searchAvailable={isWebSearchConfigured()}
             fullHeight

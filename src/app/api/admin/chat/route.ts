@@ -2,24 +2,37 @@ import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
 import {
+  isOpenRouterConfigured,
+  openRouterModel,
+  streamOpenRouterChat,
+} from "@/lib/openrouter";
+import { isRemoteBackend, normalizeBackend } from "@/lib/chatModels";
+import {
   buildSearchContext,
   hasUserTurn,
   latestUserQuery,
   prepareChatMessages,
   shouldSearch,
+  systemPromptFor,
   withSearchContext,
 } from "@/lib/chatLimits";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
 /**
- * Admin chat proxy to the self-hosted model.
+ * Admin chat proxy. Three backends, chosen per request by the panel:
+ * the self-hosted model, an open-weight model via OpenRouter, or Claude via
+ * OpenRouter.
  *
- * The model has no authentication of its own and is reachable from this box
- * over Tailscale, so this route is the only thing in front of it. Admin only,
- * re-checked against the database on every request.
+ * The local model has no authentication of its own and is reachable from this
+ * box over Tailscale, so this route is the only thing in front of it. The
+ * OpenRouter backends are metered, so this route is also the only thing
+ * between an unauthenticated request and a bill. Admin only, re-checked
+ * against the database on every request, for both reasons.
  *
- * The upstream NDJSON stream is piped straight through rather than buffered:
- * at ~26 tok/s a buffered reply reads as a hang.
+ * The upstream stream is piped straight through rather than buffered: at ~26
+ * tok/s a buffered reply reads as a hang. OpenRouter's SSE is rewritten into
+ * the same NDJSON shape by the client module, so the browser parses one format
+ * regardless of who answered.
  */
 export const dynamic = "force-dynamic";
 // Node runtime, not edge: requireAdmin needs Prisma.
@@ -30,21 +43,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
-  if (!isOllamaConfigured()) {
-    return NextResponse.json(
-      { error: "Chat is not configured — OLLAMA_URL is unset on the server." },
-      { status: 503 }
-    );
-  }
-
-  let body: { messages?: unknown; webSearch?: unknown };
+  let body: { messages?: unknown; webSearch?: unknown; backend?: unknown };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  let messages = prepareChatMessages(body.messages);
+  // An unrecognised backend falls back to the free local one rather than
+  // erroring -- and never to a metered one.
+  const backend = normalizeBackend(body.backend);
+  const remote = isRemoteBackend(backend);
+
+  if (remote && !isOpenRouterConfigured()) {
+    return NextResponse.json(
+      { error: "Cloud models aren't configured — OPENROUTER_API_KEY is unset on the server." },
+      { status: 503 }
+    );
+  }
+  if (!remote && !isOllamaConfigured()) {
+    return NextResponse.json(
+      { error: "Chat is not configured — OLLAMA_URL is unset on the server." },
+      { status: 503 }
+    );
+  }
+
+  let messages = prepareChatMessages(body.messages, systemPromptFor(backend));
   if (!hasUserTurn(messages)) {
     return NextResponse.json({ error: "Nothing to answer." }, { status: 400 });
   }
@@ -72,9 +96,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    // request.signal so navigating away actually stops generation on the GPU
-    // instead of leaving it churning for a reply nobody will read.
-    const stream = await streamOllamaChat(messages, request.signal);
+    // request.signal so navigating away actually stops generation -- on the
+    // local card that frees the GPU, and on a metered backend it stops paying
+    // for tokens nobody will read.
+    const stream = remote
+      ? await streamOpenRouterChat(messages, openRouterModel(backend), request.signal)
+      : await streamOllamaChat(messages, request.signal);
+
     return new Response(stream, {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -86,7 +114,7 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[chat] ollama request failed:", message);
+    console.error(`[chat] ${backend} request failed:`, message);
     return NextResponse.json(
       { error: `Couldn't reach the model: ${message}` },
       { status: 502 }
