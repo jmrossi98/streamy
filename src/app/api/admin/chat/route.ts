@@ -14,8 +14,10 @@ import {
   prepareChatMessages,
   shouldSearch,
   systemPromptFor,
-  withSearchContext,
+  withContext,
 } from "@/lib/chatLimits";
+import { buildStatusContext } from "@/lib/chatContext";
+import { getStatusSnapshot } from "@/lib/chatStatus";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
 /**
@@ -43,7 +45,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
-  let body: { messages?: unknown; webSearch?: unknown; backend?: unknown };
+  let body: {
+    messages?: unknown;
+    webSearch?: unknown;
+    backend?: unknown;
+    stackStatus?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -73,6 +80,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Nothing to answer." }, { status: 400 });
   }
 
+  // Opt-out rather than opt-in, unlike search: this panel exists to answer
+  // questions about this stack, and the common case is wanting the answer to
+  // be about the real one. Snapshots are memoised for a few seconds so a
+  // back-and-forth doesn't re-probe every service per message.
+  if (body.stackStatus !== false) {
+    try {
+      messages = withContext(messages, buildStatusContext(await getStatusSnapshot()));
+    } catch (err) {
+      // Answering without live state beats failing the turn -- the model is
+      // told in its prompt to say so when no status block is present.
+      console.error("[chat] stack status snapshot failed:", err);
+    }
+  }
+
   // Searched unconditionally when the toggle is on, rather than left to the
   // model to decide -- a 3B model is not a reliable judge of when it needs a
   // lookup, which is the whole reason this is a switch.
@@ -84,7 +105,7 @@ export async function POST(request: Request) {
       try {
         const results = await searchWeb(query);
         if (results.length > 0) {
-          messages = withSearchContext(messages, buildSearchContext(query, results));
+          messages = withContext(messages, buildSearchContext(query, results));
         }
       } catch (err) {
         // A search failure degrades to answering without it. Losing the whole

@@ -30,8 +30,18 @@ export const MAX_HISTORY_MESSAGES = 20;
 /** Shared by every backend: what this panel is and what it may not do. */
 const BASE_PROMPT =
   "You are a concise assistant embedded in Streamy, a self-hosted media server " +
-  "admin panel. Answer briefly and directly. You have no live access to the " +
-  "server's state unless it appears in the conversation.\n\n" +
+  "admin panel. Answer briefly and directly.\n\n" +
+  // The failure this fixes: asked to summarise the stack, the model correctly
+  // explained it had no live access and listed `docker ps` for the admin to run
+  // -- while Streamy was already probing all of it for the admin page. Same
+  // lesson as the search block below: a context block nobody told the model
+  // about gets disowned rather than used.
+  "You DO have a live view of the admin's stack when a stack status block " +
+  "appears below. That block is Streamy's own probes, run seconds ago against " +
+  "their real services -- it is your own live view, not something they pasted. " +
+  "Answer from it directly rather than saying you lack access or asking them " +
+  "to go run commands for information already in it. When no such block " +
+  "appears, you genuinely have no live state: say so.\n\n" +
   // The read-only rule is enforced by there being no tools wired up at all --
   // this paragraph only stops the model from *claiming* it will go do things,
   // which reads as a promise the admin then waits on.
@@ -207,11 +217,14 @@ export function buildSearchContext(
 }
 
 /**
- * Inserts search context immediately before the final user turn, so the model
+ * Inserts a context block immediately before the final user turn, so the model
  * reads the question last -- small models weight the tail of the prompt
  * heavily, and burying the question above 5 search results loses it.
+ *
+ * Applying this twice (stack status, then search) leaves the question last
+ * either way, which is the property that matters.
  */
-export function withSearchContext(
+export function withContext(
   messages: ChatMessage[],
   context: ChatMessage
 ): ChatMessage[] {
@@ -219,3 +232,6 @@ export function withSearchContext(
   if (lastUser === -1) return messages;
   return [...messages.slice(0, lastUser), context, ...messages.slice(lastUser)];
 }
+
+/** Named alias kept for the search path, which is where this started. */
+export const withSearchContext = withContext;
