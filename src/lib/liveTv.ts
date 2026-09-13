@@ -68,8 +68,33 @@ type JfChannel = {
   CurrentProgram?: JfProgram;
 };
 
-export function isJellyfinReachable(): boolean {
+/** Env is present. Says nothing about whether the server is actually up. */
+export function isJellyfinConfiguredForLiveTv(): boolean {
   return !!(JELLYFIN_URL && JELLYFIN_API_KEY);
+}
+
+/**
+ * Whether Jellyfin is actually answering.
+ *
+ * Env being set is not the same as the server being up, and conflating them
+ * produced a genuinely misleading page: with Jellyfin down, /live reported
+ * "No tuner configured" -- because the tuner probe threw, was caught, and
+ * returned false. That sends you to check the tuner when the real problem is
+ * the server, which is the most expensive kind of wrong error message.
+ *
+ * /System/Info/Public needs no auth and is the cheapest thing Jellyfin serves.
+ */
+export async function isJellyfinReachable(): Promise<boolean> {
+  if (!isJellyfinConfiguredForLiveTv()) return false;
+  try {
+    const res = await fetch(`${JELLYFIN_URL}/System/Info/Public`, {
+      signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+      cache: "no-store",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function liveTvFetch<T>(path: string): Promise<T> {
@@ -95,7 +120,7 @@ async function liveTvFetch<T>(path: string): Promise<T> {
  * integration here takes, and is never worth failing a page render over.
  */
 export async function isLiveTvConfigured(): Promise<boolean> {
-  if (!isJellyfinReachable()) return false;
+  if (!isJellyfinConfiguredForLiveTv()) return false;
   try {
     const hosts = await liveTvFetch<unknown[]>("/LiveTv/TunerHosts");
     return Array.isArray(hosts) && hosts.length > 0;
@@ -146,7 +171,7 @@ function logoUrl(channel: JfChannel): string | null {
  * the page should blow up on.
  */
 export async function getLiveChannels(): Promise<LiveChannel[]> {
-  if (!isJellyfinReachable()) return [];
+  if (!isJellyfinConfiguredForLiveTv()) return [];
   const params = new URLSearchParams({
     EnableImages: "true",
     AddCurrentProgram: "true",
@@ -186,7 +211,7 @@ export async function getLiveChannels(): Promise<LiveChannel[]> {
  * than one per channel.
  */
 export async function attachNextPrograms(channels: LiveChannel[]): Promise<LiveChannel[]> {
-  if (!isJellyfinReachable() || channels.length === 0) return channels;
+  if (!isJellyfinConfiguredForLiveTv() || channels.length === 0) return channels;
 
   const now = new Date();
   const params = new URLSearchParams({
