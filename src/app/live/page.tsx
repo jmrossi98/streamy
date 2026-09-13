@@ -6,6 +6,7 @@ import {
   getLiveChannels,
   isJellyfinConfiguredForLiveTv,
   isJellyfinReachable,
+  MAX_CHANNELS,
 } from "@/lib/liveTv";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -37,6 +38,7 @@ export default async function LivePage() {
         envSet={envSet}
         reachable={reachable}
         channels={channels}
+        truncated={channels.length >= MAX_CHANNELS}
       />
     </div>
   );
