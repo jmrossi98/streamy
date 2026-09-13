@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import {
   attachNextPrograms,
   getLiveChannels,
+  isJellyfinConfiguredForLiveTv,
   isJellyfinReachable,
   isLiveTvConfigured,
 } from "@/lib/liveTv";
@@ -23,7 +24,11 @@ export default async function LivePage() {
   unstable_noStore();
   if (!(await getSession())) redirect("/login?callbackUrl=/live");
 
-  const reachable = isJellyfinReachable();
+  // Three separate facts, deliberately probed separately: env is set, the
+  // server answers, and a tuner exists. Collapsing the middle one is what made
+  // a downed Jellyfin report itself as a missing tuner.
+  const envSet = isJellyfinConfiguredForLiveTv();
+  const reachable = envSet ? await isJellyfinReachable() : false;
   const configured = reachable ? await isLiveTvConfigured() : false;
   // Skipped entirely when there's no tuner: the channel query would just be a
   // round trip to an empty list, and the page has a different thing to say.
@@ -31,7 +36,12 @@ export default async function LivePage() {
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
-      <LiveTvContent reachable={reachable} configured={configured} channels={channels} />
+      <LiveTvContent
+        envSet={envSet}
+        reachable={reachable}
+        configured={configured}
+        channels={channels}
+      />
     </div>
   );
 }

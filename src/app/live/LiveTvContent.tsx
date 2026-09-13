@@ -5,7 +5,9 @@ import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
 type Props = {
-  /** JELLYFIN_URL/JELLYFIN_API_KEY are set -- we can talk to Jellyfin at all. */
+  /** JELLYFIN_URL/JELLYFIN_API_KEY are set. */
+  envSet: boolean;
+  /** Jellyfin actually answered a probe -- the server is up, not just configured. */
   reachable: boolean;
   /** Jellyfin has a tuner registered -- there is something to watch. */
   configured: boolean;
@@ -119,21 +121,30 @@ function ChannelCard({ channel }: { channel: LiveChannel }) {
   );
 }
 
-export function LiveTvContent({ reachable, configured, channels }: Props) {
+export function LiveTvContent({ envSet, reachable, configured, channels }: Props) {
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
   // "Jellyfin is fine but has no tuner", and "there's a tuner but it returned
   // nothing" have completely different fixes, and collapsing them into one
   // empty state is what makes a feature feel broken rather than unconfigured.
   let empty: { title: string; detail: React.ReactNode } | null = null;
-  if (!reachable) {
+  if (!envSet) {
     empty = {
-      title: "Live TV isn’t available",
+      title: "Live TV isn’t configured",
       detail: (
         <>
-          Streamy can’t reach Jellyfin — <code className="text-white/70">JELLYFIN_URL</code> or{" "}
+          <code className="text-white/70">JELLYFIN_URL</code> or{" "}
           <code className="text-white/70">JELLYFIN_API_KEY</code> is unset on the server.
         </>
       ),
+    };
+  } else if (!reachable) {
+    // Distinct from "no tuner" on purpose. Reporting a downed server as a
+    // missing tuner sends you to check the wrong thing entirely.
+    empty = {
+      title: "Jellyfin isn’t responding",
+      detail:
+        "Streamy is configured for Jellyfin but the server isn’t answering. " +
+        "Check that the Jellyfin container is running.",
     };
   } else if (!configured) {
     empty = {
