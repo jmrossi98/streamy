@@ -11,6 +11,7 @@ const navLinks = [
   { href: "/", label: "Home" },
   { href: "/movies", label: "Movies" },
   { href: "/tv", label: "TV Shows" },
+  { href: "/live", label: "Live TV" },
   { href: "/games", label: "Games", adminOnly: true },
   { href: "/watchlist", label: "My List", authOnly: true },
 ];
