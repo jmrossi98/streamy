@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
+import { LivePlayer } from "@/components/LivePlayer";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
 type Props = {
@@ -10,7 +11,12 @@ type Props = {
   /** Jellyfin actually answered a probe -- the server is up, not just configured. */
   reachable: boolean;
   channels: LiveChannel[];
+  /** The fetch hit its cap -- there are more channels than are shown. */
+  truncated: boolean;
 };
+
+/** Rendered at once. Enough to scroll, few enough to stay responsive. */
+const PAGE_SIZE = 60;
 
 /**
  * Local wall-clock time for a UTC instant.
@@ -60,7 +66,7 @@ function ProgramLine({ program, label }: { program: LiveProgram | null; label: s
   );
 }
 
-function ChannelCard({ channel }: { channel: LiveChannel }) {
+function ChannelCard({ channel, onPlay }: { channel: LiveChannel; onPlay: () => void }) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -71,7 +77,11 @@ function ChannelCard({ channel }: { channel: LiveChannel }) {
   const pct = progressPercent(channel.now, nowMs);
 
   return (
-    <div className="flex gap-3 rounded-lg border border-white/10 bg-netflix-dark/80 p-3 transition-colors hover:border-white/25">
+    <button
+      type="button"
+      onClick={onPlay}
+      className="flex w-full gap-3 rounded-lg border border-white/10 bg-netflix-dark/80 p-3 text-left transition-colors hover:border-white/40 hover:bg-netflix-dark focus:border-white/40 focus:outline-none"
+    >
       <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-black/40">
         {channel.logoUrl ? (
           // Plain <img>: these are proxied through our own origin at an
@@ -115,11 +125,30 @@ function ChannelCard({ channel }: { channel: LiveChannel }) {
           </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }
 
-export function LiveTvContent({ envSet, reachable, channels }: Props) {
+export function LiveTvContent({ envSet, reachable, channels, truncated }: Props) {
+  const [query, setQuery] = useState("");
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const [playing, setPlaying] = useState<LiveChannel | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return channels;
+    // Number as well as name: on a broadcast lineup people reach for "7.1"
+    // as readily as for the call sign.
+    return channels.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.number ?? "").toLowerCase().includes(q) ||
+        (c.now?.name ?? "").toLowerCase().includes(q)
+    );
+  }, [channels, query]);
+
+  const visible = filtered.slice(0, shown);
+
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
   // "Jellyfin is fine but has no tuner", and "there's a tuner but it returned
   // nothing" have completely different fixes, and collapsing them into one
@@ -166,10 +195,30 @@ export function LiveTvContent({ envSet, reachable, channels }: Props) {
         <h1 className={ROW_H2_CLASS}>Live TV</h1>
         {channels.length > 0 && (
           <span className="text-sm text-white/40">
-            {channels.length} channel{channels.length === 1 ? "" : "s"}
+            {query ? `${filtered.length} of ${channels.length}` : `${channels.length} channel${channels.length === 1 ? "" : "s"}`}
+            {truncated && !query ? "+" : ""}
           </span>
         )}
       </div>
+
+      {channels.length > PAGE_SIZE && (
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            // Reset paging here rather than in an effect: it is a consequence
+            // of the edit, not of the render. Without it the reveal count from
+            // the previous search carries over and results look arbitrarily
+            // long.
+            setShown(PAGE_SIZE);
+          }}
+          placeholder="Search channels…"
+          // text-base on mobile: iOS zooms the viewport on a focused input
+          // under 16px and there is no way back out without pinching.
+          className="mb-4 w-full rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
+        />
+      )}
 
       {empty ? (
         <div className="rounded-lg border border-white/10 bg-netflix-dark/60 px-4 py-10 text-center">
@@ -177,11 +226,48 @@ export function LiveTvContent({ envSet, reachable, channels }: Props) {
           <p className="mx-auto mt-2 max-w-md text-sm text-white/50">{empty.detail}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {channels.map((c) => (
-            <ChannelCard key={c.id} channel={c} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {visible.map((c) => (
+              <ChannelCard key={c.id} channel={c} onPlay={() => setPlaying(c)} />
+            ))}
+          </div>
+
+          {filtered.length === 0 && (
+            <p className="py-10 text-center text-sm text-white/40">
+              No channels match “{query}”.
+            </p>
+          )}
+
+          {shown < filtered.length && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setShown((n) => n + PAGE_SIZE)}
+                className="rounded bg-white/10 px-4 py-2 text-sm text-white transition-colors hover:bg-white/20"
+              >
+                Show {Math.min(PAGE_SIZE, filtered.length - shown)} more
+              </button>
+            </div>
+          )}
+
+          {truncated && !query && shown >= filtered.length && (
+            // Said out loud rather than silently cutting the list off, which
+            // is what the old hard cap did.
+            <p className="mt-4 text-center text-xs text-white/30">
+              Showing the first {channels.length} channels. Your tuner reports more —
+              narrow the playlist in Jellyfin if you need the rest.
+            </p>
+          )}
+        </>
+      )}
+
+      {playing && (
+        <LivePlayer
+          channelId={playing.id}
+          channelName={playing.name}
+          onClose={() => setPlaying(null)}
+        />
       )}
     </div>
   );

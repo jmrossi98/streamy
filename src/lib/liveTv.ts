@@ -24,11 +24,16 @@ const LIVE_TV_TIMEOUT_MS = 25_000;
 /**
  * Cap on channels fetched.
  *
- * Jellyfin will happily enumerate every channel a tuner reports, and a public
- * M3U index can carry five figures of them. Without a cap the request is slow
- * enough to trip the timeout, and the grid would be unusable anyway.
+ * Jellyfin will enumerate every channel a tuner reports, and a public M3U
+ * index can carry five figures of them. Some cap has to exist or the request
+ * outruns the timeout.
+ *
+ * 2000 rather than 500 because 500 silently truncated a real lineup -- the
+ * list just stopped, with nothing saying why. The grid handles the size with
+ * search and incremental reveal rather than by being handed less data, and the
+ * page says plainly when the cap has been hit instead of quietly cutting off.
  */
-const MAX_CHANNELS = 500;
+export const MAX_CHANNELS = 2000;
 
 export type LiveChannel = {
   id: string;
@@ -103,8 +108,13 @@ export async function isJellyfinReachable(): Promise<boolean> {
 }
 
 async function liveTvFetch<T>(path: string): Promise<T> {
+  return liveTvFetchJson<T>(path);
+}
+
+async function liveTvFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${JELLYFIN_URL}${path}`, {
-    headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    ...init,
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY!, ...(init?.headers ?? {}) },
     signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
     // A schedule is current-by-definition; a cached guide is a wrong guide.
     cache: "no-store",
@@ -262,4 +272,54 @@ export function mergeNextPrograms(
   }
 
   return channels.map((c) => ({ ...c, next: nextByChannel.get(c.id) ?? null }));
+}
+
+
+export type LiveStreamHandle = {
+  /** The opened stream's media source id -- NOT the channel id. */
+  mediaSourceId: string;
+  /** Ties every subsequent request to this one viewing. */
+  playSessionId: string;
+};
+
+/**
+ * Opens a live stream for a channel and returns what the transcode needs to
+ * address it.
+ *
+ * A recorded title has one media source and Jellyfin tolerates being handed
+ * the item id in its place. A channel does not: asking for it tells Jellyfin
+ * to *tune* -- allocate a tuner, start pulling the broadcast -- and it answers
+ * with an id for that live stream, which every later request has to name.
+ *
+ * POST, with an empty body, deliberately: PlaybackInfo has a GET form that
+ * returns media sources without opening anything, which looks like it works
+ * right up until the transcode has nothing to read from.
+ *
+ * Returns null rather than throwing on failure. A channel that won't tune is
+ * an ordinary outcome here -- the tuner is busy, the upstream is down, the
+ * playlist entry is dead -- and the page says so instead of erroring.
+ */
+export async function openLiveStream(channelId: string): Promise<LiveStreamHandle | null> {
+  if (!isJellyfinConfiguredForLiveTv()) return null;
+
+  const playSessionId = crypto.randomUUID();
+  const params = new URLSearchParams({ PlaySessionId: playSessionId });
+  if (JELLYFIN_USER_ID) params.set("UserId", JELLYFIN_USER_ID);
+
+  try {
+    const data = await liveTvFetchJson<{
+      MediaSources?: { Id?: string; OpenToken?: string }[];
+      PlaySessionId?: string;
+    }>(`/Items/${encodeURIComponent(channelId)}/PlaybackInfo?${params.toString()}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    const mediaSourceId = data?.MediaSources?.[0]?.Id;
+    if (!mediaSourceId) return null;
+    return { mediaSourceId, playSessionId: data?.PlaySessionId || playSessionId };
+  } catch {
+    return null;
+  }
 }

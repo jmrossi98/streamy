@@ -79,7 +79,13 @@ export async function proxyJellyfinHlsResource(
   itemId: string,
   jellyfinPath: string,
   proxyBasePath: string,
-  request: Request
+  request: Request,
+  // Live TV only. A recorded title has exactly one media source and Jellyfin
+  // accepts the item id in its place, which is why every other caller omits
+  // this. A live channel does not: Jellyfin opens a *stream* for it and hands
+  // back an id for that stream, and the transcode has to name that id rather
+  // than the channel's.
+  mediaSourceId?: string
 ): Promise<Response> {
   const incoming = new URL(request.url);
   // The master playlist is the one request usePlayerEngine builds itself
@@ -109,7 +115,11 @@ export async function proxyJellyfinHlsResource(
   forwardedParams.delete("startTimeTicks");
   const upstreamUrl =
     jellyfinPath === "master.m3u8"
-      ? jellyfinHlsMasterUrl(itemId, incoming.searchParams.get("session") || undefined)
+      ? jellyfinHlsMasterUrl(
+          itemId,
+          incoming.searchParams.get("session") || undefined,
+          mediaSourceId
+        )
       : jellyfinHlsResourceUrl(itemId, jellyfinPath, forwardedParams);
   const range = request.headers.get("range");
   const upstream = await fetch(upstreamUrl, {
