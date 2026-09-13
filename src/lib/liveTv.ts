@@ -7,23 +7,28 @@
  * there is no TMDB id to match on, and "what is playable" is a question about
  * a broadcast schedule rather than about a file existing on disk.
  *
- * Configuration is a two-step thing in Jellyfin and both steps can be absent
- * independently, which is why isLiveTvConfigured() asks the server rather than
- * reading env:
- *   1. JELLYFIN_URL/JELLYFIN_API_KEY set  -- we can talk to Jellyfin at all
- *   2. a tuner registered in Jellyfin     -- there is anything to watch
- * Streamy's env can be perfect while (2) is missing, which is exactly the
- * state this was built in: the Penn Yan HDHomeRun doesn't exist yet, so a
- * temporary M3U tuner stands in. Nothing here knows or cares which it is --
- * swapping the M3U for the real tuner changes no code.
+ * Whether Live TV *works* is answered by asking for channels, not by probing
+ * for a tuner. An earlier version here did GET /LiveTv/TunerHosts, which is a
+ * POST-only endpoint -- it answers 405, the call threw, and the page reported
+ * "no tuner configured" while two tuners sat happily configured in Jellyfin.
+ * Channels are also the thing the page actually needs, so asking for them
+ * directly cannot be wrong the way an inferred signal can.
  */
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
 const JELLYFIN_USER_ID = process.env.JELLYFIN_USER_ID;
 
-/** Live TV probes are on a page load's critical path; a dead tuner must not hang it. */
-const LIVE_TV_TIMEOUT_MS = 8_000;
+const LIVE_TV_TIMEOUT_MS = 25_000;
+
+/**
+ * Cap on channels fetched.
+ *
+ * Jellyfin will happily enumerate every channel a tuner reports, and a public
+ * M3U index can carry five figures of them. Without a cap the request is slow
+ * enough to trip the timeout, and the grid would be unusable anyway.
+ */
+const MAX_CHANNELS = 500;
 
 export type LiveChannel = {
   id: string;
@@ -110,25 +115,10 @@ async function liveTvFetch<T>(path: string): Promise<T> {
 }
 
 /**
- * Whether Jellyfin has a tuner registered.
- *
- * Asked of the server, not inferred from Streamy's env, because "Streamy can
- * reach Jellyfin" and "Jellyfin has anything to tune" are genuinely different
- * facts -- and the UI has to tell the two apart to say anything useful. An
- * unreachable Jellyfin reports false rather than throwing: the Live TV tab
- * degrading to "not configured" is the same posture every other optional
- * integration here takes, and is never worth failing a page render over.
+ * Live TV probes sit on a page load's critical path; a dead tuner must not
+ * hang it. Generous because a large playlist is slow to enumerate -- a
+ * 10,000-channel M3U is a normal thing for someone to point Jellyfin at.
  */
-export async function isLiveTvConfigured(): Promise<boolean> {
-  if (!isJellyfinConfiguredForLiveTv()) return false;
-  try {
-    const hosts = await liveTvFetch<unknown[]>("/LiveTv/TunerHosts");
-    return Array.isArray(hosts) && hosts.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 function toProgram(p: JfProgram | undefined | null): LiveProgram | null {
   if (!p?.Id || !p?.Name) return null;
   return {
@@ -179,6 +169,7 @@ export async function getLiveChannels(): Promise<LiveChannel[]> {
     // to how anyone thinks about channels.
     SortBy: "SortName",
     SortOrder: "Ascending",
+    Limit: String(MAX_CHANNELS),
   });
   if (JELLYFIN_USER_ID) params.set("userId", JELLYFIN_USER_ID);
 

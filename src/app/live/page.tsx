@@ -6,7 +6,6 @@ import {
   getLiveChannels,
   isJellyfinConfiguredForLiveTv,
   isJellyfinReachable,
-  isLiveTvConfigured,
 } from "@/lib/liveTv";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -24,22 +23,19 @@ export default async function LivePage() {
   unstable_noStore();
   if (!(await getSession())) redirect("/login?callbackUrl=/live");
 
-  // Three separate facts, deliberately probed separately: env is set, the
-  // server answers, and a tuner exists. Collapsing the middle one is what made
-  // a downed Jellyfin report itself as a missing tuner.
+  // Two probed facts, then the channels themselves. There is deliberately no
+  // separate "is a tuner configured" probe: the one that existed asked a
+  // POST-only endpoint with GET and reported "no tuner" for a server that had
+  // two. Channels are what the page needs, so they are what it asks for.
   const envSet = isJellyfinConfiguredForLiveTv();
   const reachable = envSet ? await isJellyfinReachable() : false;
-  const configured = reachable ? await isLiveTvConfigured() : false;
-  // Skipped entirely when there's no tuner: the channel query would just be a
-  // round trip to an empty list, and the page has a different thing to say.
-  const channels = configured ? await attachNextPrograms(await getLiveChannels()) : [];
+  const channels = reachable ? await attachNextPrograms(await getLiveChannels()) : [];
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
       <LiveTvContent
         envSet={envSet}
         reachable={reachable}
-        configured={configured}
         channels={channels}
       />
     </div>

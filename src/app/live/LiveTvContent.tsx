@@ -9,8 +9,6 @@ type Props = {
   envSet: boolean;
   /** Jellyfin actually answered a probe -- the server is up, not just configured. */
   reachable: boolean;
-  /** Jellyfin has a tuner registered -- there is something to watch. */
-  configured: boolean;
   channels: LiveChannel[];
 };
 
@@ -121,7 +119,7 @@ function ChannelCard({ channel }: { channel: LiveChannel }) {
   );
 }
 
-export function LiveTvContent({ envSet, reachable, configured, channels }: Props) {
+export function LiveTvContent({ envSet, reachable, channels }: Props) {
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
   // "Jellyfin is fine but has no tuner", and "there's a tuner but it returned
   // nothing" have completely different fixes, and collapsing them into one
@@ -146,20 +144,19 @@ export function LiveTvContent({ envSet, reachable, configured, channels }: Props
         "Streamy is configured for Jellyfin but the server isn’t answering. " +
         "Check that the Jellyfin container is running.",
     };
-  } else if (!configured) {
-    empty = {
-      title: "No tuner configured",
-      detail: (
-        <>
-          Jellyfin is reachable but has no Live TV tuner. Add one in Jellyfin under{" "}
-          <span className="text-white/70">Dashboard → Live TV → Tuner Devices</span>.
-        </>
-      ),
-    };
   } else if (channels.length === 0) {
+    // Deliberately one state, not two. Telling "no tuner" apart from "tuner
+    // that hasn't scanned" needs a signal Jellyfin doesn't cheaply expose, and
+    // guessing at one is what produced a confidently wrong message before.
     empty = {
       title: "No channels",
-      detail: "A tuner is configured but reported no channels. Check the tuner in Jellyfin.",
+      detail: (
+        <>
+          Jellyfin is running but returned no channels. Check that a tuner is added under{" "}
+          <span className="text-white/70">Dashboard → Live TV → Tuner Devices</span>, and that
+          it has finished scanning.
+        </>
+      ),
     };
   }
 
