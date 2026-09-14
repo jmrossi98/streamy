@@ -32,11 +32,12 @@ model User {
   // callback compares the two and drops tokens issued before the change.
   passwordChangedAt DateTime?
 
-  watchlist       WatchlistItem[]
-  watchlistShows  WatchlistShowItem[]
-  watchlistGames  WatchlistGameItem[]
-  progress        WatchProgress[]
-  episodeProgress EpisodeProgress[]
+  watchlist           WatchlistItem[]
+  watchlistShows      WatchlistShowItem[]
+  watchlistGames      WatchlistGameItem[]
+  watchlistFlashGames WatchlistFlashGameItem[]
+  progress            WatchProgress[]
+  episodeProgress     EpisodeProgress[]
 }
 
 model WatchlistItem {
@@ -257,19 +258,19 @@ model Setting {
 /// differently from one bad run next to a week of red ones, and only a
 /// history shows the difference.
 model PlaybackCheckRun {
-  id       String   @id @default(cuid())
-  ranAt    DateTime @default(now())
-  success  Boolean
+  id         String   @id @default(cuid())
+  ranAt      DateTime @default(now())
+  success    Boolean
   /// One line, e.g. "5/5 stages passed" or "failed at HLS transcode chain".
-  summary  String
+  summary    String
   /// Per-stage pass/fail detail, newline-separated.
-  detail   String
+  detail     String
   /// What this run downloaded and tested, e.g. "Night of the Living Dead (1968)".
-  testTitle String?
+  testTitle  String?
   durationMs Int?
   /// False when the failure alert was skipped or failed to send, so that is
   /// visible in the admin panel rather than assumed to have gone out.
-  notified Boolean  @default(false)
+  notified   Boolean  @default(false)
 
   @@index([ranAt])
 }
@@ -292,19 +293,19 @@ model PlaybackCheckRun {
 /// automatic pick.
 model GameArtwork {
   /// ES-DE system directory name, e.g. "ps2", "psx", "gamecube".
-  system    String
+  system         String
   /// ROM filename without its extension, e.g. "DreamWorks Madagascar (USA) (v3.01)".
-  romStem   String
+  romStem        String
   /// "grid" | "hero" | "logo" | "icon" -- the four assets a Steam tile uses.
-  kind      String
+  kind           String
   /// Full-size SteamGridDB asset URL to apply.
-  imageUrl  String
+  imageUrl       String
   /// Which SteamGridDB game the picker resolved this ROM to, so the UI can
   /// reopen on the same game rather than re-searching by title every time.
-  sgdbGameId Int?
+  sgdbGameId     Int?
   /// Display title shown in the admin list -- the ROM stem is not always
   /// readable on its own.
-  title     String?
+  title          String?
   /// True for a deliberate pick made through the artwork picker; false for
   /// a background auto-match (see resolveAutoArt in src/lib/gameArtworkAuto.ts).
   /// Load-bearing for /api/games/artwork-overrides: only pickedManually rows
@@ -313,8 +314,8 @@ model GameArtwork {
   /// only an actual human choice ever overrides what the Deck decides on its
   /// own. Defaults true so every row saved before this column existed (real
   /// picks, all of them) is correctly read as manual.
-  pickedManually Boolean @default(true)
-  updatedAt DateTime @updatedAt
+  pickedManually Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
 
   @@id([system, romStem, kind])
 }
@@ -361,7 +362,7 @@ model GameDeletion {
   /// mediabox-side log to name what it removed.
   title       String
   requestedBy String
-  requestedAt DateTime @default(now())
+  requestedAt DateTime  @default(now())
   /// Set once mediabox reports the files actually gone.
   deletedAt   DateTime?
 
@@ -379,9 +380,9 @@ model GameDeletion {
 /// not gamarr's -- "across systems" in the sense that matters here: it isn't
 /// wiped by anything gamarr does to its own library_items table.
 model GameTitleOverride {
-  system  String
-  romStem String
-  title   String
+  system    String
+  romStem   String
+  title     String
   updatedAt DateTime @updatedAt
 
   @@id([system, romStem])
@@ -396,18 +397,80 @@ model GameTitleOverride {
 /// alone and stays stable across a game's whole lifecycle (wishlisted ->
 /// downloading -> owned), which is exactly what a list entry needs to survive.
 model WatchlistGameItem {
-  userId  String
-  gameKey String
+  userId   String
+  gameKey  String
   /// Display title snapshot, so a row still shows something sensible if the
   /// game is later removed from gamarr entirely (unlike movies/shows, there's
   /// no external catalog left to re-look the title up from).
-  title   String
+  title    String
   platform String
-  addedAt DateTime @default(now())
+  addedAt  DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, gameKey])
+  @@index([userId])
+}
+
+/// One Flash game in the library.
+///
+/// Unlike ROMs, which are discovered by scanning mediabox's filesystem, a
+/// Flash game is *imported* -- either from Flashpoint Archive (metadata,
+/// artwork and the file itself) or by hand for a SWF Flashpoint has never
+/// heard of. So the catalogue is a table here rather than a directory listing,
+/// and the file on mediabox is only the payload.
+model FlashGame {
+  /// URL-safe identity, and the filename stem under /data/flash.
+  slug         String  @id
+  title        String
+  /// Flashpoint's entry id, when it came from there. Null for a hand-added
+  /// SWF -- which is a supported path, not a degraded one.
+  flashpointId String?
+  developer    String  @default("")
+  publisher    String  @default("")
+  description  String  @default("")
+  releaseDate  String  @default("")
+  /// Comma-separated. The rows on the Games tab are built from these, so a
+  /// genre grouping is data rather than code.
+  tags         String  @default("")
+
+  /// Filename under /data/flash, served by the `flash` container on mediabox.
+  fileName String
+  fileSize Int    @default(0)
+
+  /// Read from the SWF header at import (see lib/swfMetadata.ts), so the
+  /// player can be sized correctly and letterboxed to match before the movie
+  /// has loaded.
+  width           Int     @default(0)
+  height          Int     @default(0)
+  frameRate       Float   @default(0)
+  swfVersion      Int     @default(0)
+  /// Ruffle's AS1/AS2 support is its strongest path and its AS3 support is
+  /// still incomplete, so this is the best predictor of whether a game will
+  /// actually run -- better than Flashpoint's own `status`, which describes
+  /// real Flash Player. Stored so the UI can warn before someone clicks.
+  isActionScript3 Boolean @default(false)
+
+  addedAt DateTime @default(now())
+
+  watchlisted WatchlistFlashGameItem[]
+
+  @@index([title])
+}
+
+/// A Flash game on a user's My List, alongside the movie/show/ROM equivalents.
+/// Drives the pinned top row of the Games tab.
+model WatchlistFlashGameItem {
+  userId  String
+  slug    String
+  addedAt DateTime @default(now())
+
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Cascades, unlike WatchlistGameItem's title snapshot: a Flash game's
+  /// catalogue row lives here, so if it's gone there is nothing left to show.
+  game FlashGame @relation(fields: [slug], references: [slug], onDelete: Cascade)
+
+  @@id([userId, slug])
   @@index([userId])
 }
 
