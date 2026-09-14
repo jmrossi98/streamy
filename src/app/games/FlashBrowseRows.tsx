@@ -1,6 +1,7 @@
 import type { FlashpointGame } from "@/lib/flashpoint";
 import { BrowseCard } from "./BrowseCard";
-import { ROW_H2_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
+import { ScrollableRow } from "@/components/ScrollableRow";
+import { ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
 export type BrowseRow = { genre: string; games: FlashpointGame[] };
 
@@ -41,14 +42,11 @@ export function FlashBrowseRows({
   return (
     <>
       {populated.map((row) => (
-        <section key={row.genre} className={ROW_SECTION_CLASS}>
-          <h2 className={ROW_H2_CLASS}>{row.genre}</h2>
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {row.games.map((game) => (
-              <BrowseCard key={game.id} game={game} owned={owned.has(game.id)} />
-            ))}
-          </div>
-        </section>
+        <ScrollableRow key={row.genre} title={row.genre}>
+          {row.games.map((game) => (
+            <BrowseCard key={game.id} game={game} owned={owned.has(game.id)} />
+          ))}
+        </ScrollableRow>
       ))}
     </>
   );
