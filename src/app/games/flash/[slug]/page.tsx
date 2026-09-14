@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
 import { getFlashGame } from "@/lib/flashGames";
 import { FlashPlayer } from "@/components/FlashPlayer";
+import { FlashImportPanel } from "@/components/FlashImportPanel";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 /**
@@ -66,13 +67,19 @@ export default async function FlashGamePage({
           </p>
         )}
 
-        <FlashPlayer
-          src={`/api/flash/${encodeURIComponent(game.fileName)}`}
-          title={game.title}
-          slug={game.slug}
-          width={game.width}
-          height={game.height}
-        />
+        {game.playable && game.fileName ? (
+          <FlashPlayer
+            src={`/api/flash/${encodeURIComponent(game.fileName)}`}
+            title={game.title}
+            slug={game.slug}
+            width={game.width}
+            height={game.height}
+          />
+        ) : (
+          // Known but not downloaded. The row exists because someone
+          // bookmarked it from the archive; the file arrives when asked for.
+          <FlashImportPanel slug={game.slug} title={game.title} />
+        )}
 
         {game.description && (
           <p className="mt-5 max-w-3xl text-sm leading-relaxed text-white/70">

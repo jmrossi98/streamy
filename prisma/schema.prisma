@@ -425,8 +425,9 @@ model FlashGame {
   slug         String  @id
   title        String
   /// Flashpoint's entry id, when it came from there. Null for a hand-added
-  /// SWF -- which is a supported path, not a degraded one.
-  flashpointId String?
+  /// SWF -- which is a supported path, not a degraded one. Unique so browsing
+  /// the archive can tell at a glance what is already known here.
+  flashpointId String? @unique
   developer    String  @default("")
   publisher    String  @default("")
   description  String  @default("")
@@ -435,9 +436,17 @@ model FlashGame {
   /// genre grouping is data rather than code.
   tags         String  @default("")
 
-  /// Filename under /data/flash, served by the `flash` container on mediabox.
-  fileName String
-  fileSize Int    @default(0)
+  /// Where the SWF lives, or null when the game is known but not downloaded.
+  ///
+  /// Nullable because a row exists as soon as a game is *known* -- added to
+  /// someone's list from the archive, say -- and the file arrives later, or
+  /// never. Requiring a download before a game could be bookmarked would mean
+  /// fetching gigabytes nobody asked for.
+  fileName String?
+  fileSize Int     @default(0)
+  /// "local" (Streamy's own volume) or "mediabox" (the read-only share).
+  /// Null while there is no file.
+  storage  String?
 
   /// Read from the SWF header at import (see lib/swfMetadata.ts), so the
   /// player can be sized correctly and letterboxed to match before the movie

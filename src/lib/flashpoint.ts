@@ -88,67 +88,71 @@ export function toFlashpointGame(raw: RawGame): FlashpointGame | null {
 }
 
 /**
- * Genre rows to offer when browsing the archive.
+ * The shelves shown when browsing the archive.
  *
- * Hardcoded rather than read from /tags, deliberately. That endpoint returns
- * every tag in the database -- hundreds, including franchise names, engines
- * ("Stencyl") and bookkeeping -- and a row per tag would be unusable. These
- * are the genre-category tags broad enough that a row of them is worth
- * scrolling.
+ * Curated titles rather than a genre query, because the API has no notion of
+ * popularity -- no play counts, no ratings, not even a sort parameter, only
+ * LIMIT. A raw `tags=Platformer` query returns whichever rows the database
+ * happens to reach first, which in practice means obscure entries nobody has
+ * heard of. Naming the games is the only way to get recognisable ones.
+ *
+ * Each title is looked up individually and the best match kept, so a row is a
+ * list of actual games rather than a guess at what a genre contains.
  */
-export const BROWSE_GENRES = [
-  "Action",
-  "Adventure",
-  "Arcade",
-  "Platformer",
-  "Puzzle",
-  "Shooter",
-  "Sports",
-  "Strategy",
-  "Simulation",
-  "Racing",
-] as const;
+export const POPULAR_ROWS: { title: string; games: string[] }[] = [
+  {
+    title: "Flash Classics",
+    games: [
+      "The Impossible Quiz", "Line Rider", "Alien Hominid", "Motherload",
+      "Interactive Buddy", "Stick RPG", "Bloons", "N",
+    ],
+  },
+  {
+    title: "Platformers",
+    games: [
+      "Super Mario 63", "Fancy Pants Adventure", "Meat Boy", "Vex",
+      "Red Ball", "Electric Man 2", "Fireboy and Watergirl",
+    ],
+  },
+  {
+    title: "Tower Defense & Strategy",
+    games: [
+      "Bloons Tower Defense", "Kingdom Rush", "Gemcraft", "Age of War",
+      "The Last Stand", "Desktop Tower Defense", "Warlords",
+    ],
+  },
+  {
+    title: "Action & Shooters",
+    games: [
+      "Raze", "Sift Heads", "Madness Interactive", "Boxhead",
+      "Thing Thing", "Territory War", "Epic Battle Fantasy",
+    ],
+  },
+  {
+    title: "Physics & Puzzle",
+    games: [
+      "Crush the Castle", "Doodle God", "Achievement Unlocked", "Bubble Trouble",
+      "Portal: The Flash Version", "Learn to Fly", "Happy Wheels",
+    ],
+  },
+];
 
 /**
- * Games in one genre, straight from the archive.
+ * Looks up one curated title and returns the best match.
  *
- * The filtering parameter is `tags`, which is a real searchable field. Two
- * near-misses worth recording, since both fail by returning an empty array
- * rather than an error: `tag` is not a field at all, and `tagsStr` is a
- * *post*-filter applied to results, so on its own it matches nothing because
- * no query ran to produce results in the first place.
- *
- * `filter=true` drops entries the archive flags as unsuitable; `platform=Flash`
- * keeps out the Shockwave, Unity and HTML5 content Ruffle cannot play.
+ * "Best" is the shortest title containing the query, which reliably prefers
+ * the original over its sequels, clones and parodies -- searching "Bloons"
+ * otherwise returns a dozen "Bloons Tower Defense 5 Hacked" entries before the
+ * game itself.
  */
-export async function browseFlashpointGenre(
-  genre: string,
-  limit = 24
-): Promise<FlashpointGame[]> {
-  const params = new URLSearchParams({
-    tags: genre,
-    platform: "Flash",
-    filter: "true",
-    limit: String(limit),
-  });
-  try {
-    const res = await fetch(`${FLASHPOINT_API}/search?${params.toString()}`, {
-      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-      // Genre rows are the same for everyone and the archive changes rarely,
-      // so this is the one call here worth caching -- it turns a page load
-      // from ten upstream requests into none.
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) return [];
-    const raw = (await res.json()) as RawGame[];
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map(toFlashpointGame)
-      .filter((g): g is FlashpointGame => g !== null)
-      .filter(isPlayableHere);
-  } catch {
-    return [];
-  }
+export async function findByTitle(title: string): Promise<FlashpointGame | null> {
+  const hits = (await searchFlashpoint(title, 15)).filter(isPlayableHere);
+  if (hits.length === 0) return null;
+
+  const wanted = title.toLowerCase();
+  const contains = hits.filter((g) => g.title.toLowerCase().includes(wanted));
+  const pool = contains.length > 0 ? contains : hits;
+  return pool.reduce((best, g) => (g.title.length < best.title.length ? g : best));
 }
 
 /** Only Flash entries can be played here -- Shockwave, Unity and HTML5 can't. */
