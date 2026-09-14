@@ -16,6 +16,37 @@ const STATE_STYLE: Record<ServiceState, { dot: string; label: string; text: stri
 
 const GROUP_ORDER: ServiceStatus["group"][] = ["Media", "Downloads", "Assistant", "System"];
 
+/**
+ * Shows `host:port` but links to the full URL.
+ *
+ * The scheme is dropped from the label because every one of these is http and
+ * repeating it costs the width that the port needs. The href keeps it, since a
+ * bare `host:port` in an anchor is read as a scheme and goes nowhere.
+ *
+ * These are tailnet addresses, so the link works from any device signed into
+ * Tailscale and from nowhere else -- which is the intent.
+ */
+function Address({ url }: { url: string }) {
+  let label = url;
+  try {
+    const u = new URL(url);
+    label = u.port ? `${u.hostname}:${u.port}` : u.hostname;
+  } catch {
+    /* not a parseable URL; show it as given rather than hiding it */
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      title={url}
+      className="truncate font-mono text-[11px] text-white/35 underline decoration-white/15 underline-offset-2 hover:text-white/70"
+    >
+      {label}
+    </a>
+  );
+}
+
 export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
   const down = services.filter((s) => s.state === "down");
   const unknown = services.filter((s) => s.state === "unknown");
@@ -60,9 +91,15 @@ export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
                     key={s.name}
                     className="flex items-center justify-between gap-3 rounded border border-white/10 bg-black/30 px-3 py-2"
                   >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden />
-                      <span className="text-sm font-medium text-white">{s.name}</span>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <span
+                        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${style.dot}`}
+                        aria-hidden
+                      />
+                      <div className="flex min-w-0 flex-col">
+                        <span className="text-sm font-medium text-white">{s.name}</span>
+                        {s.address && <Address url={s.address} />}
+                      </div>
                     </div>
                     <div className="flex min-w-0 items-center gap-3">
                       <span className="truncate text-xs text-white/50">{s.detail}</span>
