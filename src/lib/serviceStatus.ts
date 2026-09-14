@@ -46,6 +46,18 @@ export type ServiceStatus = {
   state: ServiceState;
   /** Short human detail: version, model, error reason. */
   detail: string;
+  /**
+   * Where this check actually connected, verbatim -- host and port included.
+   *
+   * Deliberately the probe's own URL rather than a separately maintained
+   * label, so it cannot drift into advertising an address nothing is using.
+   * Since every mediabox service is addressed here by its tailnet IP, this
+   * doubles as the answer to "what do I point another device at": the row for
+   * Jellyfin shows the address a phone or a TV on the tailnet can open.
+   *
+   * Absent for checks that aren't a service on a port (disk, TLS, backups).
+   */
+  address?: string;
 };
 
 const env = (k: string) => process.env[k]?.replace(/\/$/, "") ?? "";
@@ -99,10 +111,17 @@ async function servarrStatus(
       group,
       state: "down",
       detail: res.error ?? `HTTP ${res.status}`,
+      address: base,
     };
   }
   const version = (res.json as { version?: string } | undefined)?.version;
-  return { name, group, state: "up", detail: version ? `v${version}` : "reachable" };
+  return {
+    name,
+    group,
+    state: "up",
+    detail: version ? `v${version}` : "reachable",
+    address: base,
+  };
 }
 
 async function jellyfinStatus(): Promise<ServiceStatus> {
@@ -110,14 +129,21 @@ async function jellyfinStatus(): Promise<ServiceStatus> {
   if (!isJellyfinConfigured()) {
     return { name: "Jellyfin", group, state: "unconfigured", detail: "Not configured" };
   }
-  const res = await probe(`${env("JELLYFIN_URL")}/System/Info`, {
+  const address = env("JELLYFIN_URL");
+  const res = await probe(`${address}/System/Info`, {
     "X-Emby-Token": process.env.JELLYFIN_API_KEY ?? "",
   });
   if (!res.ok) {
-    return { name: "Jellyfin", group, state: "down", detail: res.error ?? `HTTP ${res.status}` };
+    return { name: "Jellyfin", group, state: "down", detail: res.error ?? `HTTP ${res.status}`, address };
   }
   const info = res.json as { Version?: string } | undefined;
-  return { name: "Jellyfin", group, state: "up", detail: info?.Version ? `v${info.Version}` : "reachable" };
+  return {
+    name: "Jellyfin",
+    group,
+    state: "up",
+    detail: info?.Version ? `v${info.Version}` : "reachable",
+    address,
+  };
 }
 
 /**
@@ -213,6 +239,7 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
       detail: t.connection_status === "firewalled"
         ? "connected (no port forwarding)"
         : t.connection_status ?? "reachable",
+      address: base,
     };
 
     const torrentIp = t.last_external_address_v4;
@@ -301,6 +328,7 @@ async function ollamaServiceStatus(): Promise<ServiceStatus> {
     group,
     state: "up",
     detail: status.loaded ? ollamaModel() : `${ollamaModel()} (not pulled)`,
+    address: env("OLLAMA_URL"),
   };
 }
 
@@ -321,7 +349,13 @@ async function searxngStatus(): Promise<ServiceStatus> {
       detail: res.status === 403 ? "JSON format disabled in settings.yml" : res.error ?? `HTTP ${res.status}`,
     };
   }
-  return { name: "SearXNG", group, state: "up", detail: "JSON API responding" };
+  return {
+    name: "SearXNG",
+    group,
+    state: "up",
+    detail: "JSON API responding",
+    address: env("SEARXNG_URL"),
+  };
 }
 
 /**
@@ -412,7 +446,13 @@ async function flashLibraryStatus(): Promise<ServiceStatus> {
   if (files.length === 0) {
     return { name, group, state: "unknown", detail: "Reachable but empty, or mediabox asleep" };
   }
-  return { name, group, state: "up", detail: `${files.length} file(s) on the share` };
+  return {
+    name,
+    group,
+    state: "up",
+    detail: `${files.length} file(s) on the share`,
+    address: env("FLASH_LIBRARY_URL"),
+  };
 }
 
 const SYSTEM = "System" as const;
@@ -724,7 +764,13 @@ async function gamarrStatus(): Promise<ServiceStatus> {
     return { name: "gamarr", group, state: "down", detail: res.error ?? `HTTP ${res.status}` };
   }
   const version = (res.json as { version?: string } | undefined)?.version;
-  return { name: "gamarr", group, state: "up", detail: version ? `v${version}` : "reachable" };
+  return {
+    name: "gamarr",
+    group,
+    state: "up",
+    detail: version ? `v${version}` : "reachable",
+    address: env("GAMARR_URL"),
+  };
 }
 
 /**
@@ -776,6 +822,173 @@ async function gamarrSourcesStatus(): Promise<ServiceStatus> {
   };
 }
 
+/**
+ * Dispatcharr -- the IPTV proxy Jellyfin's Live TV tuner points at.
+ *
+ * Probes `/api/core/version/`, not `/health`. Dispatcharr serves a single-page
+ * app with a catch-all route, so `/health` answers 200 with the HTML shell
+ * whether or not the backend is alive -- the same trap that made the Jellyfin
+ * tuner URL look configured when it was serving an SPA to a parser expecting
+ * JSON. A status code alone proves nothing here; only a JSON body does.
+ */
+async function dispatcharrStatus(): Promise<ServiceStatus> {
+  const group = "Media" as const;
+  const name = "Dispatcharr";
+  const address = env("DISPATCHARR_URL");
+  if (!address) return { name, group, state: "unconfigured", detail: "No DISPATCHARR_URL" };
+
+  const res = await probe(`${address}/api/core/version/`);
+  if (!res.ok) {
+    return { name, group, state: "down", detail: res.error ?? `HTTP ${res.status}`, address };
+  }
+  const version = (res.json as { version?: string } | undefined)?.version;
+  if (!version) {
+    // 200 without the field means something answered that isn't Dispatcharr's
+    // API -- a proxy error page, or the SPA shell again.
+    return { name, group, state: "unknown", detail: "answered, but not the API", address };
+  }
+  return { name, group, state: "up", detail: `v${version}`, address };
+}
+
+/**
+ * SABnzbd. Reports the queue when a key is available, because "reachable" is
+ * the least interesting thing about a download client -- a paused queue is the
+ * failure that actually loses you downloads, and it looks perfectly healthy
+ * from the outside.
+ */
+async function sabnzbdStatus(): Promise<ServiceStatus> {
+  const group = "Downloads" as const;
+  const name = "SABnzbd";
+  const address = env("SABNZBD_URL");
+  if (!address) return { name, group, state: "unconfigured", detail: "No SABNZBD_URL" };
+
+  const key = process.env.SABNZBD_API_KEY ?? "";
+  const mode = key ? "queue" : "version";
+  const res = await probe(
+    `${address}/api?mode=${mode}&output=json${key ? `&apikey=${encodeURIComponent(key)}` : ""}`
+  );
+
+  if (!res.ok) {
+    // SABnzbd rejects any request whose Host header isn't in host_whitelist,
+    // with a 403 that reads like a permissions problem but is nothing of the
+    // sort. Worth naming: the fix is one line in sabnzbd.ini, and a bare
+    // "HTTP 403" sends you looking at the API key instead.
+    const detail =
+      res.status === 403
+        ? "403 — this address is not in SABnzbd's host_whitelist"
+        : res.error ?? `HTTP ${res.status}`;
+    return { name, group, state: "down", detail, address };
+  }
+
+  const body = res.json as
+    | { version?: string; queue?: { status?: string; paused?: boolean; noofslots?: number } }
+    | undefined;
+
+  if (body?.queue) {
+    const q = body.queue;
+    const queued = q.noofslots ?? 0;
+    return {
+      name,
+      group,
+      // Paused is reported as a real problem rather than a note: it is chosen
+      // deliberately once and then forgotten about for weeks.
+      state: q.paused ? "down" : "up",
+      detail: q.paused
+        ? `PAUSED — ${queued} job(s) waiting`
+        : `${q.status ?? "idle"}, ${queued} queued`,
+      address,
+    };
+  }
+  return {
+    name,
+    group,
+    state: "up",
+    detail: body?.version ? `v${body.version}` : "reachable (no API key set)",
+    address,
+  };
+}
+
+/**
+ * FlareSolverr, which solves the challenges Prowlarr's indexers put up.
+ *
+ * Its failure is silent in exactly the way worth a row here: Prowlarr stays
+ * green, searches simply start returning nothing, and there is no obvious
+ * place that says why.
+ */
+async function flaresolverrStatus(): Promise<ServiceStatus> {
+  const group = "Downloads" as const;
+  const name = "FlareSolverr";
+  const address = env("FLARESOLVERR_URL");
+  if (!address) return { name, group, state: "unconfigured", detail: "No FLARESOLVERR_URL" };
+
+  const res = await probe(`${address}/`);
+  if (!res.ok) {
+    return { name, group, state: "down", detail: res.error ?? `HTTP ${res.status}`, address };
+  }
+  const body = res.json as { msg?: string; version?: string } | undefined;
+  return {
+    name,
+    group,
+    state: "up",
+    detail: body?.version ? `v${body.version}` : body?.msg ?? "reachable",
+    address,
+  };
+}
+
+/**
+ * Syncthing, which carries emulator saves between mediabox, the Deck and the
+ * desktop, and now the Obsidian vault as well.
+ *
+ * `/rest/noauth/health` is the one endpoint that answers without the API key.
+ * It confirms the daemon is alive but says nothing about whether folders are
+ * actually in sync -- so an "up" here means "running", not "your saves are
+ * current". Checking sync state needs SYNCTHING_API_KEY and a per-folder call.
+ */
+async function syncthingStatus(): Promise<ServiceStatus> {
+  const name = "Syncthing";
+  const address = env("SYNCTHING_URL");
+  if (!address) return { name, group: SYSTEM, state: "unconfigured", detail: "No SYNCTHING_URL" };
+
+  const res = await probe(`${address}/rest/noauth/health`);
+  if (!res.ok) {
+    return { name, group: SYSTEM, state: "down", detail: res.error ?? `HTTP ${res.status}`, address };
+  }
+  const ok = (res.json as { status?: string } | undefined)?.status === "OK";
+  return {
+    name,
+    group: SYSTEM,
+    state: ok ? "up" : "unknown",
+    detail: ok ? "daemon healthy (sync state not checked)" : "answered, but not healthy",
+    address,
+  };
+}
+
+/**
+ * The WebDAV share the iPhone syncs the Obsidian vault through.
+ *
+ * A 401 counts as up, and has to: the share requires Basic auth, so a server
+ * that is working correctly refuses an unauthenticated probe. Treating that as
+ * "down" would pin the row red forever while everything worked. What we can
+ * prove from here is that something is listening and speaking HTTP -- so the
+ * detail says exactly that rather than implying the credentials were checked.
+ */
+async function webdavStatus(): Promise<ServiceStatus> {
+  const name = "WebDAV (Obsidian)";
+  const address = env("WEBDAV_URL");
+  if (!address) return { name, group: SYSTEM, state: "unconfigured", detail: "No WEBDAV_URL" };
+
+  const res = await probe(`${address}/`);
+  if (res.status === 401) {
+    return { name, group: SYSTEM, state: "up", detail: "listening, auth required", address };
+  }
+  if (!res.ok) {
+    return { name, group: SYSTEM, state: "down", detail: res.error ?? `HTTP ${res.status}`, address };
+  }
+  // 200 without auth would mean the share is open to the tailnet, which is not
+  // how it is configured -- worth flagging rather than quietly calling it fine.
+  return { name, group: SYSTEM, state: "unknown", detail: "answered without auth — check config", address };
+}
+
 export async function getServiceStatuses(): Promise<ServiceStatus[]> {
   const [
     radarr,
@@ -802,6 +1015,11 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     flashLibrary,
     transcodeLoad,
     backup,
+    dispatcharr,
+    sabnzbd,
+    flaresolverr,
+    syncthing,
+    webdav,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -834,6 +1052,11 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     flashLibraryStatus(),
     transcodeLoadStatus(),
     backupStatus(),
+    dispatcharrStatus(),
+    sabnzbdStatus(),
+    flaresolverrStatus(),
+    syncthingStatus(),
+    webdavStatus(),
   ]);
 
   return [
@@ -841,14 +1064,21 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     // Directly after Jellyfin: Live TV runs through it, so when one is broken
     // the other's state is the first thing worth reading next to it.
     liveTv,
+    // And Dispatcharr directly after Live TV, for the same reason one step
+    // further down the chain: Jellyfin's tuner points at it, so a Live TV
+    // failure is read top to bottom -- Jellyfin, the channels, the source.
+    dispatcharr,
     flashGames,
     flashLibrary,
     radarr,
     sonarr,
     ...downloads,
+    sabnzbd,
     radarrIntegrations,
     sonarrIntegrations,
     prowlarr,
+    // Next to Prowlarr, which is the only thing that uses it.
+    flaresolverr,
     gamarr,
     gamarrSources,
     ollama,
@@ -860,6 +1090,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     backup,
     libraryScan,
     transcodeLoad,
+    syncthing,
+    webdav,
     blogToken,
     geoip,
     tourWatch,
