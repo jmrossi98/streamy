@@ -12,7 +12,7 @@ const navLinks = [
   { href: "/movies", label: "Movies" },
   { href: "/tv", label: "TV Shows" },
   { href: "/live", label: "Live TV" },
-  { href: "/games", label: "Games", adminOnly: true },
+  { href: "/games", label: "Games" },
   { href: "/watchlist", label: "My List", authOnly: true },
 ];
 
