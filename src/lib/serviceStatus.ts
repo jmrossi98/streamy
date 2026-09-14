@@ -19,6 +19,8 @@ import {
 import { isQbittorrentConfigured } from "./qbittorrent";
 import { isGamarrConfigured } from "./gamarr";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
+import { getLiveChannels, isJellyfinConfiguredForLiveTv } from "./liveTv";
+import { isFlashLibraryConfigured, listFlashFiles } from "./flashLibrary";
 import { isWebSearchConfigured } from "./webSearch";
 import { connect } from "node:tls";
 import { statfs, stat } from "node:fs/promises";
@@ -320,6 +322,97 @@ async function searxngStatus(): Promise<ServiceStatus> {
     };
   }
   return { name: "SearXNG", group, state: "up", detail: "JSON API responding" };
+}
+
+/**
+ * Live TV, end to end.
+ *
+ * Checks that channels are actually reachable rather than that Jellyfin is up.
+ * The chain is Dispatcharr -> Jellyfin tuner -> here, and every link fails
+ * silently: a dead tuner shows an empty list, not an error, so "Jellyfin is
+ * responding" says nothing about whether anyone can watch television.
+ *
+ * That distinction cost a debugging cycle already -- a downed Jellyfin was
+ * reported to the user as "no tuner configured", pointing at the one thing
+ * that was fine.
+ */
+async function liveTvStatus(): Promise<ServiceStatus> {
+  const group = "Media" as const;
+  const name = "Live TV";
+  if (!isJellyfinConfiguredForLiveTv()) {
+    return { name, group, state: "unconfigured", detail: "Jellyfin not configured" };
+  }
+  try {
+    const channels = await getLiveChannels();
+    if (channels.length === 0) {
+      // Unknown rather than down: Jellyfin answered, so this is a tuner that
+      // has nothing or has not scanned -- not a verified failure.
+      return { name, group, state: "unknown", detail: "No channels -- check the tuner in Jellyfin" };
+    }
+    const withGuide = channels.filter((c) => c.now).length;
+    return {
+      name,
+      group,
+      state: "up",
+      // Guide coverage is reported because a tuner with no EPG is a normal,
+      // working state that looks broken in the UI -- every row reads "no guide
+      // data" and nothing says why.
+      detail: `${channels.length} channels, ${withGuide} with guide data`,
+    };
+  } catch (err) {
+    return { name, group, state: "unknown", detail: err instanceof Error ? err.message : "check failed" };
+  }
+}
+
+/**
+ * The Flash game library.
+ *
+ * Two independent stores, so one being absent is not a failure: games live on
+ * Streamy's own volume, and mediabox's read-only share is a secondary source
+ * for anything copied there by hand. A catalogue row whose file is missing is
+ * the interesting case -- it is playable-looking and will not play.
+ */
+async function flashGamesStatus(): Promise<ServiceStatus> {
+  const group = "Media" as const;
+  const name = "Flash games";
+  try {
+    const [total, playable] = await Promise.all([
+      prisma.flashGame.count(),
+      prisma.flashGame.count({ where: { NOT: { fileName: null } } }),
+    ]);
+    if (total === 0) {
+      return { name, group, state: "unconfigured", detail: "No games in the library" };
+    }
+    const pending = total - playable;
+    return {
+      name,
+      group,
+      state: "up",
+      // Not-yet-downloaded is expected, not a fault: a row exists as soon as a
+      // game is bookmarked from the archive, and the file arrives on first play.
+      detail: pending > 0
+        ? `${playable} playable, ${pending} not downloaded yet`
+        : `${playable} playable`,
+    };
+  } catch (err) {
+    return { name, group, state: "unknown", detail: err instanceof Error ? err.message : "check failed" };
+  }
+}
+
+/** The read-only SWF share on mediabox -- a secondary source, so never "down". */
+async function flashLibraryStatus(): Promise<ServiceStatus> {
+  const group = "Media" as const;
+  const name = "Flash library (mediabox)";
+  if (!isFlashLibraryConfigured()) {
+    // Genuinely optional since local storage became the primary: unset means
+    // "not using it", not "misconfigured".
+    return { name, group, state: "unconfigured", detail: "FLASH_LIBRARY_URL unset (local storage in use)" };
+  }
+  const files = await listFlashFiles();
+  if (files.length === 0) {
+    return { name, group, state: "unknown", detail: "Reachable but empty, or mediabox asleep" };
+  }
+  return { name, group, state: "up", detail: `${files.length} file(s) on the share` };
 }
 
 const SYSTEM = "System" as const;
@@ -704,6 +797,9 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     radarrIntegrations,
     sonarrIntegrations,
     libraryScan,
+    liveTv,
+    flashGames,
+    flashLibrary,
     transcodeLoad,
     backup,
   ] = await Promise.all([
@@ -733,12 +829,20 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     arrIntegrationStatus("Radarr", isRadarrConfigured(), getRadarrHealthIssues, getRadarrStuckImports),
     arrIntegrationStatus("Sonarr", isSonarrConfigured(), getSonarrHealthIssues, getSonarrStuckImports),
     libraryScanStatus(),
+    liveTvStatus(),
+    flashGamesStatus(),
+    flashLibraryStatus(),
     transcodeLoadStatus(),
     backupStatus(),
   ]);
 
   return [
     jellyfin,
+    // Directly after Jellyfin: Live TV runs through it, so when one is broken
+    // the other's state is the first thing worth reading next to it.
+    liveTv,
+    flashGames,
+    flashLibrary,
     radarr,
     sonarr,
     ...downloads,
