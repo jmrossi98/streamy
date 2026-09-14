@@ -5,6 +5,8 @@ import { prisma } from "@/lib/db";
 import { getGamesList } from "@/lib/games";
 import { getGamePlatforms, isGamarrConfigured } from "@/lib/gamarr";
 import { GamesContent } from "./GamesContent";
+import { FlashGamesRows } from "./FlashGamesRows";
+import { buildRows, listFlashGames } from "@/lib/flashGames";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 export const dynamic = "force-dynamic";
@@ -12,20 +14,27 @@ export const dynamic = "force-dynamic";
 export default async function GamesPage() {
   unstable_noStore();
   const session = await getSession();
+  // Signed in is enough now. The tab has two halves with different audiences:
+  // Flash games are for the household, and the ROM/emulator half below stays
+  // admin-only -- so this no longer redirects a non-admin away from the whole
+  // page, it just doesn't render the half that isn't theirs.
+  if (!session) redirect("/login?callbackUrl=/games");
   const admin = await requireAdmin(session);
-  // Admin-only, not just admin-hidden: a non-admin hitting this URL directly
-  // (it's not in their nav, but URLs are guessable) gets redirected exactly
-  // like /admin does, not shown an empty or broken page.
-  if (!admin) redirect("/");
 
-  const [items, platforms, watchlistRows] = await Promise.all([
-    getGamesList(),
-    getGamePlatforms(),
-    prisma.watchlistGameItem.findMany({
-      where: { userId: admin.id },
-      select: { gameKey: true },
-    }),
-  ]);
+  const flashRows = buildRows(await listFlashGames());
+
+  // Only fetched for an admin: every one of these calls out to gamarr or the
+  // database for data the page won't render otherwise.
+  const [items, platforms, watchlistRows] = admin
+    ? await Promise.all([
+        getGamesList(),
+        getGamePlatforms(),
+        prisma.watchlistGameItem.findMany({
+          where: { userId: admin.id },
+          select: { gameKey: true },
+        }),
+      ])
+    : [[], [], []];
 
   const watchlistKeys = new Set(watchlistRows.map((r) => r.gameKey));
 
@@ -34,12 +43,16 @@ export default async function GamesPage() {
       <h1 className="streamy-page-title-x mb-6 font-display text-4xl font-bold text-white">
         Games
       </h1>
-      <GamesContent
-        configured={isGamarrConfigured()}
-        items={items}
-        platforms={platforms}
-        watchlistKeys={Array.from(watchlistKeys)}
-      />
+      <FlashGamesRows rows={flashRows} />
+
+      {admin && (
+        <GamesContent
+          configured={isGamarrConfigured()}
+          items={items}
+          platforms={platforms}
+          watchlistKeys={Array.from(watchlistKeys)}
+        />
+      )}
     </div>
   );
 }

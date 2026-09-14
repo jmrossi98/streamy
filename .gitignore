@@ -43,3 +43,6 @@ tsconfig.tsbuildinfo
 /playwright-report
 /blob-report
 /playwright/.cache
+
+# Copied from node_modules by scripts/copy-ruffle.mjs (see that file for why).
+public/ruffle/
