@@ -36,6 +36,7 @@ model User {
   watchlistShows      WatchlistShowItem[]
   watchlistGames      WatchlistGameItem[]
   watchlistFlashGames WatchlistFlashGameItem[]
+  flashGameSaves      FlashGameSave[]
   progress            WatchProgress[]
   episodeProgress     EpisodeProgress[]
 }
@@ -454,8 +455,36 @@ model FlashGame {
   addedAt DateTime @default(now())
 
   watchlisted WatchlistFlashGameItem[]
+  saves       FlashGameSave[]
 
   @@index([title])
+}
+
+/// One viewer's save data for one Flash game.
+///
+/// Flash games save through SharedObject ("Flash cookies"), and Ruffle
+/// implements that on top of the browser's localStorage -- which is per
+/// device, per browser, and wiped by a routine cache clear. The whole point of
+/// playing inside Streamy is that a save made on the TV is there on a laptop,
+/// so the browser copy is treated as a cache and this row is the real one.
+///
+/// `data` is a JSON object of the localStorage entries Ruffle wrote, captured
+/// wholesale rather than parsed. Ruffle has no public API for exporting
+/// SharedObjects (ruffle-rs/ruffle#22409 is the open request), and its key
+/// format is not a stable contract -- so this deliberately stores whatever it
+/// produced without trying to understand it.
+model FlashGameSave {
+  userId    String
+  slug      String
+  /// JSON: { localStorageKey: value }.
+  data      String
+  updatedAt DateTime @updatedAt
+
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game FlashGame @relation(fields: [slug], references: [slug], onDelete: Cascade)
+
+  @@id([userId, slug])
+  @@index([userId])
 }
 
 /// A Flash game on a user's My List, alongside the movie/show/ROM equivalents.
