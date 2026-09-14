@@ -19,6 +19,7 @@ export function BrowseCard({ game, owned }: { game: FlashpointGame; owned: boole
   const router = useRouter();
   const [busy, setBusy] = useState<"open" | "list" | null>(null);
   const [listed, setListed] = useState(owned);
+  const [artFailed, setArtFailed] = useState(false);
 
   async function ensureLocal(): Promise<string | null> {
     const res = await fetch("/api/flash/known", {
@@ -65,15 +66,26 @@ export function BrowseCard({ game, owned }: { game: FlashpointGame; owned: boole
         disabled={busy !== null}
         className="group relative block aspect-video w-full overflow-hidden rounded bg-black/40 ring-1 ring-white/10 transition-all hover:ring-white/40 disabled:opacity-60"
       >
-        {/* Plain <img>: proxied through our own origin, and next/image would
-            want a configured remote pattern for a host we never link directly. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`/api/flash/art/${encodeURIComponent(game.id)}`}
-          alt=""
-          loading="lazy"
-          className="h-full w-full object-cover"
-        />
+        {artFailed ? (
+          // Plenty of archive entries simply have no logo. A plain <img> whose
+          // src 404s renders the browser's broken-image glyph, which reads as a
+          // bug rather than as missing art -- so fall back to the title, which
+          // is the only thing that tells one of these apart from another.
+          <span className="flex h-full items-center justify-center bg-gradient-to-br from-white/[0.07] to-transparent px-2 text-center text-xs font-semibold text-white/70">
+            <span className="line-clamp-3">{game.title}</span>
+          </span>
+        ) : (
+          /* Plain <img>: proxied through our own origin, and next/image would
+             want a configured remote pattern for a host we never link directly. */
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={`/api/flash/art/${encodeURIComponent(game.id)}`}
+            alt=""
+            loading="lazy"
+            onError={() => setArtFailed(true)}
+            className="h-full w-full object-cover"
+          />
+        )}
         {busy === "open" && (
           <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-white">
             Opening…
