@@ -18,7 +18,7 @@ import {
   withContext,
 } from "@/lib/chatLimits";
 import { buildStatusContext } from "@/lib/chatContext";
-import { getStatusSnapshot } from "@/lib/chatStatus";
+import { getSnapshot } from "@/lib/chatStatus";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
 /**
@@ -90,7 +90,11 @@ export async function POST(request: Request) {
   const statusQuery = latestUserQuery(messages);
   if (body.stackStatus !== false && statusQuery && shouldIncludeStatus(statusQuery)) {
     try {
-      messages = withContext(messages, buildStatusContext(await getStatusSnapshot()));
+      const snapshot = await getSnapshot();
+      messages = withContext(
+        messages,
+        buildStatusContext(snapshot.statuses, snapshot.containers)
+      );
     } catch (err) {
       // Answering without live state beats failing the turn -- the model is
       // told in its prompt to say so when no status block is present.
