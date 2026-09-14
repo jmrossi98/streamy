@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
-import { getSession } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
 import { getFlashGame } from "@/lib/flashGames";
 import { FlashPlayer } from "@/components/FlashPlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -22,10 +24,19 @@ export default async function FlashGamePage({
 }) {
   unstable_noStore();
   const { slug } = await params;
-  if (!(await getSession())) redirect(`/login?callbackUrl=/games/flash/${slug}`);
+  const session = await getSession();
+  if (!session) redirect(`/login?callbackUrl=/games/flash/${slug}`);
 
   const game = await getFlashGame(slug);
   if (!game) notFound();
+
+  const userId = await getValidSessionUserId(session);
+  const inList = userId
+    ? !!(await prisma.watchlistFlashGameItem.findUnique({
+        where: { userId_slug: { userId, slug } },
+        select: { slug: true },
+      }))
+    : false;
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
@@ -40,6 +51,10 @@ export default async function FlashGamePage({
         {game.developer && (
           <p className="mb-3 text-sm text-white/50">{game.developer}</p>
         )}
+
+        <div className="mb-4">
+          <FlashWatchlistButton slug={game.slug} initialInList={inList} />
+        </div>
 
         {game.isActionScript3 && (
           // Said before they play rather than after it fails. Ruffle's AS3

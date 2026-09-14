@@ -113,3 +113,41 @@ describe("buildRows", () => {
     expect(rows.map((r) => r.title)).toEqual(["Action", "Board", "Zany", "All Games"]);
   });
 });
+
+describe("buildRows — My List", () => {
+  const mine = game("Saved", ["Action"]);
+  const others = Array.from({ length: 4 }, (_, i) => game(`G${i}`, ["Action"]));
+
+  // The row someone came for. Burying it under whichever genre happens to be
+  // biggest makes it useless.
+  it("pins My List as the very first row", () => {
+    const rows = buildRows([...others, mine], new Set([mine.slug]));
+    expect(rows[0].key).toBe("my-list");
+    expect(rows[0].title).toBe("My List");
+    expect(rows[0].games).toEqual([mine]);
+  });
+
+  it("keeps a listed game in its genre rows too", () => {
+    const rows = buildRows([...others, mine], new Set([mine.slug]));
+    expect(rows.find((r) => r.title === "Action")!.games).toContain(mine);
+    expect(rows.at(-1)!.games).toContain(mine);
+  });
+
+  it("omits the row entirely when nothing is listed", () => {
+    expect(buildRows([...others, mine], new Set()).some((r) => r.key === "my-list")).toBe(false);
+    expect(buildRows([...others, mine]).some((r) => r.key === "my-list")).toBe(false);
+  });
+
+  // A list entry whose game is gone -- the relation cascades, but a stale set
+  // passed in must not produce a row of nothing.
+  it("omits the row when the listed slugs match no game", () => {
+    expect(buildRows(others, new Set(["deleted-game"])).some((r) => r.key === "my-list")).toBe(false);
+  });
+
+  it("shows a single listed game even in an otherwise untagged library", () => {
+    const a = game("A");
+    const rows = buildRows([a, game("B")], new Set([a.slug]));
+    expect(rows.map((r) => r.key)).toEqual(["my-list", "all"]);
+  });
+});
+

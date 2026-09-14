@@ -81,7 +81,19 @@ export function parseTags(tags: string): string[] {
  * of one, and the catch-all is always present so a library with no tags at all
  * still renders something.
  */
-export function buildRows(games: FlashGameSummary[]): FlashGameRow[] {
+export function buildRows(
+  games: FlashGameSummary[],
+  /** Slugs on this viewer's My List. Pinned as the first row when non-empty. */
+  myListSlugs: ReadonlySet<string> = new Set()
+): FlashGameRow[] {
+  // My List first, always. It is the row someone came for, and burying it
+  // under whichever genre happens to be biggest makes it useless.
+  const pinned: FlashGameRow[] = [];
+  if (myListSlugs.size > 0) {
+    const mine = games.filter((g) => myListSlugs.has(g.slug));
+    if (mine.length > 0) pinned.push({ key: "my-list", title: "My List", games: mine });
+  }
+
   const byTag = new Map<string, FlashGameSummary[]>();
   for (const game of games) {
     for (const tag of game.tags) {
@@ -103,5 +115,5 @@ export function buildRows(games: FlashGameSummary[]): FlashGameRow[] {
   if (games.length > 0) {
     rows.push({ key: "all", title: "All Games", games });
   }
-  return rows;
+  return [...pinned, ...rows];
 }
