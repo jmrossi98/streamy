@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildRows, parseTags, slugFromFileName, titleFromFileName,
   type FlashGameSummary,
-} from "../flashGames";
+} from "../flashGameRules";
 
 const game = (title: string, tags: string[] = []): FlashGameSummary => ({
   slug: title.toLowerCase().replace(/\W+/g, "-"),

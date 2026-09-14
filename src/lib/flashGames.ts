@@ -3,111 +3,27 @@
  *
  * Sits above the two lower-level clients: flashLibrary.ts (the SWF bytes on
  * mediabox) and flashpoint.ts (the catalogue metadata). Neither of those knows
- * about the database; this is where a file on disk becomes a row, and rows
- * become the tab's rows.
+ * about the database; this is where a file on disk becomes a row.
+ *
+ * Everything here touches Prisma, which is exactly why the naming and
+ * row-building rules live in flashGameRules.ts instead: CI's unit-test step
+ * runs `npm ci --ignore-scripts`, so the Prisma client does not exist there and
+ * importing this file from a test fails outright.
  */
 
 import { prisma } from "./db";
 import { fetchFlashFile, listFlashFiles } from "./flashLibrary";
 import { parseSwfMetadata } from "./swfMetadata";
+import {
+  parseTags,
+  slugFromFileName,
+  titleFromFileName,
+  type FlashGameSummary,
+} from "./flashGameRules";
 
-export type FlashGameSummary = {
-  slug: string;
-  title: string;
-  developer: string;
-  description: string;
-  tags: string[];
-  fileName: string;
-  width: number;
-  height: number;
-  /** Ruffle's weak spot -- the UI warns before someone clicks. */
-  isActionScript3: boolean;
-};
-
-/** Rows on the tab. `title` is the heading; `key` is stable for React. */
-export type FlashGameRow = {
-  key: string;
-  title: string;
-  games: FlashGameSummary[];
-};
-
-/** Rows below this aren't worth their own heading -- they fold into Everything. */
-const MIN_ROW_SIZE = 3;
-/** Tags that describe bookkeeping rather than a genre anyone browses by. */
-const NON_GENRE_TAGS = new Set(["auto-zipped", "unsorted", "untagged"]);
-
-/**
- * Filename stem -> URL-safe identity.
- *
- * Deliberately derived from the filename rather than the title: the file is
- * the one thing guaranteed to exist (a hand-dropped SWF has no title until
- * someone types one), and it keeps the slug stable if the title is later
- * edited.
- */
-export function slugFromFileName(fileName: string): string {
-  return fileName
-    .replace(/\.swf$/i, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "game";
-}
-
-/**
- * A readable title from a filename, for a SWF nobody has named.
- *
- * Same job as the ROM side's clean_label: strip the extension, turn separators
- * into spaces, and title-case what's left. It is a guess, and the point is
- * that it's an editable one rather than showing someone "thegamegame.swf".
- */
-export function titleFromFileName(fileName: string): string {
-  const stem = fileName.replace(/\.swf$/i, "").replace(/[_-]+/g, " ").trim();
-  if (!stem) return fileName;
-  return stem
-    .split(/\s+/)
-    .map((w) => (w.length <= 2 ? w : w[0].toUpperCase() + w.slice(1)))
-    .join(" ");
-}
-
-export function parseTags(tags: string): string[] {
-  return tags.split(",").map((t) => t.trim()).filter(Boolean);
-}
-
-/**
- * Groups games into the tab's rows.
- *
- * Pure, so it tests without a database.
- *
- * Tags come from Flashpoint and are genuinely uneven -- a game can carry six,
- * or none. So a game appears in every row it qualifies for rather than being
- * forced into one, small tags fold into a catch-all instead of producing rows
- * of one, and the catch-all is always present so a library with no tags at all
- * still renders something.
- */
-export function buildRows(games: FlashGameSummary[]): FlashGameRow[] {
-  const byTag = new Map<string, FlashGameSummary[]>();
-  for (const game of games) {
-    for (const tag of game.tags) {
-      const key = tag.toLowerCase();
-      if (NON_GENRE_TAGS.has(key)) continue;
-      const list = byTag.get(tag) ?? [];
-      list.push(game);
-      byTag.set(tag, list);
-    }
-  }
-
-  const rows: FlashGameRow[] = [...byTag.entries()]
-    .filter(([, list]) => list.length >= MIN_ROW_SIZE)
-    // Biggest first, then alphabetical -- a stable order, and the rows someone
-    // is most likely to want are nearest the top.
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-    .map(([tag, list]) => ({ key: `tag:${tag}`, title: tag, games: list }));
-
-  if (games.length > 0) {
-    rows.push({ key: "all", title: "All Games", games });
-  }
-  return rows;
-}
+// Re-exported so callers have one import for the library, even though the
+// pure half has to live in its own file to stay testable.
+export * from "./flashGameRules";
 
 function toSummary(row: {
   slug: string; title: string; developer: string; description: string;
