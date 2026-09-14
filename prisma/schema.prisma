@@ -470,6 +470,37 @@ model FlashGame {
   @@index([title])
 }
 
+/// One paid service, for the spend overview.
+///
+/// Manually entered, because there is no way to discover it. Nothing exposes
+/// "what has this person signed up for" -- the whole reason the panel exists
+/// is that the list had been forgotten, and a bill nobody remembers is exactly
+/// the one no API will tell you about. What *can* be pulled live (AWS, via
+/// Cost Explorer; OpenRouter, via its credits API) is fetched at render time
+/// and never stored here.
+model Subscription {
+  id       String  @id @default(cuid())
+  name     String
+  /// Free text: "Usenet", "Infrastructure", "AI", "VPN"...
+  category String  @default("")
+  /// In dollars. Zero for a free tier worth listing so it isn't re-evaluated.
+  cost     Float   @default(0)
+  /// "monthly" | "yearly" | "metered" | "free".
+  ///
+  /// Metered is its own cadence rather than a monthly guess: OpenRouter and
+  /// AWS vary, and folding a guess into the total would make the headline
+  /// figure quietly wrong.
+  cadence  String  @default("monthly")
+  /// Where it is managed -- the thing you actually want when cancelling.
+  url      String  @default("")
+  notes    String  @default("")
+  /// Kept rather than deleted when cancelled, so the history stays readable.
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 /// A live TV channel on a user's My List.
 ///
 /// Unlike the movie, show, game and Flash-game lists, there is no local row to

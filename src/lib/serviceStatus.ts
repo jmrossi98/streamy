@@ -605,71 +605,12 @@ async function backupStatus(): Promise<ServiceStatus> {
   }
 }
 
-/**
- * Month-to-date AWS spend against a fixed dollar ceiling, via Cost Explorer.
- * No baked-in default threshold -- this account's actual expected spend
- * isn't something to guess at, so the check stays "unconfigured" (not a
- * false "down") until AWS_COST_ALERT_THRESHOLD_USD is set deliberately.
- *
- * Needs its own IAM permission: ce:GetCostAndUsage, which the existing
- * alerting credential (secrets.ALERT_AWS_ACCESS_KEY_ID/SECRET, written into
- * the container's real env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY --
- * see deploy.yml -- and scoped to sns:Publish only, per .env.example) does
- * NOT have -- add it to that same IAM user's policy rather than minting a
- * new credential pair for one read-only call. Cost Explorer must also be
- * enabled once for the account (AWS Console -> Billing -> Cost Explorer)
- * before this API answers at all; unconfigured/unknown either way until
- * both are done, never a false failure.
- */
-async function awsCostStatus(): Promise<ServiceStatus> {
-  const name = "AWS spend";
-  const thresholdStr = process.env.AWS_COST_ALERT_THRESHOLD_USD;
-  const threshold = thresholdStr ? Number(thresholdStr) : NaN;
-  if (!thresholdStr || Number.isNaN(threshold)) {
-    return { name, group: SYSTEM, state: "unconfigured", detail: "No AWS_COST_ALERT_THRESHOLD_USD set" };
-  }
-  const accessKeyId = process.env.ALERT_AWS_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.ALERT_AWS_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
-  if (!accessKeyId || !secretAccessKey) {
-    return { name, group: SYSTEM, state: "unconfigured", detail: "No AWS credentials available" };
-  }
-  try {
-    // Imported lazily, matching notify.ts's SNS client.
-    const { CostExplorerClient, GetCostAndUsageCommand } = await import("@aws-sdk/client-cost-explorer");
-    // Cost Explorer is us-east-1 only, regardless of where the resources
-    // themselves live -- it's a billing-account-wide, not per-region, API.
-    const client = new CostExplorerClient({ region: "us-east-1", credentials: { accessKeyId, secretAccessKey } });
-    const now = new Date();
-    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const tomorrow = new Date(now.getTime() + 24 * 3_600_000);
-    // TimePeriod.End must be strictly after Start and is exclusive -- a
-    // Start=End=today request (asking for "today alone") is rejected by the
-    // API, confirmed against Cost Explorer's own documented constraints.
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    const result = await client.send(
-      new GetCostAndUsageCommand({
-        TimePeriod: { Start: iso(startOfMonth), End: iso(tomorrow) },
-        Granularity: "MONTHLY",
-        Metrics: ["UnblendedCost"],
-      })
-    );
-    const mtd = result.ResultsByTime?.reduce(
-      (sum, r) => sum + Number(r.Total?.UnblendedCost?.Amount ?? 0),
-      0
-    );
-    if (mtd == null || Number.isNaN(mtd)) {
-      return { name, group: SYSTEM, state: "unknown", detail: "no cost data returned" };
-    }
-    return {
-      name,
-      group: SYSTEM,
-      state: mtd > threshold ? "down" : "up",
-      detail: `$${mtd.toFixed(2)} MTD (ceiling $${threshold.toFixed(2)})`,
-    };
-  } catch (err) {
-    return { name, group: SYSTEM, state: "unknown", detail: err instanceof Error ? err.message : "check failed" };
-  }
-}
+// AWS spend used to be a health-check row here, comparing month-to-date
+// against AWS_COST_ALERT_THRESHOLD_USD and reporting up/down. It was removed
+// deliberately (2026-09-14): a threshold alarm answers "is something wrong",
+// and what was actually wanted was "what am I paying" -- a figure, not an
+// alert. Cost Explorer is still read, by lib/spend.ts, and surfaced in the
+// admin spend overview alongside every other subscription.
 
 // Sent whenever set; gamarr accepts unauthenticated calls until its own
 // AUTH_USERNAME/PASSWORD or API_KEY is configured, but once any of those
@@ -765,7 +706,6 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     libraryScan,
     transcodeLoad,
     backup,
-    awsCost,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -795,7 +735,6 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     libraryScanStatus(),
     transcodeLoadStatus(),
     backupStatus(),
-    awsCostStatus(),
   ]);
 
   return [
@@ -815,7 +754,6 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     tls,
     database,
     backup,
-    awsCost,
     libraryScan,
     transcodeLoad,
     blogToken,

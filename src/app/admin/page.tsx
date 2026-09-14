@@ -16,6 +16,9 @@ import { isWebSearchConfigured } from "@/lib/webSearch";
 import { runSecurityChecks } from "@/lib/securityChecks";
 import { SecurityPanel } from "@/components/SecurityPanel";
 import { ServicesPanel } from "@/components/ServicesPanel";
+import { SpendPanel } from "@/components/SpendPanel";
+import { computeTotals } from "@/lib/spendRules";
+import { awsBreakdown, awsMonthToDate, openRouterCredits } from "@/lib/spend";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
 import { isNotifyConfigured } from "@/lib/notify";
@@ -70,6 +73,10 @@ export default async function AdminFeaturesPage() {
     gameJobs,
     gameWishlist,
     ownedGames,
+    subscriptions,
+    awsMtd,
+    awsServices,
+    openRouter,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -110,7 +117,41 @@ export default async function AdminFeaturesPage() {
     getGameDownloads().catch(() => []),
     getWishlist().catch(() => []),
     getGamesList().catch(() => []),
+    prisma.subscription.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }] }),
+    // Both swallow their own failures and answer null, so an expired AWS
+    // credential or an unreachable OpenRouter costs those figures and not the
+    // page. The panel then names what it could not read rather than quietly
+    // reporting a total that is too low.
+    awsMonthToDate(),
+    awsBreakdown(),
+    openRouterCredits(),
   ]);
+
+  // AWS and OpenRouter are the only two here that can report themselves.
+  // Everything else in the overview is a figure someone typed in, because
+  // nothing exposes what a person has signed up for -- which is the whole
+  // reason this panel exists.
+  const meteredActuals: Record<string, number | null> = {};
+  for (const sub of subscriptions) {
+    if (sub.cadence !== "metered") continue;
+    const name = sub.name.toLowerCase();
+    if (name.includes("aws")) meteredActuals[sub.name] = awsMtd;
+    else if (name.includes("openrouter")) meteredActuals[sub.name] = openRouter?.used ?? null;
+    else meteredActuals[sub.name] = null;
+  }
+
+  const spendTotals = computeTotals(subscriptions, meteredActuals);
+  const spendRows = subscriptions.map((sub) => ({
+    id: sub.id,
+    name: sub.name,
+    category: sub.category,
+    cost: sub.cost,
+    cadence: sub.cadence,
+    url: sub.url,
+    notes: sub.notes,
+    active: sub.active,
+    actual: meteredActuals[sub.name] ?? null,
+  }));
 
   // Straight from gamarr's own downloads/wishlist, not the deduped public
   // games list -- that list deliberately folds a *completed* job into
@@ -249,6 +290,18 @@ export default async function AdminFeaturesPage() {
             findings={security.findings}
             generatedAt={security.generatedAt}
             auditLog={auditLog}
+          />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <SpendPanel
+            rows={spendRows}
+            totals={spendTotals}
+            awsBreakdown={awsServices}
+            openRouter={openRouter}
           />
         </div>
       </section>
