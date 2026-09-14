@@ -37,6 +37,7 @@ model User {
   watchlistGames      WatchlistGameItem[]
   watchlistFlashGames WatchlistFlashGameItem[]
   flashGameSaves      FlashGameSave[]
+  watchlistChannels   WatchlistChannelItem[]
   progress            WatchProgress[]
   episodeProgress     EpisodeProgress[]
 }
@@ -467,6 +468,26 @@ model FlashGame {
   saves       FlashGameSave[]
 
   @@index([title])
+}
+
+/// A live TV channel on a user's My List.
+///
+/// Unlike the movie, show, game and Flash-game lists, there is no local row to
+/// relate to: channels live in Jellyfin's tuner, not in this database, and the
+/// lineup changes whenever the tuner's source does. So this stores the channel
+/// id plus a name snapshot, and the row survives the channel disappearing --
+/// which is the common case with a playlist-backed tuner, where ids churn.
+model WatchlistChannelItem {
+  userId    String
+  channelId String
+  /// Snapshot, so a list entry still reads sensibly if the channel is gone.
+  name      String
+  addedAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, channelId])
+  @@index([userId])
 }
 
 /// One viewer's save data for one Flash game.

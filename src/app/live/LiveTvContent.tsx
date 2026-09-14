@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
-import { LivePlayer } from "@/components/LivePlayer";
+import Link from "next/link";
+import { ChannelWatchlistButton } from "@/components/ChannelWatchlistButton";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
 type Props = {
@@ -13,6 +14,8 @@ type Props = {
   channels: LiveChannel[];
   /** The fetch hit its cap -- there are more channels than are shown. */
   truncated: boolean;
+  /** Channel ids on this viewer's My List. Pinned above everything else. */
+  myListIds: string[];
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
@@ -66,7 +69,7 @@ function ProgramLine({ program, label }: { program: LiveProgram | null; label: s
   );
 }
 
-function ChannelCard({ channel, onPlay }: { channel: LiveChannel; onPlay: () => void }) {
+function ChannelCard({ channel, inList }: { channel: LiveChannel; inList: boolean }) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -77,9 +80,8 @@ function ChannelCard({ channel, onPlay }: { channel: LiveChannel; onPlay: () => 
   const pct = progressPercent(channel.now, nowMs);
 
   return (
-    <button
-      type="button"
-      onClick={onPlay}
+    <Link
+      href={`/live/${encodeURIComponent(channel.id)}`}
       className="flex w-full gap-3 rounded-lg border border-white/10 bg-netflix-dark/80 p-3 text-left transition-colors hover:border-white/40 hover:bg-netflix-dark focus:border-white/40 focus:outline-none"
     >
       <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-black/40">
@@ -107,6 +109,14 @@ function ChannelCard({ channel, onPlay }: { channel: LiveChannel; onPlay: () => 
             <span className="shrink-0 tabular-nums text-xs text-white/40">{channel.number}</span>
           )}
           <h3 className="truncate text-sm font-semibold text-white">{channel.name}</h3>
+          <span className="ml-auto shrink-0">
+            <ChannelWatchlistButton
+              channelId={channel.id}
+              name={channel.name}
+              initialInList={inList}
+              variant="circle"
+            />
+          </span>
           {channel.now?.isLive && (
             <span className="shrink-0 rounded bg-netflix-red/80 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
               Live
@@ -125,14 +135,13 @@ function ChannelCard({ channel, onPlay }: { channel: LiveChannel; onPlay: () => 
           </div>
         )}
       </div>
-    </button>
+    </Link>
   );
 }
 
-export function LiveTvContent({ envSet, reachable, channels, truncated }: Props) {
+export function LiveTvContent({ envSet, reachable, channels, truncated, myListIds }: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
-  const [playing, setPlaying] = useState<LiveChannel | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -147,6 +156,10 @@ export function LiveTvContent({ envSet, reachable, channels, truncated }: Props)
     );
   }, [channels, query]);
 
+  const listed = new Set(myListIds);
+  // Pinned above the rest, and excluded from search so it stays a stable
+  // shelf rather than disappearing the moment someone types.
+  const mine = channels.filter((c) => listed.has(c.id));
   const visible = filtered.slice(0, shown);
 
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
@@ -227,9 +240,24 @@ export function LiveTvContent({ envSet, reachable, channels, truncated }: Props)
         </div>
       ) : (
         <>
+          {mine.length > 0 && !query && (
+            <section className="mb-8">
+              <h2 className="mb-3 font-display text-xl font-bold text-white">My Stations</h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {mine.map((c) => (
+                  <ChannelCard key={`mine:${c.id}`} channel={c} inList />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {mine.length > 0 && !query && (
+            <h2 className="mb-3 font-display text-xl font-bold text-white">All Channels</h2>
+          )}
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {visible.map((c) => (
-              <ChannelCard key={c.id} channel={c} onPlay={() => setPlaying(c)} />
+              <ChannelCard key={c.id} channel={c} inList={listed.has(c.id)} />
             ))}
           </div>
 
@@ -262,13 +290,6 @@ export function LiveTvContent({ envSet, reachable, channels, truncated }: Props)
         </>
       )}
 
-      {playing && (
-        <LivePlayer
-          channelId={playing.id}
-          channelName={playing.name}
-          onClose={() => setPlaying(null)}
-        />
-      )}
     </div>
   );
 }
