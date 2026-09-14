@@ -358,3 +358,18 @@ export async function openLiveStream(channelId: string): Promise<LiveStreamHandl
     return null;
   }
 }
+
+
+/**
+ * One channel by id, with what's on now.
+ *
+ * Asks for the whole lineup and picks, rather than fetching the channel
+ * directly: Jellyfin's per-item endpoint returns a library item without
+ * CurrentProgram, so a channel page built on it would have the stream but no
+ * idea what was showing. The lineup response is already the shape the grid
+ * uses, and Jellyfin caches its tuner lookup between calls.
+ */
+export async function getLiveChannel(channelId: string): Promise<LiveChannel | null> {
+  const channels = await getLiveChannels();
+  return channels.find((c) => c.id === channelId) ?? null;
+}
