@@ -6,7 +6,7 @@ import {
 
 const game = (title: string, tags: string[] = []): FlashGameSummary => ({
   slug: title.toLowerCase().replace(/\W+/g, "-"),
-  title, developer: "", description: "", tags,
+  title, flashpointId: null, developer: "", description: "", tags,
   fileName: `${title}.swf`, width: 640, height: 480, isActionScript3: false,
 });
 

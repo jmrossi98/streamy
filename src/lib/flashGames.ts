@@ -26,9 +26,9 @@ import {
 export * from "./flashGameRules";
 
 function toSummary(row: {
-  slug: string; title: string; developer: string; description: string;
-  tags: string; fileName: string; width: number; height: number;
-  isActionScript3: boolean;
+  slug: string; title: string; flashpointId: string | null; developer: string;
+  description: string; tags: string; fileName: string; width: number;
+  height: number; isActionScript3: boolean;
 }): FlashGameSummary {
   return { ...row, tags: parseTags(row.tags) };
 }

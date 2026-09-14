@@ -11,6 +11,8 @@
 export type FlashGameSummary = {
   slug: string;
   title: string;
+  /** Set when the game came from Flashpoint; null for a hand-added SWF. */
+  flashpointId: string | null;
   developer: string;
   description: string;
   tags: string[];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPlayableHere, toFlashpointGame } from "../flashpoint";
+import { isPlayableHere, pickGameSwf, toFlashpointGame } from "../flashpoint";
 
 // Shaped from a real response (verified live 2026-09-13 against
 // db-api.unstable.life), not from the docs -- the docs are a TODO in their repo.
@@ -82,3 +82,50 @@ describe("isPlayableHere", () => {
     expect(isPlayableHere(g)).toBe(true);
   });
 });
+
+describe("pickGameSwf", () => {
+  const e = (path: string, size: number) => ({ path, size });
+
+  // A GameZIP mirrors the original site's directory tree, so it routinely
+  // carries loader shims, ad stubs and unrelated SWFs beside the game. Taking
+  // the first one gets you a blank frame or an advert.
+  it("prefers a SWF under content/ over packaging alongside it", () => {
+    expect(pickGameSwf([
+      e("readme.swf", 900),
+      e("content/example.com/game.swf", 5_000_000),
+    ])).toBe("content/example.com/game.swf");
+  });
+
+  it("skips loaders, preloaders and ad stubs by name", () => {
+    expect(pickGameSwf([
+      e("content/site/preloader.swf", 4_000),
+      e("content/site/ads.swf", 2_000),
+      e("content/site/main.swf", 3_000_000),
+    ])).toBe("content/site/main.swf");
+  });
+
+  // A loader is tiny next to what it loads, so size is the tiebreak.
+  it("takes the largest remaining candidate", () => {
+    expect(pickGameSwf([
+      e("content/a.swf", 1_000),
+      e("content/b.swf", 9_000_000),
+      e("content/c.swf", 50_000),
+    ])).toBe("content/b.swf");
+  });
+
+  // Better the biggest of what exists than giving up on a game that is there.
+  it("falls back rather than giving up when everything looks like packaging", () => {
+    expect(pickGameSwf([e("content/loader.swf", 10), e("content/ads.swf", 900)]))
+      .toBe("content/ads.swf");
+  });
+
+  it("returns null when the archive has no SWF at all", () => {
+    expect(pickGameSwf([e("content/index.html", 500), e("content/game.dcr", 9_000)])).toBeNull();
+    expect(pickGameSwf([])).toBeNull();
+  });
+
+  it("handles an archive with exactly one SWF", () => {
+    expect(pickGameSwf([e("content/only.swf", 1)])).toBe("content/only.swf");
+  });
+});
+
