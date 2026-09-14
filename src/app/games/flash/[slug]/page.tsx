@@ -69,6 +69,7 @@ export default async function FlashGamePage({
         <FlashPlayer
           src={`/api/flash/${encodeURIComponent(game.fileName)}`}
           title={game.title}
+          slug={game.slug}
           width={game.width}
           height={game.height}
         />
