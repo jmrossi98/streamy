@@ -6,6 +6,7 @@ import { getGamesList } from "@/lib/games";
 import { getGamePlatforms, isGamarrConfigured } from "@/lib/gamarr";
 import { GamesContent } from "./GamesContent";
 import { FlashGamesRows } from "./FlashGamesRows";
+import { FlashSyncButton } from "./FlashSyncButton";
 import { buildRows, listFlashGames } from "@/lib/flashGames";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -21,7 +22,15 @@ export default async function GamesPage() {
   if (!session) redirect("/login?callbackUrl=/games");
   const admin = await requireAdmin(session);
 
-  const flashRows = buildRows(await listFlashGames());
+  const userId = session.user?.id;
+  const myFlashRows = userId
+    ? await prisma.watchlistFlashGameItem.findMany({
+        where: { userId },
+        select: { slug: true },
+      })
+    : [];
+  const myFlashSlugs = myFlashRows.map((r) => r.slug);
+  const flashRows = buildRows(await listFlashGames(), new Set(myFlashSlugs));
 
   // Only fetched for an admin: every one of these calls out to gamarr or the
   // database for data the page won't render otherwise.
@@ -43,7 +52,13 @@ export default async function GamesPage() {
       <h1 className="streamy-page-title-x mb-6 font-display text-4xl font-bold text-white">
         Games
       </h1>
-      <FlashGamesRows rows={flashRows} />
+      <FlashGamesRows rows={flashRows} myListSlugs={myFlashSlugs} />
+
+      {admin && (
+        <div className="mb-6 px-4 md:px-6">
+          <FlashSyncButton />
+        </div>
+      )}
 
       {admin && (
         <GamesContent

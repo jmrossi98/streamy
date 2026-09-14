@@ -1,5 +1,6 @@
 import Link from "next/link";
-import type { FlashGameRow } from "@/lib/flashGames";
+import type { FlashGameRow } from "@/lib/flashGameRules";
+import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
 import { ROW_H2_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
 /**
@@ -9,7 +10,14 @@ import { ROW_H2_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
  * Server component -- nothing here is interactive beyond following a link, so
  * there's no reason to ship it to the browser.
  */
-export function FlashGamesRows({ rows }: { rows: FlashGameRow[] }) {
+export function FlashGamesRows({
+  rows,
+  myListSlugs,
+}: {
+  rows: FlashGameRow[];
+  myListSlugs: string[];
+}) {
+  const inList = new Set(myListSlugs);
   if (rows.length === 0) {
     return (
       <div className={ROW_SECTION_CLASS}>
@@ -40,6 +48,13 @@ export function FlashGamesRows({ rows }: { rows: FlashGameRow[] }) {
                     <span className="line-clamp-3 text-center text-xs font-semibold text-white/70">
                       {game.title}
                     </span>
+                  </div>
+                  <div className="absolute left-1 top-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <FlashWatchlistButton
+                      slug={game.slug}
+                      initialInList={inList.has(game.slug)}
+                      variant="circle"
+                    />
                   </div>
                   {game.isActionScript3 && (
                     // Flagged on the card as well as the detail page: it's the
