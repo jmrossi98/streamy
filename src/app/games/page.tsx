@@ -7,6 +7,9 @@ import { getGamePlatforms, isGamarrConfigured } from "@/lib/gamarr";
 import { GamesContent } from "./GamesContent";
 import { FlashGamesRows } from "./FlashGamesRows";
 import { FlashSyncButton } from "./FlashSyncButton";
+import { FlashSearchPanel } from "./FlashSearchPanel";
+import { FlashBrowseRows } from "./FlashBrowseRows";
+import { BROWSE_GENRES, browseFlashpointGenre } from "@/lib/flashpoint";
 import { buildRows, listFlashGames } from "@/lib/flashGames";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -30,7 +33,23 @@ export default async function GamesPage() {
       })
     : [];
   const myFlashSlugs = myFlashRows.map((r) => r.slug);
-  const flashRows = buildRows(await listFlashGames(), new Set(myFlashSlugs));
+  const localGames = await listFlashGames();
+  const flashRows = buildRows(localGames, new Set(myFlashSlugs));
+
+  // Browsing the archive, not just the local folder. The library starts empty
+  // and grows slowly, so rows built only from it show almost nothing --
+  // Flashpoint has 180,000 entries and a working genre filter. Fetched in
+  // parallel and cached for an hour upstream, so this is not ten round trips
+  // per page load.
+  const browseRows = await Promise.all(
+    BROWSE_GENRES.map(async (genre) => ({
+      genre,
+      games: await browseFlashpointGenre(genre),
+    }))
+  );
+  const ownedFlashpointIds = localGames
+    .map((g) => g.flashpointId)
+    .filter((id): id is string => !!id);
 
   // Only fetched for an admin: every one of these calls out to gamarr or the
   // database for data the page won't render otherwise.
@@ -54,9 +73,12 @@ export default async function GamesPage() {
       </h1>
       <FlashGamesRows rows={flashRows} myListSlugs={myFlashSlugs} />
 
+      <FlashBrowseRows rows={browseRows} ownedFlashpointIds={ownedFlashpointIds} />
+
       {admin && (
-        <div className="mb-6 px-4 md:px-6">
+        <div className="mb-6 space-y-4 px-4 md:px-6">
           <FlashSyncButton />
+          <FlashSearchPanel />
         </div>
       )}
 

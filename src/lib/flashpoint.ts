@@ -87,6 +87,70 @@ export function toFlashpointGame(raw: RawGame): FlashpointGame | null {
   };
 }
 
+/**
+ * Genre rows to offer when browsing the archive.
+ *
+ * Hardcoded rather than read from /tags, deliberately. That endpoint returns
+ * every tag in the database -- hundreds, including franchise names, engines
+ * ("Stencyl") and bookkeeping -- and a row per tag would be unusable. These
+ * are the genre-category tags broad enough that a row of them is worth
+ * scrolling.
+ */
+export const BROWSE_GENRES = [
+  "Action",
+  "Adventure",
+  "Arcade",
+  "Platformer",
+  "Puzzle",
+  "Shooter",
+  "Sports",
+  "Strategy",
+  "Simulation",
+  "Racing",
+] as const;
+
+/**
+ * Games in one genre, straight from the archive.
+ *
+ * The filtering parameter is `tags`, which is a real searchable field. Two
+ * near-misses worth recording, since both fail by returning an empty array
+ * rather than an error: `tag` is not a field at all, and `tagsStr` is a
+ * *post*-filter applied to results, so on its own it matches nothing because
+ * no query ran to produce results in the first place.
+ *
+ * `filter=true` drops entries the archive flags as unsuitable; `platform=Flash`
+ * keeps out the Shockwave, Unity and HTML5 content Ruffle cannot play.
+ */
+export async function browseFlashpointGenre(
+  genre: string,
+  limit = 24
+): Promise<FlashpointGame[]> {
+  const params = new URLSearchParams({
+    tags: genre,
+    platform: "Flash",
+    filter: "true",
+    limit: String(limit),
+  });
+  try {
+    const res = await fetch(`${FLASHPOINT_API}/search?${params.toString()}`, {
+      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+      // Genre rows are the same for everyone and the archive changes rarely,
+      // so this is the one call here worth caching -- it turns a page load
+      // from ten upstream requests into none.
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) return [];
+    const raw = (await res.json()) as RawGame[];
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(toFlashpointGame)
+      .filter((g): g is FlashpointGame => g !== null)
+      .filter(isPlayableHere);
+  } catch {
+    return [];
+  }
+}
+
 /** Only Flash entries can be played here -- Shockwave, Unity and HTML5 can't. */
 export function isPlayableHere(game: FlashpointGame): boolean {
   return game.platform.toLowerCase() === "flash";
@@ -155,4 +219,39 @@ export async function fetchFlashpointAsset(url: string): Promise<ArrayBuffer | n
   } catch {
     return null;
   }
+}
+
+
+/**
+ * Finds the SWF inside a Flashpoint GameZIP.
+ *
+ * Pure, so it tests without downloading anything.
+ *
+ * A GameZIP mirrors the original site's directory structure, so it routinely
+ * carries loader shims, preloaders, ad stubs and several unrelated SWFs
+ * alongside the game. Picking the wrong one gets you a blank frame or an
+ * advert, so the choice is deliberate rather than "the first .swf":
+ *
+ *   - `content/` holds the preserved site; anything outside it is packaging
+ *   - obvious non-games are rejected by name
+ *   - the largest survivor wins, since a loader or ad stub is tiny next to the
+ *     game it loads
+ */
+const NON_GAME_SWF = /(loader|preloader|ads?|advert|logo|intro|splash|banner)\.swf$/i;
+
+export function pickGameSwf(
+  entries: { path: string; size: number }[]
+): string | null {
+  const swfs = entries.filter((e) => e.path.toLowerCase().endsWith(".swf"));
+  if (swfs.length === 0) return null;
+
+  const inContent = swfs.filter((e) => e.path.toLowerCase().includes("content/"));
+  const candidates = (inContent.length > 0 ? inContent : swfs).filter(
+    (e) => !NON_GAME_SWF.test(e.path)
+  );
+
+  // Everything looked like packaging -- better to take the biggest of what
+  // there is than to give up on a game that is present.
+  const pool = candidates.length > 0 ? candidates : swfs;
+  return pool.reduce((best, e) => (e.size > best.size ? e : best)).path;
 }
