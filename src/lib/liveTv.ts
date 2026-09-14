@@ -211,30 +211,65 @@ export async function getLiveChannels(): Promise<LiveChannel[]> {
  * channel names and current-program data alone. One batched request rather
  * than one per channel.
  */
+/**
+ * How many channels' guide data to request at once.
+ *
+ * Jellyfin takes ChannelIds as a comma-separated query parameter, so this is
+ * really a limit on URL length. 2000 channel ids is roughly 72KB of query
+ * string, well past what most servers accept -- it comes back as a 414 or a
+ * connection reset, not as a useful error. A public M3U index makes that the
+ * normal case rather than a pathological one.
+ */
+const GUIDE_BATCH_SIZE = 50;
+
+/**
+ * Fills in the "up next" slot for the channels given.
+ *
+ * Split from getLiveChannels because it is strictly optional: a tuner with no
+ * EPG returns nothing here, and the grid still renders usefully from channel
+ * names and current-program data alone.
+ *
+ * Batched rather than one request per channel *or* one request for all of
+ * them -- the first is thousands of round trips, the second builds a URL no
+ * server will accept. Batches run in parallel and a failed batch costs only
+ * its own channels' "next" line.
+ */
 export async function attachNextPrograms(channels: LiveChannel[]): Promise<LiveChannel[]> {
   if (!isJellyfinConfiguredForLiveTv() || channels.length === 0) return channels;
 
   const now = new Date();
-  const params = new URLSearchParams({
-    ChannelIds: channels.map((c) => c.id).join(","),
-    // From now forward only: a guide window that starts in the past returns
-    // what already aired, and "up next" would show this morning.
-    MinStartDate: now.toISOString(),
-    MaxStartDate: new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString(),
-    SortBy: "StartDate",
-    SortOrder: "Ascending",
-    Limit: String(channels.length * 4),
-  });
-  if (JELLYFIN_USER_ID) params.set("userId", JELLYFIN_USER_ID);
-
-  try {
-    const data = await liveTvFetch<{ Items?: (JfProgram & { ChannelId?: string })[] }>(
-      `/LiveTv/Programs?${params.toString()}`
-    );
-    return mergeNextPrograms(channels, data?.Items ?? []);
-  } catch {
-    return channels;
+  const batches: LiveChannel[][] = [];
+  for (let i = 0; i < channels.length; i += GUIDE_BATCH_SIZE) {
+    batches.push(channels.slice(i, i + GUIDE_BATCH_SIZE));
   }
+
+  const results = await Promise.all(
+    batches.map(async (batch) => {
+      const params = new URLSearchParams({
+        ChannelIds: batch.map((c) => c.id).join(","),
+        // From now forward only: a window that starts in the past returns what
+        // already aired, and "up next" would show this morning.
+        MinStartDate: now.toISOString(),
+        MaxStartDate: new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString(),
+        SortBy: "StartDate",
+        SortOrder: "Ascending",
+        Limit: String(batch.length * 4),
+      });
+      if (JELLYFIN_USER_ID) params.set("userId", JELLYFIN_USER_ID);
+      try {
+        const data = await liveTvFetch<{ Items?: (JfProgram & { ChannelId?: string })[] }>(
+          `/LiveTv/Programs?${params.toString()}`
+        );
+        return data?.Items ?? [];
+      } catch {
+        // One batch failing costs those channels their "next" line, not the
+        // whole page.
+        return [];
+      }
+    })
+  );
+
+  return mergeNextPrograms(channels, results.flat());
 }
 
 /** Raw Jellyfin URL for a channel logo -- only ever reached via the image proxy. */

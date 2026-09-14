@@ -7,6 +7,9 @@ services:
     expose:
       - "3000"
     restart: always
+    labels:
+      # Opts this container, and only this container, into autoheal below.
+      - autoheal=true
     env_file: .env
     environment:
       - NODE_ENV=production
@@ -21,6 +24,48 @@ services:
       - AUTH_TRUST_HOST=true
     volumes:
       - streamy-data:/app/data
+    # `restart: always` only covers a process that *exits*. It does nothing for
+    # the failure that actually happened on 2026-09-13: the container still
+    # running but no longer answering, which reaches a visitor as a bare 502
+    # from Caddy and was noticed by a person rather than by anything here.
+    #
+    # /api/health returns a bare up/down to anonymous callers (the detailed
+    # shape is admin-only), which is exactly what a probe wants.
+    #
+    # start_period is generous because startup runs `prisma migrate deploy`
+    # before the server listens -- counting those seconds as failures would
+    # restart the app mid-migration, which is far worse than being down a
+    # little longer.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Restarts containers that report themselves unhealthy.
+  #
+  # Docker does not act on healthcheck results by itself -- it will mark a
+  # container unhealthy and leave it running forever. Something has to watch,
+  # and mediabox has run exactly this image for the same reason.
+  #
+  # Deliberately scoped by label rather than watching everything on the host:
+  # only `app` opts in. Litestream and gluetun must NOT be auto-restarted --
+  # both are documented above as deliberately not `restart: always`, precisely
+  # because a container that cannot start must not be able to crash-loop this
+  # small instance into the ground.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: streamy-autoheal
+    restart: always
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+      # Grace period between deciding a container is unhealthy and killing it.
+      - AUTOHEAL_START_PERIOD=60
+      - AUTOHEAL_INTERVAL=30
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 64m
 
   # Continuous SQLite backup to S3 (see litestream.yml for the why).
   #

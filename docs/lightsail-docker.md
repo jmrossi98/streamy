@@ -56,3 +56,43 @@ docker compose -f docker-compose.prod.yml up -d
 ```
 
 Do **not** use `docker-compose` (with hyphen) unless you are stuck on v1 — it can break with newer images (`ContainerConfig` errors).
+
+## Health checking and auto-recovery (2026-09-13)
+
+`restart: always` only covers a process that *exits*. On 2026-09-13 the app
+container stayed running but stopped answering, which reached visitors as a
+bare 502 from Caddy and was noticed by a person rather than by anything here.
+Nothing on the box was watching.
+
+Two pieces now cover that:
+
+**A healthcheck on `app`**, polling `/api/health` every 30s. That endpoint
+returns a bare up/down to anonymous callers (the detailed shape is admin-only),
+which is exactly what a probe wants. `start_period` is 90s because startup runs
+`prisma migrate deploy` before the server listens -- counting those seconds as
+failures would restart the app mid-migration, which is worse than being down a
+little longer.
+
+**An `autoheal` container**, because Docker does not act on healthcheck results
+by itself: it will mark a container unhealthy and leave it running indefinitely.
+mediabox has run the same image for the same reason.
+
+It is scoped by label, not set loose on the host -- only `app` carries
+`autoheal=true`. **Litestream and gluetun must not be auto-restarted.** Both are
+deliberately not `restart: always` (see the comments in the compose file),
+precisely because a container that cannot start must not be able to crash-loop
+this small instance into the ground. Auto-restarting them would reintroduce
+exactly the failure those comments exist to prevent.
+
+### Recovering by hand
+
+There is no SSH key for this box outside GitHub Actions, so the recovery path
+is the deploy workflow itself:
+
+```
+gh workflow run "Build and Deploy"
+```
+
+It pulls the current image and brings the stack back up. That is what restored
+the site on 2026-09-13, before any of the above existed.
+
