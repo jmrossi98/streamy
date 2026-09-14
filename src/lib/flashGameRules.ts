@@ -16,7 +16,10 @@ export type FlashGameSummary = {
   developer: string;
   description: string;
   tags: string[];
-  fileName: string;
+  /** Null when the game is known but not downloaded yet. */
+  fileName: string | null;
+  /** Whether it can actually be played right now. */
+  playable: boolean;
   width: number;
   height: number;
   /** Ruffle's weak spot -- the UI warns before someone clicks. */
@@ -30,7 +33,13 @@ export type FlashGameRow = {
   games: FlashGameSummary[];
 };
 
-/** Rows below this aren't worth their own heading -- they fold into Everything. */
+/**
+ * Rows below this aren't worth their own heading.
+ *
+ * There is no catch-all any more, so a game whose only tags are rare simply
+ * doesn't appear in the library rows -- it is still reachable from My List and
+ * from search, and a shelf of one is worse than no shelf.
+ */
 const MIN_ROW_SIZE = 3;
 /** Tags that describe bookkeeping rather than a genre anyone browses by. */
 const NON_GENRE_TAGS = new Set(["auto-zipped", "unsorted", "untagged"]);
@@ -114,8 +123,8 @@ export function buildRows(
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([tag, list]) => ({ key: `tag:${tag}`, title: tag, games: list }));
 
-  if (games.length > 0) {
-    rows.push({ key: "all", title: "All Games", games });
-  }
+  // No catch-all row. It duplicated everything already shown above it, which
+  // made the page twice as long for no new information -- and with the
+  // archive browsable below, "everything" is not a useful shelf anyway.
   return [...pinned, ...rows];
 }

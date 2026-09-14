@@ -1,4 +1,5 @@
 import type { FlashpointGame } from "@/lib/flashpoint";
+import { BrowseCard } from "./BrowseCard";
 import { ROW_H2_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
 export type BrowseRow = { genre: string; games: FlashpointGame[] };
@@ -44,29 +45,7 @@ export function FlashBrowseRows({
           <h2 className={ROW_H2_CLASS}>{row.genre}</h2>
           <div className="flex gap-3 overflow-x-auto pb-2">
             {row.games.map((game) => (
-              <div key={game.id} className="w-40 shrink-0 sm:w-48">
-                <div className="relative aspect-video w-full overflow-hidden rounded bg-black/40 ring-1 ring-white/10">
-                  {/* Plain <img>: proxied through our own origin, and
-                      next/image would want a configured remote pattern for a
-                      host we deliberately never link to directly. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={`/api/flash/art/${encodeURIComponent(game.id)}`}
-                    alt=""
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                  {owned.has(game.id) && (
-                    <span className="absolute right-1 top-1 rounded bg-emerald-500/80 px-1 text-[10px] font-bold text-black">
-                      In library
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 truncate text-xs text-white/70">{game.title}</p>
-                {game.developer && (
-                  <p className="truncate text-[11px] text-white/35">{game.developer}</p>
-                )}
-              </div>
+              <BrowseCard key={game.id} game={game} owned={owned.has(game.id)} />
             ))}
           </div>
         </section>

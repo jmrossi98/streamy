@@ -8,8 +8,9 @@ import { GamesContent } from "./GamesContent";
 import { FlashGamesRows } from "./FlashGamesRows";
 import { FlashSyncButton } from "./FlashSyncButton";
 import { FlashSearchPanel } from "./FlashSearchPanel";
+import { FlashUploadForm } from "./FlashUploadForm";
 import { FlashBrowseRows } from "./FlashBrowseRows";
-import { BROWSE_GENRES, browseFlashpointGenre } from "@/lib/flashpoint";
+import { POPULAR_ROWS, findByTitle } from "@/lib/flashpoint";
 import { buildRows, listFlashGames } from "@/lib/flashGames";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -36,15 +37,17 @@ export default async function GamesPage() {
   const localGames = await listFlashGames();
   const flashRows = buildRows(localGames, new Set(myFlashSlugs));
 
-  // Browsing the archive, not just the local folder. The library starts empty
-  // and grows slowly, so rows built only from it show almost nothing --
-  // Flashpoint has 180,000 entries and a working genre filter. Fetched in
-  // parallel and cached for an hour upstream, so this is not ten round trips
-  // per page load.
+  // Curated shelves from the archive, not a genre dump. Flashpoint has no
+  // popularity signal at all -- no counts, no ratings, not even a sort
+  // parameter -- so a raw genre query returns whatever the database reaches
+  // first, which is reliably games nobody recognises. Naming the titles is the
+  // only way to get a shelf worth browsing.
   const browseRows = await Promise.all(
-    BROWSE_GENRES.map(async (genre) => ({
-      genre,
-      games: await browseFlashpointGenre(genre),
+    POPULAR_ROWS.map(async (row) => ({
+      genre: row.title,
+      games: (await Promise.all(row.games.map(findByTitle))).filter(
+        (g): g is NonNullable<typeof g> => g !== null
+      ),
     }))
   );
   const ownedFlashpointIds = localGames
@@ -71,24 +74,46 @@ export default async function GamesPage() {
       <h1 className="streamy-page-title-x mb-6 font-display text-4xl font-bold text-white">
         Games
       </h1>
+
+      {/* Flash first: it is the half everyone can see, and the half that has
+          rows. My List is pinned at the top of it by buildRows. */}
       <FlashGamesRows rows={flashRows} myListSlugs={myFlashSlugs} />
 
       <FlashBrowseRows rows={browseRows} ownedFlashpointIds={ownedFlashpointIds} />
 
       {admin && (
-        <div className="mb-6 space-y-4 px-4 md:px-6">
-          <FlashSyncButton />
-          <FlashSearchPanel />
-        </div>
-      )}
+        // Everything below the rule is admin-only and a different kind of
+        // thing -- library maintenance and the ROM/emulator half. Previously
+        // it ran straight on from the browsing rows with nothing marking the
+        // change of audience or purpose.
+        <div className="mt-12 border-t border-white/10 pt-8">
+          <div className="mb-6 px-4 md:px-6">
+            <h2 className="mb-1 font-display text-2xl font-bold text-white">Manage library</h2>
+            <p className="mb-4 text-sm text-white/40">
+              Admin only. Import Flash games, or manage the ROM and emulator library.
+            </p>
+            <div className="space-y-4">
+              <FlashUploadForm />
+              <FlashSyncButton />
+              <FlashSearchPanel />
+            </div>
+          </div>
 
-      {admin && (
-        <GamesContent
-          configured={isGamarrConfigured()}
-          items={items}
-          platforms={platforms}
-          watchlistKeys={Array.from(watchlistKeys)}
-        />
+          <div className="mt-10 px-4 md:px-6">
+            <h2 className="mb-1 font-display text-2xl font-bold text-white">
+              ROMs &amp; emulators
+            </h2>
+            <p className="text-sm text-white/40">
+              Console games synced to the Steam Deck and desktop.
+            </p>
+          </div>
+          <GamesContent
+            configured={isGamarrConfigured()}
+            items={items}
+            platforms={platforms}
+            watchlistKeys={Array.from(watchlistKeys)}
+          />
+        </div>
       )}
     </div>
   );

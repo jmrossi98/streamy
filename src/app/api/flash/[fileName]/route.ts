@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { flashFileUpstreamUrl, isFlashLibraryConfigured } from "@/lib/flashLibrary";
+import { readLocalFile } from "@/lib/flashStorage";
 
 /**
  * Serves one SWF to Ruffle.
@@ -23,14 +24,27 @@ export async function GET(
   if (!(await getSession())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isFlashLibraryConfigured()) {
-    return NextResponse.json({ error: "Flash library not configured" }, { status: 503 });
-  }
 
   const { fileName } = await params;
+  const name = decodeURIComponent(fileName);
+
+  // Local first. Everything imported or uploaded lands on this volume, so this
+  // is the common path -- and it keeps working when mediabox is asleep, which
+  // the Tailscale share does not.
+  const local = await readLocalFile(name);
+  if (local) {
+    return new Response(new Uint8Array(local), {
+      headers: {
+        "Content-Type": "application/x-shockwave-flash",
+        "Content-Length": String(local.length),
+        "Cache-Control": "public, max-age=604800, immutable",
+      },
+    });
+  }
+
   // Null means the name failed the safe-filename check, which is a traversal
   // attempt or a corrupt row -- either way not something to pass upstream.
-  const upstream = flashFileUpstreamUrl(decodeURIComponent(fileName));
+  const upstream = flashFileUpstreamUrl(name);
   if (!upstream) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

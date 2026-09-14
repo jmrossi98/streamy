@@ -27,10 +27,10 @@ export * from "./flashGameRules";
 
 function toSummary(row: {
   slug: string; title: string; flashpointId: string | null; developer: string;
-  description: string; tags: string; fileName: string; width: number;
+  description: string; tags: string; fileName: string | null; width: number;
   height: number; isActionScript3: boolean;
 }): FlashGameSummary {
-  return { ...row, tags: parseTags(row.tags) };
+  return { ...row, tags: parseTags(row.tags), playable: !!row.fileName };
 }
 
 export async function listFlashGames(): Promise<FlashGameSummary[]> {
@@ -91,6 +91,7 @@ export async function syncFlashLibrary(): Promise<SyncResult> {
         title: titleFromFileName(file.name),
         fileName: file.name,
         fileSize: file.size,
+        storage: "mediabox",
         width: meta.width,
         height: meta.height,
         frameRate: meta.frameRate,

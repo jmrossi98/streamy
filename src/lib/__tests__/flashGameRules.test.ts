@@ -7,7 +7,7 @@ import {
 const game = (title: string, tags: string[] = []): FlashGameSummary => ({
   slug: title.toLowerCase().replace(/\W+/g, "-"),
   title, flashpointId: null, developer: "", description: "", tags,
-  fileName: `${title}.swf`, width: 640, height: 480, isActionScript3: false,
+  fileName: `${title}.swf`, playable: true, width: 640, height: 480, isActionScript3: false,
 });
 
 describe("slugFromFileName", () => {
@@ -72,25 +72,25 @@ describe("buildRows", () => {
     expect(puzzle.games).toContain(g);
   });
 
-  // A row of one is noise, not navigation.
-  it("folds tags with too few games into the catch-all", () => {
-    const rows = buildRows([game("Lonely", ["Roguelike"]), game("Also", ["Metroidvania"])]);
-    expect(rows.map((r) => r.title)).toEqual(["All Games"]);
-    expect(rows[0].games).toHaveLength(2);
+  // A row of one is noise, not navigation -- and with no catch-all, a game
+  // whose only tags are rare simply doesn't get a shelf. It stays reachable
+  // from My List and search.
+  it("gives no row to tags with too few games", () => {
+    expect(buildRows([game("Lonely", ["Roguelike"]), game("Also", ["Metroidvania"])])).toEqual([]);
   });
 
-  it("always ends with a catch-all so nothing is unreachable", () => {
+  // The catch-all was removed deliberately: it repeated everything above it,
+  // doubling the page for no new information.
+  it("emits no catch-all row", () => {
     const rows = buildRows(Array.from({ length: 5 }, (_, i) => game(`G${i}`, ["Action"])));
-    expect(rows.at(-1)!.key).toBe("all");
-    expect(rows.at(-1)!.games).toHaveLength(5);
+    expect(rows.map((r) => r.key)).toEqual(["tag:Action"]);
   });
 
-  // A library with no tags at all -- every hand-dropped SWF starts this way --
-  // still has to render something.
-  it("renders an untagged library", () => {
-    const rows = buildRows([game("A"), game("B")]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].title).toBe("All Games");
+  // An untagged library produces no rows at all now. That is fine: the
+  // archive browse section below covers discovery, and My List covers what
+  // someone actually cares about.
+  it("produces no rows for an untagged library", () => {
+    expect(buildRows([game("A"), game("B")])).toEqual([]);
   });
 
   it("returns nothing for an empty library rather than a bare heading", () => {
@@ -101,7 +101,7 @@ describe("buildRows", () => {
   // Flashpoint entries and means nothing to a person browsing.
   it("ignores bookkeeping tags", () => {
     const rows = buildRows(Array.from({ length: 4 }, (_, i) => game(`G${i}`, ["Auto-zipped"])));
-    expect(rows.map((r) => r.title)).toEqual(["All Games"]);
+    expect(rows).toEqual([]);
   });
 
   it("orders rows by size, then alphabetically", () => {
@@ -110,7 +110,7 @@ describe("buildRows", () => {
       ...Array.from({ length: 3 }, (_, i) => game(`Z${i}`, ["Zany"])),
       ...Array.from({ length: 3 }, (_, i) => game(`B${i}`, ["Board"])),
     ]);
-    expect(rows.map((r) => r.title)).toEqual(["Action", "Board", "Zany", "All Games"]);
+    expect(rows.map((r) => r.title)).toEqual(["Action", "Board", "Zany"]);
   });
 });
 
@@ -147,7 +147,7 @@ describe("buildRows — My List", () => {
   it("shows a single listed game even in an otherwise untagged library", () => {
     const a = game("A");
     const rows = buildRows([a, game("B")], new Set([a.slug]));
-    expect(rows.map((r) => r.key)).toEqual(["my-list", "all"]);
+    expect(rows.map((r) => r.key)).toEqual(["my-list"]);
   });
 });
 
