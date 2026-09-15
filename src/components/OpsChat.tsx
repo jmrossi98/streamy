@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChatMessage } from "@/components/ChatMessage";
 import {
   CHAT_BACKENDS,
   DEFAULT_BACKEND,
@@ -281,10 +282,11 @@ export function OpsChat({
                   : "bg-white/10 text-white/90"
               }`}
             >
-              {t.content ||
-                (streaming && i === turns.length - 1 ? (
-                  <span className="text-white/40">thinking…</span>
-                ) : null)}
+              {t.content ? (
+                <ChatMessage role={t.role} content={t.content} />
+              ) : streaming && i === turns.length - 1 ? (
+                <span className="text-white/40">thinking…</span>
+              ) : null}
             </div>
           </div>
         ))}
