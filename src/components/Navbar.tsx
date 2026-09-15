@@ -175,17 +175,12 @@ export function Navbar() {
                             </Link>
                           );
                         })}
-                        {session.user?.isAdmin && (
-                          <Link
-                            href="/games"
-                            onClick={() => setHamburgerOpen(false)}
-                            className={`block px-4 py-3 text-base font-medium transition-colors ${
-                              pathname === "/games" ? "text-white bg-white/10" : "text-white/90 hover:bg-white/10 hover:text-white"
-                            }`}
-                          >
-                            Games
-                          </Link>
-                        )}
+                        {/* No admin-only Games link here: /games opened to
+                            everyone (only the ROM/emulator section inside it
+                            is admin-gated), so it lives in navLinks above and
+                            the loop already renders it. This block was left
+                            over from when the whole tab was admin-only, and
+                            showed admins a second copy. */}
                         <Link
                           href="/watchlist"
                           onClick={() => setHamburgerOpen(false)}

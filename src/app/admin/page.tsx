@@ -279,10 +279,29 @@ export default async function AdminFeaturesPage() {
   downloads.unshift(...searchingRows);
 
   return (
-    <div className="min-h-screen px-4 sm:px-6 pt-24 pb-16 max-w-2xl mx-auto space-y-10">
+    // Mobile is deliberately untouched: `max-w-2xl` and the vertical stack are
+    // what it had, and it reads well at that width. Everything below is
+    // lg:-prefixed, so nothing changes until there is desktop width to use.
+    <div className="min-h-screen px-4 sm:px-6 pt-24 pb-16 max-w-2xl lg:max-w-6xl 2xl:max-w-[88rem] mx-auto">
       <h1 className="font-display text-3xl font-bold text-white">Admin Features</h1>
 
-      <section>
+      {/*
+        The same widgets, spread across columns rather than restacked. Each
+        section keeps its own internal layout; only their arrangement changes.
+
+        `items-start` matters: without it grid stretches every card in a row to
+        the tallest one, so a short panel next to the Services list would grow a
+        large empty space rather than staying its natural height.
+
+        `auto-rows-min` plus dense flow lets a short card backfill the gap left
+        beside a tall one, which is what stops a two-column layout from looking
+        ragged.
+      */}
+      <div className="mt-10 space-y-10 lg:mt-8 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0 lg:[grid-auto-flow:row_dense] 2xl:grid-cols-3">
+
+      {/* Full width: the audit log is a wide table, and this is the panel
+          you scan first. */}
+      <section className="lg:col-span-2 2xl:col-span-3">
         <h2 className="text-lg font-semibold text-white mb-4">Security</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <SecurityPanel
@@ -306,7 +325,7 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section>
+      <section className="2xl:row-span-2">
         <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6 space-y-6">
           <ServicesPanel services={services} />
@@ -331,7 +350,8 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section>
+      {/* A map is the one widget that is strictly worse narrow. */}
+      <section className="lg:col-span-2 2xl:col-span-3">
         <h2 className="text-lg font-semibold text-white mb-4">Visitor map</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <VisitorMapPanel />
@@ -422,6 +442,7 @@ export default async function AdminFeaturesPage() {
           )}
         </div>
       </section>
+      </div>
     </div>
   );
 }
