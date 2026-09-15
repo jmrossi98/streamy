@@ -6,41 +6,76 @@ import { getMovieById, getShowById } from "@/lib/tmdb";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import type { MovieProgress } from "@/components/MovieRow";
 import { getGamesList, type GameListItem } from "@/lib/games";
+import { getLiveChannels, type LiveChannel } from "@/lib/liveTv";
+import { listFlashGames } from "@/lib/flashGames";
+import type { FlashGameSummary } from "@/lib/flashGameRules";
 
 export type WatchlistData = {
   movies: Movie[];
   shows: (TVShow & { numberOfSeasons: number })[];
   games: GameListItem[];
+  channels: LiveChannel[];
+  flashGames: FlashGameSummary[];
   progressMap: Record<string, MovieProgress>;
 };
 
-/** Loads all saved movies, TV shows, and games; rows scroll horizontally (ScrollableRow) like Home/Movies. */
+/** Loads all saved movies, TV shows, games, live channels, and Flash games;
+ *  poster rows scroll horizontally (ScrollableRow) like Home/Movies. */
 export async function getWatchlist(userId: string): Promise<WatchlistData> {
-  const [movieItems, showItems, gameItems, allProgress] = await Promise.all([
-    prisma.watchlistItem.findMany({
-      where: { userId },
-      orderBy: { addedAt: "desc" },
-    }),
-    prisma.watchlistShowItem.findMany({
-      where: { userId },
-      orderBy: { addedAt: "desc" },
-    }),
-    // Cheap even for a non-admin (whose set is always empty, since they have
-    // no UI to ever add one) -- gates the actual gamarr round trip below so
-    // every other My List page doesn't pay for one on every load.
-    prisma.watchlistGameItem.findMany({
-      where: { userId },
-      orderBy: { addedAt: "desc" },
-      select: { gameKey: true },
-    }),
-    prisma.watchProgress.findMany({ where: { userId } }),
-  ]);
+  const [movieItems, showItems, gameItems, channelItems, flashItems, allProgress] =
+    await Promise.all([
+      prisma.watchlistItem.findMany({
+        where: { userId },
+        orderBy: { addedAt: "desc" },
+      }),
+      prisma.watchlistShowItem.findMany({
+        where: { userId },
+        orderBy: { addedAt: "desc" },
+      }),
+      // Cheap even for a non-admin (whose set is always empty, since they have
+      // no UI to ever add one) -- gates the actual gamarr round trip below so
+      // every other My List page doesn't pay for one on every load.
+      prisma.watchlistGameItem.findMany({
+        where: { userId },
+        orderBy: { addedAt: "desc" },
+        select: { gameKey: true },
+      }),
+      // Same gating reason as gameItems: a Jellyfin round trip for the full
+      // channel guide is not worth paying on every My List load for a viewer
+      // who has never saved a station.
+      prisma.watchlistChannelItem.findMany({
+        where: { userId },
+        orderBy: { addedAt: "desc" },
+        select: { channelId: true },
+      }),
+      prisma.watchlistFlashGameItem.findMany({
+        where: { userId },
+        orderBy: { addedAt: "desc" },
+        select: { slug: true },
+      }),
+      prisma.watchProgress.findMany({ where: { userId } }),
+    ]);
 
   const gameKeys = new Set(gameItems.map((i) => i.gameKey));
   const games =
     gameKeys.size > 0
       ? (await getGamesList()).filter((g) => gameKeys.has(g.gameKey))
       : [];
+
+  const channelIds = new Set(channelItems.map((i) => i.channelId));
+  const allChannels = channelIds.size > 0 ? await getLiveChannels() : [];
+  // Preserves addedAt order (most recently saved first) rather than whatever
+  // order the guide returns -- channelIds came from the addedAt-sorted query
+  // above, allChannels didn't.
+  const channels = channelItems
+    .map((i) => allChannels.find((c) => c.id === i.channelId))
+    .filter((c): c is LiveChannel => c != null);
+
+  const flashSlugs = new Set(flashItems.map((i) => i.slug));
+  const allFlashGames = flashSlugs.size > 0 ? await listFlashGames() : [];
+  const flashGames = flashItems
+    .map((i) => allFlashGames.find((g) => g.slug === i.slug))
+    .filter((g): g is FlashGameSummary => g != null);
 
   const [movieDetails, showDetails] = await Promise.all([
     Promise.all(movieItems.map((item) => getMovieById(item.movieId))),
@@ -69,6 +104,8 @@ export async function getWatchlist(userId: string): Promise<WatchlistData> {
     movies,
     shows,
     games,
+    channels,
+    flashGames,
     progressMap,
   };
 }
