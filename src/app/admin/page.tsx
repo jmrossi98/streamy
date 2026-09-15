@@ -285,22 +285,19 @@ export default async function AdminFeaturesPage() {
       <h1 className="font-display text-3xl font-bold text-white">Admin Features</h1>
 
       {/*
-        The same widgets, spread across columns rather than restacked. Each
-        section keeps its own internal layout; only their arrangement changes.
-
-        `items-start` matters: without it grid stretches every card in a row to
-        the tallest one, so a short panel next to the Services list would grow a
-        large empty space rather than staying its natural height.
-
-        `auto-rows-min` plus dense flow lets a short card backfill the gap left
-        beside a tall one, which is what stops a two-column layout from looking
-        ragged.
+        Every widget at the container's full width, stacked in one column --
+        not a multi-column grid. Order is grouped by responsibility rather
+        than by when each was added: overview widgets first (Security,
+        Visitors, the map), then Services (what's actually running), then
+        the day-to-day admin tools, with the Assistant last since it's the
+        one widget here that answers questions about everything above it
+        rather than reporting its own thing.
       */}
-      <div className="mt-10 space-y-10 lg:mt-8 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0 lg:[grid-auto-flow:row_dense] 2xl:grid-cols-3">
+      <div className="mt-10 space-y-10 lg:mt-8">
 
       {/* Full width: the audit log is a wide table, and this is the panel
           you scan first. */}
-      <section className="lg:col-span-2 2xl:col-span-3">
+      <section>
         <h2 className="text-lg font-semibold text-white mb-4">Security</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <SecurityPanel
@@ -313,18 +310,20 @@ export default async function AdminFeaturesPage() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">Visitors</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <SpendPanel
-            rows={spendRows}
-            totals={spendTotals}
-            awsBreakdown={awsServices}
-            openRouter={openRouter}
-          />
+          <VisitorsPanel summary={visitors} />
         </div>
       </section>
 
-      <section className="lg:col-span-2 2xl:col-span-3">
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Visitor map</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <VisitorMapPanel />
+        </div>
+      </section>
+
+      <section>
         <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6 space-y-6">
           <ServicesPanel services={services} />
@@ -342,18 +341,15 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section className="lg:col-span-2 2xl:col-span-3">
-        <h2 className="text-lg font-semibold text-white mb-4">Visitors</h2>
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <VisitorsPanel summary={visitors} />
-        </div>
-      </section>
-
-      {/* A map is the one widget that is strictly worse narrow. */}
-      <section className="lg:col-span-2 2xl:col-span-3">
-        <h2 className="text-lg font-semibold text-white mb-4">Visitor map</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <VisitorMapPanel />
+          <SpendPanel
+            rows={spendRows}
+            totals={spendTotals}
+            awsBreakdown={awsServices}
+            openRouter={openRouter}
+          />
         </div>
       </section>
 
@@ -400,7 +396,26 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section className="lg:col-span-2 2xl:col-span-3">
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Storage usage</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          {diskUsage ? (
+            <StorageChart
+              totalSpace={diskUsage.totalBytes}
+              freeSpace={diskUsage.freeBytes}
+              moviesSize={diskUsage.categories.movies}
+              tvSize={diskUsage.categories.tv}
+              gamesSize={gamesSize}
+            />
+          ) : (
+            <p className="text-white/50 text-sm">
+              Storage info unavailable — mediabox isn&apos;t reachable.
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section>
         <div className="mb-4 flex items-baseline justify-between gap-3">
           <h2 className="text-lg font-semibold text-white">Assistant</h2>
           <Link
@@ -420,25 +435,6 @@ export default async function AdminFeaturesPage() {
             statusError={ollamaStatus && !ollamaStatus.ok ? ollamaStatus.error : null}
             searchAvailable={isWebSearchConfigured()}
           />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Storage usage</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          {diskUsage ? (
-            <StorageChart
-              totalSpace={diskUsage.totalBytes}
-              freeSpace={diskUsage.freeBytes}
-              moviesSize={diskUsage.categories.movies}
-              tvSize={diskUsage.categories.tv}
-              gamesSize={gamesSize}
-            />
-          ) : (
-            <p className="text-white/50 text-sm">
-              Storage info unavailable — mediabox isn&apos;t reachable.
-            </p>
-          )}
         </div>
       </section>
       </div>
