@@ -238,10 +238,40 @@ export async function fetchFlashpointAsset(url: string): Promise<ArrayBuffer | n
  *
  *   - `content/` holds the preserved site; anything outside it is packaging
  *   - obvious non-games are rejected by name
- *   - the largest survivor wins, since a loader or ad stub is tiny next to the
- *     game it loads
+ *   - a mirror from a well-known portal wins over any other candidate
+ *   - failing that, the largest survivor wins, since a loader or ad stub is
+ *     tiny next to the game it loads
+ *
+ * The portal preference exists because "biggest wins" alone picked wrong on a
+ * real title: Learn to Fly's GameZIP holds a ~1.2MB rip from a Vietnamese
+ * regional mirror (content/static.game24h.vn/...) alongside ~890KB copies
+ * from Kongregate and Armor Games. All three are legitimate, unmodified
+ * builds -- but the regional one is bigger, purely from extra bundled assets,
+ * and size alone chose it over two portals whose whole business is hosting
+ * the stock, unmodified, English original. Sites known to re-host under a
+ * cracked domain lock or altered balance (hackedgames.biz and similar) are
+ * deliberately not on this list: swapping a user onto a "hacked" build
+ * changes what they're actually playing, which is a call for a person to
+ * make, not a heuristic to make silently.
  */
 const NON_GAME_SWF = /(loader|preloader|ads?|advert|logo|intro|splash|banner)\.swf$/i;
+
+const TRUSTED_MIRROR_HOSTS = [
+  "kongregate.com",
+  "armorgames.com",
+  "newgrounds.com",
+  "addictinggames.com",
+  "miniclip.com",
+  "crazygames.com",
+  "coolmathgames.com",
+  "y8.com",
+  "flashpointarchive.org",
+];
+
+function isTrustedMirror(path: string): boolean {
+  const lower = path.toLowerCase();
+  return TRUSTED_MIRROR_HOSTS.some((host) => lower.includes(`/${host}/`) || lower.includes(`.${host}/`));
+}
 
 export function pickGameSwf(
   entries: { path: string; size: number }[]
@@ -257,5 +287,9 @@ export function pickGameSwf(
   // Everything looked like packaging -- better to take the biggest of what
   // there is than to give up on a game that is present.
   const pool = candidates.length > 0 ? candidates : swfs;
-  return pool.reduce((best, e) => (e.size > best.size ? e : best)).path;
+
+  const trusted = pool.filter((e) => isTrustedMirror(e.path));
+  const finalPool = trusted.length > 0 ? trusted : pool;
+
+  return finalPool.reduce((best, e) => (e.size > best.size ? e : best)).path;
 }

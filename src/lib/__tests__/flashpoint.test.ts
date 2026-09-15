@@ -127,5 +127,45 @@ describe("pickGameSwf", () => {
   it("handles an archive with exactly one SWF", () => {
     expect(pickGameSwf([e("content/only.swf", 1)])).toBe("content/only.swf");
   });
+
+  // Regression: Learn to Fly's real GameZIP (flashpointId
+  // 11ee16a3-dadb-4d54-84dd-a3dcf124ee1d, fetched and inspected live on
+  // 2026-09-16) holds four legitimate mirrors. Size alone picked the
+  // Vietnamese regional rip -- bigger purely from extra bundled assets, not
+  // any difference in the actual game -- over two portals (Kongregate, Armor
+  // Games) whose whole business is hosting the stock, unmodified original.
+  it("prefers a known portal mirror over a bigger regional one (Learn to Fly)", () => {
+    const entries = [
+      e("content/cache.armorgames.com/files/games/learn-to-fly-3789.swf", 892_238),
+      e("content/chat.kongregate.com/gamez/0004/5630/live/Learn_to_fly_Final_3.52k.swf", 894_960),
+      e("content/static.game24h.vn/upload/game/2010-04-17/1271468645_baihocbaydaudoi2.swf", 1_201_484),
+      e("content/www.hackedarcadegames.com/swf/learntofly_hack9.swf", 724_479),
+    ];
+    expect(pickGameSwf(entries)).toBe(
+      "content/chat.kongregate.com/gamez/0004/5630/live/Learn_to_fly_Final_3.52k.swf"
+    );
+  });
+
+  // Regression, the other direction: Bloons TD 5's real GameZIP
+  // (flashpointId 07921a2f-26fd-4364-9671-ee0c8d256ec1) has no portal mirror
+  // at all -- only the official ninjakiwi.com asset (domain-locked, but
+  // genuine) and a "hackedgames.biz" rip. The portal list must not fall back
+  // to preferring "not the official host" in general, or it would silently
+  // swap a user onto a build that may have altered gameplay. With nothing
+  // trusted to prefer, this must fall through to the original size-based
+  // pick, same as before this change.
+  it("falls through to size when no candidate is from a known portal (Bloons TD 5)", () => {
+    const entries = [
+      e("content/assets.ninjakiwi.com/Games/gameswfs/btd5-dat.swf", 18_993_704),
+      e("content/cache.hackedgames.biz/uploads/games/files/732/Q3H4WR6ZBW4Y.swf", 87_845),
+      e(
+        "content/cache.hackedgames.biz/uploads/games/files/hacked/swf-001/btd5-2014.swf",
+        15_354_544
+      ),
+    ];
+    expect(pickGameSwf(entries)).toBe(
+      "content/assets.ninjakiwi.com/Games/gameswfs/btd5-dat.swf"
+    );
+  });
 });
 
