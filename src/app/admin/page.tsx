@@ -2,8 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { getRadarrStorageInfo, getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
-import { getSonarrTvSize, getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sonarr";
+import { getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
+import { getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sonarr";
+import { getDiskUsage } from "@/lib/diskUsage";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
 import { AdminApprovals } from "@/components/AdminApprovals";
@@ -54,8 +55,7 @@ export default async function AdminFeaturesPage() {
 
   const [
     pendingUsers,
-    storageInfo,
-    tvSize,
+    diskUsage,
     radarrDownloads,
     sonarrDownloads,
     radarrCompleted,
@@ -83,8 +83,7 @@ export default async function AdminFeaturesPage() {
       orderBy: { createdAt: "asc" },
       select: { id: true, name: true, createdAt: true },
     }),
-    getRadarrStorageInfo(),
-    getSonarrTvSize(),
+    getDiskUsage(),
     getRadarrActiveDownloads(),
     getSonarrActiveDownloads(),
     getRadarrCompletedMovies(),
@@ -325,7 +324,7 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section className="2xl:row-span-2">
+      <section className="lg:col-span-2 2xl:col-span-3">
         <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6 space-y-6">
           <ServicesPanel services={services} />
@@ -343,8 +342,8 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Portfolio visitors</h2>
+      <section className="lg:col-span-2 2xl:col-span-3">
+        <h2 className="text-lg font-semibold text-white mb-4">Visitors</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <VisitorsPanel summary={visitors} />
         </div>
@@ -401,7 +400,7 @@ export default async function AdminFeaturesPage() {
         </div>
       </section>
 
-      <section>
+      <section className="lg:col-span-2 2xl:col-span-3">
         <div className="mb-4 flex items-baseline justify-between gap-3">
           <h2 className="text-lg font-semibold text-white">Assistant</h2>
           <Link
@@ -427,17 +426,17 @@ export default async function AdminFeaturesPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Storage usage</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          {storageInfo ? (
+          {diskUsage ? (
             <StorageChart
-              totalSpace={storageInfo.totalSpace}
-              freeSpace={storageInfo.freeSpace}
-              moviesSize={storageInfo.moviesSize}
-              tvSize={tvSize ?? 0}
+              totalSpace={diskUsage.totalBytes}
+              freeSpace={diskUsage.freeBytes}
+              moviesSize={diskUsage.categories.movies}
+              tvSize={diskUsage.categories.tv}
               gamesSize={gamesSize}
             />
           ) : (
             <p className="text-white/50 text-sm">
-              Storage info unavailable — Radarr isn&apos;t configured or unreachable.
+              Storage info unavailable — mediabox isn&apos;t reachable.
             </p>
           )}
         </div>
