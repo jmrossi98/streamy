@@ -78,4 +78,7 @@ EXPOSE 3000
 # turning container start into a network dependency that fails closed on a bad
 # link. The direct path has no such fallback: it either exists or the container
 # tells us immediately.
-CMD ["sh", "-c", "mkdir -p /app/data /app/.next/cache && if [ \"$RUN_MIGRATE\" = '1' ]; then node node_modules/prisma/build/index.js migrate deploy; fi && chown -R nextjs:nodejs /app/data /app/.next/cache && exec runuser -u nextjs -- node server.js"]
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+CMD ["/app/docker-entrypoint.sh"]
