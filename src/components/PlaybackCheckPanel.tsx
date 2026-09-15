@@ -57,7 +57,10 @@ export function PlaybackCheckPanel({ runs }: { runs: PlaybackCheckRunSummary[] }
         )}
       </div>
 
-      <ul className="space-y-2">
+      {/* Same max-h-72/overflow-y-auto as Security's "Recent admin activity" --
+          both are run-history lists sitting under a fixed summary, so they
+          should behave the same way as the list grows. */}
+      <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
         {runs.map((run) => {
           const isOpen = expanded === run.id;
           return (
