@@ -89,7 +89,13 @@ export function BrowseCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug }),
       });
-      if (res.ok) setListed(true);
+      if (res.ok) {
+        setListed(true);
+        // The My List shelf is server-rendered, so it only picks this up on a
+        // re-render -- otherwise the game is on the list but the row above
+        // doesn't show it until the page is reloaded.
+        router.refresh();
+      }
     } finally {
       setBusy(null);
     }
@@ -116,12 +122,13 @@ export function BrowseCard({
              want a configured remote pattern for a host we never link directly. */
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
+            // One endpoint, which tries Flashpoint's logo, then its
+            // screenshot, then Andkon's icon before giving up.
             src={
-              game.id
-                ? `/api/flash/art/${encodeURIComponent(game.id)}`
-                : `/api/flash/andkon-art/${encodeURIComponent(
-                    (game.andkonPath ?? "").split("/")[1] ?? ""
-                  )}`
+              `/api/flash/art/${encodeURIComponent(game.id ?? "none")}` +
+              (game.andkonPath
+                ? `?andkon=${encodeURIComponent(game.andkonPath.split("/")[1] ?? "")}`
+                : "")
             }
             alt=""
             loading="lazy"
