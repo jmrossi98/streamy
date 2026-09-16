@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import type { FlashpointGame } from "@/lib/flashpoint";
-import { BrowseCard } from "./BrowseCard";
+import { BrowseCard, type CardGame } from "./BrowseCard";
+
+/**
+ * A hit from either source. `full` is present only on Flashpoint results,
+ * where the browser already holds the whole entry and can hand it straight
+ * back rather than making the server look it up again.
+ */
+type SearchHit = CardGame & { full?: FlashpointGame };
 
 /**
  * Finds a game in Flashpoint Archive and plays it.
@@ -21,7 +28,7 @@ import { BrowseCard } from "./BrowseCard";
  */
 export function FlashSearchBar({ ownedFlashpointIds }: { ownedFlashpointIds: string[] }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<FlashpointGame[] | null>(null);
+  const [results, setResults] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
   const owned = new Set(ownedFlashpointIds);
 
@@ -32,7 +39,7 @@ export function FlashSearchBar({ ownedFlashpointIds }: { ownedFlashpointIds: str
     setSearching(true);
     try {
       const res = await fetch(`/api/flash/search?q=${encodeURIComponent(q)}`);
-      const data = (await res.json().catch(() => ({}))) as { results?: FlashpointGame[] };
+      const data = (await res.json().catch(() => ({}))) as { results?: SearchHit[] };
       setResults(data.results ?? []);
     } catch {
       setResults([]);
@@ -42,7 +49,10 @@ export function FlashSearchBar({ ownedFlashpointIds }: { ownedFlashpointIds: str
   }
 
   return (
-    <div className="px-4 md:px-6">
+    // mb-10 rather than nothing: the first row heading sat immediately under
+    // the input, so the search block read as part of "My List" rather than as
+    // its own thing.
+    <div className="mb-10 px-4 md:px-6">
       <form onSubmit={search} className="flex max-w-2xl gap-2">
         <div className="relative min-w-0 flex-1">
           <span
@@ -96,7 +106,12 @@ export function FlashSearchBar({ ownedFlashpointIds }: { ownedFlashpointIds: str
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-5">
             {results.map((g) => (
-              <BrowseCard key={g.id} game={g} full={g} owned={owned.has(g.id)} />
+              <BrowseCard
+                key={g.id ?? g.andkonPath}
+                game={g}
+                full={g.full}
+                owned={!!g.id && owned.has(g.id)}
+              />
             ))}
           </div>
         </section>

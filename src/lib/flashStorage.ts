@@ -21,7 +21,7 @@
  * irreplaceable part, live in the database.
  */
 
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isSafeFlashFileName } from "./flashLibrary";
 
@@ -81,5 +81,27 @@ export async function storeLocalFile(
     return name;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Removes a downloaded SWF from the local volume.
+ *
+ * Only ever used for files this volume owns: mediabox's share is mounted
+ * read-only and is somebody else's copy, so a game stored there is dropped
+ * from the catalogue without touching the file.
+ *
+ * A missing file counts as success. The point of calling this is to end up
+ * with no file, and re-reporting "already gone" as an error would only make
+ * the caller handle a state it doesn't care about.
+ */
+export async function deleteLocalFile(fileName: string): Promise<boolean> {
+  const path = pathFor(fileName);
+  if (!path) return false;
+  try {
+    await unlink(path);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === "ENOENT";
   }
 }

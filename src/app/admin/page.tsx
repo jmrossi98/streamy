@@ -36,6 +36,7 @@ import { getGamesList, getGamesStorageSize, platformToSlug } from "@/lib/games";
 import { getGameDownloads, getWishlist } from "@/lib/gamarr";
 import { gameKeyOf } from "@/lib/romNames";
 import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
+import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
 import { formatFileSize } from "@/lib/formatBytes";
 
@@ -73,6 +74,7 @@ export default async function AdminFeaturesPage() {
     gameJobs,
     gameWishlist,
     ownedGames,
+    flashDownloads,
     subscriptions,
     awsMtd,
     awsServices,
@@ -116,6 +118,13 @@ export default async function AdminFeaturesPage() {
     getGameDownloads().catch(() => []),
     getWishlist().catch(() => []),
     getGamesList().catch(() => []),
+    // Every Flash game with a file on disk, so a bad download can be thrown
+    // away from here rather than over SSH.
+    prisma.flashGame.findMany({
+      where: { fileName: { not: null } },
+      select: { slug: true, title: true, fileSize: true, storage: true },
+      orderBy: { title: "asc" },
+    }),
     prisma.subscription.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }] }),
     // Both swallow their own failures and answer null, so an expired AWS
     // credential or an unreachable OpenRouter costs those figures and not the
@@ -393,6 +402,13 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Game downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <GameDownloadsPanel downloads={gameDownloads} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Flash downloads</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <FlashDownloadsPanel rows={flashDownloads} />
         </div>
       </section>
 

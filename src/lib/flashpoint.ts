@@ -364,9 +364,18 @@ function isModifiedBuild(path: string): boolean {
   return hostedBy(path, MODIFIED_GAME_HOSTS);
 }
 
-export function pickGameSwf(
+export type SwfPick = {
+  path: string;
+  /**
+   * True when the only candidates left were a site-locked build or a cheat
+   * rip -- i.e. the archive had nothing that will simply run here.
+   */
+  compromised: boolean;
+};
+
+export function pickGameSwfDetailed(
   entries: { path: string; size: number }[]
-): string | null {
+): SwfPick | null {
   const swfs = entries.filter((e) => e.path.toLowerCase().endsWith(".swf"));
   if (swfs.length === 0) return null;
 
@@ -403,7 +412,21 @@ export function pickGameSwf(
     pool.filter((e) => !isModifiedBuild(e.path)),
     pool,
   ];
-  const finalPool = tiers.find((t) => t.length > 0)!;
+  const tierUsed = tiers.findIndex((t) => t.length > 0);
+  const finalPool = tiers[tierUsed];
+  const path = finalPool.reduce((best, e) => (e.size > best.size ? e : best)).path;
 
-  return finalPool.reduce((best, e) => (e.size > best.size ? e : best)).path;
+  // Tiers 0 and 1 are the unlocked ones. Anything below means the archive held
+  // nothing that will run off its original domain, which the caller may be
+  // able to do something about.
+  return { path, compromised: tierUsed >= 2 };
+}
+
+/**
+ * The SWF to play out of a GameZIP, or null if there isn't one.
+ *
+ * Thin wrapper over pickGameSwfDetailed for callers that only want the path.
+ */
+export function pickGameSwf(entries: { path: string; size: number }[]): string | null {
+  return pickGameSwfDetailed(entries)?.path ?? null;
 }
