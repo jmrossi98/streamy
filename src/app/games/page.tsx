@@ -7,8 +7,7 @@ import { getGamePlatforms, isGamarrConfigured } from "@/lib/gamarr";
 import { GamesContent } from "./GamesContent";
 import { FlashGamesRows } from "./FlashGamesRows";
 import { FlashSyncButton } from "./FlashSyncButton";
-import { FlashSearchPanel } from "./FlashSearchPanel";
-import { FlashUploadForm } from "./FlashUploadForm";
+import { FlashSearchBar } from "./FlashSearchBar";
 import { FlashBrowseRows } from "./FlashBrowseRows";
 import { POPULAR_ROWS, findByTitle } from "@/lib/flashpoint";
 import { buildRows, listFlashGames } from "@/lib/flashGames";
@@ -76,7 +75,11 @@ export default async function GamesPage() {
       </h1>
 
       {/* Flash first: it is the half everyone can see, and the half that has
-          rows. My List is pinned at the top of it by buildRows. */}
+          rows. My List is pinned at the top of it by buildRows. Search sits
+          above the shelves -- it is the same audience and the same click ->
+          play flow, just for a specific title rather than a curated genre. */}
+      <FlashSearchBar ownedFlashpointIds={ownedFlashpointIds} />
+
       <FlashGamesRows rows={flashRows} myListSlugs={myFlashSlugs} />
 
       <FlashBrowseRows rows={browseRows} ownedFlashpointIds={ownedFlashpointIds} />
@@ -90,12 +93,11 @@ export default async function GamesPage() {
           <div className="mb-6 px-4 md:px-6">
             <h2 className="mb-1 font-display text-2xl font-bold text-white">Manage library</h2>
             <p className="mb-4 text-sm text-white/40">
-              Admin only. Import Flash games, or manage the ROM and emulator library.
+              Admin only. Manage the ROM and emulator library. Flash games are found
+              and added through the search bar above, same as everyone else.
             </p>
             <div className="space-y-4">
-              <FlashUploadForm />
               <FlashSyncButton />
-              <FlashSearchPanel />
             </div>
           </div>
 
