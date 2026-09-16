@@ -33,7 +33,17 @@ export const config = {
   // (see src/app/dev/player-harness/page.tsx), and /test-assets holds
   // nothing but that one throwaway synthetic test clip -- this only widens
   // *who can reach* those two paths, not what's actually there.
+  //
+  // /ruffle is the same class of miss, found while chasing "Flash games take
+  // a long time to start": it holds the Flash emulator's own static runtime
+  // (ruffle.js plus a multi-megabyte WASM/JS core), not game content, and had
+  // no exemption -- so every load of it paid for a full JWT decode via
+  // getToken() on top of the actual SWF fetch, and Next couldn't serve it as
+  // a plain cacheable static file. The content this actually needs to gate
+  // (the .swf itself) is unaffected: that goes through
+  // /api/flash/[fileName], which checks the session itself and is not
+  // exempted here.
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|login|who-is-watching|dev|test-assets).*)",
+    "/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|login|who-is-watching|dev|test-assets|ruffle).*)",
   ],
 };

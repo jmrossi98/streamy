@@ -46,6 +46,35 @@ const nextConfig = {
     ],
   },
 
+  // Ruffle's own runtime (public/ruffle/, copied in by copy-ruffle.mjs) gets
+  // no caching headers by default -- files under public/ aren't treated like
+  // _next/static's build-hashed output, which Next marks immutable on its
+  // own. Found while chasing "Flash games take a long time to start": every
+  // game load was re-fetching a multi-megabyte WASM runtime that had already
+  // been downloaded, because nothing told the browser it was safe to keep.
+  //
+  // Split in two on purpose. core.ruffle.<hash>.js and the .wasm files carry
+  // their exact content in the filename -- a Ruffle version bump changes the
+  // hash, so the URL changes, so `immutable` is genuinely safe here: an old
+  // cached copy can never be served for new content, because it would be a
+  // different URL. `ruffle.js` itself has no hash -- its bytes change on a
+  // version bump while the filename stays put -- so it is deliberately left
+  // off this list; caching it long-term would risk exactly the stale-file
+  // trap a hand-patched SWF hit under this app's own similarly-named,
+  // similarly "immutable" /api/flash/[name] cache policy.
+  async headers() {
+    return [
+      {
+        source: "/ruffle/:path*.wasm",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      {
+        source: "/ruffle/core.ruffle.:hash([a-f0-9]+).js",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+    ];
+  },
+
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "image.tmdb.org", pathname: "/**" },
