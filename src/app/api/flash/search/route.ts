@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { isPlayableHere, searchFlashpoint } from "@/lib/flashpoint";
+import { isFamilyFriendly, isPlayableHere, searchFlashpoint } from "@/lib/flashpoint";
 
 /**
  * Searches Flashpoint Archive for a game to play.
@@ -14,6 +14,11 @@ import { isPlayableHere, searchFlashpoint } from "@/lib/flashpoint";
  *
  * Filtered to Flash. The archive also preserves Shockwave, Unity, Java and
  * HTML5 content, none of which Ruffle can play here.
+ *
+ * Also filtered for adult material and for Flashpoint's `theatre` library.
+ * The archive is a preservation project, so it holds everything the Flash web
+ * had -- pornography included -- and an unfiltered title search on a
+ * household media server surfaced exactly that.
  */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,6 +33,8 @@ export async function GET(request: Request) {
 
   // searchFlashpoint never throws -- an unreachable archive is an empty
   // result, not a failed page.
-  const results = (await searchFlashpoint(query, 40)).filter(isPlayableHere);
+  const results = (await searchFlashpoint(query, 40)).filter(
+    (g) => isPlayableHere(g) && isFamilyFriendly(g)
+  );
   return NextResponse.json({ results });
 }

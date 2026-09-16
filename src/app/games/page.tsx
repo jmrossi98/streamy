@@ -6,10 +6,9 @@ import { getGamesList } from "@/lib/games";
 import { getGamePlatforms, isGamarrConfigured } from "@/lib/gamarr";
 import { GamesContent } from "./GamesContent";
 import { FlashGamesRows } from "./FlashGamesRows";
-import { FlashSyncButton } from "./FlashSyncButton";
 import { FlashSearchBar } from "./FlashSearchBar";
-import { FlashBrowseRows } from "./FlashBrowseRows";
-import { POPULAR_ROWS, findByTitle } from "@/lib/flashpoint";
+import { FlashBrowseRows, type BrowseRow } from "./FlashBrowseRows";
+import { allTimePopular, listCategories } from "@/lib/flashCatalog";
 import { buildRows, listFlashGames } from "@/lib/flashGames";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -36,19 +35,20 @@ export default async function GamesPage() {
   const localGames = await listFlashGames();
   const flashRows = buildRows(localGames, new Set(myFlashSlugs));
 
-  // Curated shelves from the archive, not a genre dump. Flashpoint has no
-  // popularity signal at all -- no counts, no ratings, not even a sort
-  // parameter -- so a raw genre query returns whatever the database reaches
-  // first, which is reliably games nobody recognises. Naming the titles is the
-  // only way to get a shelf worth browsing.
-  const browseRows = await Promise.all(
-    POPULAR_ROWS.map(async (row) => ({
-      genre: row.title,
-      games: (await Promise.all(row.games.map(findByTitle))).filter(
-        (g): g is NonNullable<typeof g> => g !== null
-      ),
-    }))
-  );
+  // Shelves come from the generated catalogue (scripts/build-flash-catalog.mjs)
+  // rather than from live archive queries. This page used to resolve about a
+  // hundred titles against Flashpoint on every single load, which was slow,
+  // rude to a volunteer-run service, and limited the shelves to whatever had
+  // been hand-listed. All-Time Popular leads, then one row per genre.
+  const browseRows: BrowseRow[] = [
+    { key: null, genre: "All-Time Popular", games: allTimePopular(24) },
+    ...listCategories().map((c) => ({
+      key: c.key,
+      genre: c.title,
+      games: c.games.slice(0, 24),
+      total: c.games.length,
+    })),
+  ];
   const ownedFlashpointIds = localGames
     .map((g) => g.flashpointId)
     .filter((id): id is string => !!id);
@@ -86,22 +86,15 @@ export default async function GamesPage() {
 
       {admin && (
         // Everything below the rule is admin-only and a different kind of
-        // thing -- library maintenance and the ROM/emulator half. Previously
-        // it ran straight on from the browsing rows with nothing marking the
-        // change of audience or purpose.
+        // thing -- the ROM/emulator half. Previously it ran straight on from
+        // the browsing rows with nothing marking the change of audience.
+        //
+        // The "Manage library" block that used to sit here is gone: its only
+        // control was a sync for hand-dropped SWFs on mediabox, and every
+        // game now arrives through the catalogue and the search bar, which
+        // need no admin step at all.
         <div className="mt-12 border-t border-white/10 pt-8">
-          <div className="mb-6 px-4 md:px-6">
-            <h2 className="mb-1 font-display text-2xl font-bold text-white">Manage library</h2>
-            <p className="mb-4 text-sm text-white/40">
-              Admin only. Manage the ROM and emulator library. Flash games are found
-              and added through the search bar above, same as everyone else.
-            </p>
-            <div className="space-y-4">
-              <FlashSyncButton />
-            </div>
-          </div>
-
-          <div className="mt-10 px-4 md:px-6">
+          <div className="px-4 md:px-6">
             <h2 className="mb-1 font-display text-2xl font-bold text-white">
               ROMs &amp; emulators
             </h2>

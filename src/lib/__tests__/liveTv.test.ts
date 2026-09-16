@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { mergeNextPrograms, type LiveChannel, type LiveProgram } from "../liveTv";
+import {
+  classifyChannel,
+  mergeNextPrograms,
+  type LiveChannel,
+  type LiveProgram,
+} from "../liveTv";
 
 const prog = (id: string, name: string): LiveProgram => ({
   id,
@@ -102,5 +107,50 @@ describe("mergeNextPrograms", () => {
     const input = [channel("c"), channel("a"), channel("b")];
     const out = mergeNextPrograms(input, []);
     expect(out.map((c) => c.id)).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("classifyChannel", () => {
+  // Names taken verbatim from the real lineup (1,477 channels, read live from
+  // the running Jellyfin on 2026-09-16). This tuner is an M3U playlist with no
+  // XMLTV behind it: every channel reports empty Genres and Tags and no
+  // CurrentProgram, so the name is the only genre signal there is.
+  it("files the real names it can recognise", () => {
+    expect(classifyChannel("3ABN Kids Network")).toBe("Kids");
+    expect(classifyChannel("30A Golf Kingdom (720p)")).toBe("Sports");
+    expect(classifyChannel("Bellator MMA")).toBe("Sports");
+    expect(classifyChannel("ABC News Live 1 (720p)")).toBe("News");
+    expect(classifyChannel("70s Cinema")).toBe("Movies");
+    expect(classifyChannel("30A Music (720p)")).toBe("Music");
+    expect(classifyChannel("3ABN English")).toBe("Faith");
+    expect(classifyChannel("Access 19")).toBe("Community");
+  });
+
+  // Ordering is deliberate: a network affiliate's news channel is more useful
+  // under News than under Broadcast.
+  it("prefers the more specific category when two could apply", () => {
+    expect(classifyChannel("ABC 25 News Central Texas (720p)")).toBe("News");
+    expect(classifyChannel("CBS 12 Cincinnati OH (WKRC) (1080p)")).toBe("Broadcast");
+  });
+
+  // Quality tags are on ~78% of these names and carry no genre. "(4K)" would
+  // otherwise read as a word.
+  it("ignores quality tags", () => {
+    expect(classifyChannel("Some Channel (1080p)")).toBe("Other");
+    expect(classifyChannel("Some Channel (4K)")).toBe("Other");
+  });
+
+  // Word boundaries matter: without them "teen" matches "canteen" and "cine"
+  // matches "medicine", which is how a filter starts quietly lying.
+  it("matches whole words, not substrings", () => {
+    expect(classifyChannel("The Canteen Channel")).toBe("Other");
+    expect(classifyChannel("Loomered TV")).toBe("Other");
+  });
+
+  // Most of this lineup genuinely has no genre in the name. Saying "Other" is
+  // the honest answer rather than forcing a guess.
+  it("returns Other for a name with no genre in it", () => {
+    expect(classifyChannel("00s Replay")).toBe("Other");
+    expect(classifyChannel("Burbank Channel (720p)")).toBe("Other");
   });
 });

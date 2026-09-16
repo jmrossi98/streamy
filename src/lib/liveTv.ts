@@ -373,3 +373,67 @@ export async function getLiveChannel(channelId: string): Promise<LiveChannel | n
   const channels = await getLiveChannels();
   return channels.find((c) => c.id === channelId) ?? null;
 }
+
+/**
+ * Channel categories, inferred from the channel's name.
+ *
+ * Inferred, because nothing better is available. This tuner is an M3U
+ * playlist with no XMLTV source behind it: Jellyfin reports empty `Genres`
+ * and `Tags` for every channel, and `CurrentProgram` -- whose IsNews/IsSports
+ * /IsKids flags would have answered this properly -- is absent on all 1,477 of
+ * them, verified live against the running server. Dispatcharr does hold the
+ * playlist's own group names, but only behind its authenticated API, which is
+ * a whole second integration for this one label.
+ *
+ * So this reads the name, which in an IPTV lineup is where the genre actually
+ * lives ("3ABN Kids Network", "70s Cinema", "30A Golf Kingdom"). It is a
+ * heuristic and will occasionally be wrong; it is offered as a filter someone
+ * chooses, never as a fact displayed about a channel.
+ */
+export const CHANNEL_CATEGORIES = [
+  "Sports", "News", "Movies", "Kids", "Music", "Faith", "Lifestyle",
+  "Broadcast", "Community",
+] as const;
+
+export type ChannelCategory = (typeof CHANNEL_CATEGORIES)[number] | "Other";
+
+/**
+ * Word-ish patterns per category, tried in order.
+ *
+ * Bounded on both sides so "Loomered TV" doesn't match on "more", and ordered
+ * so the more specific category wins where two could apply: "ABC 25 News" is
+ * more usefully News than Broadcast, and a kids' sports channel is more
+ * usefully Kids than Sports.
+ *
+ * Measured against this lineup's 1,477 real channel names, this files 36% of
+ * them and leaves the rest as "Other". That is the honest ceiling for reading
+ * names -- the remainder are regional and niche channels whose names simply
+ * carry no genre ("00s Replay", "Burbank Channel") -- and tuning further
+ * would just be overfitting to one playlist.
+ */
+const CATEGORY_PATTERNS: [ChannelCategory, RegExp][] = [
+  ["Kids", /\b(kids?|cartoons?|toons?|junior|nick\w*|disney|baby|teen)\b/i],
+  ["Faith", /\b(faith|church|gospel|bible|christian|catholic|3abn|ewtn|cbn|praise|worship|islam|quran|jewish|llbn|blessing)\b/i],
+  ["Sports", /\b(sports?|espn|nfl|nba|mlb|nhl|golf|soccer|football|basketball|baseball|hockey|tennis|boxing|ufc|mma|wrestl\w*|racing|nascar|motogp|cycling|rugby|cricket|fight\w*|outdoors?|fish\w*|hunt\w*)\b/i],
+  ["News", /\b(news\w*|cnn|msnbc|cnbc|bbc|weather|headlines?|politics?|c-?span)\b/i],
+  ["Movies", /\b(cinema|cine|movies?|film[sz]?|flix|thriller|horror|western|sci-?fi|drama)\b/i],
+  ["Music", /\b(music|mtv|vevo|radio|hits|country|rock|jazz|hip-?hop|rap|classical|karaoke|dance|cmt)\b/i],
+  ["Lifestyle", /\b(food|cook\w*|travel|home|garden|fashion|beauty|health|fitness|auto|cars?|comedy|game ?show|reality|documentar\w*|history|science|nature|animals?|shop\w*)\b/i],
+  ["Broadcast", /\b(cbs|nbc|abc|fox|pbs|telemundo|univision|ion|buzzr|mytv|cozi|metv)\b/i],
+  ["Community", /\b(community|public|government|county|municipal|city|town|borough)\b|\bcan tv|\baccess\b/i],
+];
+
+/**
+ * Best-guess category for a channel name, or "Other".
+ *
+ * Pure, so it tests without a tuner.
+ */
+export function classifyChannel(name: string): ChannelCategory {
+  // Quality tags are on ~78% of names here ("Darcizzle Offshore (720p)") and
+  // carry no genre, but "(4K)" would otherwise be read as a word.
+  const cleaned = name.replace(/\((?:\d{3,4}p|4k|hd|sd|fhd|uhd)\)/gi, " ");
+  for (const [category, pattern] of CATEGORY_PATTERNS) {
+    if (pattern.test(cleaned)) return category;
+  }
+  return "Other";
+}

@@ -1,10 +1,19 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { ROW_H2_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
 type ScrollableRowProps = {
   title: string;
+  /**
+   * Makes the heading a link to the full shelf.
+   *
+   * Opt-in: most rows are the whole of what they show, and a heading that
+   * looks clickable but isn't is worse than a plain one. Flash genre rows use
+   * it because a row of 24 is a window onto a few hundred.
+   */
+  href?: string;
   children: React.ReactNode;
 };
 
@@ -48,7 +57,7 @@ function useRowScrollState(scrollRef: React.RefObject<HTMLDivElement | null>) {
   return { canScrollLeft, canScrollRight };
 }
 
-export function ScrollableRow({ title, children }: ScrollableRowProps) {
+export function ScrollableRow({ title, href, children }: ScrollableRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { canScrollLeft, canScrollRight } = useRowScrollState(scrollRef);
 
@@ -61,7 +70,20 @@ export function ScrollableRow({ title, children }: ScrollableRowProps) {
 
   return (
     <section className={ROW_SECTION_CLASS}>
-      <h2 className={ROW_H2_CLASS}>{title}</h2>
+      {href ? (
+        <Link href={href} className={`${ROW_H2_CLASS} group/title inline-flex items-center gap-1.5 transition-colors hover:text-white/80`}>
+          {title}
+          <span
+            aria-hidden
+            className="translate-x-0 text-base opacity-0 transition-all group-hover/title:translate-x-0.5 group-hover/title:opacity-100"
+          >
+            &rsaquo;
+          </span>
+          <span className="sr-only">— see all</span>
+        </Link>
+      ) : (
+        <h2 className={ROW_H2_CLASS}>{title}</h2>
+      )}
       {/*
         Full-bleed scroll container on ALL screen sizes:
         -mx-4 (mobile) / md:-mx-6 (desktop) cancels the section padding so the

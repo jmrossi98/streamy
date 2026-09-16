@@ -46,15 +46,21 @@ export default async function FlashGamePage({
           ← Games
         </Link>
 
-        <h1 className="mb-1 mt-3 font-display text-2xl font-bold text-white sm:text-3xl">
-          {game.title}
-        </h1>
-        {game.developer && (
-          <p className="mb-3 text-sm text-white/50">{game.developer}</p>
-        )}
-
-        <div className="mb-4">
-          <FlashWatchlistButton slug={game.slug} initialInList={inList} />
+        {/* Title, byline and the list button on one line on desktop: the
+            player is the point of this page, and three stacked blocks above it
+            pushed it below the fold on a laptop. */}
+        <div className="mb-5 mt-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">
+              {game.title}
+            </h1>
+            {game.developer && (
+              <p className="mt-1 truncate text-sm text-white/50">{game.developer}</p>
+            )}
+          </div>
+          <div className="shrink-0">
+            <FlashWatchlistButton slug={game.slug} initialInList={inList} />
+          </div>
         </div>
 
         {game.isActionScript3 && (
@@ -81,19 +87,26 @@ export default async function FlashGamePage({
           <FlashImportPanel slug={game.slug} title={game.title} />
         )}
 
-        {game.description && (
-          <p className="mt-5 max-w-3xl text-sm leading-relaxed text-white/70">
-            {game.description}
-          </p>
-        )}
+        {(game.description || game.tags.length > 0) && (
+          <div className="mt-8 border-t border-white/10 pt-6">
+            {game.description && (
+              <p className="max-w-3xl text-sm leading-relaxed text-white/70">
+                {game.description}
+              </p>
+            )}
 
-        {game.tags.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {game.tags.map((tag) => (
-              <span key={tag} className="rounded bg-white/10 px-2 py-1 text-xs text-white/60">
-                {tag}
-              </span>
-            ))}
+            {game.tags.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {game.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-white/[0.07] px-2.5 py-1 text-xs text-white/60"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
