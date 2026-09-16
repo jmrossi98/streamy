@@ -5,6 +5,8 @@ import type { LiveChannel } from "@/lib/liveTv";
 import { ChannelCard } from "@/components/ChannelCard";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
+type HiddenEntry = { channelId: string; name: string };
+
 type Props = {
   /** JELLYFIN_URL/JELLYFIN_API_KEY are set. */
   envSet: boolean;
@@ -15,33 +17,132 @@ type Props = {
   truncated: boolean;
   /** Channel ids on this viewer's My List. Pinned above everything else. */
   myListIds: string[];
+  /** Channels this viewer has hidden from their lineup, name-snapshotted. */
+  hiddenChannels: HiddenEntry[];
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
 const PAGE_SIZE = 60;
 
-export function LiveTvContent({ envSet, reachable, channels, truncated, myListIds }: Props) {
+/** Leading numeric run of a channel number ("7.1" -> 7.1, "WGN" -> NaN). */
+function numberValue(number: string | null): number {
+  if (!number) return NaN;
+  const m = number.match(/^\d+(\.\d+)?/);
+  return m ? parseFloat(m[0]) : NaN;
+}
+
+export function LiveTvContent({
+  envSet, reachable, channels, truncated, myListIds, hiddenChannels,
+}: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
+  const [sortBy, setSortBy] = useState<"name" | "number">("name");
+
+  const [hidden, setHidden] = useState<HiddenEntry[]>(hiddenChannels);
+  const [hiddenPanelOpen, setHiddenPanelOpen] = useState(false);
+  const [unhiding, setUnhiding] = useState<string | null>(null);
+
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [hiding, setHiding] = useState(false);
+
+  const hiddenIds = useMemo(() => new Set(hidden.map((h) => h.channelId)), [hidden]);
+  const channelById = useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels]);
+
+  const sorted = useMemo(() => {
+    const arr = [...channels];
+    if (sortBy === "number") {
+      arr.sort((a, b) => {
+        const an = numberValue(a.number);
+        const bn = numberValue(b.number);
+        if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
+        if (!Number.isNaN(an)) return -1;
+        if (!Number.isNaN(bn)) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    } else {
+      arr.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return arr;
+  }, [channels, sortBy]);
+
+  const unfilteredVisible = useMemo(
+    () => sorted.filter((c) => !hiddenIds.has(c.id)),
+    [sorted, hiddenIds]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return channels;
+    if (!q) return unfilteredVisible;
     // Number as well as name: on a broadcast lineup people reach for "7.1"
     // as readily as for the call sign.
-    return channels.filter(
+    return unfilteredVisible.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.number ?? "").toLowerCase().includes(q) ||
         (c.now?.name ?? "").toLowerCase().includes(q)
     );
-  }, [channels, query]);
+  }, [unfilteredVisible, query]);
 
   const listed = new Set(myListIds);
   // Pinned above the rest, and excluded from search so it stays a stable
-  // shelf rather than disappearing the moment someone types.
-  const mine = channels.filter((c) => listed.has(c.id));
+  // shelf rather than disappearing the moment someone types. Left out of
+  // bulk-hide on purpose -- favorites are managed with the star button, and
+  // mixing the two actions on the same shelf invites hiding something you
+  // just starred.
+  const mine = channels.filter((c) => listed.has(c.id) && !hiddenIds.has(c.id));
   const visible = filtered.slice(0, shown);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
+
+  async function hideSelected() {
+    const entries = [...selectedIds]
+      .map((id) => channelById.get(id))
+      .filter((c): c is LiveChannel => !!c)
+      .map((c) => ({ channelId: c.id, name: c.name }));
+    if (entries.length === 0) return;
+    setHiding(true);
+    try {
+      const res = await fetch("/api/live/hidden", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channels: entries }),
+      });
+      if (res.ok) {
+        setHidden((prev) => [
+          ...prev,
+          ...entries.filter((e) => !prev.some((p) => p.channelId === e.channelId)),
+        ]);
+        exitSelectMode();
+      }
+    } finally {
+      setHiding(false);
+    }
+  }
+
+  async function unhide(channelId: string) {
+    setUnhiding(channelId);
+    try {
+      const res = await fetch(`/api/live/hidden?channelId=${encodeURIComponent(channelId)}`, {
+        method: "DELETE",
+      });
+      if (res.ok) setHidden((prev) => prev.filter((h) => h.channelId !== channelId));
+    } finally {
+      setUnhiding(null);
+    }
+  }
 
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
   // "Jellyfin is fine but has no tuner", and "there's a tuner but it returned
@@ -89,29 +190,108 @@ export function LiveTvContent({ envSet, reachable, channels, truncated, myListId
         <h1 className={ROW_H2_CLASS}>Live TV</h1>
         {channels.length > 0 && (
           <span className="text-sm text-white/40">
-            {query ? `${filtered.length} of ${channels.length}` : `${channels.length} channel${channels.length === 1 ? "" : "s"}`}
+            {query ? `${filtered.length} of ${unfilteredVisible.length}` : `${unfilteredVisible.length} channel${unfilteredVisible.length === 1 ? "" : "s"}`}
             {truncated && !query ? "+" : ""}
           </span>
         )}
       </div>
 
-      {channels.length > PAGE_SIZE && (
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            // Reset paging here rather than in an effect: it is a consequence
-            // of the edit, not of the render. Without it the reveal count from
-            // the previous search carries over and results look arbitrarily
-            // long.
-            setShown(PAGE_SIZE);
-          }}
-          placeholder="Search channels…"
-          // text-base on mobile: iOS zooms the viewport on a focused input
-          // under 16px and there is no way back out without pinching.
-          className="mb-4 w-full rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
-        />
+      {channels.length > 0 && !empty && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {channels.length > PAGE_SIZE && (
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // Reset paging here rather than in an effect: it is a consequence
+                // of the edit, not of the render. Without it the reveal count from
+                // the previous search carries over and results look arbitrarily
+                // long.
+                setShown(PAGE_SIZE);
+              }}
+              placeholder="Search channels…"
+              // text-base on mobile: iOS zooms the viewport on a focused input
+              // under 16px and there is no way back out without pinching.
+              className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
+            />
+          )}
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as "name" | "number")}
+            className="shrink-0 rounded border border-white/15 bg-black/40 px-2 py-2 text-sm text-white focus:border-white/40 focus:outline-none"
+            aria-label="Sort channels"
+          >
+            <option value="name">Sort: Name</option>
+            <option value="number">Sort: Channel #</option>
+          </select>
+
+          {!selectMode ? (
+            <button
+              type="button"
+              onClick={() => setSelectMode(true)}
+              className="shrink-0 rounded bg-white/10 px-3 py-2 text-sm text-white transition-colors hover:bg-white/20"
+            >
+              Select
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={exitSelectMode}
+              className="shrink-0 rounded bg-white/10 px-3 py-2 text-sm text-white transition-colors hover:bg-white/20"
+            >
+              Cancel
+            </button>
+          )}
+
+          {hidden.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setHiddenPanelOpen((v) => !v)}
+              className="shrink-0 rounded bg-white/10 px-3 py-2 text-sm text-white/70 transition-colors hover:bg-white/20"
+            >
+              Hidden ({hidden.length})
+            </button>
+          )}
+        </div>
+      )}
+
+      {selectMode && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-white/15 bg-netflix-dark/80 px-4 py-3">
+          <span className="text-sm text-white/70">
+            {selectedIds.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={hideSelected}
+            disabled={selectedIds.size === 0 || hiding}
+            className="ml-auto rounded bg-netflix-red px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-netflix-red/80 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {hiding ? "Hiding…" : `Hide selected`}
+          </button>
+        </div>
+      )}
+
+      {hiddenPanelOpen && hidden.length > 0 && (
+        <div className="mb-6 rounded-lg border border-white/10 bg-netflix-dark/60 p-4">
+          <h2 className="mb-3 text-sm font-semibold text-white/80">Hidden channels</h2>
+          <ul className="space-y-2">
+            {hidden.map((h) => (
+              <li key={h.channelId} className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate text-white/70">{h.name}</span>
+                <button
+                  type="button"
+                  onClick={() => unhide(h.channelId)}
+                  disabled={unhiding === h.channelId}
+                  className="shrink-0 rounded bg-white/10 px-2.5 py-1 text-xs text-white transition-colors hover:bg-white/20 disabled:opacity-50"
+                >
+                  {unhiding === h.channelId ? "…" : "Unhide"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {empty ? (
@@ -121,7 +301,7 @@ export function LiveTvContent({ envSet, reachable, channels, truncated, myListId
         </div>
       ) : (
         <>
-          {mine.length > 0 && !query && (
+          {mine.length > 0 && !query && !selectMode && (
             <section className="mb-8">
               <h2 className="mb-3 font-display text-xl font-bold text-white">My Stations</h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -132,13 +312,20 @@ export function LiveTvContent({ envSet, reachable, channels, truncated, myListId
             </section>
           )}
 
-          {mine.length > 0 && !query && (
+          {mine.length > 0 && !query && !selectMode && (
             <h2 className="mb-3 font-display text-xl font-bold text-white">All Channels</h2>
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {visible.map((c) => (
-              <ChannelCard key={c.id} channel={c} inList={listed.has(c.id)} />
+              <ChannelCard
+                key={c.id}
+                channel={c}
+                inList={listed.has(c.id)}
+                selectMode={selectMode}
+                selected={selectedIds.has(c.id)}
+                onToggleSelect={() => toggleSelect(c.id)}
+              />
             ))}
           </div>
 
