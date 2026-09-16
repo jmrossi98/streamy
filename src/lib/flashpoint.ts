@@ -105,20 +105,26 @@ export const POPULAR_ROWS: { title: string; games: string[] }[] = [
     games: [
       "The Impossible Quiz", "Line Rider", "Alien Hominid", "Motherload",
       "Interactive Buddy", "Stick RPG", "Bloons", "N",
+      "Cursor*10", "Toss the Turtle", "QWOP", "Robot Unicorn Attack",
+      "Give Up", "Sonny", "Rebuild", "Bowman 2",
     ],
   },
   {
     title: "Platformers",
     games: [
       "Super Mario 63", "Fancy Pants Adventure", "Meat Boy", "Vex",
-      "Red Ball", "Electric Man 2", "Fireboy and Watergirl",
+      "Red Ball", "Electricman 2", "Fireboy and Watergirl",
+      "Canabalt", "Icy Tower", "This Is the Only Level", "Robot Wants Kitty",
+      "Winterbells", "Chibi Knight", "Raft Wars",
     ],
   },
   {
     title: "Tower Defense & Strategy",
     games: [
-      "Bloons Tower Defense", "Kingdom Rush", "Gemcraft", "Age of War",
+      "Bloons TD", "Kingdom Rush", "Gemcraft", "Age of War",
       "The Last Stand", "Desktop Tower Defense", "Warlords",
+      "Flash Element TD", "Pandemic", "Warfare 1917",
+      "Sonny 2", "Epic War", "Elemental",
     ],
   },
   {
@@ -126,6 +132,8 @@ export const POPULAR_ROWS: { title: string; games: string[] }[] = [
     games: [
       "Raze", "Sift Heads", "Madness Interactive", "Boxhead",
       "Thing Thing", "Territory War", "Epic Battle Fantasy",
+      "Bowman", "Stick War", "Swords and Sandals 2", "Raze 2",
+      "Money Movers", "Zombotron", "Sift Heads World",
     ],
   },
   {
@@ -133,6 +141,8 @@ export const POPULAR_ROWS: { title: string; games: string[] }[] = [
     games: [
       "Crush the Castle", "Doodle God", "Achievement Unlocked", "Bubble Trouble",
       "Portal: The Flash Version", "Learn to Fly", "Happy Wheels",
+      "Bloxorz", "Fantastic Contraption 2", "Snail Bob", "The World's Hardest Game",
+      "Cargo Bridge", "Feed Us", "Sushi Cat",
     ],
   },
 ];
