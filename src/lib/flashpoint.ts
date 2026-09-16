@@ -101,48 +101,67 @@ export function toFlashpointGame(raw: RawGame): FlashpointGame | null {
  */
 export const POPULAR_ROWS: { title: string; games: string[] }[] = [
   {
-    title: "Flash Classics",
+    title: "All-Time Popular",
     games: [
-      "The Impossible Quiz", "Line Rider", "Alien Hominid", "Motherload",
-      "Interactive Buddy", "Stick RPG", "Bloons", "N",
-      "Cursor*10", "Toss the Turtle", "QWOP", "Robot Unicorn Attack",
-      "Give Up", "Sonny", "Rebuild", "Bowman 2",
+      "The Impossible Quiz", "Line Rider", "Bloons TD", "Stick RPG", "Learn to Fly",
+      "Achievement Unlocked", "QWOP", "Raze", "Alien Hominid", "Interactive Buddy",
+      "N: The Way", "Age of War", "Portal: The Flash Version", "Duck Life", "Epic Battle Fantasy", "Sift Heads",
     ],
   },
   {
     title: "Platformers",
     games: [
-      "Super Mario 63", "Fancy Pants Adventure", "Meat Boy", "Vex",
-      "Red Ball", "Electricman 2", "Fireboy and Watergirl",
-      "Canabalt", "Icy Tower", "This Is the Only Level", "Robot Wants Kitty",
-      "Winterbells", "Chibi Knight", "Raft Wars",
+      "Super Mario 63", "Fancy Pants Adventure", "Meat Boy", "Vex", "Red Ball",
+      "Electricman 2", "Fireboy and Watergirl", "Canabalt", "Icy Tower", "This Is the Only Level",
+      "Robot Wants Kitty", "Winterbells", "Chibi Knight", "Raft Wars", "William and Sly",
+    ],
+  },
+  {
+    title: "Action & Adventure",
+    games: [
+      "Alien Hominid", "Madness Interactive", "Thing Thing", "Territory War", "Riddle School",
+      "Motherload", "South Park Character Creator", "Zombotron", "Vertical Drop Heroes", "Penguins Attack 2",
+      "Hobo", "Bob the Robber", "Great Basement Escape",
+    ],
+  },
+  {
+    title: "Shooters",
+    games: [
+      "Raze", "Sift Heads", "Boxhead", "Bowman", "Sift Heads World",
+      "Thing Thing Arena 2", "Dead Zed", "Dogfight", "Clear Vision 2", "Scope: First Blood",
+      "Tactical Assassin 2", "Swords and Sandals 2",
     ],
   },
   {
     title: "Tower Defense & Strategy",
     games: [
-      "Bloons TD", "Kingdom Rush", "Gemcraft", "Age of War",
-      "The Last Stand", "Desktop Tower Defense", "Warlords",
-      "Flash Element TD", "Pandemic", "Warfare 1917",
-      "Sonny 2", "Epic War", "Elemental",
+      "Bloons TD", "Kingdom Rush", "Gemcraft", "Age of War", "The Last Stand",
+      "Desktop Tower Defense", "Warlords", "Flash Element TD", "Warfare 1917", "Sonny 2",
+      "Epic War", "Stick War", "Xeno Tactic", "Miragine War",
     ],
   },
   {
-    title: "Action & Shooters",
+    title: "Puzzle & Physics",
     games: [
-      "Raze", "Sift Heads", "Madness Interactive", "Boxhead",
-      "Thing Thing", "Territory War", "Epic Battle Fantasy",
-      "Bowman", "Stick War", "Swords and Sandals 2", "Raze 2",
-      "Money Movers", "Zombotron", "Sift Heads World",
+      "Crush the Castle", "Doodle God", "Bubble Trouble", "Bloxorz", "Fantastic Contraption 2",
+      "Snail Bob", "The World's Hardest Game", "Cargo Bridge", "Feed Us", "Sushi Cat",
+      "Factory Balls", "Chronotron",
     ],
   },
   {
-    title: "Physics & Puzzle",
+    title: "Racing & Sports",
     games: [
-      "Crush the Castle", "Doodle God", "Achievement Unlocked", "Bubble Trouble",
-      "Portal: The Flash Version", "Learn to Fly", "Happy Wheels",
-      "Bloxorz", "Fantastic Contraption 2", "Snail Bob", "The World's Hardest Game",
-      "Cargo Bridge", "Feed Us", "Sushi Cat",
+      "Coaster Racer", "Stunt Dirt Bike", "Battle Gear 2", "Nuclear Outrun", "Dune Buggy",
+      "Penalty Fever", "DX Hockey", "Billiard Blitz 2", "Billiards", "Basket Balls",
+      "Homerun in Berzerk Land",
+    ],
+  },
+  {
+    title: "Skill & Reflex",
+    games: [
+      "Hedgehog Launch", "Toss the Turtle", "Wake Up the Box", "Hanger", "Boombot",
+      "Blosics", "Blosics 2", "Perfect Balance 2", "Super Stacker 2", "Gravitex 2",
+      "Meteor Launch", "Roly-Poly Cannon 2", "Drunken Masters",
     ],
   },
 ];
