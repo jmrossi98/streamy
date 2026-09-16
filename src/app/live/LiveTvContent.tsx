@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { LiveChannel } from "@/lib/liveTv";
+import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { ChannelCard } from "@/components/ChannelCard";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
@@ -37,6 +37,7 @@ export function LiveTvContent({
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
   const [sortBy, setSortBy] = useState<"name" | "number">("name");
+  const [category, setCategory] = useState<string>("all");
 
   const [hidden, setHidden] = useState<HiddenEntry[]>(hiddenChannels);
   const [hiddenPanelOpen, setHiddenPanelOpen] = useState(false);
@@ -48,6 +49,25 @@ export function LiveTvContent({
 
   const hiddenIds = useMemo(() => new Set(hidden.map((h) => h.channelId)), [hidden]);
   const channelById = useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels]);
+
+  // Computed once over the whole lineup rather than per render of a card:
+  // classifying 1,477 names on every keystroke is wasted work.
+  const categoryById = useMemo(
+    () => new Map(channels.map((c) => [c.id, classifyChannel(c.name)])),
+    [channels]
+  );
+
+  // Only offer categories this lineup actually has, with counts. An empty
+  // "Kids" option that filters to nothing is worse than no option.
+  const availableCategories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const cat of categoryById.values()) {
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    }
+    return [...CHANNEL_CATEGORIES, "Other"]
+      .filter((c) => (counts.get(c) ?? 0) > 0)
+      .map((c) => ({ name: c, count: counts.get(c)! }));
+  }, [categoryById]);
 
   const sorted = useMemo(() => {
     const arr = [...channels];
@@ -67,8 +87,13 @@ export function LiveTvContent({
   }, [channels, sortBy]);
 
   const unfilteredVisible = useMemo(
-    () => sorted.filter((c) => !hiddenIds.has(c.id)),
-    [sorted, hiddenIds]
+    () =>
+      sorted.filter(
+        (c) =>
+          !hiddenIds.has(c.id) &&
+          (category === "all" || categoryById.get(c.id) === category)
+      ),
+    [sorted, hiddenIds, category, categoryById]
   );
 
   const filtered = useMemo(() => {
@@ -215,6 +240,25 @@ export function LiveTvContent({
               // under 16px and there is no way back out without pinching.
               className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
             />
+          )}
+
+          {availableCategories.length > 1 && (
+            <select
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                setShown(PAGE_SIZE);
+              }}
+              className="shrink-0 rounded border border-white/15 bg-black/40 px-2 py-2 text-sm text-white focus:border-white/40 focus:outline-none"
+              aria-label="Filter channels by type"
+            >
+              <option value="all">All types</option>
+              {availableCategories.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name} ({c.count})
+                </option>
+              ))}
+            </select>
           )}
 
           <select

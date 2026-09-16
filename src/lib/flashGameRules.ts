@@ -34,17 +34,6 @@ export type FlashGameRow = {
 };
 
 /**
- * Rows below this aren't worth their own heading.
- *
- * There is no catch-all any more, so a game whose only tags are rare simply
- * doesn't appear in the library rows -- it is still reachable from My List and
- * from search, and a shelf of one is worse than no shelf.
- */
-const MIN_ROW_SIZE = 3;
-/** Tags that describe bookkeeping rather than a genre anyone browses by. */
-const NON_GENRE_TAGS = new Set(["auto-zipped", "unsorted", "untagged"]);
-
-/**
  * Filename stem -> URL-safe identity.
  *
  * Deliberately derived from the filename rather than the title: the file is
@@ -82,49 +71,26 @@ export function parseTags(tags: string): string[] {
 }
 
 /**
- * Groups games into the tab's rows.
+ * The viewer's own row, above the browsable shelves.
  *
  * Pure, so it tests without a database.
  *
- * Tags come from Flashpoint and are genuinely uneven -- a game can carry six,
- * or none. So a game appears in every row it qualifies for rather than being
- * forced into one, small tags fold into a catch-all instead of producing rows
- * of one, and the catch-all is always present so a library with no tags at all
- * still renders something.
+ * Just My List now. This used to also emit a row per Flashpoint tag across
+ * whatever happened to be downloaded, which produced a wall of near-duplicate
+ * shelves ("Action", "Arcade", "Platformer"...) built from a handful of games,
+ * sitting above the real genre shelves and pushing them off the screen. The
+ * genres are the catalogue's job; this is only "the games you saved".
+ *
+ * Returns an array rather than a single row so the caller stays the same
+ * shape, and so an empty list renders nothing at all instead of an empty
+ * heading.
  */
 export function buildRows(
   games: FlashGameSummary[],
-  /** Slugs on this viewer's My List. Pinned as the first row when non-empty. */
+  /** Slugs on this viewer's My List. */
   myListSlugs: ReadonlySet<string> = new Set()
 ): FlashGameRow[] {
-  // My List first, always. It is the row someone came for, and burying it
-  // under whichever genre happens to be biggest makes it useless.
-  const pinned: FlashGameRow[] = [];
-  if (myListSlugs.size > 0) {
-    const mine = games.filter((g) => myListSlugs.has(g.slug));
-    if (mine.length > 0) pinned.push({ key: "my-list", title: "My List", games: mine });
-  }
-
-  const byTag = new Map<string, FlashGameSummary[]>();
-  for (const game of games) {
-    for (const tag of game.tags) {
-      const key = tag.toLowerCase();
-      if (NON_GENRE_TAGS.has(key)) continue;
-      const list = byTag.get(tag) ?? [];
-      list.push(game);
-      byTag.set(tag, list);
-    }
-  }
-
-  const rows: FlashGameRow[] = [...byTag.entries()]
-    .filter(([, list]) => list.length >= MIN_ROW_SIZE)
-    // Biggest first, then alphabetical -- a stable order, and the rows someone
-    // is most likely to want are nearest the top.
-    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-    .map(([tag, list]) => ({ key: `tag:${tag}`, title: tag, games: list }));
-
-  // No catch-all row. It duplicated everything already shown above it, which
-  // made the page twice as long for no new information -- and with the
-  // archive browsable below, "everything" is not a useful shelf anyway.
-  return [...pinned, ...rows];
+  if (myListSlugs.size === 0) return [];
+  const mine = games.filter((g) => myListSlugs.has(g.slug));
+  return mine.length > 0 ? [{ key: "my-list", title: "My List", games: mine }] : [];
 }

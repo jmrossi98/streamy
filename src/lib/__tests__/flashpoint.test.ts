@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPlayableHere, pickGameSwf, toFlashpointGame } from "../flashpoint";
+import { isFamilyFriendly, isPlayableHere, pickGameSwf, toFlashpointGame } from "../flashpoint";
 
 // Shaped from a real response (verified live 2026-09-13 against
 // db-api.unstable.life), not from the docs -- the docs are a TODO in their repo.
@@ -80,6 +80,43 @@ describe("isPlayableHere", () => {
   it("is case-insensitive about the platform name", () => {
     const g = toFlashpointGame({ id: "a", title: "T", platform: "flash" })!;
     expect(isPlayableHere(g)).toBe(true);
+  });
+});
+
+describe("isFamilyFriendly", () => {
+  const g = (tags: string[], library = "arcade") =>
+    toFlashpointGame({ id: "a", title: "T", tags, library })!;
+
+  // Tag sets copied from real archive entries. Flashpoint preserves what the
+  // Flash web actually had, so an unfiltered search on a household media
+  // server surfaced pornography -- this is the filter that stops it.
+  it("rejects the real tag sets adult entries carry", () => {
+    expect(isFamilyFriendly(g(["Adult", "Sexual Content", "Loop", "Spam", "Nudity", "Porn"])))
+      .toBe(false);
+    expect(isFamilyFriendly(g(["Adult", "Nudity", "Poker"]))).toBe(false);
+  });
+
+  // "theatre" is Flashpoint's animation/video-loop library. It is Flash, it
+  // loads in Ruffle, and it is not a game.
+  it("rejects the theatre library even when nothing is adult-tagged", () => {
+    expect(isFamilyFriendly(g(["Comedy", "Joke"], "theatre"))).toBe(false);
+    expect(isFamilyFriendly(g(["Comedy", "Joke"], "Theatre"))).toBe(false);
+  });
+
+  it("accepts an ordinary arcade game", () => {
+    expect(isFamilyFriendly(g(["Action", "Platformer", "Auto-zipped"]))).toBe(true);
+    expect(isFamilyFriendly(g([]))).toBe(true);
+  });
+
+  it("matches adult tags regardless of case", () => {
+    expect(isFamilyFriendly(g(["ADULT"]))).toBe(false);
+    expect(isFamilyFriendly(g(["sexual content"]))).toBe(false);
+  });
+
+  // Defaults matter: an entry with no library field is a game, not a loop,
+  // and must not be filtered out on a missing value.
+  it("treats a missing library as arcade", () => {
+    expect(isFamilyFriendly(toFlashpointGame({ id: "a", title: "T" })!)).toBe(true);
   });
 });
 
@@ -171,6 +208,34 @@ describe("pickGameSwf", () => {
     expect(pickGameSwf(entries)).toBe(
       "content/andkon.com/arcade/adventureaction/stickrpg/andkon170.swf"
     );
+  });
+
+  // Regression: Duck Life 4's real GameZIP (flashpointId
+  // e41bbfa1-1de6-41e8-81ff-a1012d00143c, fetched and inspected live on
+  // 2026-09-16) holds exactly two builds -- Armor Games' own, which is
+  // domain-locked and showed the "play this on Armor Games" splash, and a
+  // mirror ~16KB smaller that plays fine. Armor Games used to be on the
+  // trusted-portal list, so it won on both portal preference and size, and
+  // the locked build is what a viewer got.
+  it("prefers an unlocked mirror over a site-locker's own build (Duck Life 4)", () => {
+    const entries = [
+      e("content/armorgames.com/DuckLife4/ducklife-4-13008.swf", 8_899_507),
+      e("content/games.wixgames.co.uk/games/ducklife4/swf/game.swf", 8_883_728),
+    ];
+    expect(pickGameSwf(entries)).toBe(
+      "content/games.wixgames.co.uk/games/ducklife4/swf/game.swf"
+    );
+  });
+
+  // A locked build is at least the real game, and says plainly why it won't
+  // run. A cheat rip runs and quietly isn't the game you clicked, so it ranks
+  // below even the lock.
+  it("prefers a locked official build over a cheat-site rip", () => {
+    const entries = [
+      e("content/www.xgenstudios.com/game.swf", 2_540_508),
+      e("content/www.arcadeprehacks.com/swf/game-hacked.swf", 9_000_000),
+    ];
+    expect(pickGameSwf(entries)).toBe("content/www.xgenstudios.com/game.swf");
   });
 
   it("falls through to size when no candidate is from a known portal (Bloons TD 5)", () => {

@@ -43,18 +43,32 @@ export function FlashSearchBar({ ownedFlashpointIds }: { ownedFlashpointIds: str
 
   return (
     <div className="px-4 md:px-6">
-      <form onSubmit={search} className="flex gap-2">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search for a Flash game…"
-          className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
-        />
+      <form onSubmit={search} className="flex max-w-2xl gap-2">
+        <div className="relative min-w-0 flex-1">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+            </svg>
+          </span>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search thousands of Flash games…"
+            // text-base on mobile: iOS zooms the viewport on a focused input
+            // under 16px and there is no way back out without pinching.
+            className="w-full rounded-full border border-white/15 bg-black/40 py-2.5 pl-9 pr-3 text-base text-white placeholder-white/30 transition-colors focus:border-white/40 focus:bg-black/60 focus:outline-none sm:text-sm"
+          />
+        </div>
         <button
           type="submit"
           disabled={!query.trim() || searching}
-          className="rounded bg-netflix-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40"
+          className="shrink-0 rounded-full bg-netflix-red px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40"
         >
           {searching ? "Searching…" : "Search"}
         </button>
@@ -65,11 +79,27 @@ export function FlashSearchBar({ ownedFlashpointIds }: { ownedFlashpointIds: str
       )}
 
       {results !== null && results.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-3">
-          {results.map((g) => (
-            <BrowseCard key={g.id} game={g} owned={owned.has(g.id)} />
-          ))}
-        </div>
+        <section className="mt-5">
+          <div className="mb-3 flex items-baseline gap-2">
+            <h2 className="font-display text-lg font-bold text-white">Search results</h2>
+            <span className="text-sm text-white/40">{results.length}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setResults(null);
+                setQuery("");
+              }}
+              className="ml-auto text-sm text-white/50 transition-colors hover:text-white"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-5">
+            {results.map((g) => (
+              <BrowseCard key={g.id} game={g} full={g} owned={owned.has(g.id)} />
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );

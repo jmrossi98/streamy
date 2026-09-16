@@ -10,7 +10,7 @@
 import AdmZip from "adm-zip";
 import { prisma } from "./db";
 import {
-  fetchFlashpointAsset,
+  fetchFlashpointAssetDetailed,
   flashpointGameZipUrl,
   pickGameSwf,
   type FlashpointGame,
@@ -87,8 +87,9 @@ export async function importGameFile(slug: string): Promise<ImportResult> {
     return { ok: false, reason: "This game has no Flashpoint entry to download from" };
   }
 
-  const zipBytes = await fetchFlashpointAsset(flashpointGameZipUrl(game.flashpointId));
-  if (!zipBytes) return { ok: false, reason: "Couldn’t download from Flashpoint" };
+  const fetched = await fetchFlashpointAssetDetailed(flashpointGameZipUrl(game.flashpointId));
+  if (!fetched.ok) return { ok: false, reason: fetched.reason };
+  const zipBytes = fetched.bytes;
 
   let entries: { path: string; size: number }[];
   let zip: AdmZip;

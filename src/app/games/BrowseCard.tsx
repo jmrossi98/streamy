@@ -5,6 +5,20 @@ import { useRouter } from "next/navigation";
 import type { FlashpointGame } from "@/lib/flashpoint";
 
 /**
+ * The little a card actually needs.
+ *
+ * Search hands over a whole FlashpointGame, because the browser already has
+ * one. The generated catalogue stores three fields per game across thousands
+ * of entries, so it hands over only this -- and the server fills in the rest
+ * from the id when someone opens the game.
+ */
+export type CardGame = {
+  id: string;
+  title: string;
+  developer: string;
+};
+
+/**
  * One archive game, with the two things that were missing: a way in, and a way
  * to add it.
  *
@@ -15,7 +29,20 @@ import type { FlashpointGame } from "@/lib/flashpoint";
  * are separate on purpose, so bookmarking from a 180,000-entry archive stays
  * free.
  */
-export function BrowseCard({ game, owned }: { game: FlashpointGame; owned: boolean }) {
+export function BrowseCard({
+  game,
+  owned,
+  full,
+}: {
+  game: CardGame;
+  owned: boolean;
+  /**
+   * The complete archive entry, when the caller has one. Sent as-is so a
+   * search result doesn't need a second lookup; without it the server
+   * resolves the id itself.
+   */
+  full?: FlashpointGame;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState<"open" | "list" | null>(null);
   const [listed, setListed] = useState(owned);
@@ -25,7 +52,7 @@ export function BrowseCard({ game, owned }: { game: FlashpointGame; owned: boole
     const res = await fetch("/api/flash/known", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ game }),
+      body: JSON.stringify(full ? { game: full } : { id: game.id }),
     });
     if (!res.ok) return null;
     const data = (await res.json().catch(() => ({}))) as { slug?: string };
