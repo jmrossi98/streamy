@@ -60,7 +60,20 @@ function ProgramLine({ program, label }: { program: LiveProgram | null; label: s
   );
 }
 
-export function ChannelCard({ channel, inList }: { channel: LiveChannel; inList: boolean }) {
+type Props = {
+  channel: LiveChannel;
+  inList: boolean;
+  /**
+   * Turns the card from a link into a checkbox toggle for bulk actions.
+   * Navigation would fight with selecting a channel to hide, so the card
+   * picks one job or the other rather than trying to support both at once.
+   */
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+};
+
+export function ChannelCard({ channel, inList, selectMode, selected, onToggleSelect }: Props) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -70,11 +83,29 @@ export function ChannelCard({ channel, inList }: { channel: LiveChannel; inList:
   }, []);
   const pct = progressPercent(channel.now, nowMs);
 
-  return (
-    <Link
-      href={`/live/${encodeURIComponent(channel.id)}`}
-      className="flex w-full gap-3 rounded-lg border border-white/10 bg-netflix-dark/80 p-3 text-left transition-colors hover:border-white/40 hover:bg-netflix-dark focus:border-white/40 focus:outline-none"
-    >
+  const className =
+    "flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none " +
+    (selectMode
+      ? selected
+        ? "border-netflix-red/70 bg-netflix-red/10"
+        : "border-white/10 bg-netflix-dark/80 hover:border-white/30"
+      : "border-white/10 bg-netflix-dark/80 hover:border-white/40 hover:bg-netflix-dark focus:border-white/40");
+
+  const inner = (
+    <>
+      {selectMode && (
+        <div className="flex shrink-0 items-center">
+          <span
+            aria-hidden
+            className={
+              "flex h-5 w-5 items-center justify-center rounded border text-xs font-bold " +
+              (selected ? "border-netflix-red bg-netflix-red text-white" : "border-white/30 text-transparent")
+            }
+          >
+            ✓
+          </span>
+        </div>
+      )}
       <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-black/40">
         {channel.logoUrl ? (
           // Plain <img>: these are proxied through our own origin at an
@@ -100,14 +131,16 @@ export function ChannelCard({ channel, inList }: { channel: LiveChannel; inList:
             <span className="shrink-0 tabular-nums text-xs text-white/40">{channel.number}</span>
           )}
           <h3 className="truncate text-sm font-semibold text-white">{channel.name}</h3>
-          <span className="ml-auto shrink-0">
-            <ChannelWatchlistButton
-              channelId={channel.id}
-              name={channel.name}
-              initialInList={inList}
-              variant="circle"
-            />
-          </span>
+          {!selectMode && (
+            <span className="ml-auto shrink-0">
+              <ChannelWatchlistButton
+                channelId={channel.id}
+                name={channel.name}
+                initialInList={inList}
+                variant="circle"
+              />
+            </span>
+          )}
           {channel.now?.isLive && (
             <span className="shrink-0 rounded bg-netflix-red/80 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
               Live
@@ -126,6 +159,20 @@ export function ChannelCard({ channel, inList }: { channel: LiveChannel; inList:
           </div>
         )}
       </div>
+    </>
+  );
+
+  if (selectMode) {
+    return (
+      <button type="button" onClick={onToggleSelect} className={className} aria-pressed={!!selected}>
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <Link href={`/live/${encodeURIComponent(channel.id)}`} className={className}>
+      {inner}
     </Link>
   );
 }

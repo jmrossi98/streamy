@@ -38,6 +38,7 @@ model User {
   watchlistFlashGames WatchlistFlashGameItem[]
   flashGameSaves      FlashGameSave[]
   watchlistChannels   WatchlistChannelItem[]
+  hiddenChannels      HiddenChannelItem[]
   progress            WatchProgress[]
   episodeProgress     EpisodeProgress[]
 }
@@ -514,6 +515,26 @@ model WatchlistChannelItem {
   /// Snapshot, so a list entry still reads sensibly if the channel is gone.
   name      String
   addedAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, channelId])
+  @@index([userId])
+}
+
+/// One viewer's "hide this channel from my lineup" choice.
+///
+/// Per-user, not global: a lineup pulled from a shared M3U playlist tuner
+/// commonly carries hundreds of channels nobody in the household watches, and
+/// one person's clutter is another's favorite. Same shape as
+/// WatchlistChannelItem and for the same reason -- channels live in
+/// Jellyfin's tuner, not this database, so a name snapshot keeps a hidden
+/// entry's management UI readable if the channel ever disappears.
+model HiddenChannelItem {
+  userId    String
+  channelId String
+  name      String
+  hiddenAt  DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

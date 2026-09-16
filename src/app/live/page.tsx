@@ -35,14 +35,18 @@ export default async function LivePage() {
   const channels = reachable ? await attachNextPrograms(await getLiveChannels()) : [];
 
   const userId = await getValidSessionUserId(session);
-  const myListIds = userId
-    ? (
-        await prisma.watchlistChannelItem.findMany({
+  const [myListIds, hidden] = userId
+    ? await Promise.all([
+        prisma.watchlistChannelItem
+          .findMany({ where: { userId }, select: { channelId: true } })
+          .then((rows) => rows.map((r) => r.channelId)),
+        prisma.hiddenChannelItem.findMany({
           where: { userId },
-          select: { channelId: true },
-        })
-      ).map((r) => r.channelId)
-    : [];
+          select: { channelId: true, name: true },
+          orderBy: { name: "asc" },
+        }),
+      ])
+    : [[], []];
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
@@ -52,6 +56,7 @@ export default async function LivePage() {
         channels={channels}
         truncated={channels.length >= MAX_CHANNELS}
         myListIds={myListIds}
+        hiddenChannels={hidden}
       />
     </div>
   );
