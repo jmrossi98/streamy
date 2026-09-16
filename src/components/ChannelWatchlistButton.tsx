@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Props = {
   channelId: string;
@@ -13,6 +14,7 @@ type Props = {
 export function ChannelWatchlistButton({
   channelId, name, initialInList, variant = "default",
 }: Props) {
+  const router = useRouter();
   const [inList, setInList] = useState(initialInList);
   const [loading, setLoading] = useState(false);
 
@@ -22,18 +24,30 @@ export function ChannelWatchlistButton({
     e.preventDefault();
     e.stopPropagation();
     if (loading) return;
+
+    // Flipped before the request, not after it -- see the note in
+    // FlashWatchlistButton. Same reasoning, same feel.
+    const next = !inList;
+    setInList(next);
     setLoading(true);
     try {
-      const res = inList
-        ? await fetch(`/api/live/watchlist?channelId=${encodeURIComponent(channelId)}`, {
-            method: "DELETE",
-          })
-        : await fetch("/api/live/watchlist", {
+      const res = next
+        ? await fetch("/api/live/watchlist", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ channelId, name }),
+          })
+        : await fetch(`/api/live/watchlist?channelId=${encodeURIComponent(channelId)}`, {
+            method: "DELETE",
           });
-      if (res.ok) setInList(!inList);
+      if (!res.ok) {
+        setInList(!next);
+        return;
+      }
+      // "My Stations" is server-rendered, so it needs a re-render to follow.
+      router.refresh();
+    } catch {
+      setInList(!next);
     } finally {
       setLoading(false);
     }

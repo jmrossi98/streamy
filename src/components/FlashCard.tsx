@@ -14,16 +14,15 @@ import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
  * it read as two different features rather than one -- so this is the single
  * card both now use.
  *
- * Artwork resolution, in order:
+ * Artwork comes from /api/flash/art, which tries Flashpoint's logo, then its
+ * screenshot, then Andkon's icon, and 404s only when no source has anything.
+ * The title treatment below is the last resort.
  *
- *  1. Flashpoint's logo, proxied through our own origin
- *  2. a title treatment, when there is no `flashpointId` or the archive has no
- *     art for it
- *
- * Step 2 is why this is a client component. A plain <img> with a src that 404s
- * renders the browser's broken-image glyph, which is what was showing on The
- * Impossible Quiz -- worse than no image at all, because it reads as a bug.
- * Falling back needs the error event, and the error event needs the browser.
+ * That fallback is why this is a client component. A plain <img> with a src
+ * that 404s renders the browser's broken-image glyph, which is what was
+ * showing on The Impossible Quiz -- worse than no image at all, because it
+ * reads as a bug. Catching it needs the error event, and the error event needs
+ * the browser.
  */
 export function FlashCard({
   game,
@@ -32,10 +31,17 @@ export function FlashCard({
   game: FlashGameSummary;
   inList: boolean;
 }) {
-  // Games with no Flashpoint entry have no art to try for, so they start in
-  // the fallback rather than requesting a URL that cannot resolve.
-  const [artFailed, setArtFailed] = useState(!game.flashpointId);
-  const showArt = !artFailed && game.flashpointId;
+  const [artFailed, setArtFailed] = useState(false);
+  // Either identity is enough to ask with: a game with no Flashpoint entry
+  // still usually has an Andkon icon.
+  const artKey = game.flashpointId ?? (game.andkonPath ? "none" : null);
+  const andkonSlug = game.andkonPath?.split("/")[1];
+  const artUrl =
+    artKey === null
+      ? null
+      : `/api/flash/art/${encodeURIComponent(artKey)}` +
+        (andkonSlug ? `?andkon=${encodeURIComponent(andkonSlug)}` : "");
+  const showArt = !artFailed && artUrl;
 
   return (
     <div className="w-40 shrink-0 sm:w-48">
@@ -48,7 +54,7 @@ export function FlashCard({
              want a configured remote pattern for a host we never link to. */
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
-            src={`/api/flash/art/${encodeURIComponent(game.flashpointId!)}`}
+            src={artUrl!}
             alt=""
             loading="lazy"
             onError={() => setArtFailed(true)}
@@ -63,15 +69,6 @@ export function FlashCard({
               {game.title}
             </span>
           </div>
-        )}
-
-        {!game.playable && (
-          // A row exists as soon as a game is bookmarked; the SWF arrives on
-          // first play. Worth saying on the card, since the alternative is
-          // finding out by clicking and waiting.
-          <span className="absolute left-1 top-1 rounded bg-black/75 px-1 text-[10px] font-medium text-white/80">
-            Not downloaded
-          </span>
         )}
 
         {game.isActionScript3 && (

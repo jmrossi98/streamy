@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Props = {
   slug: string;
@@ -17,6 +18,7 @@ type Props = {
  * reads the rest back through the relation.
  */
 export function FlashWatchlistButton({ slug, initialInList, variant = "default" }: Props) {
+  const router = useRouter();
   const [inList, setInList] = useState(initialInList);
   const [loading, setLoading] = useState(false);
 
@@ -26,18 +28,33 @@ export function FlashWatchlistButton({ slug, initialInList, variant = "default" 
     e.preventDefault();
     e.stopPropagation();
     if (loading) return;
+
+    // Flipped before the request, not after it. The button is the feedback
+    // that the tap registered, and waiting on a round trip to show it made
+    // adding a game feel broken enough to tap twice.
+    const next = !inList;
+    setInList(next);
     setLoading(true);
     try {
-      const res = inList
-        ? await fetch(`/api/games/flash-watchlist?slug=${encodeURIComponent(slug)}`, {
-            method: "DELETE",
-          })
-        : await fetch("/api/games/flash-watchlist", {
+      const res = next
+        ? await fetch("/api/games/flash-watchlist", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ slug }),
+          })
+        : await fetch(`/api/games/flash-watchlist?slug=${encodeURIComponent(slug)}`, {
+            method: "DELETE",
           });
-      if (res.ok) setInList(!inList);
+      if (!res.ok) {
+        setInList(!next);
+        return;
+      }
+      // The My List row is rendered on the server, so it only picks this up
+      // on a re-render. Without it the game is in the list but the shelf
+      // above still doesn't show it until someone reloads the page.
+      router.refresh();
+    } catch {
+      setInList(!next);
     } finally {
       setLoading(false);
     }

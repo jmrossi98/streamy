@@ -13,6 +13,8 @@ export type FlashGameSummary = {
   title: string;
   /** Set when the game came from Flashpoint; null for a hand-added SWF. */
   flashpointId: string | null;
+  /** Andkon's "category/slug", when it came from there. Also the art fallback. */
+  andkonPath: string | null;
   developer: string;
   description: string;
   tags: string[];
