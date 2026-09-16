@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isFamilyFriendly, isPlayableHere, pickGameSwf, toFlashpointGame } from "../flashpoint";
+import {
+  isFamilyFriendly,
+  isPlayableHere,
+  pickGameSwf,
+  pickGameSwfDetailed,
+  toFlashpointGame,
+} from "../flashpoint";
 
 // Shaped from a real response (verified live 2026-09-13 against
 // db-api.unstable.life), not from the docs -- the docs are a TODO in their repo.
@@ -236,6 +242,30 @@ describe("pickGameSwf", () => {
       e("content/www.arcadeprehacks.com/swf/game-hacked.swf", 9_000_000),
     ];
     expect(pickGameSwf(entries)).toBe("content/www.xgenstudios.com/game.swf");
+  });
+
+  // The flag is what lets the importer try Andkon instead: Andkon re-hosts on
+  // its own domain, so whatever it serves demonstrably runs somewhere that
+  // isn't the publisher -- the exact property a locked build lacks.
+  it("reports whether the pick is one that will actually run", () => {
+    expect(
+      pickGameSwfDetailed([
+        e("content/kongregate.com/game.swf", 100),
+        e("content/armorgames.com/game.swf", 999),
+      ])!.compromised
+    ).toBe(false);
+
+    // Only a locked build available.
+    expect(
+      pickGameSwfDetailed([e("content/www.ninjakiwi.com/game.swf", 999)])!.compromised
+    ).toBe(true);
+
+    // Only a cheat rip available.
+    expect(
+      pickGameSwfDetailed([e("content/hackedgames.biz/game.swf", 999)])!.compromised
+    ).toBe(true);
+
+    expect(pickGameSwfDetailed([])).toBeNull();
   });
 
   it("falls through to size when no candidate is from a known portal (Bloons TD 5)", () => {

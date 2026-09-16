@@ -57,7 +57,11 @@ export function FlashBrowseRows({
           href={row.key ? `/games/flash/genre/${row.key}` : undefined}
         >
           {row.games.map((game) => (
-            <BrowseCard key={game.id} game={game} owned={owned.has(game.id)} />
+            <BrowseCard
+              key={game.id ?? game.andkonPath}
+              game={game}
+              owned={!!game.id && owned.has(game.id)}
+            />
           ))}
           {row.key && row.total && row.total > row.games.length && (
             <SeeAllCard href={`/games/flash/genre/${row.key}`} count={row.total} />

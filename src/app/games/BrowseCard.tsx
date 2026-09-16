@@ -13,7 +13,10 @@ import type { FlashpointGame } from "@/lib/flashpoint";
  * from the id when someone opens the game.
  */
 export type CardGame = {
-  id: string;
+  /** Flashpoint id, or null when only Andkon has this game. */
+  id?: string | null;
+  /** Andkon's "category/slug", when it came from the catalogue. */
+  andkonPath?: string;
   title: string;
   developer: string;
 };
@@ -52,7 +55,14 @@ export function BrowseCard({
     const res = await fetch("/api/flash/known", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(full ? { game: full } : { id: game.id }),
+      // The Andkon path goes along even when Flashpoint has the game: it is
+      // the fallback the importer needs if every build in the GameZIP turns
+      // out to be domain-locked.
+      body: JSON.stringify(
+        full
+          ? { game: full }
+          : { id: game.id ?? undefined, andkon: game.andkonPath, title: game.title }
+      ),
     });
     if (!res.ok) return null;
     const data = (await res.json().catch(() => ({}))) as { slug?: string };
@@ -106,7 +116,13 @@ export function BrowseCard({
              want a configured remote pattern for a host we never link directly. */
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
-            src={`/api/flash/art/${encodeURIComponent(game.id)}`}
+            src={
+              game.id
+                ? `/api/flash/art/${encodeURIComponent(game.id)}`
+                : `/api/flash/andkon-art/${encodeURIComponent(
+                    (game.andkonPath ?? "").split("/")[1] ?? ""
+                  )}`
+            }
             alt=""
             loading="lazy"
             onError={() => setArtFailed(true)}

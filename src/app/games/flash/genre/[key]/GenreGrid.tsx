@@ -68,7 +68,11 @@ export function GenreGrid({
       ) : (
         <div className="flex flex-wrap gap-x-3 gap-y-5">
           {visible.map((game) => (
-            <BrowseCard key={game.id} game={game} owned={owned.has(game.id)} />
+            <BrowseCard
+              key={game.id ?? game.andkonPath}
+              game={game}
+              owned={!!game.id && owned.has(game.id)}
+            />
           ))}
         </div>
       )}

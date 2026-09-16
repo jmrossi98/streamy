@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ensureKnownGame } from "@/lib/flashImport";
+import { ensureKnownAndkonGame, ensureKnownGame } from "@/lib/flashImport";
+import { isAndkonPath } from "@/lib/andkon";
 import {
   findById,
   isFamilyFriendly,
@@ -28,8 +29,20 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { game?: unknown; id?: unknown }
+    | { game?: unknown; id?: unknown; andkon?: unknown; title?: unknown }
     | null;
+
+  const andkonPath =
+    typeof body?.andkon === "string" && isAndkonPath(body.andkon) ? body.andkon : null;
+
+  // Andkon-only game: no Flashpoint entry exists, so there is no metadata to
+  // fetch and the row is built from the catalogue's title plus the path the
+  // download will come from. About half of Andkon's catalogue is in this
+  // shape -- "The Game Game" and its sequels among them.
+  if (!body?.id && andkonPath && typeof body?.title === "string") {
+    const slug = await ensureKnownAndkonGame(andkonPath, body.title);
+    return NextResponse.json({ slug });
+  }
 
   // Two callers, two shapes. Search results arrive as a whole entry, because
   // the browser already has one. Catalogue shelves send only an id -- the
@@ -62,6 +75,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not available here" }, { status: 400 });
   }
 
-  const slug = await ensureKnownGame(game);
+  const slug = await ensureKnownGame(game, andkonPath);
   return NextResponse.json({ slug });
 }

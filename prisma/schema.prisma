@@ -430,6 +430,11 @@ model FlashGame {
   /// SWF -- which is a supported path, not a degraded one. Unique so browsing
   /// the archive can tell at a glance what is already known here.
   flashpointId String? @unique
+  /// Andkon Arcade's own path for this game, "category/slug", when it came
+  /// from there. Roughly half of Andkon's 4,686 games have no Flashpoint
+  /// entry at all -- The Game Game and its sequels among them -- and Andkon
+  /// serves their SWFs directly, so it is the download source for those.
+  andkonPath   String? @unique
   developer    String  @default("")
   publisher    String  @default("")
   description  String  @default("")

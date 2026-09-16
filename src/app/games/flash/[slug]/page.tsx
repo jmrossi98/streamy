@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
-import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
 import { getFlashGame } from "@/lib/flashGames";
 import { FlashPlayer } from "@/components/FlashPlayer";
 import { FlashImportPanel } from "@/components/FlashImportPanel";
+import { FlashDeleteButton } from "@/components/FlashDeleteButton";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 /**
@@ -31,6 +32,7 @@ export default async function FlashGamePage({
   const game = await getFlashGame(slug);
   if (!game) notFound();
 
+  const admin = await requireAdmin(session);
   const userId = await getValidSessionUserId(session);
   const inList = userId
     ? !!(await prisma.watchlistFlashGameItem.findUnique({
@@ -58,8 +60,12 @@ export default async function FlashGamePage({
               <p className="mt-1 truncate text-sm text-white/50">{game.developer}</p>
             )}
           </div>
-          <div className="shrink-0">
+          <div className="flex shrink-0 items-center gap-3">
             <FlashWatchlistButton slug={game.slug} initialInList={inList} />
+            {/* Admin-only, and only once there is something to delete. The
+                game re-downloads on the next play, so this is a repair for a
+                bad copy rather than a removal. */}
+            {admin && game.playable && <FlashDeleteButton slug={game.slug} />}
           </div>
         </div>
 

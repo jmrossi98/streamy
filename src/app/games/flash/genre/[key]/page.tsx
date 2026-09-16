@@ -30,7 +30,9 @@ export default async function FlashGenrePage({
 
   // Which of these are already local, so the grid can mark them. One query for
   // the whole category rather than one per card.
-  const ids = category.games.map((g) => g.id);
+  const ids = category.games
+    .map((g) => g.id)
+    .filter((id): id is string => id !== null);
   const ownedRows = await prisma.flashGame.findMany({
     where: { flashpointId: { in: ids } },
     select: { flashpointId: true },
