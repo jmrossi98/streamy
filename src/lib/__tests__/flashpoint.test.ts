@@ -154,6 +154,25 @@ describe("pickGameSwf", () => {
   // swap a user onto a build that may have altered gameplay. With nothing
   // trusted to prefer, this must fall through to the original size-based
   // pick, same as before this change.
+  // Regression: Stick RPG's real GameZIP (flashpointId
+  // bbd64607-aac2-4c3e-b701-fa6d1b5d2fb8) has the same domain-lock shape as
+  // Bloons TD 5 -- an "official" studio CDN asset that only runs on its
+  // original site -- but with a genuine third option Bloons TD 5 didn't have:
+  // a mirror from Andkon Arcade, a legitimate multi-decade Flash aggregator,
+  // not a cheat site and not the locked original.
+  it("prefers Andkon's mirror over a bigger official-but-locked asset (Stick RPG)", () => {
+    const entries = [
+      e("content/andkon.com/arcade/adventureaction/stickrpg/andkon170.swf", 1_220_283),
+      e("content/localflash/demo/76020_srpgdemo202c.swf", 1_537_727),
+      e("content/www.arcadeprehacks.com/swf/stickrpgcompletehack.swf", 2_538_718),
+      e("content/www.xgenstudios.com/srpgcomplete-v1.5-xgcc.swf", 6_754_146),
+      e("content/www.xgenstudios.com/srpgcompletexgen.swf", 2_540_508),
+    ];
+    expect(pickGameSwf(entries)).toBe(
+      "content/andkon.com/arcade/adventureaction/stickrpg/andkon170.swf"
+    );
+  });
+
   it("falls through to size when no candidate is from a known portal (Bloons TD 5)", () => {
     const entries = [
       e("content/assets.ninjakiwi.com/Games/gameswfs/btd5-dat.swf", 18_993_704),

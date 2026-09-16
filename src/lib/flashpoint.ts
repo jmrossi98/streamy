@@ -266,6 +266,12 @@ const TRUSTED_MIRROR_HOSTS = [
   "coolmathgames.com",
   "y8.com",
   "flashpointarchive.org",
+  // A long-running general Flash arcade, same category as the others above --
+  // added after Stick RPG's archive turned out to hold only two candidates
+  // otherwise: XGen Studios' own official build (domain-locked to
+  // xgenstudios.com, exactly the same failure Bloons TD 5 hit) and a
+  // cheat-site rip. Andkon's copy is neither.
+  "andkon.com",
 ];
 
 function isTrustedMirror(path: string): boolean {
