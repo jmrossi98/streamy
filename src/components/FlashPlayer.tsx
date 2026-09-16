@@ -133,8 +133,15 @@ export function FlashPlayer({ src, title, slug, width, height }: Props) {
       }
     };
 
-    hydrate()
-      .then(loadRuffle)
+    // hydrate() and loadRuffle() have nothing to do with each other -- the
+    // save-data fetch and the Ruffle runtime download are two independent
+    // round trips that were needlessly chained, stacking their latency
+    // instead of overlapping it. The only real ordering constraint, per the
+    // comment above hydrate(), is that localStorage must be restored before
+    // player.load() actually starts the movie -- not before Ruffle's script
+    // even begins downloading. Promise.all keeps that constraint and removes
+    // the artificial one.
+    Promise.all([hydrate(), loadRuffle()])
       .then(() => {
         if (cancelled) return;
         const api = window.RufflePlayer?.newest();
