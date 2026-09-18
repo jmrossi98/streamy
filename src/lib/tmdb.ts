@@ -58,6 +58,22 @@ async function withMemoryCache<T>(keyParts: string[], ttlMs: number, fn: () => P
   return value;
 }
 
+/**
+ * TMDB is a third party on the public internet, so "slow" here is not a
+ * hypothetical: it is somebody else's incident, and this app has no say in how
+ * long it lasts.
+ *
+ * Without a timeout a stalled TMDB connection holds a Node request open, and
+ * Node serves every visitor from a single event loop on a two-vCPU box. The
+ * home page alone opens roughly ten of these per uncached render, so one bad
+ * few minutes upstream is enough to occupy the server completely while it goes
+ * on reporting itself healthy.
+ *
+ * Eight seconds is far longer than TMDB's normal answer and short enough that
+ * a viewer gets an error page rather than a spinner that never resolves.
+ */
+const TMDB_TIMEOUT_MS = 8_000;
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMAGE_BASE = "https://image.tmdb.org/t/p";
 
@@ -175,7 +191,10 @@ async function fetchTmdb<T>(path: string, params: Record<string, string> = {}): 
   url.searchParams.set("language", "en-US");
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-  const res = await fetch(url.toString(), { next: { revalidate: ONE_DAY_SEC } });
+  const res = await fetch(url.toString(), {
+    next: { revalidate: ONE_DAY_SEC },
+    signal: AbortSignal.timeout(TMDB_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`TMDB API error: ${res.status}`);
   return res.json();
 }
@@ -607,11 +626,11 @@ async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
   const [movieRes, providersRes] = await Promise.all([
     fetch(
       `${TMDB_BASE}/movie/${id}?api_key=${key}&language=en-US&append_to_response=credits`,
-      { next: { revalidate: CACHE_REVALIDATE } }
+      { next: { revalidate: CACHE_REVALIDATE }, signal: AbortSignal.timeout(TMDB_TIMEOUT_MS) }
     ),
     fetch(
       `${TMDB_BASE}/movie/${id}/watch/providers?api_key=${key}`,
-      { next: { revalidate: CACHE_REVALIDATE } }
+      { next: { revalidate: CACHE_REVALIDATE }, signal: AbortSignal.timeout(TMDB_TIMEOUT_MS) }
     ),
   ]);
 

@@ -52,41 +52,37 @@ test("a pause that lands while a resume is still loading is not overridden once 
   await page.goto("/dev/player-harness?progress=5", { waitUntil: "domcontentloaded" });
   const video = page.locator("video");
 
-  // Establishes the real "already playing" precondition a native autoplay
-  // success (or an earlier resume) would have left behind -- readyState is
-  // still 0 (the response above is held), but HTMLMediaElement accepts
-  // play() regardless and sets `paused` false immediately per spec. Without
-  // some prior genuine paused=false, a pause() call below would be a no-op:
-  // the browser only fires a real 'pause' event on an actual transition, and
-  // there's nothing to transition from on an element that was never told to
-  // play at all.
+  // Resume click FIRST, before anything has played. This ordering is the whole
+  // reason the test is stable.
+  //
+  // It used to call video.play() up here to establish a "already playing"
+  // precondition, then look for this control -- and those two things cannot
+  // both be true for long. VideoChrome renders
+  // aria-label={isPlaying ? "Pause" : "Play"} (VideoChrome.tsx:138) and
+  // unmounts the centre overlay Play button once playing, so the moment React
+  // processed the resulting 'play' event nothing on the page matched /^play/i
+  // and the click waited out its timeout. Whether it won came down to whether
+  // the machine reached React first: it passed alone for months and began
+  // failing the moment other specs competed for CPU beside it.
+  //
+  // The harness does not autoplay (autoPlay is opt-in via ?autoPlay=1, see
+  // page.tsx), so at this point the video is genuinely paused, React agrees,
+  // and this control is unambiguously a resume. The response is still held, so
+  // the click schedules the deferred loadedmetadata wait inside seekThenRun
+  // rather than resolving synchronously -- which is the state under test.
+  await page.getByRole("button", { name: /^play/i }).first().click();
+
+  // Now establish a real playing -> paused transition, which is what
+  // playIntentRef actually listens for. readyState is still 0, but
+  // HTMLMediaElement accepts play() regardless and sets `paused` false
+  // immediately per spec. Without a genuine paused=false first, the pause()
+  // below would be a no-op: the browser only fires a real 'pause' event on an
+  // actual transition.
   await video.evaluate((v: HTMLVideoElement) => {
     v.play().catch(() => {});
   });
   await expect(video).toHaveJSProperty("paused", false);
 
-  // KNOWN RACE -- passes alone, fails under a loaded machine. Not yet fixed
-  // because fixing it means changing what this test asserts, and it is the
-  // regression test for a real bug.
-  //
-  // The precondition it needs is contradictory on its face: the <video> must
-  // report paused=false (set synchronously by the play() above) while React
-  // still believes isPlaying=false, because only then is the control below
-  // still a *resume*. VideoChrome renders aria-label={isPlaying ? "Pause" :
-  // "Play"} (VideoChrome.tsx:138) and unmounts the centre overlay Play button
-  // entirely once playing -- so the instant React processes the 'play' DOM
-  // event, nothing on the page matches /^play/i at all and this line waits out
-  // its timeout. Whether it wins is purely whether the machine got to React
-  // first, which is why it survived for months and only started failing when
-  // other specs began competing for CPU alongside it.
-  //
-  // The fix is to stop addressing this control by a label that legitimately
-  // changes -- give the toggle a stable test id and assert the resume path
-  // directly -- rather than to retry it until it passes.
-  await page.getByRole("button", { name: /^play/i }).click();
-
-  // A real pause -- paused was false a moment ago, so this is a genuine
-  // transition and fires the DOM 'pause' event playIntentRef listens for.
   await video.evaluate((v: HTMLVideoElement) => v.pause());
   await expect(video).toHaveJSProperty("paused", true);
 
@@ -94,5 +90,22 @@ test("a pause that lands while a resume is still loading is not overridden once 
   // resume it drives) fires now, well after the pause above.
   releaseResponse();
   await page.waitForTimeout(1500);
+
+  // The seek half of the deferred resume DID run: ?progress=5 moved the
+  // playhead off zero once metadata arrived.
+  //
+  // This assertion is here to stop the test passing for the wrong reason. Every
+  // other check below is a negative -- "it did not start playing" -- and a
+  // negative is satisfied just as well by a deferred resume that never fired at
+  // all, which is precisely what a future refactor is most likely to break.
+  // Seeing the seek land proves the path under test executed, so the paused
+  // assertion that follows is about the guard rather than about nothing having
+  // happened.
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 5_000 })
+    .toBeGreaterThan(1);
+
+  // ...and the play half did not, because the viewer had paused in the
+  // meantime. This is the regression: playIntentRef in usePlayerEngine.ts.
   await expect(video).toHaveJSProperty("paused", true);
 });
