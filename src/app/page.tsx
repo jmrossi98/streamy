@@ -1,18 +1,23 @@
+import { Suspense } from "react";
 import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
 import { HomeFeedHeader } from "@/components/HomeFeedHeader";
-import { RecentlyWatchedRow, type RecentItem } from "@/components/RecentlyWatchedRow";
 import { HomeMoviesSection } from "@/components/HomeMoviesSection";
 import { HomePrefetch } from "@/components/HomePrefetch";
-import { getTrending, getGenres, getDiscoverByGenre, getMovieById, getShowById, getTrendingTV, getTVGenres, getDiscoverTVByGenre } from "@/lib/tmdb";
+import { RecentlyWatchedSection, RecentlyWatchedSkeleton } from "./RecentlyWatchedSection";
+import { getTrending, getGenres, getDiscoverByGenre, getTrendingTV } from "@/lib/tmdb";
 
 const HERO_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror, Sci-Fi
 const RECENT_LIMIT = 3; // cap to keep server fast; progress bars for rows fetched client-side
 const RECENT_SHOWS_LIMIT = 3;
-const TV_CACHE_WARM_GENRES = 0; // skip on home to keep TTFB low; TV tab warms on first visit
+// TV_CACHE_WARM_GENRES is gone along with the call it guarded. It was already
+// 0 ("skip on home to keep TTFB low"), so the getTVGenres().then(...) entry in
+// the wave below sliced that list to nothing and threw the result away -- a
+// TMDB call on the critical path of every home render whose only remaining
+// effect was warming its own cache. The TV tab warms it on first visit anyway.
 const EPISODE_PROGRESS_TAKE = 30;
 
 export const dynamic = "force-dynamic";
@@ -24,74 +29,44 @@ export default async function HomePage() {
     redirect("/who-is-watching");
   }
 
-  // Single wave: all list data + hero genre rows (no second round-trip for genre discover)
-  const [
-    trending,
-    genres,
-    ...heroDiscoverResults
-  ] = await Promise.all([
-    getTrending(10),
-    getGenres(),
-    ...HERO_GENRE_IDS.map((id) => getDiscoverByGenre(id, 8)),
-    getTrendingTV(10),
-    prisma.watchProgress.findMany({
-      where: { userId: session.user.id },
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.episodeProgress.findMany({
-      where: { userId: session.user.id },
-      orderBy: { updatedAt: "desc" },
-      take: EPISODE_PROGRESS_TAKE,
-    }),
-    getTVGenres().then((tvGenres) =>
-      Promise.all(tvGenres.slice(0, TV_CACHE_WARM_GENRES).map((g) => getDiscoverTVByGenre(g.id, 8)))
-    ),
-  ]);
+  // Single wave: everything the shell, the hero and every row needs.
+  //
+  // The genre lists are one nested Promise.all rather than spread into this
+  // one. Spread, the results landed in a rest array that the three values
+  // after them had to be dug back out of by index -- `heroDiscoverResults[6]`
+  // with an `as` cast, because TypeScript cannot know what is at position six
+  // of a spread. Adding a single genre to HERO_GENRE_IDS shifted all three by
+  // one and the casts would have kept it compiling: watch progress read as
+  // trending TV, silently, at runtime only.
+  const [trending, genres, genreMovieLists, trendingTV, allWatchProgress, recentEpisodeProgress] =
+    await Promise.all([
+      getTrending(10),
+      getGenres(),
+      Promise.all(HERO_GENRE_IDS.map((id) => getDiscoverByGenre(id, 8))),
+      getTrendingTV(10),
+      prisma.watchProgress.findMany({
+        where: { userId: session.user.id },
+        orderBy: { updatedAt: "desc" },
+      }),
+      prisma.episodeProgress.findMany({
+        where: { userId: session.user.id },
+        orderBy: { updatedAt: "desc" },
+        take: EPISODE_PROGRESS_TAKE,
+      }),
+    ]);
 
-  const trendingTV = heroDiscoverResults[5] as Awaited<ReturnType<typeof getTrendingTV>>;
-  const allWatchProgress = heroDiscoverResults[6] as Awaited<ReturnType<typeof prisma.watchProgress.findMany>>;
-  const recentEpisodeProgress = heroDiscoverResults[7] as Awaited<ReturnType<typeof prisma.episodeProgress.findMany>>;
-
-  const genreRows = HERO_GENRE_IDS.slice(0, 5).map((id, i) => ({
+  const genreRows = HERO_GENRE_IDS.map((id, i) => ({
     title: genres.find((g) => g.id === id)?.name ?? "Genre",
-    movies: (heroDiscoverResults[i] as Awaited<ReturnType<typeof getDiscoverByGenre>>) ?? [],
+    movies: genreMovieLists[i] ?? [],
   }));
 
   const recentProgress = allWatchProgress.slice(0, RECENT_LIMIT);
   const recentShowIds = Array.from(new Map(recentEpisodeProgress.map((p) => [p.showId, p])).keys()).slice(0, RECENT_SHOWS_LIMIT);
 
-  // Only fetch details for recently-watched strip (3 movies + 3 shows); progress bars for rows = client-side
-  const [movieDetails, ...showDetails] = await Promise.all([
-    Promise.all(recentProgress.map((p) => getMovieById(String(p.movieId)))),
-    ...recentShowIds.map((id) => getShowById(id)),
-  ]);
-  // Movies and shows merged into one strip ordered by when each was last
-  // watched (newest first), so a show watched minutes ago outranks an older
-  // movie -- the "Continue Watching" ordering people expect.
-  const recentMovieItems: RecentItem[] = recentProgress
-    .map((p, i): RecentItem | null => {
-      const movie = movieDetails[i];
-      if (!movie) return null;
-      return {
-        kind: "movie",
-        sortAt: new Date(p.updatedAt).getTime(),
-        movie,
-        progressSeconds: p.progressSeconds,
-        runtimeMinutes: movie.runtime ?? null,
-      };
-    })
-    .filter((item): item is RecentItem => item != null);
-  const recentShowItems: RecentItem[] = recentShowIds
-    .map((id, i): RecentItem | null => {
-      const show = showDetails[i];
-      if (!show) return null;
-      const lastWatched = recentEpisodeProgress.find((p) => p.showId === id)?.updatedAt;
-      return { kind: "show", sortAt: lastWatched ? new Date(lastWatched).getTime() : 0, show };
-    })
-    .filter((item): item is RecentItem => item != null);
-  const recentlyWatchedItems = [...recentMovieItems, ...recentShowItems].sort(
-    (a, b) => b.sortAt - a.sortAt
-  );
+  // The detail lookups for the strip (3 movies + 3 shows) used to be a second
+  // await right here, and nothing rendered until they finished. They now live
+  // in RecentlyWatchedSection behind a Suspense boundary, so the shell, the
+  // hero and every row flush on wave one above and the strip streams in.
 
   const movieIdsOnPage = new Set([
     ...trending.map((m) => m.id),
@@ -113,7 +88,12 @@ export default async function HomePage() {
     );
   }
 
-  const hasRecentProgress = recentlyWatchedItems.length > 0;
+  // Whether there is anything to continue is knowable from the progress rows
+  // wave one already returned -- no detail lookup needed. That matters: it
+  // decides whether to reserve the strip's space before the section behind the
+  // Suspense boundary has resolved, so a viewer with nothing saved never sees
+  // a skeleton for a row that will turn out to be empty.
+  const hasRecentProgress = recentProgress.length > 0 || recentShowIds.length > 0;
   const featuredProgressSeconds =
     allWatchProgress.find((p) => String(p.movieId) === String(featured.id))?.progressSeconds ?? 0;
 
@@ -136,7 +116,13 @@ export default async function HomePage() {
       </div>
       <div id="movies" className="space-y-4 pt-6 sm:space-y-5 md:space-y-2 md:pt-5">
         {hasRecentProgress && (
-          <RecentlyWatchedRow items={recentlyWatchedItems} />
+          <Suspense fallback={<RecentlyWatchedSkeleton />}>
+            <RecentlyWatchedSection
+              recentProgress={recentProgress}
+              recentShowIds={recentShowIds}
+              recentEpisodeProgress={recentEpisodeProgress}
+            />
+          </Suspense>
         )}
         <HomeMoviesSection
           trending={trending}
