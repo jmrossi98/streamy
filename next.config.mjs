@@ -37,6 +37,12 @@ const nextConfig = {
   // Don't emit browser source maps in production (saves ~30% of build I/O)
   productionBrowserSourceMaps: false,
 
+  // Caddy compresses instead (see Caddyfile). Left on, Next gzips every
+  // response on the Node event loop -- the one thread also serving every other
+  // request -- and arrives at Caddy pre-compressed, so Caddy can only pass the
+  // gzip through and never gets to offer zstd.
+  compress: false,
+
   experimental: {
     // Tree-shake barrel exports — skips unused re-exports at build time
     optimizePackageImports: [
