@@ -325,6 +325,7 @@ export async function searchMovies(query: string, limit = 12, page = 1): Promise
 // people who liked this title also liked, which is closer to what "More like
 // this" means on every other streaming site.
 export async function getSimilarMovies(id: string, limit = 12): Promise<Movie[]> {
+  if (USE_MOCK) return (await getMock()).mockGetSimilarMovies(id, limit);
   return withMemoryCache(
     ["tmdb-movie-recs", id, String(limit)],
     ONE_DAY_MS,
@@ -603,6 +604,7 @@ export async function getDiscoverTVByGenre(genreId: number, limit = 12): Promise
 }
 
 export async function getSimilarTV(id: string, limit = 12): Promise<TVShow[]> {
+  if (USE_MOCK) return (await getMock()).mockGetSimilarTV(id, limit);
   return withMemoryCache(
     ["tmdb-tv-recs", id, String(limit)],
     ONE_DAY_MS,
@@ -740,7 +742,9 @@ async function getPersonByIdUncached(id: string): Promise<PersonDetail | null> {
 }
 
 export const getPersonById = cache(async (id: string) =>
-  withMemoryCache(
+  USE_MOCK
+    ? (await getMock()).mockGetPersonById(id)
+    : withMemoryCache(
     ["tmdb-person", id],
     ONE_DAY_MS,
     () =>
@@ -816,7 +820,9 @@ export function mergeCombinedCredits(
 }
 
 export const getPersonCredits = cache(async (id: string): Promise<{ movies: Movie[]; shows: TVShow[] }> =>
-  withMemoryCache(
+  USE_MOCK
+    ? (await getMock()).mockGetPersonCredits(id)
+    : withMemoryCache(
     ["tmdb-person-credits", id],
     ONE_DAY_MS,
     () =>

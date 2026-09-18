@@ -3,7 +3,7 @@
  * Production (npm run build / start) uses the real API in tmdb.ts.
  */
 
-import type { Movie, MovieDetail, TVShow, TVSeason, TVEpisode } from "./tmdb";
+import type { Movie, MovieDetail, PersonDetail, TVShow, TVSeason, TVEpisode } from "./tmdb";
 
 const PLACEHOLDER = "https://placehold.co/400x600/1a1a1a/666?text=Poster";
 const BACKDROP = "https://placehold.co/1920x1080/1a1a1a/444?text=Backdrop";
@@ -188,4 +188,48 @@ export async function mockGetSeason(showId: string, seasonNumber: number): Promi
   if (!show) return null;
   const epCount = seasonNumber === 1 ? 10 : seasonNumber === 2 ? 8 : 6;
   return mockSeason(showId, seasonNumber, epCount);
+}
+
+/**
+ * The four below were missing entirely, which is why /watch/[id], the
+ * similar-titles row on /show/[id] and the whole of /person/[id] could not be
+ * tested: "mock mode" still sent those to the live API, so with no API key the
+ * page hung on a request that was never going to succeed. /watch/1000 sat on
+ * "Loading…" forever, and it read like a bug in the page.
+ */
+
+export async function mockGetSimilarMovies(id: string, limit = 12): Promise<Movie[]> {
+  // Anything but the title being viewed -- a recommendations list that
+  // recommends the thing you are already looking at is the one obviously wrong
+  // answer, and worth not baking into the fixture.
+  return Promise.resolve(MOCK_MOVIES.filter((m) => m.id !== id).slice(0, limit));
+}
+
+export async function mockGetSimilarTV(id: string, limit = 12): Promise<TVShow[]> {
+  return Promise.resolve(MOCK_TV_SHOWS.filter((s) => s.id !== id).slice(0, limit));
+}
+
+export async function mockGetPersonById(id: string): Promise<PersonDetail | null> {
+  // Numeric ids resolve; anything else is the not-found path, so a spec can
+  // exercise both without needing to know which ids the fixture happens to
+  // contain.
+  if (!/^\d+$/.test(id)) return null;
+  return {
+    id,
+    name: `Mock Person ${id}`,
+    biography: "Mock biography for development and tests.",
+    photo: PLACEHOLDER,
+    birthday: "1980-01-01",
+    placeOfBirth: "Mockville",
+    knownFor: "Acting",
+  };
+}
+
+export async function mockGetPersonCredits(
+  _id: string
+): Promise<{ movies: Movie[]; shows: TVShow[] }> {
+  return Promise.resolve({
+    movies: MOCK_MOVIES.slice(0, 6),
+    shows: MOCK_TV_SHOWS.slice(0, 4),
+  });
 }
