@@ -46,6 +46,20 @@ export default async function RootLayout({
 
   return (
     <html lang="en" className={bebas.variable}>
+      <head>
+        {/*
+          Every poster on every page comes from image.tmdb.org, and they are
+          rendered `unoptimized` -- so the browser goes to TMDB directly rather
+          than through this server. That is the right call, but it means the
+          first poster pays for a DNS lookup, a TCP handshake and a TLS
+          negotiation to a host the browser has never seen, and it pays for it
+          only once the HTML has parsed far enough to find an <img>. Starting
+          that handshake in the document head runs it in parallel with the rest
+          of the page instead.
+        */}
+        <link rel="preconnect" href="https://image.tmdb.org" crossOrigin="" />
+        <link rel="dns-prefetch" href="https://image.tmdb.org" />
+      </head>
       <body className="min-h-screen bg-netflix-black font-sans antialiased">
         <SessionProvider session={session}>
           <WatchlistProvider initial={watchlist}>
