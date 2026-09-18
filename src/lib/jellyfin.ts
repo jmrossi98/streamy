@@ -23,6 +23,25 @@ const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
 // skipped, same fail-closed posture as every other optional integration here.
 const JELLYFIN_USER_ID = process.env.JELLYFIN_USER_ID;
 
+/**
+ * Every call here has to be able to give up.
+ *
+ * JELLYFIN_URL is a Tailscale address on the home box, reached across a link
+ * that this app cannot assume anything about: the far end has had its disk
+ * saturated, its VPN namespace recreated underneath it and its exit node
+ * rebuilt, all while still accepting TCP connections. A fetch with no timeout
+ * does not fail in that situation -- it waits, holding a Node request open,
+ * and Node serves every visitor from one event loop on a two-vCPU box. Enough
+ * of them and the container is still running, still passing its healthcheck's
+ * own /api/health call, and answering nobody. That exact shape took the site
+ * down on 2026-09-13 and reached a visitor as a bare 502 from Caddy.
+ *
+ * Ten seconds is well past a healthy answer on a LAN-speed tailnet link and
+ * well short of a viewer deciding the page is broken. liveTv.ts and sonarr.ts
+ * already do this; this file was the gap.
+ */
+const JELLYFIN_TIMEOUT_MS = 10_000;
+
 export function isJellyfinConfigured(): boolean {
   return !!(JELLYFIN_URL && JELLYFIN_API_KEY);
 }
@@ -31,6 +50,9 @@ async function jellyfinFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${JELLYFIN_URL}${path}`, {
     ...init,
     headers: { "X-Emby-Token": JELLYFIN_API_KEY!, ...(init?.headers ?? {}) },
+    // Caller's own signal wins when there is one -- a request that is already
+    // being cancelled should not be resurrected by this default.
+    signal: init?.signal ?? AbortSignal.timeout(JELLYFIN_TIMEOUT_MS),
     // Library contents change as downloads land; never serve a stale "not
     // available yet" answer from Next's fetch cache.
     cache: "no-store",
@@ -91,6 +113,7 @@ export function requestJellyfinLibraryScan(): void {
   fetch(`${JELLYFIN_URL}/Library/Refresh`, {
     method: "POST",
     headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    signal: AbortSignal.timeout(JELLYFIN_TIMEOUT_MS),
     cache: "no-store",
   }).catch((err) => console.error("[jellyfin] library refresh failed:", err));
 }
@@ -397,7 +420,11 @@ export async function stopJellyfinTranscode(playSessionId: string): Promise<void
   try {
     await fetch(
       `${JELLYFIN_URL}/Videos/ActiveEncodings?deviceId=streamy&playSessionId=${encodeURIComponent(playSessionId)}`,
-      { method: "DELETE", headers: { "X-Emby-Token": JELLYFIN_API_KEY! } }
+      {
+        method: "DELETE",
+        headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+        signal: AbortSignal.timeout(JELLYFIN_TIMEOUT_MS),
+      }
     );
   } catch (err) {
     console.error(`[jellyfin] stopJellyfinTranscode failed for session ${playSessionId}:`, err);
