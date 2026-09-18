@@ -78,3 +78,37 @@ test("adding a title persists across a reload", async ({ page }) => {
     })
     .toBeGreaterThan(before);
 });
+
+test("the button flips immediately, without waiting for the server", async ({ page }) => {
+  // Hold the write open. Whatever the button does inside this window, it does
+  // without any answer from the server.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/watchlist", async (route) => {
+    if (route.request().method() === "POST") await held;
+    await route.continue();
+  });
+
+  await page.goto("/");
+  const add = page.getByRole("button", { name: "Add to My List" }).first();
+  await expect(add).toBeVisible({ timeout: 15_000 });
+
+  const before = await page.getByRole("button", { name: "Remove from My List" }).count();
+  await add.click();
+
+  // The point of the change: this assertion has to pass while the POST above
+  // is still hanging. Three of the five My List buttons used to wait for the
+  // response before showing anything, which is what "I tapped it and nothing
+  // happened" actually was -- and why one of them had already been rewritten
+  // with a comment saying it "made adding a game feel broken enough to tap
+  // twice". A short timeout is the assertion here, not impatience.
+  await expect
+    .poll(() => page.getByRole("button", { name: "Remove from My List" }).count(), {
+      timeout: 2_000,
+    })
+    .toBeGreaterThan(before);
+
+  release();
+});

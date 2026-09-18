@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useSession } from "next-auth/react";
 import { signOutIfStaleSession } from "@/lib/staleSession";
+import { watchlistAddRequest, watchlistRemoveRequest } from "@/lib/watchlistKinds";
 import { EMPTY_WATCHLIST, type WatchlistSnapshot } from "@/lib/watchlistSnapshot";
 
 type WatchlistContextValue = {
@@ -80,54 +81,78 @@ export function WatchlistProvider({
     void refresh();
   }, [refresh]);
 
+  /**
+   * Applied to local state first, then sent.
+   *
+   * These back every poster on every page -- by far the most-used My List
+   * control in the app -- and they were the last ones still waiting for the
+   * round trip before showing anything. WatchlistToggle and WatchlistButton
+   * both flip first; this did not, so the busiest button stayed the slowest to
+   * acknowledge a tap. A failed write puts the old value back.
+   */
   const toggleMovie = useCallback(async (id: string, add: boolean): Promise<boolean> => {
-    if (add) {
-      const res = await fetch("/api/watchlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ movieId: id }),
-      });
-      if (await signOutIfStaleSession(res)) return false;
-      if (!res.ok) return false;
-      setMovieIds((prev) => new Set(prev).add(id));
-      return true;
-    }
-    const res = await fetch(`/api/watchlist?movieId=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (await signOutIfStaleSession(res)) return false;
-    if (!res.ok) return false;
     setMovieIds((prev) => {
       const next = new Set(prev);
-      next.delete(id);
+      if (add) next.add(id);
+      else next.delete(id);
       return next;
     });
-    return true;
+    const revert = () =>
+      setMovieIds((prev) => {
+        const next = new Set(prev);
+        if (add) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+
+    try {
+      const [url, init] = add
+        ? watchlistAddRequest("movie", id)
+        : watchlistRemoveRequest("movie", id);
+      const res = await fetch(url, init);
+      if (await signOutIfStaleSession(res)) return false;
+      if (!res.ok) {
+        revert();
+        return false;
+      }
+      return true;
+    } catch {
+      revert();
+      return false;
+    }
   }, []);
 
+  /** Same shape as toggleMovie above, and for the same reason. */
   const toggleShow = useCallback(async (id: string, add: boolean): Promise<boolean> => {
-    if (add) {
-      const res = await fetch("/api/watchlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ showId: id }),
-      });
-      if (await signOutIfStaleSession(res)) return false;
-      if (!res.ok) return false;
-      setShowIds((prev) => new Set(prev).add(id));
-      return true;
-    }
-    const res = await fetch(`/api/watchlist?showId=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (await signOutIfStaleSession(res)) return false;
-    if (!res.ok) return false;
     setShowIds((prev) => {
       const next = new Set(prev);
-      next.delete(id);
+      if (add) next.add(id);
+      else next.delete(id);
       return next;
     });
-    return true;
+    const revert = () =>
+      setShowIds((prev) => {
+        const next = new Set(prev);
+        if (add) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+
+    try {
+      const [url, init] = add
+        ? watchlistAddRequest("show", id)
+        : watchlistRemoveRequest("show", id);
+      const res = await fetch(url, init);
+      if (await signOutIfStaleSession(res)) return false;
+      if (!res.ok) {
+        revert();
+        return false;
+      }
+      return true;
+    } catch {
+      revert();
+      return false;
+    }
   }, []);
 
   const value = useMemo(

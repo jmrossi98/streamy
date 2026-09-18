@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { signOutIfStaleSession } from "@/lib/staleSession";
+import { watchlistAddRequest, watchlistRemoveRequest } from "@/lib/watchlistKinds";
 
 export type WatchlistButtonProps = {
   movieId?: string;
@@ -25,6 +27,7 @@ export function WatchlistButton({
 }: WatchlistButtonProps) {
   const id = movieId ?? showId ?? "";
   const type = movieId ? "movie" : "show";
+  const router = useRouter();
   const { data: session, status } = useSession();
   const [inList, setInList] = useState(initialInList ?? false);
   const [loading, setLoading] = useState(false);
@@ -40,24 +43,30 @@ export function WatchlistButton({
 
   async function toggle() {
     if (!session?.user || loading || !id) return;
+
+    // Flipped before the request, matching WatchlistToggle and the three kinds
+    // it replaced. This one still waited for the round trip, which on a page
+    // whose data already comes from the home server is exactly where the delay
+    // is most noticeable -- and the state it was waiting for is one boolean it
+    // can already predict.
+    const next = !inList;
+    setInList(next);
     setLoading(true);
     try {
-      if (inList) {
-        const param = movieId ? `movieId=${encodeURIComponent(movieId)}` : `showId=${encodeURIComponent(showId!)}`;
-        const res = await fetch(`/api/watchlist?${param}`, { method: "DELETE" });
-        if (await signOutIfStaleSession(res)) return;
-        if (!res.ok) return;
-        setInList(false);
-      } else {
-        const res = await fetch("/api/watchlist", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(movieId ? { movieId } : { showId }),
-        });
-        if (await signOutIfStaleSession(res)) return;
-        if (!res.ok) return;
-        setInList(true);
+      const [url, init] = next
+        ? watchlistAddRequest(type, id)
+        : watchlistRemoveRequest(type, id);
+      const res = await fetch(url, init);
+
+      if (await signOutIfStaleSession(res)) return;
+      if (!res.ok) {
+        setInList(!next);
+        return;
       }
+      // My List is server-rendered, so it only follows on a re-render.
+      router.refresh();
+    } catch {
+      setInList(!next);
     } finally {
       setLoading(false);
     }

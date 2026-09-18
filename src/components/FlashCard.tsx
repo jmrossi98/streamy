@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
-import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 
 /**
  * One Flash game in a row, laid out like every other card on the site.
@@ -97,7 +97,7 @@ export function FlashCard({
           )}
         </div>
         <div className="mt-0.5 shrink-0">
-          <FlashWatchlistButton slug={game.slug} initialInList={inList} variant="circle" />
+          <WatchlistToggle kind="flash" itemId={game.slug} initialInList={inList} variant="badge" />
         </div>
       </div>
     </div>
