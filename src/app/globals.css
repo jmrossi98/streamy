@@ -249,6 +249,88 @@ select option {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   cursor: pointer;
 }
+/*
+  Keyboard focus, with the thumb itself carrying the indicator.
+
+  This was a bare `outline: none`, which is the seek bar of a video player with
+  no way to tell whether it has keyboard focus -- and arrow-key seeking is the
+  main reason to focus it at all. A rectangular outline around a full-width
+  4px-tall track reads as a stray line rather than a focus ring, so the ring
+  goes on the thumb, where the eye already is.
+*/
 .player-scrubber:focus {
   outline: none;
+}
+.player-scrubber:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(20, 20, 20, 0.9), 0 0 0 5px #fff;
+}
+.player-scrubber:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(20, 20, 20, 0.9), 0 0 0 5px #fff;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Keyboard focus, everywhere, once.
+
+   102 <button> elements in this app; 13 of them defined a focus style, and 25
+   places set `outline-none` with nothing in its place. So for anyone driving
+   Streamy from a keyboard -- or a TV remote, which is not a hypothetical for
+   this app -- most of the interface gave no indication of where they were.
+
+   Done here rather than as a class on 102 components because consistency that
+   depends on remembering is not consistency. `:is(...)` with a pseudo-class
+   lands at specificity 0-1-1, which beats Tailwind's `.outline-none` (0-1-0),
+   so the existing removals are overridden rather than needing to be hunted
+   down and edited.
+
+   :focus-visible, not :focus, so a mouse click never paints a ring -- which is
+   the reason those `outline-none`s were added in the first place, and a
+   legitimate complaint about the default behaviour.
+
+   White rather than netflix-red: this rides on top of red buttons, red
+   progress bars and red-accented rows, where a red ring would vanish. The dark
+   inner shadow keeps it readable against light poster artwork too.
+   ───────────────────────────────────────────────────────────────────────── */
+:is(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Respect prefers-reduced-motion.
+
+   There was no handling for it at all, against animate-spin, animate-pulse,
+   transition-all, hover:scale-105 and a hero that slides. For a viewer who has
+   asked their OS to reduce motion -- often because motion makes them ill --
+   that request was simply ignored.
+
+   Spinners are deliberately exempt. Collapsing their duration to nothing
+   freezes them mid-rotation, which turns "still loading" into "this is broken"
+   -- the one piece of motion here that is carrying information rather than
+   decorating. WCAG's own carve-out is for animation essential to the content,
+   and a busy indicator is exactly that.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-spin {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
