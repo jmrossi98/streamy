@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ChannelWatchlistButton } from "@/components/ChannelWatchlistButton";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -56,9 +56,10 @@ export default async function LiveChannelPage({
             {channel.name}
           </h1>
           <span className="ml-auto">
-            <ChannelWatchlistButton
-              channelId={channel.id}
-              name={channel.name}
+            <WatchlistToggle
+              kind="channel"
+              itemId={channel.id}
+              extra={{ name: channel.name }}
               initialInList={inList}
             />
           </span>

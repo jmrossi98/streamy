@@ -1,6 +1,45 @@
 import { test, expect } from "@playwright/test";
 
 /**
+ * Waits until React has actually attached handlers to a control.
+ *
+ * Playwright's click waits for an element to be visible, stable and enabled --
+ * none of which say anything about whether a handler is bound. Server-rendered
+ * HTML produces a button that satisfies all three while doing nothing at all,
+ * so a click during that window is swallowed and the test goes on to assert
+ * against a state nothing ever moved it to.
+ *
+ * That is not hypothetical here: it is the same shape as the bug this app was
+ * just fixed for (My List buttons absent until a session round trip resolved),
+ * and it showed up as this file failing only under full-suite CPU contention,
+ * reporting currentTime 0 -- the deferred resume never armed because the click
+ * that arms it did nothing.
+ *
+ * React sets __reactFiber$/__reactProps$ expandos on a DOM node when it
+ * hydrates it. Reaching for an internal is justified by the alternative: the
+ * usual substitute is a sleep, which is the same bet with worse odds.
+ */
+async function clickWhenHydrated(
+  page: import("@playwright/test").Page,
+  locator: import("@playwright/test").Locator
+) {
+  await locator.waitFor({ state: "visible" });
+  await locator.evaluate((el) =>
+    new Promise<void>((resolve) => {
+      const hydrated = () => Object.keys(el).some((k) => k.startsWith("__react"));
+      if (hydrated()) return resolve();
+      const started = Date.now();
+      const tick = () => {
+        if (hydrated() || Date.now() - started > 10_000) return resolve();
+        requestAnimationFrame(tick);
+      };
+      tick();
+    })
+  );
+  await locator.click();
+}
+
+/**
  * Regression coverage for "clicking the pause button doesn't actually pause
  * the video" (reported live). Root cause: usePlayerEngine's `playing` state
  * only ever meant "has playback started without erroring" -- it was never
@@ -15,7 +54,7 @@ test("play then pause actually pauses, and stays paused", async ({ page }) => {
   await page.goto("/dev/player-harness");
   const video = page.locator("video");
 
-  await page.getByRole("button", { name: /^play/i }).click();
+  await clickWhenHydrated(page, page.getByRole("button", { name: /^play/i }).first());
   await expect(video).toHaveJSProperty("paused", false);
 
   await page.getByRole("button", { name: "Pause" }).click();
@@ -70,7 +109,7 @@ test("a pause that lands while a resume is still loading is not overridden once 
   // and this control is unambiguously a resume. The response is still held, so
   // the click schedules the deferred loadedmetadata wait inside seekThenRun
   // rather than resolving synchronously -- which is the state under test.
-  await page.getByRole("button", { name: /^play/i }).first().click();
+  await clickWhenHydrated(page, page.getByRole("button", { name: /^play/i }).first());
 
   // Now establish a real playing -> paused transition, which is what
   // playIntentRef actually listens for. readyState is still 0, but

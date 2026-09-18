@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { GameListItem } from "@/lib/games";
 import type { ArtworkKind } from "@/lib/steamgriddb";
 import { GameDownloadButton } from "@/components/GameDownloadButton";
-import { GameWatchlistButton } from "@/components/GameWatchlistButton";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { GameArtworkPicker } from "@/components/GameArtworkPicker";
 import { formatFileSize } from "@/lib/formatBytes";
 
@@ -221,11 +221,12 @@ export function GameDetailContent({
               sizeText={sizeText}
               onChanged={() => startRefresh(() => router.refresh())}
             />
-            <GameWatchlistButton
-              gameKey={item.gameKey}
-              title={displayTitle}
-              platform={item.platform}
+            <WatchlistToggle
+              kind="game"
+              itemId={item.gameKey}
+              extra={{ title: displayTitle, platform: item.platform }}
               initialInList={initialInWatchlist}
+              variant="button"
             />
           </div>
         </div>

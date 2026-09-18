@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
-import { ChannelWatchlistButton } from "@/components/ChannelWatchlistButton";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 
 /**
  * Extracted from LiveTvContent so /watchlist can show the same card for a
@@ -133,11 +133,12 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
           <h3 className="truncate text-sm font-semibold text-white">{channel.name}</h3>
           {!selectMode && (
             <span className="ml-auto shrink-0">
-              <ChannelWatchlistButton
-                channelId={channel.id}
-                name={channel.name}
+              <WatchlistToggle
+                kind="channel"
+                itemId={channel.id}
+                extra={{ name: channel.name }}
                 initialInList={inList}
-                variant="circle"
+                variant="badge"
               />
             </span>
           )}

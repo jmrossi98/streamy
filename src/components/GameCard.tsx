@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { GameListItem } from "@/lib/games";
-import { GameWatchlistButton } from "./GameWatchlistButton";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 
 /**
  * Portrait poster tile for a game -- same card shape/hover behavior as
@@ -73,12 +73,12 @@ export function GameCard({
         </Link>
         <div className="pointer-events-none absolute inset-0 z-[1] bg-black/40 opacity-0 transition-opacity group-hover:opacity-100" />
         <div className="absolute right-2 top-2 z-[5] pointer-events-auto opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-          <GameWatchlistButton
-            gameKey={item.gameKey}
-            title={item.displayTitle}
-            platform={item.platform}
+          <WatchlistToggle
+            kind="game"
+            itemId={item.gameKey}
+            extra={{ title: item.displayTitle, platform: item.platform }}
             initialInList={inWatchlist}
-            variant="circle"
+            variant="hero"
           />
         </div>
         {statusLabel && (

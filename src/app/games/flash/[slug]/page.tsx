@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
 import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { FlashWatchlistButton } from "@/components/FlashWatchlistButton";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { getFlashGame } from "@/lib/flashGames";
 import { FlashPlayer } from "@/components/FlashPlayer";
 import { FlashImportPanel } from "@/components/FlashImportPanel";
@@ -61,7 +61,7 @@ export default async function FlashGamePage({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-3">
-            <FlashWatchlistButton slug={game.slug} initialInList={inList} />
+            <WatchlistToggle kind="flash" itemId={game.slug} initialInList={inList} />
             {/* Admin-only, and only once there is something to delete. The
                 game re-downloads on the next play, so this is a repair for a
                 bad copy rather than a removal. */}
