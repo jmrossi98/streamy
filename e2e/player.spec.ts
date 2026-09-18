@@ -65,8 +65,24 @@ test("a pause that lands while a resume is still loading is not overridden once 
   });
   await expect(video).toHaveJSProperty("paused", false);
 
-  // Resume click: still held, so this schedules the deferred loadedmetadata
-  // wait inside seekThenRun rather than resolving synchronously.
+  // KNOWN RACE -- passes alone, fails under a loaded machine. Not yet fixed
+  // because fixing it means changing what this test asserts, and it is the
+  // regression test for a real bug.
+  //
+  // The precondition it needs is contradictory on its face: the <video> must
+  // report paused=false (set synchronously by the play() above) while React
+  // still believes isPlaying=false, because only then is the control below
+  // still a *resume*. VideoChrome renders aria-label={isPlaying ? "Pause" :
+  // "Play"} (VideoChrome.tsx:138) and unmounts the centre overlay Play button
+  // entirely once playing -- so the instant React processes the 'play' DOM
+  // event, nothing on the page matches /^play/i at all and this line waits out
+  // its timeout. Whether it wins is purely whether the machine got to React
+  // first, which is why it survived for months and only started failing when
+  // other specs began competing for CPU alongside it.
+  //
+  // The fix is to stop addressing this control by a label that legitimately
+  // changes -- give the toggle a stable test id and assert the resume path
+  // directly -- rather than to retry it until it passes.
   await page.getByRole("button", { name: /^play/i }).click();
 
   // A real pause -- paused was false a moment ago, so this is a genuine
