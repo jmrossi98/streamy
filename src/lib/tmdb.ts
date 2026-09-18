@@ -22,7 +22,27 @@ function isRealApiEnabledInDev(): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
-const USE_MOCK = process.env.NODE_ENV === "development" && !isRealApiEnabledInDev();
+/**
+ * Forces the mock module on regardless of NODE_ENV.
+ *
+ * The e2e suite runs the real standalone production build (see
+ * playwright.config.ts for why), and NODE_ENV is "production" there -- so the
+ * dev-only condition below is false and every spec would hit the live TMDB
+ * API: a network dependency, a rate limit, and a set of assertions that change
+ * whenever TMDB re-ranks what is trending. This flag is the opt-in that lets
+ * those tests be deterministic.
+ *
+ * Deliberately a separate variable from the dev path rather than another way
+ * to satisfy it: reading the name at a call site should make it obvious that
+ * something explicitly asked for fixtures, not that an environment was
+ * misdetected.
+ */
+const FORCE_MOCK = ["true", "1", "yes"].includes(
+  process.env.TMDB_FORCE_MOCK?.toLowerCase().trim() ?? ""
+);
+
+const USE_MOCK =
+  FORCE_MOCK || (process.env.NODE_ENV === "development" && !isRealApiEnabledInDev());
 
 const ONE_DAY_SEC = 86400;
 const ONE_DAY_MS = ONE_DAY_SEC * 1000;
@@ -212,6 +232,7 @@ export async function getGenres(): Promise<TmdbGenre[]> {
 }
 
 export async function getTrending(limit = 10): Promise<Movie[]> {
+  if (USE_MOCK) return (await getMock()).mockGetTrending(limit);
   return withMemoryCache(
     ["tmdb-trending", String(limit)],
     ONE_DAY_MS,
@@ -258,6 +279,7 @@ const SEARCH_CACHE_REVALIDATE = 3600; // 1 hour for search
 export async function searchMovies(query: string, limit = 12, page = 1): Promise<Movie[]> {
   const q = query.trim();
   if (!q) return [];
+  if (USE_MOCK) return (await getMock()).mockSearchMovies(q, limit, page);
   return withMemoryCache(
     ["tmdb-search-movies", q, String(limit), String(page)],
     ONE_DAY_MS,
@@ -428,6 +450,7 @@ export async function getTvExternalIds(tmdbId: string): Promise<{ tvdbId: number
 }
 
 export async function getSeason(showId: string, seasonNumber: number): Promise<TVSeason | null> {
+  if (USE_MOCK) return (await getMock()).mockGetSeason(showId, seasonNumber);
   return withMemoryCache(
     ["tmdb-season", showId, String(seasonNumber)],
     ONE_DAY_MS,
@@ -538,6 +561,7 @@ export async function getTrendingTV(limit = 10): Promise<TVShow[]> {
 }
 
 export async function getDiscoverTVByGenre(genreId: number, limit = 12): Promise<TVShow[]> {
+  if (USE_MOCK) return (await getMock()).mockGetDiscoverTVByGenre(genreId, limit);
   return withMemoryCache(
     ["tmdb-discover-tv", String(genreId), String(limit)],
     ONE_DAY_MS,

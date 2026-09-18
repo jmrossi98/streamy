@@ -3,5 +3,30 @@ streamy-app.com {
 		output file /var/log/caddy/access.log
 		format json
 	}
+
+	# Next's own `compress` is turned off (next.config.mjs) so this can run
+	# instead. Two reasons, and the second is the one that matters here:
+	#
+	#  - zstd beats the gzip Next would have emitted on JS and RSC payloads,
+	#    and Caddy will negotiate down to gzip for anything that can't take it.
+	#  - Node compresses on the event loop. That is the same single thread that
+	#    serves every other request, so a burst of page loads was spending it on
+	#    gzip. Caddy does this work in its own process instead.
+	#
+	# Explicitly matched rather than left to the default, because this app also
+	# serves video: re-compressing an already-compressed stream costs CPU on
+	# every byte and reliably saves none.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type application/manifest+json*
+			header Content-Type image/svg+xml*
+		}
+	}
+
 	reverse_proxy app:3000
 }

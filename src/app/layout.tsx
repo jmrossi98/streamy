@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { Bebas_Neue } from "next/font/google";
 import "./globals.css";
+import { getSession } from "@/lib/auth";
+import { getWatchlistSnapshot } from "@/lib/watchlistSnapshot";
 import { SessionProvider } from "@/components/SessionProvider";
 import { WatchlistProvider } from "@/contexts/WatchlistContext";
 import { HomeRefresh } from "@/components/HomeRefresh";
-import { NavigationSync } from "@/components/NavigationSync";
 import { LayoutShell } from "@/components/LayoutShell";
 import { VisitReporter } from "@/components/VisitReporter";
 
@@ -30,18 +31,25 @@ export const viewport: Viewport = {
   themeColor: "#141414",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Both are read here rather than on the client, and both are React-cached per
+  // request, so a page that also calls getSession() pays for one lookup, not
+  // two. See lib/watchlistSnapshot.ts for why this matters more than it looks:
+  // it is the difference between My List buttons existing at first paint and
+  // appearing two network round trips later.
+  const session = await getSession();
+  const watchlist = await getWatchlistSnapshot(session);
+
   return (
     <html lang="en" className={bebas.variable}>
       <body className="min-h-screen bg-netflix-black font-sans antialiased">
-        <SessionProvider>
-          <WatchlistProvider>
+        <SessionProvider session={session}>
+          <WatchlistProvider initial={watchlist}>
             <HomeRefresh />
-            <NavigationSync />
             <VisitReporter />
             <LayoutShell>{children}</LayoutShell>
           </WatchlistProvider>

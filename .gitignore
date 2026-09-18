@@ -46,3 +46,8 @@ tsconfig.tsbuildinfo
 
 # Copied from node_modules by scripts/copy-ruffle.mjs (see that file for why).
 public/ruffle/
+
+# e2e scratch: throwaway SQLite DB + a saved session JWT, rebuilt every run
+e2e/.tmp/
+test-results/
+playwright-report/
