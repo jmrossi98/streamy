@@ -55,6 +55,13 @@ export type Fixture = {
   state: FixtureState;
   /** Display name, already formatted -- "Sabres at Maple Leafs" or an event title. */
   name: string;
+  /**
+   * The two sides, kept separate from `name` for matching against a channel
+   * lineup ("NHL BUFFALO SABRES" names one team, not the formatted fixture
+   * string). Null for the sports that genuinely have no two sides -- F1, UFC.
+   */
+  awayTeam: string | null;
+  homeTeam: string | null;
 };
 
 type EspnCompetitor = {
@@ -107,6 +114,8 @@ function toFixture(league: string, e: EspnEvent): Fixture | null {
     detail: type?.shortDetail ?? type?.detail ?? "",
     state,
     name,
+    awayTeam: away?.displayName ?? null,
+    homeTeam: home?.displayName ?? null,
   };
 }
 
