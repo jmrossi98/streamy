@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { ChannelCard } from "@/components/ChannelCard";
+import { StreamBrowser } from "@/components/StreamBrowser";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
 type HiddenEntry = { channelId: string; name: string };
@@ -19,6 +20,8 @@ type Props = {
   myListIds: string[];
   /** Channels this viewer has hidden from their lineup, name-snapshotted. */
   hiddenChannels: HiddenEntry[];
+  /** Gates the stream browser: adding a channel publishes it to everyone. */
+  isAdmin: boolean;
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
@@ -32,7 +35,7 @@ function numberValue(number: string | null): number {
 }
 
 export function LiveTvContent({
-  envSet, reachable, channels, truncated, myListIds, hiddenChannels,
+  envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin,
 }: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
@@ -402,6 +405,13 @@ export function LiveTvContent({
         </>
       )}
 
+      {/*
+        Admin only, and below the lineup rather than beside it: this is a
+        maintenance surface, not something a viewer scrolls past on the way to
+        watching something. Rendered even when the tuner is unreachable, since
+        an empty lineup is exactly when someone wants to add to it.
+      */}
+      {isAdmin && <StreamBrowser />}
     </div>
   );
 }
