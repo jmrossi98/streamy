@@ -37,15 +37,18 @@ function progressPercent(program: LiveProgram | null, nowMs: number): number | n
   return Math.min(100, Math.max(0, ((nowMs - start) / (end - start)) * 100));
 }
 
+/**
+ * One guide line, or nothing at all.
+ *
+ * Returns null rather than "Now: no guide data". This tuner is an M3U playlist
+ * with no XMLTV source behind it, so *every* channel had two greyed-out lines
+ * saying the same non-fact -- which is most of the card's height spent telling
+ * the reader that there is nothing to tell them. A card with no guide is
+ * simply a channel with a name, which is what it actually is.
+ */
 function ProgramLine({ program, label }: { program: LiveProgram | null; label: string }) {
   const start = formatLocalTime(program?.startUtc ?? null);
-  if (!program) {
-    return (
-      <p className="truncate text-xs text-white/30">
-        {label}: <span className="italic">no guide data</span>
-      </p>
-    );
-  }
+  if (!program) return null;
   return (
     <p className="truncate text-xs text-white/60">
       <span className="text-white/40">{label}:</span>{" "}
@@ -83,8 +86,12 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
   }, []);
   const pct = progressPercent(channel.now, nowMs);
 
+  // items-center so the logo and the text block share a centre line. With the
+  // guide lines gone for a tuner that has no EPG, the 56px logo is taller than
+  // a single row of title text, and top-aligning left every card looking
+  // top-heavy with dead space under the name.
   const className =
-    "flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none " +
+    "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none " +
     (selectMode
       ? selected
         ? "border-netflix-red/70 bg-netflix-red/10"
@@ -126,7 +133,10 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
+        {/* items-center, not items-baseline: the number, the title and the
+            My List button are different sizes, and baseline alignment left the
+            round button visibly low against the text it sits beside. */}
+        <div className="flex items-center gap-2">
           {channel.number && (
             <span className="shrink-0 tabular-nums text-xs text-white/40">{channel.number}</span>
           )}
@@ -149,10 +159,15 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
           )}
         </div>
 
-        <div className="mt-1 space-y-0.5">
-          <ProgramLine program={channel.now} label="Now" />
-          <ProgramLine program={channel.next} label="Next" />
-        </div>
+        {/* The wrapper goes too when there is nothing in it, otherwise every
+            card keeps a margin reserved for absent guide lines and the row
+            heights stay uneven for no visible reason. */}
+        {(channel.now || channel.next) && (
+          <div className="mt-1 space-y-0.5">
+            <ProgramLine program={channel.now} label="Now" />
+            <ProgramLine program={channel.next} label="Next" />
+          </div>
+        )}
 
         {pct !== null && (
           <div className="mt-2 h-0.5 w-full overflow-hidden rounded bg-white/10">
