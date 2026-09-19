@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel } from "@/lib/liveTv";
-import { looksLikeEventFeed } from "@/lib/liveTimeline";
+import { looksLikeEventFeed, looksLikeNetworkFeed } from "@/lib/liveTimeline";
 
 type Stream = {
   id: number;
@@ -31,6 +31,15 @@ type Stream = {
 export function StreamBrowser() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string>("all");
+  /*
+    Networks only, by default.
+
+    Most of a 4,150-entry catalogue is one-off fixtures that are dead outside
+    their event, and promoting one produces a channel that looks broken. The
+    default therefore shows only what is recognisably a channel, with the rest
+    one click away for when a specific game is genuinely what you want.
+  */
+  const [networksOnly, setNetworksOnly] = useState(true);
   const [streams, setStreams] = useState<Stream[]>([]);
   const [promotedIds, setPromotedIds] = useState<Set<number>>(new Set());
   const [total, setTotal] = useState(0);
@@ -90,12 +99,18 @@ export function StreamBrowser() {
     [streams]
   );
 
-  const visible = useMemo(
-    () =>
-      category === "all"
-        ? streams
-        : streams.filter((s) => categoryOf.get(s.id) === category),
-    [streams, category, categoryOf]
+  const visible = useMemo(() => {
+    let list = streams;
+    if (networksOnly) list = list.filter((s) => looksLikeNetworkFeed(s.name));
+    if (category !== "all") list = list.filter((s) => categoryOf.get(s.id) === category);
+    return list;
+  }, [streams, category, categoryOf, networksOnly]);
+
+  // How many the network filter is holding back, so the toggle can say so
+  // rather than leaving a short list looking like a failed search.
+  const hiddenByNetworkFilter = useMemo(
+    () => (networksOnly ? streams.filter((s) => !looksLikeNetworkFeed(s.name)).length : 0),
+    [streams, networksOnly]
   );
 
   // Only categories present in what is loaded, with counts. An empty option
@@ -173,6 +188,27 @@ export function StreamBrowser() {
         )}
       </div>
 
+      <div className="streamy-page-title-x mb-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setNetworksOnly((v) => !v)}
+          className={`rounded-full px-3 py-1 text-xs transition-colors ${
+            networksOnly
+              ? "bg-white font-semibold text-netflix-black"
+              : "bg-white/10 text-white/70 hover:bg-white/20"
+          }`}
+          aria-pressed={networksOnly}
+        >
+          Networks only
+        </button>
+        {networksOnly && hiddenByNetworkFilter > 0 && (
+          <span className="text-xs text-white/40">
+            {hiddenByNetworkFilter} one-off event
+            {hiddenByNetworkFilter === 1 ? "" : "s"} hidden on this page
+          </span>
+        )}
+      </div>
+
       {availableCategories.length > 0 && (
         <div className="streamy-page-title-x mb-4 flex flex-wrap gap-2">
           <CategoryChip
@@ -209,7 +245,9 @@ export function StreamBrowser() {
         <p className="streamy-page-title-x text-sm text-white/40">
           {streams.length === 0
             ? "No streams match that search."
-            : "No streams in that category on this page."}
+            : networksOnly
+              ? "No recognised networks on this page — turn off “Networks only” to see one-off events."
+              : "No streams in that category on this page."}
         </p>
       ) : (
         <ul className="streamy-page-title-x space-y-1">

@@ -4,6 +4,7 @@ import {
   isAtLiveEdge,
   liveSeekTarget,
   looksLikeEventFeed,
+  looksLikeNetworkFeed,
   liveTrackPercent,
   secondsBehindLive,
   shouldSnapToLive,
@@ -144,5 +145,30 @@ describe("looksLikeEventFeed", () => {
     expect(looksLikeEventFeed("SP - NHL NETWORK HD")).toBe(false);
     expect(looksLikeEventFeed("ESPN2")).toBe(false);
     expect(looksLikeEventFeed("CBS News")).toBe(false);
+  });
+});
+
+describe("looksLikeNetworkFeed", () => {
+  it("recognises the always-on networks worth promoting", () => {
+    // All measured live against the provider.
+    expect(looksLikeNetworkFeed("NBA TV HD")).toBe(true);
+    expect(looksLikeNetworkFeed("SP - NHL NETWORK HD")).toBe(true);
+    expect(looksLikeNetworkFeed("USA - ESPN2 HD")).toBe(true);
+    expect(looksLikeNetworkFeed("SP - BEIN SPORTS LA LIGA HD")).toBe(true);
+    expect(looksLikeNetworkFeed("NCAAF 09: BIG TEN NETWORK")).toBe(true);
+  });
+
+  it("rejects fixtures even when they name the broadcaster", () => {
+    // The case the fixture heuristic alone misses. "CBS" is in the allowlist,
+    // so without the event check first this would qualify as a network -- and
+    // it is precisely the dead channel that started all of this.
+    expect(looksLikeNetworkFeed("NFL CBS BILLS GIANTS JETS NEW YORK NY")).toBe(false);
+    expect(looksLikeNetworkFeed("UEFA | 09 - Arsenal vs Vilareal 6:00pm")).toBe(false);
+  });
+
+  it("rejects a league name on its own", () => {
+    // "NHL" alone is a fixture feed's prefix, not a network.
+    expect(looksLikeNetworkFeed("NHL BUFFALO SABRES")).toBe(false);
+    expect(looksLikeNetworkFeed("NBA 07 :")).toBe(false);
   });
 });

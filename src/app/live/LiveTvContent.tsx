@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { ChannelCard } from "@/components/ChannelCard";
 import { StreamBrowser } from "@/components/StreamBrowser";
+import { SportsSchedule } from "@/components/SportsSchedule";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 
 type HiddenEntry = { channelId: string; name: string };
@@ -411,6 +412,10 @@ export function LiveTvContent({
         watching something. Rendered even when the tuner is unreachable, since
         an empty lineup is exactly when someone wants to add to it.
       */}
+      {/* Everyone, not admin-gated like the browser below: "what's on
+          tonight" is exactly the audience Live TV itself has. */}
+      <SportsSchedule />
+
       {isAdmin && <StreamBrowser />}
     </div>
   );

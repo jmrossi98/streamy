@@ -137,3 +137,52 @@ export function looksLikeEventFeed(name: string): boolean {
     /\blive event\b|\bppv\b|\bevent \d/.test(n)
   );
 }
+
+/**
+ * Whether a stream name looks like a recognised network rather than a fixture.
+ *
+ * An allowlist, and deliberately the opposite approach to looksLikeEventFeed.
+ * That one asks "does this look like a one-off?", which fails open: anything it
+ * does not recognise is treated as a channel, and "NFL CBS BILLS GIANTS JETS
+ * NEW YORK NY" sails through it while being exactly the thing to avoid.
+ *
+ * Asking "is this a network I recognise?" fails closed instead. The cost is
+ * that an unlisted network gets hidden behind the toggle; the benefit is that
+ * the default view contains things that are actually on air. For a catalogue
+ * of 4,150 where most entries are fixtures, that is the right way round.
+ *
+ * Kept as broadcast brands only. Team names, league names and competition
+ * names are all excluded on purpose -- "NHL" appears in both "SP - NHL NETWORK
+ * HD" and "NHL BUFFALO SABRES", so matching the league would defeat the point.
+ */
+const NETWORK_PATTERNS = [
+  /\bespn\s*(news|u|deportes|\d)?\b/,
+  /\bnba\s*tv\b/,
+  /\bnhl\s*network\b/,
+  /\bnfl\s*(network|redzone)\b/,
+  /\bmlb\s*network\b/,
+  /\bfox\s*sports?\b/,
+  /\bcbs\s*sports?\b/,
+  /\bnbc\s*sports?\b/,
+  /\bsky\s*sports?\b/,
+  /\bbein\s*sports?\b/,
+  /\bdazn\b/,
+  /\btnt\b|\btbs\b|\btruTV\b/i,
+  /\bbally\s*sports?\b/,
+  /\bmsg\b|\byes\s*network\b/,
+  /\busa\s*network\b/,
+  /\bbig\s*ten\s*network\b|\bacc\s*network\b|\bsec\s*network\b/,
+  /\bgolf\s*channel\b/,
+  /\btennis\s*channel\b/,
+  /\bmotortrend\b|\bmotorsport\b/,
+  /\bwillow\b/,
+];
+
+export function looksLikeNetworkFeed(name: string): boolean {
+  const n = name.toLowerCase();
+  // A fixture that happens to name its broadcaster ("NFL CBS BILLS GIANTS
+  // JETS") must not qualify: the broadcaster is incidental, the fixture is the
+  // subject. Checked first so the allowlist cannot override it.
+  if (looksLikeEventFeed(n)) return false;
+  return NETWORK_PATTERNS.some((re) => re.test(n));
+}
