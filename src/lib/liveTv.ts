@@ -546,3 +546,45 @@ export function classifyChannel(name: string): ChannelCategory {
   }
   return "Other";
 }
+
+/**
+ * Asks Jellyfin to re-read its tuners now.
+ *
+ * A channel added in Dispatcharr does not appear in Jellyfin -- and therefore
+ * not in Streamy -- until Jellyfin refreshes its guide, which on its own
+ * schedule can be hours. Promoting a stream and then seeing nothing change is
+ * indistinguishable from the promote having failed, and was reported as
+ * exactly that.
+ *
+ * The task is looked up by name rather than by a hardcoded id: ids are
+ * per-install, so one copied from this server would silently do nothing on any
+ * other.
+ *
+ * Best effort. A promote that succeeded and a refresh that did not is still a
+ * promote that succeeded, and the caller says "refreshing" either way because
+ * Jellyfin will get there on its own schedule regardless.
+ */
+export async function refreshGuide(): Promise<boolean> {
+  if (!isJellyfinConfiguredForLiveTv()) return false;
+  try {
+    const tasks = await liveTvFetch<{ Id?: string; Name?: string; Key?: string }[]>(
+      "/ScheduledTasks"
+    );
+    const task = (tasks ?? []).find((t) =>
+      `${t.Name ?? ""}${t.Key ?? ""}`.toLowerCase().includes("guide")
+    );
+    if (!task?.Id) return false;
+
+    const res = await fetch(
+      `${JELLYFIN_URL}/ScheduledTasks/Running/${encodeURIComponent(task.Id)}`,
+      {
+        method: "POST",
+        headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+        signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+      }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

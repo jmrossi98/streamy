@@ -131,9 +131,12 @@ export function StreamBrowser() {
       // Marked locally rather than refetching: the list is paged and a refetch
       // would scroll the reader back to the top of it.
       setPromotedIds((prev) => new Set(prev).add(stream.id));
+      // The server's own wording, not a guess: it knows whether Jellyfin
+      // accepted the guide refresh, and "refreshing now" and "wait for the
+      // next scheduled update" are very different promises to make.
       setNote(
         `Added “${stream.name}” as channel ${body?.channelNumber ?? "?"}. ` +
-          "It appears in Live TV once Jellyfin refreshes its guide."
+          (body?.note ?? "")
       );
     } catch {
       setNote("Couldn't add that stream.");

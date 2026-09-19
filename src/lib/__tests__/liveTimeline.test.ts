@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   LIVE_SNAP_SECONDS,
   isAtLiveEdge,
+  liveSeekTarget,
   liveTrackPercent,
   secondsBehindLive,
   shouldSnapToLive,
@@ -84,5 +85,43 @@ describe("isAtLiveEdge", () => {
 
   it("calls a real lag behind", () => {
     expect(isAtLiveEdge(1060, 1120)).toBe(false);
+  });
+});
+
+describe("liveSeekTarget", () => {
+  const CUSHION = 8;
+
+  it("lands a cushion short of the edge, not on it", () => {
+    // Landing exactly on the edge leaves nothing buffered ahead, which is an
+    // immediate stall.
+    expect(liveSeekTarget(0, 0, 100, CUSHION)).toBe(92);
+  });
+
+  it("never rewinds when recovering from a stall", () => {
+    // The loop bug: at live the playhead is already ~edge-cushion, so an
+    // unconditional seek to that target moves backwards by the cushion. Repeat
+    // per stall and the same seconds replay forever.
+    expect(liveSeekTarget(92, 0, 100, CUSHION, { forwardOnly: true })).toBeNull();
+    expect(liveSeekTarget(95, 0, 100, CUSHION, { forwardOnly: true })).toBeNull();
+  });
+
+  it("still moves forward when genuinely behind", () => {
+    expect(liveSeekTarget(40, 0, 100, CUSHION, { forwardOnly: true })).toBe(92);
+  });
+
+  it("allows a deliberate jump to live from far behind", () => {
+    // Without forwardOnly, direction is not restricted -- that is the button.
+    expect(liveSeekTarget(10, 0, 100, CUSHION)).toBe(92);
+  });
+
+  it("never seeks before the window starts", () => {
+    // A window shorter than the cushion is normal in the first seconds of a
+    // tune; clamping stops a seek to a negative time.
+    expect(liveSeekTarget(0, 50, 54, CUSHION)).toBe(50);
+  });
+
+  it("returns null rather than NaN before a window exists", () => {
+    expect(liveSeekTarget(0, 0, Number.NaN, CUSHION)).toBeNull();
+    expect(liveSeekTarget(0, Number.NaN, 100, CUSHION)).toBeNull();
   });
 });
