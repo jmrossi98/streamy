@@ -19,10 +19,24 @@ type Props = {
  * A playlist entry is not a promise that anything is broadcasting. A dead
  * channel usually does not fail -- the manifest loads, the transcode starts,
  * and no video data ever arrives -- so nothing fires an error and the player
- * waits forever. Matches LIVE_TV_TIMEOUT_MS, which is how long the tune
- * request itself is given.
+ * waits forever.
+ *
+ * 60s, not the 25s this used to be. Tuning goes through Jellyfin, which opens
+ * the upstream, probes it, and only serves a playlist once it has three HLS
+ * segments at hls_time 3 -- nine seconds of content before the first byte can
+ * reach a viewer. Measured end to end on the live channels after capping the
+ * probe (mediabox-infra#77): 18-26s.
+ *
+ * At 25s that was a coin flip. A channel that tuned in 26 seconds was reported
+ * as off air, which is the most misleading thing this component can say: it
+ * sends someone to debug a stream that was about to play.
+ *
+ * The number is deliberately well clear of the measured range rather than just
+ * above it, because the upstreams are third-party IPTV and their open time is
+ * not ours to control. The cost of waiting too long is a spinner; the cost of
+ * giving up too early is a wrong answer.
  */
-const TUNE_TIMEOUT_MS = 25_000;
+const TUNE_TIMEOUT_MS = 60_000;
 
 /** Indeterminate progress, for a wait with no knowable length. */
 function Spinner({ label }: { label: string }) {
@@ -164,8 +178,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       setLoading((stillLoading) => {
         if (stillLoading) {
           setError(
-            "This channel isn’t sending any video. It’s most likely off air — " +
-              "the playlist lists it either way."
+            "This channel didn’t start. The stream is most likely off air — " +
+              "the channel list includes it either way."
           );
         }
         return false;
