@@ -108,8 +108,53 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     const video = videoRef.current;
     if (!video) return;
 
-    const src = `/api/stream/live/${encodeURIComponent(channelId)}/hls/master.m3u8`;
+    /*
+      The id this tune is opened under, minted here so this component can name
+      it again to shut it down. It used to be generated server-side and thrown
+      away, leaving nothing on the client that could close anything -- so every
+      channel anyone left kept ffmpeg encoding until Jellyfin timed it out.
+      Measured 2026-09-18: two jobs encoding for over 1h40m with Jellyfin
+      reporting zero sessions playing.
+
+      That costs more than CPU. h264_nvenc caps concurrent sessions, so
+      abandoned tunes eat encoder slots until channels stop starting or drop to
+      software encoding -- which reaches the viewer as a slow tune that then
+      stutters.
+    */
+    const playSessionId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    const src = `/api/stream/live/${encodeURIComponent(channelId)}/hls/master.m3u8?playSessionId=${encodeURIComponent(playSessionId)}`;
     let hls: Hls | null = null;
+
+    /*
+      Two paths on purpose. fetch(keepalive) covers leaving the page within the
+      app, where the request outlives the component; sendBeacon covers the tab
+      actually closing, which is the case no unmount handler ever runs for.
+      Both are fire-and-forget: the viewer is already gone.
+    */
+    const endTune = (useBeacon: boolean) => {
+      const body = JSON.stringify({ playSessionId });
+      try {
+        if (useBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
+          navigator.sendBeacon("/api/stream/live/stop", new Blob([body], { type: "text/plain" }));
+          return;
+        }
+        void fetch("/api/stream/live/stop", {
+          method: "POST",
+          body,
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+        }).catch(() => {});
+      } catch {
+        // Teardown must never throw into a page that is going away.
+      }
+    };
+
+    const onPageHide = () => endTune(true);
+    window.addEventListener("pagehide", onPageHide);
 
     // Nothing here fires if the channel is dead, which is the whole problem:
     // the timer is the only thing that can tell the difference between "still
@@ -223,8 +268,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("waiting", onWaiting);
       video.removeEventListener("stalled", onWaiting);
-      // Tears down the transcode upstream too -- without this Jellyfin keeps a
-      // tuner allocated and ffmpeg running for a channel nobody is watching.
+      window.removeEventListener("pagehide", onPageHide);
+      // hls.destroy() ends the *client* fetching and nothing more -- the
+      // comment that used to sit here claimed it tore down the transcode
+      // upstream, and that is exactly the assumption that left ffmpeg running.
+      // Jellyfin has to be told.
+      endTune(false);
       hls?.destroy();
       video.removeAttribute("src");
       video.load();

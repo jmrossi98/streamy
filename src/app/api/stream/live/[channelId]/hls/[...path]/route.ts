@@ -35,7 +35,15 @@ export async function GET(request: Request, { params }: Props) {
 
   let mediaSourceId: string | undefined;
   if (isMaster) {
-    const handle = await openLiveStream(channelId);
+    // The player supplies the session id so it can name this stream later to
+    // shut it down. It used to be minted server-side and dropped, which left
+    // the client with nothing to close -- and so every channel anyone left
+    // kept ffmpeg encoding until Jellyfin's own inactivity timeout. Two such
+    // jobs were found running for over an hour and 40 minutes with zero
+    // sessions playing.
+    const requestedSessionId =
+      new URL(request.url).searchParams.get("playSessionId") || undefined;
+    const handle = await openLiveStream(channelId, requestedSessionId);
     if (!handle) {
       // Ordinary, not exceptional: the tuner is busy, the upstream is down, or
       // the playlist entry is dead. 503 so the player can say "unavailable"

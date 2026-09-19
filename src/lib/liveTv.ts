@@ -334,10 +334,21 @@ export type LiveStreamHandle = {
  * an ordinary outcome here -- the tuner is busy, the upstream is down, the
  * playlist entry is dead -- and the page says so instead of erroring.
  */
-export async function openLiveStream(channelId: string): Promise<LiveStreamHandle | null> {
+export async function openLiveStream(
+  channelId: string,
+  /**
+   * The id to open this stream under, when the caller already has one.
+   *
+   * The player generates it, so it can name the same session later to shut it
+   * down. Without that, nothing on the client ever knows what to close: the id
+   * was minted here, used once, and dropped -- which is why leaving a channel
+   * left ffmpeg running until Jellyfin's own inactivity timeout.
+   */
+  requestedSessionId?: string
+): Promise<LiveStreamHandle | null> {
   if (!isJellyfinConfiguredForLiveTv()) return null;
 
-  const playSessionId = crypto.randomUUID();
+  const playSessionId = requestedSessionId || crypto.randomUUID();
   const params = new URLSearchParams({ PlaySessionId: playSessionId });
   if (JELLYFIN_USER_ID) params.set("UserId", JELLYFIN_USER_ID);
 
@@ -359,6 +370,63 @@ export async function openLiveStream(channelId: string): Promise<LiveStreamHandl
   }
 }
 
+
+/**
+ * Shuts a live stream down: the encode, then the tuner.
+ *
+ * Both, and in that order, because they are separate allocations and killing
+ * only one leaves the other held. Measured on 2026-09-18: two ffmpeg jobs had
+ * been encoding for over an hour and 44 minutes with Jellyfin reporting zero
+ * sessions playing, because nothing had ever asked them to stop -- the player
+ * destroyed its hls.js instance and assumed that was enough. It is not: that
+ * ends the *client* fetching, and Jellyfin keeps encoding for whoever might
+ * come back.
+ *
+ * That matters more than the wasted CPU. h264_nvenc has a hard cap on
+ * concurrent sessions, so abandoned tunes eat encoder slots until new channels
+ * cannot start at all, or quietly fall back to software encoding -- which on
+ * this box reaches the viewer as a channel that takes forever to tune and then
+ * stutters.
+ *
+ * Every failure here is swallowed. This runs while a viewer is navigating
+ * away; there is nothing useful to tell them, and nothing they could do.
+ */
+export async function closeLiveStream(
+  playSessionId: string,
+  mediaSourceId?: string
+): Promise<void> {
+  if (!isJellyfinConfiguredForLiveTv() || !playSessionId) return;
+
+  try {
+    await fetch(
+      `${JELLYFIN_URL}/Videos/ActiveEncodings?deviceId=streamy&playSessionId=${encodeURIComponent(playSessionId)}`,
+      {
+        method: "DELETE",
+        headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+        signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+      }
+    );
+  } catch {
+    // Best effort.
+  }
+
+  // Closing the live stream is what actually releases the tuner. A channel
+  // whose encode is dead but whose stream is still open still counts against
+  // the tuner limit, which on a real HDHomeRun is a very small number.
+  if (!mediaSourceId) return;
+  try {
+    await fetch(
+      `${JELLYFIN_URL}/LiveStreams/Close?liveStreamId=${encodeURIComponent(mediaSourceId)}`,
+      {
+        method: "POST",
+        headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+        signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+      }
+    );
+  } catch {
+    // Best effort.
+  }
+}
 
 /**
  * One channel by id, with what's on now.
