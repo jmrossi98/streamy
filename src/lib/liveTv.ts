@@ -363,13 +363,54 @@ export async function openLiveStream(channelId: string): Promise<LiveStreamHandl
 /**
  * One channel by id, with what's on now.
  *
- * Asks for the whole lineup and picks, rather than fetching the channel
- * directly: Jellyfin's per-item endpoint returns a library item without
- * CurrentProgram, so a channel page built on it would have the stream but no
- * idea what was showing. The lineup response is already the shape the grid
- * uses, and Jellyfin caches its tuner lookup between calls.
+ * `/LiveTv/Channels/{id}` -- not `/Items/{id}`, and not the whole lineup.
+ *
+ * This used to fetch every channel and pick one out of the array, on the
+ * grounds that "Jellyfin's per-item endpoint returns a library item without
+ * CurrentProgram". That is true of `/Items/{id}`, the generic endpoint, and it
+ * is not true of the Live TV one, which returns the channel *and* its current
+ * programme. Measured against the running server on 2026-09-18, opening a
+ * single channel page:
+ *
+ *     whole lineup            0.240s   502,175 bytes
+ *     /LiveTv/Channels/{id}   0.098s     3,090 bytes
+ *
+ * A 160x payload for data that was discarded on the next line. It did not show
+ * as a bug because the page worked -- it just pulled half a megabyte across
+ * the tailnet from the home server every time somebody opened a channel.
+ *
+ * `ids=` is not the answer either, in case it looks like it should be: Jellyfin
+ * accepts the parameter on this endpoint and ignores it, returning all 1,475
+ * channels with a 200. Confirmed live; it fails by working.
+ *
+ * Falls back to the lineup scan if the direct lookup fails, so a Jellyfin
+ * version that behaves differently degrades to the old behaviour rather than
+ * to a blank page.
  */
 export async function getLiveChannel(channelId: string): Promise<LiveChannel | null> {
+  if (!isJellyfinConfiguredForLiveTv()) return null;
+
+  const params = new URLSearchParams({ AddCurrentProgram: "true", EnableImages: "true" });
+  if (JELLYFIN_USER_ID) params.set("userId", JELLYFIN_USER_ID);
+
+  try {
+    const c = await liveTvFetch<JfChannel>(
+      `/LiveTv/Channels/${encodeURIComponent(channelId)}?${params.toString()}`
+    );
+    if (c?.Id && c?.Name) {
+      return {
+        id: c.Id,
+        name: c.Name,
+        number: c.ChannelNumber || null,
+        logoUrl: logoUrl(c),
+        now: toProgram(c.CurrentProgram),
+        next: null,
+      };
+    }
+  } catch {
+    // fall through to the lineup scan
+  }
+
   const channels = await getLiveChannels();
   return channels.find((c) => c.id === channelId) ?? null;
 }
