@@ -26,6 +26,13 @@ jobs:
         # never touch the database.
         run: npm ci --ignore-scripts
 
+      # Cheap, and catches a failure mode nothing else does: a variable wired
+      # into only two of deploy.yml's three required places arrives empty on the
+      # server, and the app reports that integration as unconfigured with
+      # nothing in the logs to say why. Fourteen were empty on 2026-09-19.
+      - name: Deploy env wiring
+        run: node scripts/check-deploy-env.mjs
+
       - name: Unit tests
         run: npm test
 
