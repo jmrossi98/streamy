@@ -38,6 +38,62 @@ type Props = {
  */
 const TUNE_TIMEOUT_MS = 60_000;
 
+/**
+ * How far behind the live edge to sit, in seconds.
+ *
+ * Not zero, and not a segment count. Sitting exactly at the edge means every
+ * upstream hiccup is a stall, because there is nothing buffered to play
+ * through it -- and these upstreams are third-party IPTV whose time to first
+ * byte was measured between 4 and 19 seconds, so hiccups are the normal case.
+ *
+ * Seconds rather than hls.js's *DurationCount settings because those multiply
+ * by segment length, and segment length changed from 3s to 1s when the tune
+ * latency was fixed (mediabox-infra#78). The old `liveSyncDurationCount: 3`
+ * quietly went from nine seconds of protection to three.
+ */
+const LIVE_SYNC_SECONDS = 8;
+
+/** Past this far behind, jump forward rather than trying to catch up by playing faster. */
+const LIVE_MAX_LATENCY_SECONDS = 24;
+
+/**
+ * How much history to keep for scrubbing back.
+ *
+ * Jellyfin's playlist is EVENT-type and never drops segments, so the server
+ * side of this is free -- the only cost is browser memory, which is what this
+ * bounds.
+ */
+const DVR_WINDOW_SECONDS = 1800;
+
+/**
+ * A stall this long at the live edge is treated as having fallen off the end,
+ * not as ordinary rebuffering.
+ *
+ * The EVENT playlist grows rather than slides, so a player that catches up to
+ * the encoder waits at a position that will never have more data *in the
+ * past*. Waiting it out is what produced the reported "buffers, then tries to
+ * reconnect" -- the fix is to move, not to wait.
+ */
+const EDGE_STALL_RECOVERY_MS = 6_000;
+
+/**
+ * Moves playback to the live edge, minus the sync cushion.
+ *
+ * `seekable.end()` is the furthest the player can go; landing exactly there is
+ * what causes an immediate stall, so it deliberately lands LIVE_SYNC_SECONDS
+ * short of it. Returns false when there is no seekable range yet, which is the
+ * normal state for the first moments of a tune.
+ */
+function seekToLiveEdge(video: HTMLVideoElement): boolean {
+  if (video.seekable.length === 0) return false;
+  const edge = video.seekable.end(video.seekable.length - 1);
+  const start = video.seekable.start(0);
+  const target = Math.max(start, edge - LIVE_SYNC_SECONDS);
+  if (!Number.isFinite(target)) return false;
+  video.currentTime = target;
+  return true;
+}
+
 /** Indeterminate progress, for a wait with no knowable length. */
 function Spinner({ label }: { label: string }) {
   return (
@@ -113,8 +169,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
    */
   const goLive = useCallback(() => {
     const v = videoRef.current;
-    if (!v || v.seekable.length === 0) return;
-    v.currentTime = v.seekable.end(v.seekable.length - 1);
+    if (!v) return;
+    // Via seekToLiveEdge rather than seeking to seekable.end() directly.
+    // Landing exactly on the edge leaves nothing buffered ahead, so "go live"
+    // reliably produced an immediate stall -- the button appeared to break
+    // playback rather than restore it.
+    if (!seekToLiveEdge(v)) return;
     void v.play().catch(() => {});
   }, []);
 
@@ -195,6 +255,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
 
     const onPlaying = () => {
       clearTuneTimer();
+      clearStallTimer();
       setLoading(false);
       setRebuffering(false);
       setNeedsGesture(false);
@@ -202,7 +263,41 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     // Mid-stream stalls get the spinner back rather than a frozen frame, and
     // are kept distinct from the initial tune so the timeout above doesn't
     // treat a brief rebuffer as a dead channel.
-    const onWaiting = () => setRebuffering(true);
+    /*
+      A stall gets a deadline, not just a spinner.
+
+      Jellyfin's playlist is EVENT-type: it grows and never slides, so a player
+      that catches up to the encoder is parked at a position that will never
+      receive more data. Waiting there is what produced "it buffers and tries
+      to reconnect" -- hls.js eventually tears the stream down and restarts it,
+      which is both slow and visible.
+
+      Moving back to the live cushion fixes it in one seek. The timer is
+      cleared by `playing`, so ordinary rebuffering that resolves on its own
+      never triggers it.
+    */
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearStallTimer = () => {
+      if (stallTimer !== null) {
+        clearTimeout(stallTimer);
+        stallTimer = null;
+      }
+    };
+
+    const onWaiting = () => {
+      setRebuffering(true);
+      if (stallTimer !== null) return;
+      stallTimer = setTimeout(() => {
+        stallTimer = null;
+        // Only if still stalled: `playing` clears this, so reaching here means
+        // the wait did not resolve.
+        if (!video.paused && video.readyState < 3) {
+          seekToLiveEdge(video);
+          void video.play().catch(() => {});
+        }
+      }, EDGE_STALL_RECOVERY_MS);
+    };
 
     /**
      * A rejected play() used to just clear the spinner, leaving a black
@@ -248,14 +343,45 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       startPlayback();
     } else if (Hls.isSupported()) {
       hls = new Hls({
-        // A broadcast has no history worth seeking into, and a long buffer just
-        // means starting further behind live.
-        liveSyncDurationCount: 3,
+        /*
+          Jellyfin serves an EVENT playlist that grows and never slides:
+
+              #EXT-X-PLAYLIST-TYPE:EVENT
+              #EXT-X-MEDIA-SEQUENCE:0     <- never advances
+              4 segments -> 23 over 12s
+
+          So the "live edge" keeps moving away while the start stays at zero,
+          and a player that begins near the front plays a finite-looking
+          timeline, drifts further behind every minute, and stalls when it
+          finally meets the encoder. That is exactly the reported symptom:
+          starts somewhere, runs to an end, buffers, reconnects.
+
+          Expressed in SECONDS rather than segment counts, deliberately. The
+          count-based settings multiply by target duration, and the segment
+          length is now 1s rather than 3s (mediabox-infra#78) -- so the old
+          liveSyncDurationCount: 3 silently went from nine seconds of safety
+          to three, which is not enough to absorb a hiccup on a residential
+          IPTV feed.
+        */
+        liveSyncDuration: LIVE_SYNC_SECONDS,
+        liveMaxLatencyDuration: LIVE_MAX_LATENCY_SECONDS,
+        // Keep a real DVR window to scrub back through, rather than the
+        // default's small one. The segments exist on the server anyway.
+        backBufferLength: DVR_WINDOW_SECONDS,
+        // Jump rather than crawl when we end up further behind than
+        // liveMaxLatencyDuration allows -- catching up at 1.05x on a stream
+        // whose upstream is already marginal just prolongs the stall.
+        liveDurationInfinity: true,
         enableWorker: true,
+        lowLatencyMode: false,
       });
       hls.loadSource(src);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        // Start at the edge, not wherever the playlist happens to begin.
+        // With an EVENT playlist hls.js has no sliding window to infer the
+        // live point from, so it is set explicitly.
+        seekToLiveEdge(video);
         startPlayback();
       });
       hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -272,7 +398,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       clearTuneTimer();
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setError("This browser can’t play live streams.");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setLoading(false);
     }
 
@@ -282,6 +408,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("waiting", onWaiting);
       video.removeEventListener("stalled", onWaiting);
+      clearStallTimer();
       window.removeEventListener("pagehide", onPageHide);
       // hls.destroy() ends the *client* fetching and nothing more -- the
       // comment that used to sit here claimed it tore down the transcode
@@ -294,9 +421,16 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     };
   }, [channelId]);
 
-  // A couple of seconds behind is just buffering, not "behind live" -- every
-  // live stream sits slightly back from the edge by design.
-  const isBehind = behind !== null && behind > 20;
+  /*
+    "Behind live" means meaningfully behind, not merely cushioned.
+
+    Playback deliberately sits LIVE_SYNC_SECONDS back from the edge so a hiccup
+    has something to play through, so the threshold has to clear that or the
+    player would permanently describe its own healthy state as behind. Set just
+    above the cushion rather than far above it: at 20s a viewer who had scrubbed
+    back fifteen seconds was still told they were live.
+  */
+  const isBehind = behind !== null && behind > LIVE_SYNC_SECONDS + 4;
 
   return (
     <div className="w-full">
