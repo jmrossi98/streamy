@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
+import { refreshGuide } from "@/lib/liveTv";
 import {
   isDispatcharrConfigured,
   nextChannelNumber,
@@ -67,10 +68,19 @@ export async function POST(request: Request) {
     );
   }
 
+  // Kick Jellyfin now rather than waiting for its own schedule, which can be
+  // hours. Awaited rather than fired and forgotten so the response can say
+  // which of the two things actually happened -- "added, refreshing" and
+  // "added, but you will have to wait" are different messages, and guessing
+  // between them is how "I added it and nothing happened" gets reported.
+  const refreshing = await refreshGuide();
+
   return NextResponse.json({
     id: created.id,
     channelNumber,
-    // Said plainly so the panel can say it too.
-    note: "Added to Dispatcharr. It appears in Live TV once Jellyfin refreshes its guide.",
+    refreshing,
+    note: refreshing
+      ? "Added. Jellyfin is refreshing its guide now — it appears in Live TV in a moment."
+      : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",
   });
 }

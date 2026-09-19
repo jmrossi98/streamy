@@ -69,3 +69,36 @@ export function isAtLiveEdge(
 ): boolean {
   return secondsBehindLive(currentTime, edge) <= toleranceSeconds;
 }
+
+/**
+ * Where to move the playhead when heading for the live edge, or null to stay put.
+ *
+ * Extracted from the player because getting it wrong is invisible until it is
+ * very visible. The original version assigned the target unconditionally, and
+ * stall recovery called it: at live the playhead already sits at roughly
+ * `edge - cushion`, so "seek to live" moved it *backwards* by the cushion.
+ * A stream that stalled repeatedly rewound the same few seconds every time and
+ * replayed them indefinitely -- reported as "reconnecting and looping the same
+ * portion over and over", which sounds like a stream fault and was not one.
+ *
+ * `forwardOnly` is what recovery passes. A deliberate jump to live does not,
+ * because returning to the edge from ten minutes back is the entire point of
+ * the button.
+ */
+export function liveSeekTarget(
+  currentTime: number,
+  windowStart: number,
+  edge: number,
+  cushionSeconds: number,
+  opts: { forwardOnly?: boolean } = {}
+): number | null {
+  if (!Number.isFinite(edge) || !Number.isFinite(windowStart)) return null;
+
+  const target = Math.max(windowStart, edge - cushionSeconds);
+  if (!Number.isFinite(target)) return null;
+
+  // Never move backwards when recovering -- that is the loop.
+  if (opts.forwardOnly && target <= currentTime) return null;
+
+  return target;
+}

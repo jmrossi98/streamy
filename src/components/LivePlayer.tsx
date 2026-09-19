@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { supportsNativeHls } from "@/lib/hlsSupport";
+import { liveSeekTarget } from "@/lib/liveTimeline";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
 
@@ -53,9 +54,6 @@ const TUNE_TIMEOUT_MS = 60_000;
  */
 const LIVE_SYNC_SECONDS = 8;
 
-/** Past this far behind, jump forward rather than trying to catch up by playing faster. */
-const LIVE_MAX_LATENCY_SECONDS = 24;
-
 /**
  * How much history to keep for scrubbing back.
  *
@@ -84,12 +82,20 @@ const EDGE_STALL_RECOVERY_MS = 6_000;
  * short of it. Returns false when there is no seekable range yet, which is the
  * normal state for the first moments of a tune.
  */
-function seekToLiveEdge(video: HTMLVideoElement): boolean {
+function seekToLiveEdge(
+  video: HTMLVideoElement,
+  opts: { forwardOnly?: boolean } = {}
+): boolean {
   if (video.seekable.length === 0) return false;
   const edge = video.seekable.end(video.seekable.length - 1);
   const start = video.seekable.start(0);
-  const target = Math.max(start, edge - LIVE_SYNC_SECONDS);
-  if (!Number.isFinite(target)) return false;
+
+  // The decision lives in liveTimeline.ts so it can be tested without a
+  // browser -- it is the logic whose unconditional version rewound the
+  // playhead on every stall and replayed the same seconds indefinitely.
+  const target = liveSeekTarget(video.currentTime, start, edge, LIVE_SYNC_SECONDS, opts);
+  if (target === null) return false;
+
   video.currentTime = target;
   return true;
 }
@@ -156,6 +162,19 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
    */
   const [dvr, setDvr] = useState<{ start: number; edge: number } | null>(null);
 
+  /*
+    Whether the viewer deliberately scrubbed back into the DVR window.
+
+    Set from the video's own `seeked` event rather than plumbed down from the
+    scrubber, so it is true however the position changed -- the bar, a keyboard
+    arrow, or the OS media controls.
+
+    Recovery and catch-up both consult it. Without it, seeking back to watch a
+    replay meant the next stall silently dragged you to live again, which reads
+    as the player refusing to stay where it was put.
+  */
+  const stayBehindRef = useRef(false);
+
   // No knownDurationSeconds: a broadcast has no runtime to pin the bar to.
   const chrome = usePlayerChrome(videoRef, containerRef);
 
@@ -174,6 +193,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     // Landing exactly on the edge leaves nothing buffered ahead, so "go live"
     // reliably produced an immediate stall -- the button appeared to break
     // playback rather than restore it.
+    stayBehindRef.current = false;
     if (!seekToLiveEdge(v)) return;
     void v.play().catch(() => {});
   }, []);
@@ -292,8 +312,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
         stallTimer = null;
         // Only if still stalled: `playing` clears this, so reaching here means
         // the wait did not resolve.
-        if (!video.paused && video.readyState < 3) {
-          seekToLiveEdge(video);
+        if (video.paused || video.readyState >= 3) return;
+        // Someone watching a replay is meant to stay there. A stall while
+        // scrubbed back is ordinary buffering, not a reason to move them.
+        if (stayBehindRef.current) return;
+        // forwardOnly: recovery must never rewind (see seekToLiveEdge).
+        if (seekToLiveEdge(video, { forwardOnly: true })) {
           void video.play().catch(() => {});
         }
       }, EDGE_STALL_RECOVERY_MS);
@@ -333,6 +357,18 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       setDvr({ start, edge });
     };
 
+    /*
+      Reads intent from where the playhead ends up after any seek. Inside the
+      cushion means "live"; clearly outside it means the viewer went looking
+      for something and should be left there.
+    */
+    const onSeeked = () => {
+      if (video.seekable.length === 0) return;
+      const edge = video.seekable.end(video.seekable.length - 1);
+      stayBehindRef.current = edge - video.currentTime > LIVE_SYNC_SECONDS + 4;
+    };
+
+    video.addEventListener("seeked", onSeeked);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("waiting", onWaiting);
@@ -364,14 +400,23 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
           IPTV feed.
         */
         liveSyncDuration: LIVE_SYNC_SECONDS,
-        liveMaxLatencyDuration: LIVE_MAX_LATENCY_SECONDS,
+        /*
+          liveMaxLatencyDuration is deliberately NOT set.
+
+          It makes hls.js seek to the live edge on its own once the playhead
+          falls further behind than the limit -- which is precisely what a
+          viewer does on purpose when they scrub back to re-watch something.
+          With it set, going back thirty seconds was quietly undone a moment
+          later by the library, and no amount of intent-tracking in this
+          component could win against it.
+
+          Falling behind unintentionally is handled by the stall recovery
+          below, which knows the difference because it checks stayBehindRef.
+        */
         // Keep a real DVR window to scrub back through, rather than the
-        // default's small one. The segments exist on the server anyway.
+        // default's small one. The segments exist on the server anyway --
+        // Jellyfin's playlist is EVENT-type and never drops any.
         backBufferLength: DVR_WINDOW_SECONDS,
-        // Jump rather than crawl when we end up further behind than
-        // liveMaxLatencyDuration allows -- catching up at 1.05x on a stream
-        // whose upstream is already marginal just prolongs the stall.
-        liveDurationInfinity: true,
         enableWorker: true,
         lowLatencyMode: false,
       });
@@ -404,6 +449,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
 
     return () => {
       clearTuneTimer();
+      video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("waiting", onWaiting);
