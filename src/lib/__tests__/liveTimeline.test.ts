@@ -3,6 +3,7 @@ import {
   LIVE_SNAP_SECONDS,
   isAtLiveEdge,
   liveSeekTarget,
+  looksLikeEventFeed,
   liveTrackPercent,
   secondsBehindLive,
   shouldSnapToLive,
@@ -123,5 +124,25 @@ describe("liveSeekTarget", () => {
   it("returns null rather than NaN before a window exists", () => {
     expect(liveSeekTarget(0, 0, Number.NaN, CUSHION)).toBeNull();
     expect(liveSeekTarget(0, Number.NaN, 100, CUSHION)).toBeNull();
+  });
+});
+
+describe("looksLikeEventFeed", () => {
+  it("flags the fixture-style names that turned out to be dead", () => {
+    // Both real: promoted here, then reported as "won't stream".
+    expect(looksLikeEventFeed("NFL CBS BILLS GIANTS JETS NEW YORK NY")).toBe(false);
+    expect(looksLikeEventFeed("UEFA | 09 - Arsenal vs Vilareal 6:00pm")).toBe(true);
+    expect(looksLikeEventFeed("UEFA | 32 - ARSENAL - ATHLETIC CLUB BILBAO | Sat 09 Aug 15:45")).toBe(true);
+    expect(looksLikeEventFeed("LIVE EVENT 01 - 5pm Prelims UFC 331")).toBe(true);
+    expect(looksLikeEventFeed("PPV: EVENT UFC 1080P")).toBe(true);
+    expect(looksLikeEventFeed("US (ESPN+ 006) | Soccer: Fri_ 9/18 _ LALIGA Highlight Show")).toBe(true);
+  });
+
+  it("leaves always-on networks alone", () => {
+    // These are the ones worth promoting, and were measured live.
+    expect(looksLikeEventFeed("NBA TV HD")).toBe(false);
+    expect(looksLikeEventFeed("SP - NHL NETWORK HD")).toBe(false);
+    expect(looksLikeEventFeed("ESPN2")).toBe(false);
+    expect(looksLikeEventFeed("CBS News")).toBe(false);
   });
 });

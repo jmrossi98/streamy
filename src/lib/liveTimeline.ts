@@ -102,3 +102,38 @@ export function liveSeekTarget(
 
   return target;
 }
+
+/**
+ * Whether a provider stream name looks like a one-off event rather than a channel.
+ *
+ * Providers mix two very different things in one list, and nothing in the API
+ * distinguishes them:
+ *
+ *   NETWORK  "NBA TV HD", "SP - NHL NETWORK HD", "ESPN2"     -- always running
+ *   EVENT    "NHL BUFFALO SABRES", "UEFA | 09 - Arsenal vs
+ *            Vilareal 6:00pm", "LIVE EVENT 01 - UFC 331"      -- only during it
+ *
+ * Promoting an event feed gives a channel that is dead almost all the time,
+ * which is indistinguishable from a broken channel. Both channels promoted
+ * here before this existed were event feeds, and both were reported as "won't
+ * stream" -- correctly, and not because anything was wrong.
+ *
+ * A heuristic, and offered as a warning rather than stated as fact: a fixture
+ * list is written by the provider and there is no format to rely on. It errs
+ * toward flagging, because the cost of a needless warning is far lower than
+ * the cost of a channel that is dead six days a week.
+ */
+export function looksLikeEventFeed(name: string): boolean {
+  const n = name.toLowerCase();
+  return (
+    // "Arsenal vs Villarreal", "BILLS GIANTS JETS"
+    /\bvs?\.?\b/.test(n) ||
+    // "5:45 pm", "6:00pm"
+    /\b\d{1,2}[:.]\d{2}\s*(am|pm)\b/.test(n) ||
+    // "Sat 09 Aug", "Fri_ 9/18"
+    /\b(mon|tue|wed|thu|fri|sat|sun)\b/.test(n) ||
+    /\b\d{1,2}\/\d{1,2}\b/.test(n) ||
+    // Explicit markers providers use for one-offs
+    /\blive event\b|\bppv\b|\bevent \d/.test(n)
+  );
+}
