@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
-import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
   attachNextPrograms,
@@ -34,6 +34,10 @@ export default async function LivePage() {
   const reachable = envSet ? await isJellyfinReachable() : false;
   const channels = reachable ? await attachNextPrograms(await getLiveChannels()) : [];
 
+  // Gates the stream browser below. Re-checked against the database rather
+  // than read from the session token, like every other admin surface here.
+  const isAdmin = !!(await requireAdmin(session));
+
   const userId = await getValidSessionUserId(session);
   const [myListIds, hidden] = userId
     ? await Promise.all([
@@ -57,6 +61,7 @@ export default async function LivePage() {
         truncated={channels.length >= MAX_CHANNELS}
         myListIds={myListIds}
         hiddenChannels={hidden}
+        isAdmin={isAdmin}
       />
     </div>
   );

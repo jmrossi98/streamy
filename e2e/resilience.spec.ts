@@ -49,3 +49,21 @@ test("the health endpoint answers for anonymous callers", async ({ request }) =>
   const res = await request.get("/api/health");
   expect(res.ok()).toBe(true);
 });
+
+test("the stream browser API is closed to non-admins", async ({ request }) => {
+  // The suite runs as an approved but NON-admin account (see fixtures.ts), so
+  // this asserts the gate rather than the happy path.
+  //
+  // Worth its own test because the two endpoints differ in blast radius from
+  // everything else in this app: the first reads the provider's entire
+  // catalogue, and the second publishes a channel to every viewer. A
+  // regression that dropped the admin check would not be visible in the UI at
+  // all, since the panel is hidden from non-admins by a separate condition.
+  const list = await request.get("/api/live/streams");
+  expect(list.status()).toBe(403);
+
+  const promote = await request.post("/api/live/streams/promote", {
+    data: { streamId: 1, name: "should not work" },
+  });
+  expect(promote.status()).toBe(403);
+});
