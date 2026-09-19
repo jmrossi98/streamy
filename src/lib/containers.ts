@@ -51,9 +51,46 @@ export function isContainerViewConfigured(): boolean {
   return !!env("PORTAINER_URL") && !!process.env.PORTAINER_API_KEY;
 }
 
-/** Portainer's numeric environment id. 1 unless more hosts were added. */
-function endpointId(): string {
-  return process.env.PORTAINER_ENDPOINT_ID || "1";
+/**
+ * Portainer's numeric environment id, discovered rather than assumed.
+ *
+ * This used to be `PORTAINER_ENDPOINT_ID || "1"`, with a comment reading "1
+ * unless more hosts were added". A host *was* added: the only environment on
+ * this Portainer is id 2, named docker-prod. So every call asked for endpoint
+ * 1, got a 404 ("Unable to find an environment with the specified identifier"),
+ * and listContainers returned null -- which callers correctly render as "we
+ * couldn't look", so the container view simply showed nothing and never said
+ * why. Confirmed live 2026-09-19.
+ *
+ * A default that silently stops matching reality is worse than no default, so
+ * this asks. The env var still wins when set, for a multi-host Portainer where
+ * "the first one" is the wrong answer.
+ *
+ * Cached for the life of the process: endpoint ids are assigned when a host is
+ * added and do not change under a running server.
+ */
+let cachedEndpointId: string | null = null;
+
+async function endpointId(): Promise<string | null> {
+  const configured = process.env.PORTAINER_ENDPOINT_ID?.trim();
+  if (configured) return configured;
+  if (cachedEndpointId) return cachedEndpointId;
+
+  try {
+    const res = await fetch(`${env("PORTAINER_URL")}/api/endpoints`, {
+      headers: { "X-API-Key": process.env.PORTAINER_API_KEY ?? "" },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const body: unknown = await res.json();
+    if (!Array.isArray(body) || body.length === 0) return null;
+    const id = (body[0] as { Id?: number }).Id;
+    if (typeof id !== "number") return null;
+    cachedEndpointId = String(id);
+    return cachedEndpointId;
+  } catch {
+    return null;
+  }
 }
 
 type RawContainer = {
@@ -75,8 +112,11 @@ type RawContainer = {
 export async function listContainers(): Promise<ContainerState[] | null> {
   if (!isContainerViewConfigured()) return null;
 
+  const ep = await endpointId();
+  if (!ep) return null;
+
   const url =
-    `${env("PORTAINER_URL")}/api/endpoints/${encodeURIComponent(endpointId())}` +
+    `${env("PORTAINER_URL")}/api/endpoints/${encodeURIComponent(ep)}` +
     `/docker/containers/json?all=true`;
 
   let raw: RawContainer[];
