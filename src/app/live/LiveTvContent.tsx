@@ -252,7 +252,7 @@ export function LiveTvContent({
                 setCategory(e.target.value);
                 setShown(PAGE_SIZE);
               }}
-              className="shrink-0 rounded border border-white/15 bg-black/40 px-2 py-2 text-sm text-white focus:border-white/40 focus:outline-none"
+              className="streamy-select shrink-0 rounded border border-white/15 bg-black/40 py-2 pl-3 text-sm text-white focus:border-white/40 focus:outline-none"
               aria-label="Filter channels by type"
             >
               <option value="all">All types</option>
@@ -267,7 +267,7 @@ export function LiveTvContent({
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as "name" | "number")}
-            className="shrink-0 rounded border border-white/15 bg-black/40 px-2 py-2 text-sm text-white focus:border-white/40 focus:outline-none"
+            className="streamy-select shrink-0 rounded border border-white/15 bg-black/40 py-2 pl-3 text-sm text-white focus:border-white/40 focus:outline-none"
             aria-label="Sort channels"
           >
             <option value="name">Sort: Name</option>

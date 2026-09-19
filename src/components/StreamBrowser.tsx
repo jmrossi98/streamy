@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel } from "@/lib/liveTv";
+import { looksLikeEventFeed } from "@/lib/liveTimeline";
 
 type Stream = {
   id: number;
@@ -230,6 +231,16 @@ export function StreamBrowser() {
                     {s.stale && (
                       <span className="ml-2 text-amber-400/80">
                         · provider reports this stream as dead
+                      </span>
+                    )}
+                    {/* A one-off fixture rather than a channel. Promoting one
+                        gives a channel that is dead outside the event, which
+                        is indistinguishable from a broken channel -- both
+                        sports channels added here before this warning existed
+                        were reported as "won't stream", correctly. */}
+                    {looksLikeEventFeed(s.name) && (
+                      <span className="ml-2 text-amber-400/80">
+                        · looks like a one-off event — dead outside it
                       </span>
                     )}
                   </p>
