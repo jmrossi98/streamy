@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { supportsNativeHls } from "@/lib/hlsSupport";
+import { usePlayerChrome } from "@/lib/usePlayerChrome";
+import { VideoChrome } from "@/components/VideoChrome";
 
 type Props = {
   channelId: string;
@@ -64,6 +66,7 @@ function Spinner({ label }: { label: string }) {
  */
 export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /** Playback started and then stalled, as opposed to never having started. */
@@ -72,6 +75,19 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   const [needsGesture, setNeedsGesture] = useState(false);
   /** Seconds behind the live edge. Null until the stream reports a seekable range. */
   const [behind, setBehind] = useState<number | null>(null);
+  /**
+   * The seekable window, as the stream currently reports it.
+   *
+   * Both ends move: HLS drops segments off the back as it adds them to the
+   * front, so this is re-read on every timeupdate rather than measured once.
+   * How much is in it is Jellyfin's decision, not this player's -- the bar
+   * shows whatever is actually there, which may be a couple of minutes or a
+   * couple of seconds.
+   */
+  const [dvr, setDvr] = useState<{ start: number; edge: number } | null>(null);
+
+  // No knownDurationSeconds: a broadcast has no runtime to pin the bar to.
+  const chrome = usePlayerChrome(videoRef, containerRef);
 
   /**
    * Jumps to the live edge.
@@ -151,9 +167,16 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     // is what replaces a progress bar: a broadcast has no start and no end, so
     // "37% through" is meaningless, but "2 minutes behind live" is not.
     const onTimeUpdate = () => {
-      if (video.seekable.length === 0) return setBehind(null);
-      const edge = video.seekable.end(video.seekable.length - 1);
+      if (video.seekable.length === 0) {
+        setBehind(null);
+        setDvr(null);
+        return;
+      }
+      const last = video.seekable.length - 1;
+      const edge = video.seekable.end(last);
+      const start = video.seekable.start(0);
       setBehind(Math.max(0, edge - video.currentTime));
+      setDvr({ start, edge });
     };
 
     video.addEventListener("playing", onPlaying);
@@ -214,18 +237,41 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
 
   return (
     <div className="w-full">
-      <div className="relative w-full overflow-hidden rounded-lg bg-black">
+      <div ref={containerRef} className="relative w-full overflow-hidden rounded-lg bg-black">
         <video
           ref={videoRef}
-          // No seek bar: `controls` would draw a scrubber over a timeline that
-          // grows as the broadcast runs, which is what made this look like a
-          // recording. Volume and fullscreen are kept; scrubbing is not a thing
-          // you do to live television.
-          controls
-          controlsList="nodownload noplaybackrate"
+          /*
+            No `controls`. The comment that used to sit here said "no seek bar"
+            while the attribute was right underneath it, so the browser drew
+            its native scrubber -- with a total duration, over a timeline that
+            grows as the broadcast runs. That end time is what made a live
+            channel read as a recording.
+
+            VideoChrome replaces it, and in live mode the same bar means
+            something true: the span is the seekable window, and the right-hand
+            end is now rather than a finish.
+          */
           playsInline
+          onClick={chrome.togglePlay}
+          onMouseMove={chrome.revealControls}
           className="aspect-video w-full bg-black"
         />
+
+        {/* Only once something is playing: chrome over a tuning spinner is
+            controls for a stream that does not exist yet. */}
+        {!loading && !error && (
+          <VideoChrome
+            title={channelName}
+            subtitle={nowPlaying ?? undefined}
+            chrome={chrome}
+            live={{
+              windowStart: dvr?.start ?? 0,
+              edge: dvr?.edge ?? 0,
+              atLive: !isBehind,
+              goLive,
+            }}
+          />
+        )}
 
         {loading && !error && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -252,26 +298,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
         )}
       </div>
 
+      {/*
+        The live badge used to live here, below the frame, because there was no
+        chrome to put it in. It is inside the player now -- where the scrubber
+        it describes is, and where every other platform puts it -- so this row
+        is just the channel's identity, which stays visible when the controls
+        fade.
+      */}
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        {/* The live indicator, in place of a clock counting up. Red and solid
-            when at the edge; muted with a way back when behind. */}
-        {isBehind ? (
-          <button
-            type="button"
-            onClick={goLive}
-            className="flex items-center gap-1.5 rounded bg-white/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-white/70 transition-colors hover:bg-white/20"
-            title="Jump to live"
-          >
-            <span className="h-2 w-2 rounded-full bg-white/40" />
-            Go live
-          </button>
-        ) : (
-          <span className="flex items-center gap-1.5 rounded bg-netflix-red px-2 py-1 text-xs font-bold uppercase tracking-wide text-white">
-            <span className="h-2 w-2 rounded-full bg-white" />
-            Live
-          </span>
-        )}
-
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-white">{channelName}</p>
           {nowPlaying && <p className="truncate text-xs text-white/50">{nowPlaying}</p>}

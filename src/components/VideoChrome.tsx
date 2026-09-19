@@ -2,6 +2,12 @@
 
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
+import {
+  LIVE_SNAP_SECONDS,
+  liveTrackPercent,
+  secondsBehindLive,
+  shouldSnapToLive,
+} from "@/lib/liveTimeline";
 
 type ChromeState = {
   isPlaying: boolean;
@@ -19,7 +25,26 @@ type ChromeState = {
   toggleFullscreen: () => void;
 };
 
-// A single unified control overlay for both the movie and episode players.
+/**
+ * Live playback, where a timeline means something different.
+ *
+ * A broadcast has no duration and no fixed start. What it has is a sliding
+ * window of segments the player is still holding -- so the scrubber spans
+ * `windowStart..edge` rather than `0..duration`, and both ends advance in real
+ * time as the stream runs.
+ */
+export type LiveState = {
+  /** Earliest point still seekable: the start of the DVR window. */
+  windowStart: number;
+  /** The live edge. */
+  edge: number;
+  /** At (or close enough to) the edge to call it live. */
+  atLive: boolean;
+  /** Seek back to the edge and resume. */
+  goLive: () => void;
+};
+
+// A single unified control overlay for the movie, episode and live players.
 // Replaces the native <video controls> (whose scrubber resizes during a
 // transcode) plus the old scattered title/quality/maximize overlays.
 export function VideoChrome({
@@ -28,6 +53,7 @@ export function VideoChrome({
   closeHref,
   onClose,
   chrome,
+  live,
   extraTopRight,
   extraBottomRight,
 }: {
@@ -36,6 +62,8 @@ export function VideoChrome({
   closeHref?: string;
   onClose?: () => void;
   chrome: ChromeState;
+  /** Present only for a broadcast. Switches the timeline to DVR semantics. */
+  live?: LiveState;
   extraTopRight?: React.ReactNode;
   /** Rendered in the bottom bar, left of fullscreen -- e.g. a "next episode" button. */
   extraBottomRight?: React.ReactNode;
@@ -56,8 +84,28 @@ export function VideoChrome({
     toggleFullscreen,
   } = chrome;
 
-  const pct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const bufPct = duration > 0 ? Math.min(100, (buffered / duration) * 100) : 0;
+  // Live maps the bar onto the DVR window; everything else onto the runtime.
+  const trackStart = live ? live.windowStart : 0;
+  const trackEnd = live ? live.edge : duration;
+  // liveTimeline.ts owns the arithmetic for both modes -- VOD is just a window
+  // that happens to start at zero -- so it is unit-tested without a browser.
+  const along = (t: number) => liveTrackPercent(t, trackStart, trackEnd);
+
+  const pct = along(currentTime);
+  // For live, `buffered` is ahead of the playhead inside the same window, so
+  // the same mapping applies -- it just usually reaches the right-hand end.
+  const bufPct = along(buffered);
+
+  /** Seeking, with the live edge snapping so "drag to the end" means "go live". */
+  const onSeek = (t: number) => {
+    if (live && shouldSnapToLive(t, live.edge, LIVE_SNAP_SECONDS)) {
+      live.goLive();
+      return;
+    }
+    seek(t);
+  };
+
+  const behind = live ? secondsBehindLive(currentTime, live.edge) : 0;
   const show = controlsVisible || !isPlaying;
   // The root never captures pointer events -- only the bars/buttons do -- so
   // clicks on the empty middle fall through to the <video> (tap to toggle/reveal).
@@ -124,12 +172,12 @@ export function VideoChrome({
           </div>
           <input
             type="range"
-            min={0}
-            max={duration || 0}
+            min={trackStart}
+            max={trackEnd || 0}
             step="any"
-            value={Math.min(currentTime, duration || 0)}
-            onChange={(e) => seek(Number(e.target.value))}
-            aria-label="Seek"
+            value={Math.max(trackStart, Math.min(currentTime, trackEnd || 0))}
+            onChange={(e) => onSeek(Number(e.target.value))}
+            aria-label={live ? "Seek within the live buffer" : "Seek"}
             className="player-scrubber relative z-10 h-4 w-full cursor-pointer appearance-none bg-transparent"
           />
         </div>
@@ -187,9 +235,45 @@ export function VideoChrome({
             />
           </div>
 
-          <span className="ml-1 text-xs tabular-nums text-white/90 sm:text-sm">
-            {formatTime(currentTime)} <span className="text-white/50">/ {formatTime(duration)}</span>
-          </span>
+          {live ? (
+            /*
+              A broadcast has no end, so there is no total to count towards --
+              showing one is what made this look like a recording. What a
+              viewer actually wants to know is whether they are at the edge,
+              and if not, by how much and how to get back.
+
+              Red and solid at the edge; muted and clickable when behind, with
+              how far behind. Disabled at the edge rather than hidden, so the
+              control does not appear and disappear as the stream drifts across
+              the threshold.
+            */
+            <button
+              type="button"
+              onClick={live.goLive}
+              disabled={live.atLive}
+              aria-label={live.atLive ? "Playing live" : `Jump to live, currently ${formatTime(behind)} behind`}
+              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-bold uppercase tracking-wide transition-colors ${
+                live.atLive
+                  ? "bg-netflix-red text-white"
+                  : "bg-white/15 text-white/80 hover:bg-white/25"
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${live.atLive ? "bg-white" : "bg-white/50"}`}
+                aria-hidden
+              />
+              Live
+              {!live.atLive && (
+                <span className="tabular-nums font-normal normal-case tracking-normal text-white/60">
+                  -{formatTime(behind)}
+                </span>
+              )}
+            </button>
+          ) : (
+            <span className="ml-1 text-xs tabular-nums text-white/90 sm:text-sm">
+              {formatTime(currentTime)} <span className="text-white/50">/ {formatTime(duration)}</span>
+            </span>
+          )}
 
           <div className="ml-auto flex items-center gap-2">
             {extraBottomRight}
