@@ -5,6 +5,7 @@ import {
   liveSeekTarget,
   looksLikeEventFeed,
   looksLikeNetworkFeed,
+  findChannelForFixture,
   liveTrackPercent,
   secondsBehindLive,
   shouldSnapToLive,
@@ -170,5 +171,44 @@ describe("looksLikeNetworkFeed", () => {
     // "NHL" alone is a fixture feed's prefix, not a network.
     expect(looksLikeNetworkFeed("NHL BUFFALO SABRES")).toBe(false);
     expect(looksLikeNetworkFeed("NBA 07 :")).toBe(false);
+  });
+});
+
+describe("findChannelForFixture", () => {
+  const channels = [
+    { id: "1", name: "NHL BUFFALO SABRES" },
+    { id: "2", name: "NBA TV HD" },
+    { id: "3", name: "SP - NHL NETWORK HD" },
+    { id: "4", name: "USA - FOX 47 ROCHESTER MN (KXLT)" },
+  ];
+
+  it("matches a fixture channel by nickname", () => {
+    const fixture = { awayTeam: "Toronto Maple Leafs", homeTeam: "Buffalo Sabres" };
+    expect(findChannelForFixture(fixture, channels)?.id).toBe("1");
+  });
+
+  it("tries the away team, then the home team", () => {
+    // Only the home side matches here; the function must not stop at the
+    // first (unmatched) nickname.
+    const fixture = { awayTeam: "Dallas Stars", homeTeam: "Buffalo Sabres" };
+    expect(findChannelForFixture(fixture, channels)?.id).toBe("1");
+  });
+
+  it("returns null rather than a wrong guess", () => {
+    const fixture = { awayTeam: "Los Angeles Lakers", homeTeam: "Golden State Warriors" };
+    expect(findChannelForFixture(fixture, channels)).toBeNull();
+  });
+
+  it("excludes short and common nicknames", () => {
+    // "City" and "United" alone would match almost anything -- worth being
+    // wrong in the safe direction (no link) rather than the flashy one.
+    const fixture = { awayTeam: "Manchester City", homeTeam: "Leeds United" };
+    expect(findChannelForFixture(fixture, channels)).toBeNull();
+  });
+
+  it("handles a fixture with no two sides", () => {
+    // F1, UFC: ESPN gives no home/away split for these.
+    const fixture = { awayTeam: null, homeTeam: null };
+    expect(findChannelForFixture(fixture, channels)).toBeNull();
   });
 });

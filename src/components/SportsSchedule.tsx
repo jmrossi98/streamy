@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { findChannelForFixture } from "@/lib/liveTimeline";
 
 type Fixture = {
   id: string;
@@ -9,7 +11,11 @@ type Fixture = {
   detail: string;
   state: "pre" | "in" | "post";
   name: string;
+  awayTeam: string | null;
+  homeTeam: string | null;
 };
+
+type ScheduleChannel = { id: string; name: string };
 
 /**
  * Today's games, from a source that actually knows -- which the provider
@@ -21,7 +27,7 @@ type Fixture = {
  * only what is being played and when, so "is Buffalo on tonight" has an answer
  * that isn't "try tuning it and see".
  */
-export function SportsSchedule() {
+export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
   const [fixtures, setFixtures] = useState<Fixture[] | null>(null);
   const [error, setError] = useState(false);
 
@@ -57,10 +63,18 @@ export function SportsSchedule() {
         <p className="streamy-page-title-x text-sm text-white/40">Loading…</p>
       ) : (
         <ul className="streamy-page-title-x space-y-1">
-          {fixtures.map((f) => (
+          {fixtures.map((f) => {
+            // No EPG here -- nothing says which channel is airing which game
+            // -- so this is a name-based guess against your own lineup, not a
+            // fact. Conservative on purpose: no link beats a wrong one, so an
+            // unmatched fixture stays plain text exactly as it was before.
+            const channel = findChannelForFixture(f, channels);
+            const row = (
             <li
               key={f.id}
-              className="flex items-center gap-3 rounded bg-white/5 px-3 py-2"
+              className={`flex items-center gap-3 rounded bg-white/5 px-3 py-2 ${
+                channel ? "transition-colors hover:bg-white/10" : ""
+              }`}
             >
               <span
                 className={`w-14 shrink-0 text-center text-[10px] font-bold uppercase tracking-wide ${
@@ -81,7 +95,18 @@ export function SportsSchedule() {
                 {f.detail}
               </span>
             </li>
-          ))}
+            );
+            // A link over the same content rather than a whole separate
+            // presentation, so "this fixture goes to a channel" changes
+            // nothing about the row except that it is now clickable.
+            return channel ? (
+              <Link key={f.id} href={`/live/${encodeURIComponent(channel.id)}`}>
+                {row}
+              </Link>
+            ) : (
+              row
+            );
+          })}
         </ul>
       )}
     </section>

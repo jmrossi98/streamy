@@ -225,6 +225,21 @@ export function LiveTvContent({
         )}
       </div>
 
+      {/*
+        Above the grid, not below it. This used to render after the entire
+        channel list -- on any real lineup, "what's on tonight" was buried
+        under dozens of cards you had to scroll past to reach the one section
+        that actually answers "what should I watch". It's the first question
+        Live TV exists to answer, so it's the first thing on the page.
+
+        Visible whether or not the lineup loaded: the schedule is independent
+        of Jellyfin/Dispatcharr entirely, and someone landing here while Live
+        TV is broken should still be able to see what's on -- it just won't
+        be clickable to anything, since findChannelForFixture has nothing to
+        match against.
+      */}
+      <SportsSchedule channels={channels} />
+
       {channels.length > 0 && !empty && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           {channels.length > PAGE_SIZE && (
@@ -360,8 +375,18 @@ export function LiveTvContent({
             </section>
           )}
 
-          {mine.length > 0 && !query && !selectMode && (
-            <h2 className="mb-3 font-display text-xl font-bold text-white">All Channels</h2>
+          {/*
+            A heading either way, not only when My Stations pushes one out.
+            Without this, a viewer with nothing starred landed straight in an
+            unlabeled wall of cards -- fine once you already know what page
+            you're on, disorienting on first visit, which is the "confusing"
+            part of "stream navigation is confusing" that a screenshot alone
+            wouldn't have shown.
+          */}
+          {!query && !selectMode && (
+            <h2 className="mb-3 font-display text-xl font-bold text-white">
+              {mine.length > 0 ? "All Channels" : "Channels"}
+            </h2>
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -412,10 +437,6 @@ export function LiveTvContent({
         watching something. Rendered even when the tuner is unreachable, since
         an empty lineup is exactly when someone wants to add to it.
       */}
-      {/* Everyone, not admin-gated like the browser below: "what's on
-          tonight" is exactly the audience Live TV itself has. */}
-      <SportsSchedule />
-
       {isAdmin && <StreamBrowser />}
     </div>
   );

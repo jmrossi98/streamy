@@ -186,3 +186,58 @@ export function looksLikeNetworkFeed(name: string): boolean {
   if (looksLikeEventFeed(n)) return false;
   return NETWORK_PATTERNS.some((re) => re.test(n));
 }
+
+/**
+ * Finds a channel in the lineup that is plausibly carrying a fixture, so a
+ * schedule entry can link straight to a channel page rather than being inert
+ * text.
+ *
+ * A real, narrower problem than it sounds. There is no EPG here -- nothing
+ * says which channel is showing which game right now -- so this cannot be
+ * "the" answer, only a reasonable guess from names alone. A promoted fixture
+ * channel is typically named after one team ("NHL BUFFALO SABRES"), so the
+ * match is against each side's nickname (the last word of the team's display
+ * name -- "Sabres" out of "Buffalo Sabres"), not the full name or the city.
+ *
+ * Deliberately conservative: no match beats a wrong one. A short or common
+ * nickname ("FC", "United", "City") is excluded, since matching it would
+ * light up channels that have nothing to do with the fixture. Returns the
+ * first channel matched; a lineup with two channels named after the same
+ * team is not a case worth resolving here.
+ */
+const NICKNAME_STOPLIST = new Set([
+  "fc", "sc", "cf", "afc", "united", "city", "athletic", "club",
+  "real", "state", "a&m",
+]);
+
+function teamNickname(teamName: string | null): string | null {
+  if (!teamName) return null;
+  const words = teamName.trim().split(/\s+/);
+  const last = words[words.length - 1];
+  if (!last || last.length < 4) return null;
+  if (NICKNAME_STOPLIST.has(last.toLowerCase())) return null;
+  return last;
+}
+
+export function findChannelForFixture<C extends { id: string; name: string }>(
+  fixture: { awayTeam: string | null; homeTeam: string | null },
+  channels: C[]
+): C | null {
+  const nicknames = [teamNickname(fixture.awayTeam), teamNickname(fixture.homeTeam)]
+    .filter((n): n is string => n != null);
+  if (nicknames.length === 0) return null;
+
+  for (const nickname of nicknames) {
+    // Whole-word, case-insensitive: "Jets" must not match "Jetstream Sports".
+    //
+    // \\b, not \b: inside a template literal \b is the BACKSPACE escape
+    // (U+0008), not two characters a RegExp would read as a word boundary.
+    // The unescaped version compiled without error -- it is a valid, useless
+    // pattern -- and every match silently failed, caught only by the test
+    // above expecting a real id and getting undefined.
+    const re = new RegExp(`\\b${nickname}\\b`, "i");
+    const match = channels.find((c) => re.test(c.name));
+    if (match) return match;
+  }
+  return null;
+}
