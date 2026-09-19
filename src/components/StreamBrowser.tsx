@@ -115,7 +115,11 @@ export function StreamBrowser() {
       const res = await fetch("/api/live/streams/promote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ streamId: stream.id, name: stream.name }),
+        body: JSON.stringify({
+          streamId: stream.id,
+          name: stream.name,
+          logoUrl: stream.logoUrl,
+        }),
       });
       const body = (await res.json().catch(() => null)) as
         | { error?: string; channelNumber?: number; note?: string }

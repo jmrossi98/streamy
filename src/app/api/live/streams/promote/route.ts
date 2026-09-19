@@ -55,6 +55,9 @@ export async function POST(request: Request) {
     name,
     channelNumber,
     groupId: typeof body?.groupId === "number" ? body.groupId : null,
+    // Taken from the row the panel already has rather than re-fetched: the
+    // browser listed this stream a moment ago and knows its artwork.
+    logoUrl: typeof body?.logoUrl === "string" ? body.logoUrl : null,
   });
 
   if (!created) {

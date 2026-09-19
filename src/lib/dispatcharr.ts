@@ -194,6 +194,83 @@ export async function listPromotedStreamIds(): Promise<Set<number> | null> {
 }
 
 /**
+ * Finds or creates a logo record, returning its id.
+ *
+ * Dispatcharr stores logos as their own rows and channels reference one by id,
+ * so a channel cannot simply carry a URL. Every provider stream ships a
+ * `logo_url` -- 200 of 200 sampled here -- but the five published channels had
+ * `logo_id: null`, so Dispatcharr emitted `tvg-logo=""` in its M3U, Jellyfin
+ * had no image to cache, and Streamy fell back to drawing the channel's
+ * initials in a grey box.
+ *
+ * Existing logos are reused by URL rather than duplicated: promoting six
+ * streams from one provider otherwise creates six identical rows.
+ */
+export async function ensureLogo(name: string, url: string): Promise<number | null> {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+
+  const existing = await api<
+    { results?: { id?: number | string; url?: string }[] } | { id?: number | string; url?: string }[]
+  >(`/api/channels/logos/?page_size=1000`);
+  const rows = existing ? (Array.isArray(existing) ? existing : (existing.results ?? [])) : [];
+  const match = rows.find((r) => r?.url === trimmed);
+  if (match?.id != null) {
+    const id = Number(match.id);
+    if (Number.isFinite(id)) return id;
+  }
+
+  const created = await api<{ id?: number | string }>(`/api/channels/logos/`, {
+    method: "POST",
+    body: JSON.stringify({ name: name.slice(0, 100), url: trimmed }),
+  });
+  const id = Number(created?.id);
+  return Number.isFinite(id) ? id : null;
+}
+
+/** One published channel, for backfilling artwork onto what already exists. */
+export type DispatcharrChannel = {
+  id: number;
+  name: string;
+  logoId: number | null;
+  streamIds: number[];
+};
+
+export async function listChannels(): Promise<DispatcharrChannel[] | null> {
+  const data = await api<
+    | { results?: { id?: number; name?: string; logo_id?: number | null; streams?: number[] }[] }
+    | { id?: number; name?: string; logo_id?: number | null; streams?: number[] }[]
+  >(`/api/channels/channels/?page_size=1000`);
+  if (!data) return null;
+  const rows = Array.isArray(data) ? data : (data.results ?? []);
+  return rows
+    .filter((r): r is { id: number; name: string; logo_id?: number | null; streams?: number[] } =>
+      typeof r?.id === "number" && typeof r?.name === "string"
+    )
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      logoId: typeof r.logo_id === "number" ? r.logo_id : null,
+      streamIds: r.streams ?? [],
+    }));
+}
+
+/** One stream by id, so a channel can borrow its artwork. */
+export async function getStream(id: number): Promise<DispatcharrStream | null> {
+  const raw = await api<RawStream>(`/api/channels/streams/${id}/`);
+  return raw ? toStream(raw) : null;
+}
+
+/** Points an existing channel at a logo. */
+export async function setChannelLogo(channelId: number, logoId: number): Promise<boolean> {
+  const res = await api<{ id?: number }>(`/api/channels/channels/${channelId}/`, {
+    method: "PATCH",
+    body: JSON.stringify({ logo_id: logoId }),
+  });
+  return res != null;
+}
+
+/**
  * Promotes a stream into the published lineup.
  *
  * `name` is the only field Dispatcharr requires. The channel number is chosen
@@ -210,6 +287,8 @@ export async function promoteStreamToChannel(input: {
   name: string;
   channelNumber?: number | null;
   groupId?: number | null;
+  /** The provider's logo for this stream, attached to the new channel. */
+  logoUrl?: string | null;
 }): Promise<{ id: number } | null> {
   const body: Record<string, unknown> = {
     name: input.name,
@@ -217,6 +296,14 @@ export async function promoteStreamToChannel(input: {
   };
   if (typeof input.channelNumber === "number") body.channel_number = input.channelNumber;
   if (typeof input.groupId === "number") body.channel_group_id = input.groupId;
+
+  // Artwork, when the provider supplied any. Best effort on purpose: a channel
+  // with no logo is a cosmetic problem, and failing the whole promote over one
+  // would be worse than the grey box it avoids.
+  if (input.logoUrl) {
+    const logoId = await ensureLogo(input.name, input.logoUrl);
+    if (logoId != null) body.logo_id = logoId;
+  }
 
   const created = await api<{ id?: number }>(`/api/channels/channels/`, {
     method: "POST",
