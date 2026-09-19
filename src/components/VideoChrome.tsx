@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
 import {
@@ -91,7 +92,31 @@ export function VideoChrome({
   // that happens to start at zero -- so it is unit-tested without a browser.
   const along = (t: number) => liveTrackPercent(t, trackStart, trackEnd);
 
-  const pct = along(currentTime);
+  /*
+    While the thumb is being dragged, the drag wins.
+
+    Both ends of a live window advance in real time, so a bar driven purely by
+    playback state fights the finger: the value is recomputed underneath the
+    drag and the thumb springs back. Holding the dragged value until release is
+    what makes scrubbing feel attached to the pointer rather than advisory.
+  */
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const dragging = dragValue !== null;
+
+  /*
+    At live, the playhead is drawn AT the right edge -- not at its true
+    position.
+
+    Playback deliberately sits a few seconds back from the edge so an upstream
+    hiccup has something buffered to play through (LIVE_SYNC_SECONDS in
+    LivePlayer). That cushion is an implementation detail: rendering it
+    honestly leaves a permanent gap between the thumb and the end of the bar,
+    which reads as "stuck slightly behind" rather than as "live". Every major
+    platform pins the thumb to the end while you are in the live window and
+    shows the offset only once you have genuinely scrubbed back.
+  */
+  const livePct = live?.atLive ? 100 : along(currentTime);
+  const pct = dragging ? along(dragValue) : live ? livePct : along(currentTime);
   // For live, `buffered` is ahead of the playhead inside the same window, so
   // the same mapping applies -- it just usually reaches the right-hand end.
   const bufPct = along(buffered);
@@ -175,8 +200,26 @@ export function VideoChrome({
             min={trackStart}
             max={trackEnd || 0}
             step="any"
-            value={Math.max(trackStart, Math.min(currentTime, trackEnd || 0))}
-            onChange={(e) => onSeek(Number(e.target.value))}
+            value={
+              dragging
+                ? dragValue
+                : live?.atLive
+                  ? trackEnd || 0
+                  : Math.max(trackStart, Math.min(currentTime, trackEnd || 0))
+            }
+            // Tracked while dragging so the thumb follows the pointer; the seek
+            // itself happens on release, so scrubbing across a live window does
+            // not fire a seek per pixel.
+            onChange={(e) => setDragValue(Number(e.target.value))}
+            onPointerUp={() => {
+              if (dragValue !== null) onSeek(dragValue);
+              setDragValue(null);
+            }}
+            onKeyUp={() => {
+              if (dragValue !== null) onSeek(dragValue);
+              setDragValue(null);
+            }}
+            onBlur={() => setDragValue(null)}
             aria-label={live ? "Seek within the live buffer" : "Seek"}
             className="player-scrubber relative z-10 h-4 w-full cursor-pointer appearance-none bg-transparent"
           />
