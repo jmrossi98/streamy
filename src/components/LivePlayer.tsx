@@ -170,19 +170,17 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   const [loading, setLoading] = useState(true);
   /** Playback started and then stalled, as opposed to never having started. */
   const [rebuffering, setRebuffering] = useState(false);
-  /** Autoplay was refused. Not a failure -- it needs a click, and says so. */
-  const [needsGesture, setNeedsGesture] = useState(false);
   /**
-   * Mirrors `needsGesture` for the tune effect's closures to read live.
+   * Whether a blocked autoplay forced this tune to start muted.
    *
-   * The effect only re-runs on [channelId, goLive, retryToken], so a plain
-   * read of the `needsGesture` state variable inside it would see whatever
-   * value was current when the effect last ran, not whatever a handler set a
-   * moment ago. scheduleRetry needs the live value: see its own comment for
-   * why retrying while this is true only burns the retry budget on a retry
-   * that cannot succeed.
+   * A live channel is meant to just start -- nothing here should ever ask a
+   * viewer to click play. Muted autoplay is exempt from the gesture
+   * requirement in every major browser, so a blocked attempt retries muted
+   * instead of surfacing a prompt (see startPlayback and resumePlayback).
+   * This flags that it happened, so onPlaying knows to unmute the instant
+   * real playback actually starts rather than leaving the channel silent.
    */
-  const needsGestureRef = useRef(false);
+  const autoMutedRef = useRef(false);
   /**
    * Seconds behind the live edge. Null until the stream reports a seekable
    * range. Re-read on every timeupdate -- HLS drops segments off the back as
@@ -223,6 +221,32 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   const chrome = usePlayerChrome(videoRef, containerRef);
 
   /**
+   * Resumes playback after an automatic seek, retrying muted the same way
+   * startPlayback's own first attempt does when autoplay is blocked -- see
+   * the comment there for why, and autoMutedRef's for what tells onPlaying
+   * to undo it.
+   *
+   * Silently swallowing the rejection instead -- what both call sites below
+   * used to do, with no muted retry either -- was the actual bug behind
+   * "reconnecting forever, then a generic failure": the player kept
+   * re-issuing play() the same blocked way, nothing recovered, and
+   * eventually an unrelated hls.js watchdog gave up and reported a stream
+   * failure that was never the real problem. A muted retry failing too is
+   * left to that same existing machinery (onWaiting's own timer, hls.js's
+   * fatal handler) rather than handled again here.
+   */
+  const resumePlayback = useCallback((v: HTMLVideoElement) => {
+    v.play().catch((err: unknown) => {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NotAllowedError" || name === "AbortError") {
+        autoMutedRef.current = true;
+        v.muted = true;
+        void v.play().catch(() => {});
+      }
+    });
+  }, []);
+
+  /**
    * Jumps to the live edge.
    *
    * A live HLS stream has a seekable window -- a few minutes of segments the
@@ -230,32 +254,6 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
    * a stall, a backgrounded tab). Live players offer a way back rather than
    * leaving you permanently minutes late with no indication why.
    */
-  /**
-   * Resumes playback after an automatic seek, treating a blocked autoplay
-   * the same way startPlayback's own first attempt does: not a failure, and
-   * not something a further automatic retry can fix either, since none of
-   * these calls carry a fresh user gesture any more than the last one did.
-   *
-   * Silently swallowing this instead -- what both call sites below used to
-   * do -- was the actual bug behind "reconnecting forever, then a generic
-   * failure": the player kept re-issuing play() with no gesture, nothing
-   * told the viewer why nothing was happening, and eventually an unrelated
-   * hls.js watchdog gave up and reported a stream failure that was never the
-   * real problem.
-   */
-  const resumePlayback = useCallback((v: HTMLVideoElement) => {
-    v.play().catch((err: unknown) => {
-      const name = err instanceof Error ? err.name : "";
-      if (name === "NotAllowedError" || name === "AbortError") {
-        needsGestureRef.current = true;
-        setNeedsGesture(true);
-        // Not still reconnecting -- waiting on a click now, a different and
-        // more actionable thing to tell the viewer. See the render below.
-        setRebuffering(false);
-      }
-    });
-  }, []);
-
   const goLive = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -349,13 +347,6 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
      * shows, not a flash of an error that then heals itself.
      */
     const scheduleRetry = (finalError: string) => {
-      // A blocked autoplay never heals itself by retrying: the retried
-      // startPlayback() carries no more of a user gesture than the attempt
-      // that just got NotAllowedError, so it is guaranteed to fail the same
-      // way. Spending the retry budget on that used to run out silently and
-      // end in this exact "Playback failed." -- masking the one thing that
-      // was actually true and already on screen, that a click would fix it.
-      if (needsGestureRef.current) return;
       if (retryCountRef.current >= MAX_RETRIES) {
         setError(finalError);
         setLoading(false);
@@ -390,8 +381,13 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       clearStallTimer();
       setLoading(false);
       setRebuffering(false);
-      needsGestureRef.current = false;
-      setNeedsGesture(false);
+      // Undoes the muted fallback the instant real playback is confirmed --
+      // not unconditionally, so this never fights a viewer's own deliberate
+      // mute (toggleMute), only the one this component itself forced.
+      if (autoMutedRef.current) {
+        autoMutedRef.current = false;
+        video.muted = false;
+      }
       // A channel that plays fine now shouldn't have its retry budget
       // dented by trouble from ten minutes ago -- only a run of failures
       // that never once reaches "playing" should count toward the cap.
@@ -446,11 +442,6 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     };
 
     const onWaiting = () => {
-      // Already known to be waiting on a click, not a stall (see
-      // resumePlayback) -- hls.js can keep firing waiting/stalled while
-      // paused, and re-flipping this to "Reconnecting..." on every one of
-      // those would fight the message that's already correctly on screen.
-      if (needsGestureRef.current) return;
       setRebuffering(true);
       if (stallTimer !== null) return;
       stallTimer = setTimeout(() => {
@@ -470,24 +461,28 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
 
     /**
      * A rejected play() used to just clear the spinner, leaving a black
-     * rectangle with no text -- the reported symptom. Two very different
-     * causes, so they are told apart: the browser refusing to autoplay wants a
-     * click, and anything else is a real failure.
+     * rectangle with no text -- the original reported symptom. A live
+     * channel has no business asking anyone to click play, so a blocked
+     * autoplay (missing a user gesture) retries muted instead of surfacing a
+     * prompt -- muted autoplay is exempt from that requirement in every
+     * major browser. onPlaying unmutes the instant real playback starts.
+     * Anything else, or the muted retry failing too, is a real failure and
+     * goes through the normal retry-with-backoff path.
      */
     const startPlayback = () => {
       video.play().catch((err: unknown) => {
-        clearTuneTimer();
         const name = err instanceof Error ? err.name : "";
         if (name === "NotAllowedError" || name === "AbortError") {
-          // Not a failure -- the browser is waiting for a click, and nothing
-          // about retrying would change that, so this doesn't touch the
-          // retry budget at all.
-          needsGestureRef.current = true;
-          setNeedsGesture(true);
-          setLoading(false);
-        } else {
-          scheduleRetry("Playback couldn’t start.");
+          autoMutedRef.current = true;
+          video.muted = true;
+          video.play().catch(() => {
+            clearTuneTimer();
+            scheduleRetry("Playback couldn’t start.");
+          });
+          return;
         }
+        clearTuneTimer();
+        scheduleRetry("Playback couldn’t start.");
       });
     };
     // How far behind the live edge we are, recomputed as playback moves. This
@@ -714,21 +709,13 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
         )}
         {/* Rebuffering is drawn over the frozen frame rather than replacing it,
             and only once playback has started -- otherwise a stall during the
-            initial tune would stack two spinners. Also not when needsGesture
-            is set: resumePlayback always clears rebuffering the moment it
-            discovers a blocked autoplay, but this guard keeps the two from
-            ever rendering stacked even if some future path doesn't, since
-            needsGesture is the more actionable of the two messages -- it
-            says the one thing actually true, that nothing further happens
-            without a click. */}
-        {rebuffering && !loading && !error && !needsGesture && (
+            initial tune would stack two spinners. No separate "press play"
+            state: a blocked autoplay retries muted instead (see
+            startPlayback/resumePlayback), so there is nothing here that ever
+            needs a click. */}
+        {rebuffering && !loading && !error && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
             <Spinner label="Reconnecting…" />
-          </span>
-        )}
-        {needsGesture && !error && (
-          <span className="absolute inset-0 flex items-center justify-center bg-black/50 px-6 text-center text-sm text-white/70">
-            Press play to start this channel.
           </span>
         )}
         {error && (
