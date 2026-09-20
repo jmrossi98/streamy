@@ -113,8 +113,20 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
           </span>
         </div>
       )}
-      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded bg-black/40">
+      <div
+        className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded ${
+          channel.logoUrl ? "bg-white p-1.5" : "bg-black/40"
+        }`}
+      >
         {channel.logoUrl ? (
+          // A light backing plate, not the dark one the no-logo fallback
+          // uses: a provider's logo is designed to sit on a white page --
+          // several came through as a dark wordmark with no background of
+          // its own, which read as an empty box against this app's dark
+          // theme. Most logos already carry their own colour and lose
+          // nothing sitting on white; the ones that were invisible before
+          // are the ones this is actually for.
+          //
           // Plain <img>: these are proxied through our own origin at an
           // arbitrary upstream size, and next/image would want a configured
           // remote pattern for a host that is Tailscale-only anyway.
