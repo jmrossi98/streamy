@@ -30,6 +30,8 @@ import { checkEgress } from "./pageWatch";
 import { isNotifyConfigured } from "./notify";
 import { prisma } from "./db";
 import { isContainerViewConfigured, listContainers } from "./containers";
+import { isOpenRouterConfigured } from "./openrouter";
+import { openRouterCredits } from "./spend";
 
 const PROBE_TIMEOUT_MS = 5_000;
 
@@ -357,6 +359,53 @@ async function searxngStatus(): Promise<ServiceStatus> {
     detail: "JSON API responding",
     address: env("SEARXNG_URL"),
   };
+}
+
+/**
+ * OpenRouter, the admin chat's paid model backend (see openrouter.ts).
+ *
+ * Reuses openRouterCredits() (spend.ts) rather than a separate probe: it
+ * already hits /key, which validates the inference key the same way a chat
+ * request would, and its response doubles as the one figure worth showing
+ * here -- remaining balance, the thing that silently breaks the chat panel
+ * with a 402 once it runs out rather than any kind of outage.
+ */
+async function openRouterStatus(): Promise<ServiceStatus> {
+  const name = "OpenRouter";
+  const group = "Assistant" as const;
+  if (!isOpenRouterConfigured()) {
+    return { name, group, state: "unconfigured", detail: "No OPENROUTER_API_KEY" };
+  }
+  const credits = await openRouterCredits();
+  if (!credits) {
+    return { name, group, state: "down", detail: "Key rejected, or OpenRouter unreachable" };
+  }
+  const detail =
+    credits.limit == null
+      ? `$${credits.used.toFixed(2)} used, no cap set`
+      : `$${Math.max(0, credits.limit - credits.used).toFixed(2)} left of $${credits.limit.toFixed(2)}`;
+  return { name, group, state: "up", detail };
+}
+
+/**
+ * TMDB, the metadata/artwork source for every movie and show page.
+ *
+ * /authentication is TMDB's own purpose-built key-validation endpoint -- it
+ * costs nothing to call and touches no real data, unlike probing an actual
+ * title lookup would.
+ */
+async function tmdbStatus(): Promise<ServiceStatus> {
+  const name = "TMDB";
+  const group = "Media" as const;
+  const key = process.env.TMDB_API_KEY;
+  if (!key) {
+    return { name, group, state: "unconfigured", detail: "No TMDB_API_KEY" };
+  }
+  const res = await probe(`https://api.themoviedb.org/3/authentication?api_key=${key}`);
+  if (!res.ok) {
+    return { name, group, state: "down", detail: res.error ?? `HTTP ${res.status}` };
+  }
+  return { name, group, state: "up", detail: "API key valid" };
 }
 
 /**
@@ -1062,6 +1111,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     syncthing,
     webdav,
     portainer,
+    openRouter,
+    tmdb,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -1100,10 +1151,15 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     syncthingStatus(),
     webdavStatus(),
     portainerStatus(),
+    openRouterStatus(),
+    tmdbStatus(),
   ]);
 
   return [
     jellyfin,
+    // Next to Jellyfin, which is the only thing every movie/show page above
+    // it depends on TMDB for: artwork and metadata, not playback itself.
+    tmdb,
     // Directly after Jellyfin: Live TV runs through it, so when one is broken
     // the other's state is the first thing worth reading next to it.
     liveTv,
@@ -1125,6 +1181,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     gamarr,
     gamarrSources,
     ollama,
+    openRouter,
     searxng,
     // System group, in rough order of "how loudly does this failing matter".
     disk,
