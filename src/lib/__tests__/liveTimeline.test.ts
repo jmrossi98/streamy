@@ -320,6 +320,23 @@ describe("findCandidateChannels", () => {
       const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
       expect(ids).toContain("3");
     });
+
+    it("ranks a team's own local affiliate ahead of a national network", () => {
+      // The exact case reported live: a Bills game defaulted to a national
+      // feed instead of WKBW, Buffalo's own ABC affiliate, because a market
+      // match and a single-league brand match (NFL Network) used to tie at
+      // the same specificity -- leaving the winner to catalogue order rather
+      // than to which one actually says something about *this* game.
+      const withNetwork = [
+        { id: "12", name: "USA - NBC 10 BUFFALO NY (WGRZ)" },
+        { id: "20", name: "SP - NFL NETWORK HD" },
+        { id: "21", name: "USA - ABC 7 BUFFALO NY (WKBW)" },
+      ];
+      const fixture = { league: "NFL", awayTeam: "Miami Dolphins", homeTeam: "Buffalo Bills" };
+      const ids = findCandidateChannels(fixture, withNetwork).map((c) => c.id);
+      expect(ids.indexOf("21")).toBeLessThan(ids.indexOf("20"));
+      expect(ids.indexOf("12")).toBeLessThan(ids.indexOf("20"));
+    });
   });
 });
 

@@ -442,13 +442,23 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
 
     const brand = NETWORK_BRANDS.find((b) => b.pattern.test(n));
     if (brand && brand.leagues.includes(fixture.league)) {
-      consider(channel, brand.leagues.length);
+      // +1 so even the most specific brand (a single-league network like NFL
+      // Network, specificity 1) never ties with a market match below. A
+      // market match is a *stronger* signal than any brand, not just a
+      // narrower one: it names the actual team's actual local station,
+      // where a brand only says "some game on this league airs here,
+      // somewhere, at some point" -- ties used to leave the winner to
+      // whichever happened to come first in the lineup, which is how a
+      // Bills game defaulted to a national feed instead of WKBW.
+      consider(channel, brand.leagues.length + 1);
     }
 
     // Whole-word, so "Miami" doesn't also light up something that merely
-    // contains it as a substring of a longer word.
+    // contains it as a substring of a longer word. 0, strictly below every
+    // brand match above, so a team's own market always outranks a network --
+    // see the comment on that branch for why this isn't just "equally good".
     if (cities.some((city) => new RegExp(`\\b${city}\\b`, "i").test(channel.name))) {
-      consider(channel, 1);
+      consider(channel, 0);
     }
   }
 
