@@ -155,27 +155,34 @@ export function looksLikeEventFeed(name: string): boolean {
  * names are all excluded on purpose -- "NHL" appears in both "SP - NHL NETWORK
  * HD" and "NHL BUFFALO SABRES", so matching the league would defeat the point.
  */
-const NETWORK_PATTERNS = [
-  /\bespn\s*(news|u|deportes|\d)?\b/,
-  /\bnba\s*tv\b/,
-  /\bnhl\s*network\b/,
-  /\bnfl\s*(network|redzone)\b/,
-  /\bmlb\s*network\b/,
-  /\bfox\s*sports?\b/,
-  /\bcbs\s*sports?\b/,
-  /\bnbc\s*sports?\b/,
-  /\bsky\s*sports?\b/,
-  /\bbein\s*sports?\b/,
-  /\bdazn\b/,
-  /\btnt\b|\btbs\b|\btruTV\b/i,
-  /\bbally\s*sports?\b/,
-  /\bmsg\b|\byes\s*network\b/,
-  /\busa\s*network\b/,
-  /\bbig\s*ten\s*network\b|\bacc\s*network\b|\bsec\s*network\b/,
-  /\bgolf\s*channel\b/,
-  /\btennis\s*channel\b/,
-  /\bmotortrend\b|\bmotorsport\b/,
-  /\bwillow\b/,
+/**
+ * Broadcast brands, each tagged with the fixture leagues (from
+ * sportsSchedule's `LEAGUES` labels) it plausibly carries. Rights change
+ * most offseasons and this is not chased season to season -- it is a rough
+ * "worth a look" signal for `findCandidateChannels`, not a claim of fact.
+ * `looksLikeNetworkFeed` only needs the pattern half, not the tag.
+ */
+const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
+  { pattern: /\bespn\s*(news|u|deportes|\d)?\b/, leagues: ["NFL", "NHL", "NBA", "College Football", "College Basketball", "UFC"] },
+  { pattern: /\bnba\s*tv\b/, leagues: ["NBA"] },
+  { pattern: /\bnhl\s*network\b/, leagues: ["NHL"] },
+  { pattern: /\bnfl\s*(network|redzone)\b/, leagues: ["NFL"] },
+  { pattern: /\bmlb\s*network\b/, leagues: [] },
+  { pattern: /\bfox\s*sports?\b/, leagues: ["NFL", "College Football", "College Basketball"] },
+  { pattern: /\bcbs\s*sports?\b/, leagues: ["NFL", "College Basketball", "Champions League"] },
+  { pattern: /\bnbc\s*sports?\b/, leagues: ["NFL", "Premier League"] },
+  { pattern: /\bsky\s*sports?\b/, leagues: ["Premier League", "La Liga", "Champions League"] },
+  { pattern: /\bbein\s*sports?\b/, leagues: ["La Liga", "MLS", "Champions League"] },
+  { pattern: /\bdazn\b/, leagues: ["La Liga", "Champions League"] },
+  { pattern: /\btnt\b|\btbs\b|\btruTV\b/i, leagues: ["NBA", "College Basketball"] },
+  { pattern: /\bbally\s*sports?\b/, leagues: ["NHL", "NBA"] },
+  { pattern: /\bmsg\b|\byes\s*network\b/, leagues: ["NHL", "NBA"] },
+  { pattern: /\busa\s*network\b/, leagues: ["Premier League"] },
+  { pattern: /\bbig\s*ten\s*network\b|\bacc\s*network\b|\bsec\s*network\b/, leagues: ["College Football", "College Basketball"] },
+  { pattern: /\bgolf\s*channel\b/, leagues: [] },
+  { pattern: /\btennis\s*channel\b/, leagues: [] },
+  { pattern: /\bmotortrend\b|\bmotorsport\b/, leagues: [] },
+  { pattern: /\bwillow\b/, leagues: [] },
 ];
 
 export function looksLikeNetworkFeed(name: string): boolean {
@@ -184,7 +191,7 @@ export function looksLikeNetworkFeed(name: string): boolean {
   // JETS") must not qualify: the broadcaster is incidental, the fixture is the
   // subject. Checked first so the allowlist cannot override it.
   if (looksLikeEventFeed(n)) return false;
-  return NETWORK_PATTERNS.some((re) => re.test(n));
+  return NETWORK_BRANDS.some((b) => b.pattern.test(n));
 }
 
 /**
@@ -240,4 +247,37 @@ export function findChannelForFixture<C extends { id: string; name: string }>(
     if (match) return match;
   }
   return null;
+}
+
+/**
+ * Channels plausibly carrying a fixture's league, for when
+ * `findChannelForFixture` finds nothing to link to.
+ *
+ * There is still no EPG confirming this -- checked, and the one channel here
+ * with real programme data (Dispatcharr only stores it for channels mapped to
+ * an EPG source, and only one is) lists generic blocks like "Live: WNBA
+ * Basketball" rather than naming teams, so it cannot confirm a specific
+ * fixture either. This is the same honest downgrade `looksLikeNetworkFeed`
+ * makes: not "this channel has the game", only "this is a network that
+ * carries this league, worth a look".
+ *
+ * Capped, and ordered by how specific the brand is -- a dedicated single-sport
+ * network (NBA TV for an NBA fixture) is a better guess than a generalist
+ * (ESPN) that also covers nine other things this list tracks.
+ */
+export function findCandidateChannels<C extends { id: string; name: string }>(
+  fixture: { league: string },
+  channels: C[],
+  limit = 4
+): C[] {
+  const matches: { channel: C; specificity: number }[] = [];
+  for (const channel of channels) {
+    const n = channel.name.toLowerCase();
+    if (looksLikeEventFeed(n)) continue;
+    const brand = NETWORK_BRANDS.find((b) => b.pattern.test(n));
+    if (!brand || !brand.leagues.includes(fixture.league)) continue;
+    matches.push({ channel, specificity: brand.leagues.length });
+  }
+  matches.sort((a, b) => a.specificity - b.specificity);
+  return matches.slice(0, limit).map((m) => m.channel);
 }

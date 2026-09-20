@@ -225,21 +225,6 @@ export function LiveTvContent({
         )}
       </div>
 
-      {/*
-        Above the grid, not below it. This used to render after the entire
-        channel list -- on any real lineup, "what's on tonight" was buried
-        under dozens of cards you had to scroll past to reach the one section
-        that actually answers "what should I watch". It's the first question
-        Live TV exists to answer, so it's the first thing on the page.
-
-        Visible whether or not the lineup loaded: the schedule is independent
-        of Jellyfin/Dispatcharr entirely, and someone landing here while Live
-        TV is broken should still be able to see what's on -- it just won't
-        be clickable to anything, since findChannelForFixture has nothing to
-        match against.
-      */}
-      <SportsSchedule channels={channels} />
-
       {channels.length > 0 && !empty && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           {channels.length > PAGE_SIZE && (
@@ -430,6 +415,17 @@ export function LiveTvContent({
           )}
         </>
       )}
+
+      {/*
+        Below the lineup, not above it: a viewer opening Live TV wants a
+        channel first, and the grid -- not "what's on tonight" -- is that.
+        Still rendered whether or not the lineup loaded, since the schedule is
+        independent of Jellyfin/Dispatcharr entirely and someone landing here
+        while Live TV is broken should still be able to see what's on -- it
+        just won't be clickable to anything, since findChannelForFixture has
+        nothing to match against.
+      */}
+      <SportsSchedule channels={channels} />
 
       {/*
         Admin only, and below the lineup rather than beside it: this is a

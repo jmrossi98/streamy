@@ -5,6 +5,7 @@ import {
   liveSeekTarget,
   looksLikeEventFeed,
   looksLikeNetworkFeed,
+  findCandidateChannels,
   findChannelForFixture,
   liveTrackPercent,
   secondsBehindLive,
@@ -210,5 +211,52 @@ describe("findChannelForFixture", () => {
     // F1, UFC: ESPN gives no home/away split for these.
     const fixture = { awayTeam: null, homeTeam: null };
     expect(findChannelForFixture(fixture, channels)).toBeNull();
+  });
+});
+
+describe("findCandidateChannels", () => {
+  const channels = [
+    { id: "1", name: "NHL BUFFALO SABRES" },
+    { id: "2", name: "NBA TV HD" },
+    { id: "3", name: "SP - NHL NETWORK HD" },
+    { id: "4", name: "USA - ESPN2 HD" },
+    { id: "5", name: "USA - FOX 47 ROCHESTER MN (KXLT)" },
+    { id: "6", name: "ABC News AU" },
+  ];
+
+  it("lists networks tagged for the fixture's league", () => {
+    const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
+    expect(ids).toContain("3"); // NHL Network
+    expect(ids).toContain("4"); // ESPN
+  });
+
+  it("excludes fixture feeds and event-named channels", () => {
+    // "NHL BUFFALO SABRES" matches nothing in NETWORK_BRANDS at all (it isn't
+    // a network name), so this also guards against the fixture heuristic
+    // somehow leaking through.
+    const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
+    expect(ids).not.toContain("1");
+  });
+
+  it("excludes a network with no tie to the fixture's league", () => {
+    // NBA TV is a real network, just not one that carries NHL.
+    const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
+    expect(ids).not.toContain("2");
+  });
+
+  it("never lists a plain-language channel a brand regex happens to hit", () => {
+    // "ABC News AU" matching nothing here is the point being guarded --
+    // there is no bare "ABC" pattern precisely because this channel exists.
+    const ids = findCandidateChannels({ league: "NBA" }, channels).map((c) => c.id);
+    expect(ids).not.toContain("6");
+  });
+
+  it("ranks a dedicated single-sport network ahead of a generalist", () => {
+    const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
+    expect(ids.indexOf("3")).toBeLessThan(ids.indexOf("4"));
+  });
+
+  it("returns nothing for a league no lineup channel carries", () => {
+    expect(findCandidateChannels({ league: "Formula 1" }, channels)).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { findChannelForFixture } from "@/lib/liveTimeline";
+import { findCandidateChannels, findChannelForFixture } from "@/lib/liveTimeline";
 
 type Fixture = {
   id: string;
@@ -50,7 +50,7 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
   if (fixtures !== null && fixtures.length === 0) return null;
 
   return (
-    <section className="mt-10">
+    <section className="mt-10 mb-10">
       <h2 className="streamy-page-title-x mb-1 font-display text-2xl font-bold text-white">
         Today
       </h2>
@@ -69,31 +69,58 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
             // fact. Conservative on purpose: no link beats a wrong one, so an
             // unmatched fixture stays plain text exactly as it was before.
             const channel = findChannelForFixture(f, channels);
+            // Only worth computing when there's no direct link -- a fixture
+            // that already resolved to its own channel doesn't need guesses.
+            const candidates = channel ? [] : findCandidateChannels(f, channels);
             const row = (
             <li
               key={f.id}
-              className={`flex items-center gap-3 rounded bg-white/5 px-3 py-2 ${
+              className={`rounded bg-white/5 px-3 py-2 ${
                 channel ? "transition-colors hover:bg-white/10" : ""
               }`}
             >
-              <span
-                className={`w-14 shrink-0 text-center text-[10px] font-bold uppercase tracking-wide ${
-                  f.state === "in" ? "text-netflix-red" : "text-white/40"
-                }`}
-              >
-                {f.league}
-              </span>
-              <p className="min-w-0 flex-1 truncate text-sm text-white/90">{f.name}</p>
-              <span
-                className={`shrink-0 text-xs ${
-                  f.state === "in" ? "font-semibold text-netflix-red" : "text-white/50"
-                }`}
-              >
-                {f.state === "in" && (
-                  <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-netflix-red align-middle" />
-                )}
-                {f.detail}
-              </span>
+              <div className="flex items-center gap-3">
+                <span
+                  className={`w-14 shrink-0 text-center text-[10px] font-bold uppercase tracking-wide ${
+                    f.state === "in" ? "text-netflix-red" : "text-white/40"
+                  }`}
+                >
+                  {f.league}
+                </span>
+                <p className="min-w-0 flex-1 truncate text-sm text-white/90">{f.name}</p>
+                <span
+                  className={`shrink-0 text-xs ${
+                    f.state === "in" ? "font-semibold text-netflix-red" : "text-white/50"
+                  }`}
+                >
+                  {f.state === "in" && (
+                    <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-netflix-red align-middle" />
+                  )}
+                  {f.detail}
+                </span>
+              </div>
+              {/*
+                No single channel confirmed -- not nothing, either. A list of
+                networks that plausibly carry this league, so "is Buffalo on
+                tonight" has more of an answer than silence when the fixture
+                channel itself isn't promoted (or hasn't gone live yet).
+              */}
+              {candidates.length > 0 && (
+                <p className="mt-1 pl-[68px] text-xs text-white/40">
+                  Might be on:{" "}
+                  {candidates.map((c, i) => (
+                    <span key={c.id}>
+                      {i > 0 && ", "}
+                      <Link
+                        href={`/live/${encodeURIComponent(c.id)}`}
+                        className="text-white/60 underline decoration-white/20 underline-offset-2 hover:text-white"
+                      >
+                        {c.name}
+                      </Link>
+                    </span>
+                  ))}
+                </p>
+              )}
             </li>
             );
             // A link over the same content rather than a whole separate
