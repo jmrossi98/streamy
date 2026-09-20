@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
-import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
+import { DemoteChannelButton } from "@/components/DemoteChannelButton";
 import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
+import { findChannelIdByName, isDispatcharrConfigured } from "@/lib/dispatcharr";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -39,6 +41,13 @@ export default async function LiveChannelPage({
       }))
     : false;
 
+  // Only for an admin, and only the one extra lookup demoting actually needs
+  // (see findChannelIdByName): Jellyfin's channel id, what this page is keyed
+  // by, isn't Dispatcharr's -- the two are correlated by name alone.
+  const admin = await requireAdmin(session);
+  const dispatcharrChannelId =
+    admin && isDispatcharrConfigured() ? await findChannelIdByName(channel.name) : null;
+
   const now = channel.now;
 
   return (
@@ -55,13 +64,16 @@ export default async function LiveChannelPage({
           <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">
             {channel.name}
           </h1>
-          <span className="ml-auto">
+          <span className="ml-auto flex items-center gap-2">
             <WatchlistToggle
               kind="channel"
               itemId={channel.id}
               extra={{ name: channel.name }}
               initialInList={inList}
             />
+            {dispatcharrChannelId != null && (
+              <DemoteChannelButton channelId={dispatcharrChannelId} channelName={channel.name} />
+            )}
           </span>
         </div>
 
