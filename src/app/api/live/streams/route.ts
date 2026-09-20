@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession, requireAdmin } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
 import {
   isDispatcharrConfigured,
   listPromotedStreamIds,
@@ -9,10 +9,11 @@ import {
 /**
  * The provider catalogue, for the stream browser.
  *
- * Admin only. This reads the full list of everything the providers carry --
- * 4,150 entries here, most of which are not in the published lineup -- and the
- * companion POST route can add to what every viewer sees. Neither is something
- * an ordinary account should reach.
+ * Any signed-in viewer, not just admins: reading the catalogue to find
+ * something worth adding is the same action whoever does it, and the
+ * companion POST route (promote) is open the same way now. Removing an
+ * already-published channel is the one action here that stays admin-only --
+ * see the demote route -- since it can interrupt someone else mid-watch.
  *
  * Searching and paging are Dispatcharr's, not this route's: filtering 4,150
  * rows in the browser would mean shipping the whole catalogue per keystroke,
@@ -22,8 +23,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  if (!(await requireAdmin(await getSession()))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  if (!(await getValidSessionUserId(await getSession()))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!isDispatcharrConfigured()) {
     return NextResponse.json(
