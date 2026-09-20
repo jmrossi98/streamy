@@ -317,7 +317,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
                         were reported as "won't stream", correctly. */}
                     {looksLikeEventFeed(s.name) && (
                       <span className="ml-2 text-amber-400/80">
-                        · looks like a one-off event — dead outside it
+                        · looks like a one-off event
                       </span>
                     )}
                   </p>

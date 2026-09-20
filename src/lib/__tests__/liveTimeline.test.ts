@@ -176,6 +176,19 @@ describe("looksLikeNetworkFeed", () => {
     expect(looksLikeNetworkFeed("USA - DISCOVERY CHANNEL HD")).toBe(true);
     expect(looksLikeNetworkFeed("USA - HBO EAST HD")).toBe(true);
   });
+
+  it("recognises MLS and Premier League's actual US rightsholders", () => {
+    // MLS: Apple-exclusive since 2023 -- "MLS Season Pass" is the specific
+    // service, not the generic "Apple TV" brand (which would false-positive
+    // on every unrelated Apple TV+ channel).
+    expect(looksLikeNetworkFeed("US - MLS Season Pass HD")).toBe(true);
+    // Premier League: Peacock picked up the games that used to air on the
+    // now-defunct NBCSN. A local NBC affiliate is still recognised, but via
+    // its own call sign (see "recognises a local affiliate..." above) rather
+    // than a bare "NBC" brand match -- see findCandidateChannels' market
+    // tests for why that stays narrow.
+    expect(looksLikeNetworkFeed("USA - Peacock HD")).toBe(true);
+  });
 });
 
 describe("findChannelForFixture", () => {
