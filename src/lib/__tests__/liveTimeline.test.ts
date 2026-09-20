@@ -119,6 +119,9 @@ describe("looksLikeEventFeed", () => {
     expect(looksLikeEventFeed("LIVE EVENT 01 - 5pm Prelims UFC 331")).toBe(true);
     expect(looksLikeEventFeed("PPV: EVENT UFC 1080P")).toBe(true);
     expect(looksLikeEventFeed("US (ESPN+ 006) | Soccer: Fri_ 9/18 _ LALIGA Highlight Show")).toBe(true);
+    // ESPN+'s numbered per-game feeds: no "vs" or weekday, just an ISO
+    // kickoff timestamp -- the shape that slipped through as "ESPN" networks.
+    expect(looksLikeEventFeed("US (ESPN+ 322) | NHL: Jets Broadcast (2026-09-22 20:00:05)")).toBe(true);
   });
 
   it("leaves always-on networks alone", () => {
@@ -146,6 +149,12 @@ describe("looksLikeNetworkFeed", () => {
     // it is precisely the dead channel that started all of this.
     expect(looksLikeNetworkFeed("NFL CBS BILLS GIANTS JETS NEW YORK NY")).toBe(false);
     expect(looksLikeNetworkFeed("UEFA | 09 - Arsenal vs Vilareal 6:00pm")).toBe(false);
+    // ESPN+'s numbered per-game feeds: the ESPN brand match alone used to be
+    // enough to qualify these as a "network", one per NHL/NBA/MLB game on the
+    // slate -- the exact clutter "Networks only" exists to filter out.
+    expect(
+      looksLikeNetworkFeed("US (ESPN+ 322) | NHL: Jets Broadcast (2026-09-22 20:00:05)")
+    ).toBe(false);
   });
 
   it("rejects a league name on its own", () => {
