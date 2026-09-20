@@ -79,6 +79,25 @@ const BACK_BUFFER_SECONDS = 60;
 const EDGE_STALL_RECOVERY_MS = 6_000;
 
 /**
+ * How many times a dead tune retries itself before actually reporting the
+ * error, and how long each retry waits before trying.
+ *
+ * A fatal hls.js error or a tune timeout used to be terminal: the viewer saw
+ * "Playback failed" and had to manually go back and re-select the channel.
+ * Reported live: a channel died on Jellyfin's own client too at the same
+ * moment -- the shared upstream or transcode had the problem, not this
+ * player -- and Jellyfin's client doesn't self-heal from that either. This
+ * player can, by re-tuning itself the same way a manual re-select would.
+ *
+ * Linear rather than exponential backoff, and capped at three: a genuinely
+ * dead channel (provider offline, not a transient hiccup) must still end in
+ * the real error rather than retry forever, and each attempt already costs
+ * up to TUNE_TIMEOUT_MS if the failure is a hang rather than a fast error.
+ */
+const MAX_RETRIES = 3;
+const RETRY_BACKOFF_MS = 3_000;
+
+/**
  * Moves playback to the live edge, minus the sync cushion.
  *
  * `seekable.end()` is the furthest the player can go; landing exactly there is
@@ -161,6 +180,20 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
    * automatic (see `onPlay`, `onWaiting`), not something a viewer triggers.
    */
   const [behind, setBehind] = useState<number | null>(null);
+  /**
+   * Bumped to force a fresh tune of the same channel after a failure.
+   *
+   * Included in the tune effect's own dependency array below, so incrementing
+   * it re-runs the whole effect exactly as a channelId change would: full
+   * teardown (closes the dead Jellyfin stream, destroys the old hls.js
+   * instance), then a genuinely fresh attempt with a new playSessionId --
+   * the same thing a manual back-and-reselect would produce, just automatic.
+   */
+  const [retryToken, setRetryToken] = useState(0);
+  /** How many consecutive failed attempts *this* channel has had. */
+  const retryCountRef = useRef(0);
+  /** Which channel retryCountRef's count belongs to, so switching channels starts fresh. */
+  const retryChannelIdRef = useRef<string | null>(null);
 
   /*
     Whether the viewer deliberately scrubbed back into the DVR window.
@@ -201,6 +234,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    // A genuine channel change gets a fresh retry budget; a retry of the
+    // same channel (channelId unchanged, only retryToken bumped) keeps
+    // whatever count it already had, which is the thing MAX_RETRIES bounds.
+    if (retryChannelIdRef.current !== channelId) {
+      retryChannelIdRef.current = channelId;
+      retryCountRef.current = 0;
+    }
 
     /*
       Throttle for the continuous drift correction in onTimeUpdate below.
@@ -258,20 +299,39 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     const onPageHide = () => endTune(true);
     window.addEventListener("pagehide", onPageHide);
 
+    /**
+     * Retries the tune, or -- past MAX_RETRIES -- gives up and shows the
+     * real error.
+     *
+     * Bumping retryToken re-runs this whole effect (see its dependency array
+     * below), tearing down and starting over exactly as a channel change
+     * would: a fresh playSessionId, a new hls.js instance, a fresh Jellyfin
+     * live stream open. `loading` is deliberately left alone on the retry
+     * path -- it is already true at every call site this is used from, so
+     * the viewer keeps seeing the same "Tuning..." spinner a first attempt
+     * shows, not a flash of an error that then heals itself.
+     */
+    const scheduleRetry = (finalError: string) => {
+      if (retryCountRef.current >= MAX_RETRIES) {
+        setError(finalError);
+        setLoading(false);
+        return;
+      }
+      retryCountRef.current += 1;
+      setTimeout(() => {
+        setRetryToken((t) => t + 1);
+      }, RETRY_BACKOFF_MS * retryCountRef.current);
+    };
+
     // Nothing here fires if the channel is dead, which is the whole problem:
     // the timer is the only thing that can tell the difference between "still
     // tuning" and "never going to start".
     let tuneTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       tuneTimer = null;
-      setLoading((stillLoading) => {
-        if (stillLoading) {
-          setError(
-            "This channel didn’t start. The stream is most likely off air — " +
-              "the channel list includes it either way."
-          );
-        }
-        return false;
-      });
+      scheduleRetry(
+        "This channel didn’t start. The stream is most likely off air — " +
+          "the channel list includes it either way."
+      );
     }, TUNE_TIMEOUT_MS);
 
     const clearTuneTimer = () => {
@@ -287,6 +347,10 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       setLoading(false);
       setRebuffering(false);
       setNeedsGesture(false);
+      // A channel that plays fine now shouldn't have its retry budget
+      // dented by trouble from ten minutes ago -- only a run of failures
+      // that never once reaches "playing" should count toward the cap.
+      retryCountRef.current = 0;
     };
 
     /*
@@ -365,11 +429,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
         clearTuneTimer();
         const name = err instanceof Error ? err.name : "";
         if (name === "NotAllowedError" || name === "AbortError") {
+          // Not a failure -- the browser is waiting for a click, and nothing
+          // about retrying would change that, so this doesn't touch the
+          // retry budget at all.
           setNeedsGesture(true);
+          setLoading(false);
         } else {
-          setError("Playback couldn’t start.");
+          scheduleRetry("Playback couldn’t start.");
         }
-        setLoading(false);
       });
     };
     // How far behind the live edge we are, recomputed as playback moves. This
@@ -485,12 +552,11 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
         clearTuneTimer();
-        setError(
+        scheduleRetry(
           data.response?.code === 503
             ? "This channel couldn’t be tuned. The stream may be offline."
             : "Playback failed."
         );
-        setLoading(false);
       });
     } else {
       clearTuneTimer();
@@ -519,7 +585,11 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       video.removeAttribute("src");
       video.load();
     };
-  }, [channelId, goLive]);
+    // retryToken is read nowhere in the body above -- it's listed here purely
+    // so scheduleRetry's setRetryToken(t => t + 1) forces this effect to
+    // re-run, giving a retry the same teardown-and-restart a channel change
+    // already gets.
+  }, [channelId, goLive, retryToken]);
 
   /*
     "Behind live" means meaningfully behind, not merely cushioned.
