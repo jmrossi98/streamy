@@ -113,6 +113,14 @@ export function looksLikeEventFeed(name: string): boolean {
     // "Sat 09 Aug", "Fri_ 9/18"
     /\b(mon|tue|wed|thu|fri|sat|sun)\b/.test(n) ||
     /\b\d{1,2}\/\d{1,2}\b/.test(n) ||
+    // "(2026-09-22 20:00:05)" -- ESPN+'s per-game numbered feeds ("US (ESPN+
+    // 322) | NHL: Jets Broadcast") carry an exact kickoff timestamp instead
+    // of the "vs"/weekday wording above, which let them slip through
+    // looksLikeNetworkFeed's ESPN brand match as if they were the linear
+    // ESPN channel. A literal ISO date, or a 24-hour clock with seconds, is
+    // not something a real network's own name ever contains.
+    /\b\d{4}-\d{2}-\d{2}\b/.test(n) ||
+    /\b\d{1,2}:\d{2}:\d{2}\b/.test(n) ||
     // Explicit markers providers use for one-offs
     /\blive event\b|\bppv\b|\bevent \d/.test(n)
   );
