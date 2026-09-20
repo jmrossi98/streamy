@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
-import { liveTrackPercent, secondsBehindLive } from "@/lib/liveTimeline";
+import { liveTrackPercent } from "@/lib/liveTimeline";
 
 type ChromeState = {
   isPlaying: boolean;
@@ -25,17 +25,14 @@ type ChromeState = {
  * Live playback, where a timeline means something different.
  *
  * A broadcast has no duration and no fixed start, and no scrubber either --
- * see the bottom control bar below. What it has is a live edge that keeps
- * moving, which is what this describes: whether playback is at it, and by
- * how much it isn't when it's not.
+ * see the bottom control bar below. Catching back up to the edge after
+ * falling behind (a pause, a stall) is LivePlayer's own job now, done
+ * automatically rather than offered as a button -- so all this describes is
+ * whether playback is currently at the edge, for the badge's colour.
  */
 export type LiveState = {
-  /** The live edge, for the "how far behind" readout on the LIVE badge. */
-  edge: number;
   /** At (or close enough to) the edge to call it live. */
   atLive: boolean;
-  /** Seek back to the edge and resume. */
-  goLive: () => void;
 };
 
 // A single unified control overlay for the movie, episode and live players.
@@ -98,7 +95,6 @@ export function VideoChrome({
   const bufPct = along(buffered);
   const onSeek = seek;
 
-  const behind = live ? secondsBehindLive(currentTime, live.edge) : 0;
   const show = controlsVisible || !isPlaying;
   // The root never captures pointer events -- only the bars/buttons do -- so
   // clicks on the empty middle fall through to the <video> (tap to toggle/reveal).
@@ -256,24 +252,16 @@ export function VideoChrome({
           {live ? (
             /*
               A broadcast has no end, so there is no total to count towards --
-              showing one is what made this look like a recording. What a
-              viewer actually wants to know is whether they are at the edge,
-              and if not, by how much and how to get back.
-
-              Red and solid at the edge; muted and clickable when behind, with
-              how far behind. Disabled at the edge rather than hidden, so the
-              control does not appear and disappear as the stream drifts across
-              the threshold.
+              showing one is what made this look like a recording. This used
+              to also show how far behind playback was and offer a button to
+              jump back, which put a running countdown on screen for
+              something the player now handles on its own (LivePlayer resyncs
+              to the edge itself, on a stall and on resuming from a pause) --
+              a status light, not a control.
             */
-            <button
-              type="button"
-              onClick={live.goLive}
-              disabled={live.atLive}
-              aria-label={live.atLive ? "Playing live" : `Jump to live, currently ${formatTime(behind)} behind`}
-              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-bold uppercase tracking-wide transition-colors ${
-                live.atLive
-                  ? "bg-netflix-red text-white"
-                  : "bg-white/15 text-white/80 hover:bg-white/25"
+            <span
+              className={`ml-1 flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-bold uppercase tracking-wide ${
+                live.atLive ? "bg-netflix-red text-white" : "bg-white/15 text-white/80"
               }`}
             >
               <span
@@ -281,12 +269,7 @@ export function VideoChrome({
                 aria-hidden
               />
               Live
-              {!live.atLive && (
-                <span className="tabular-nums font-normal normal-case tracking-normal text-white/60">
-                  -{formatTime(behind)}
-                </span>
-              )}
-            </button>
+            </span>
           ) : (
             <span className="ml-1 text-xs tabular-nums text-white/90 sm:text-sm">
               {formatTime(currentTime)} <span className="text-white/50">/ {formatTime(duration)}</span>
