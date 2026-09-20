@@ -203,6 +203,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     if (!video) return;
 
     /*
+      Throttle for the continuous drift correction in onTimeUpdate below.
+      Plain closure state, not a ref: written and read synchronously in the
+      same handler, never across a render.
+    */
+    let lastCatchUpAt = 0;
+    const CATCH_UP_COOLDOWN_MS = 4_000;
+
+    /*
       The id this tune is opened under, minted here so this component can name
       it again to shut it down. It used to be generated server-side and thrown
       away, leaving nothing on the client that could close anything -- so every
@@ -374,7 +382,34 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       }
       const last = video.seekable.length - 1;
       const edge = video.seekable.end(last);
-      setBehind(Math.max(0, edge - video.currentTime));
+      const behindNow = Math.max(0, edge - video.currentTime);
+      setBehind(behindNow);
+
+      /*
+        Corrects drift during otherwise-healthy playback, not just on a pause
+        or a hard stall.
+
+        Without this, "slightly behind" only ever gets worse: normal playback
+        runs at 1x while the encoder keeps producing segments, so any
+        buffering along the way -- even too brief to fire `waiting` -- is time
+        that's gone for good unless something actively seeks forward. Over a
+        long session that drift only accumulates, and the LIVE badge sits grey
+        (see VideoChrome) for longer than the cushion actually requires.
+
+        Same threshold as `isBehind` below and the resume check in `onPlay`,
+        so the badge and this correction agree on what "behind" means. The
+        cooldown exists because this runs on every timeupdate tick (multiple
+        times a second) while behind, and a seek that hasn't resolved yet
+        must not be re-issued on the next tick.
+      */
+      if (behindNow > LIVE_SYNC_SECONDS + 4 && !stayBehindRef.current) {
+        const now = Date.now();
+        if (now - lastCatchUpAt > CATCH_UP_COOLDOWN_MS) {
+          lastCatchUpAt = now;
+          setRebuffering(true);
+          goLive();
+        }
+      }
     };
 
     /*
