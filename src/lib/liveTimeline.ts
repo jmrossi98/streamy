@@ -158,10 +158,26 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   { pattern: /\bmlb\s*network\b/, leagues: [] },
   { pattern: /\bfox\s*sports?\b/, leagues: ["NFL", "College Football", "College Basketball"] },
   { pattern: /\bcbs\s*sports?\b/, leagues: ["NFL", "College Basketball", "Champions League"] },
+  // Not widened to bare "nbc": every market has its own local NBC affiliate
+  // (see the market-matching tests below, "USA - NBC 10 BUFFALO NY (WGRZ)"),
+  // and unlike a team-name match, "NBC" alone says nothing about which game a
+  // given affiliate is actually airing -- it would make every NBC affiliate
+  // in the catalogue a candidate for every NFL/Premier League fixture,
+  // exactly the false-positive class the market-matching path exists to
+  // avoid. National coverage is covered by Peacock below instead.
   { pattern: /\bnbc\s*sports?\b/, leagues: ["NFL", "Premier League"] },
+  // NBCUniversal's streamer, carrying most Premier League matches since
+  // NBCSN shut down in 2021 -- the games that don't air on NBC/USA Network
+  // itself moved here, not to a separate cable channel.
+  { pattern: /\bpeacock\b/, leagues: ["NFL", "Premier League"] },
   { pattern: /\bsky\s*sports?\b/, leagues: ["Premier League", "La Liga", "Champions League"] },
-  { pattern: /\bbein\s*sports?\b/, leagues: ["La Liga", "MLS", "Champions League"] },
+  { pattern: /\bbein\s*sports?\b/, leagues: ["La Liga", "Champions League"] },
   { pattern: /\bdazn\b/, leagues: ["La Liga", "Champions League"] },
+  // MLS has been an Apple exclusive (every match, no cable/broadcast split)
+  // since 2023 -- "MLS Season Pass" is the specific service name, not the
+  // generic "Apple TV" brand, which would false-positive on every unrelated
+  // Apple TV+ show and movie channel in the catalogue.
+  { pattern: /\bmls\s*season\s*pass\b/, leagues: ["MLS"] },
   { pattern: /\btnt\b|\btbs\b|\btruTV\b/i, leagues: ["NBA", "College Basketball"] },
   { pattern: /\bbally\s*sports?\b/, leagues: ["NHL", "NBA"] },
   { pattern: /\bmsg\b|\byes\s*network\b/, leagues: ["NHL", "NBA"] },
