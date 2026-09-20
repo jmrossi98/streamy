@@ -29,6 +29,7 @@ import { checkBlogAccess } from "./githubPublish";
 import { checkEgress } from "./pageWatch";
 import { isNotifyConfigured } from "./notify";
 import { prisma } from "./db";
+import { isContainerViewConfigured, listContainers } from "./containers";
 
 const PROBE_TIMEOUT_MS = 5_000;
 
@@ -989,6 +990,46 @@ async function webdavStatus(): Promise<ServiceStatus> {
   return { name, group: SYSTEM, state: "unknown", detail: "answered without auth — check config", address };
 }
 
+/**
+ * Portainer, the read-only window onto every container on mediabox (see
+ * containers.ts).
+ *
+ * It went unmonitored for a while, which the admin chat itself surfaced: asked
+ * for Portainer's logs, it correctly answered that Portainer "isn't being
+ * monitored or isn't installed here" -- true, and the gap that added this
+ * check. Reuses listContainers() rather than probing separately, since that
+ * already carries the real failure modes here: the wrong API key, an
+ * unresolved endpoint id (see endpointId()'s own history), or Portainer simply
+ * being down -- all of which come back as null, same as every other "couldn't
+ * look" case in this file.
+ */
+async function portainerStatus(): Promise<ServiceStatus> {
+  const name = "Portainer";
+  const address = env("PORTAINER_URL");
+  if (!isContainerViewConfigured()) {
+    return { name, group: SYSTEM, state: "unconfigured", detail: "No PORTAINER_URL/PORTAINER_API_KEY" };
+  }
+
+  const containers = await listContainers();
+  if (!containers) {
+    return {
+      name,
+      group: SYSTEM,
+      state: "down",
+      detail: "Couldn't reach Portainer, or list its containers",
+      address,
+    };
+  }
+
+  return {
+    name,
+    group: SYSTEM,
+    state: "up",
+    detail: `${containers.length} containers visible`,
+    address,
+  };
+}
+
 export async function getServiceStatuses(): Promise<ServiceStatus[]> {
   const [
     radarr,
@@ -1020,6 +1061,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     flaresolverr,
     syncthing,
     webdav,
+    portainer,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -1057,6 +1099,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     flaresolverrStatus(),
     syncthingStatus(),
     webdavStatus(),
+    portainerStatus(),
   ]);
 
   return [
@@ -1092,6 +1135,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     transcodeLoad,
     syncthing,
     webdav,
+    portainer,
     blogToken,
     geoip,
     tourWatch,
