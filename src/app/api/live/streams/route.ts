@@ -35,12 +35,13 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const search = url.searchParams.get("q") ?? "";
   const page = Number(url.searchParams.get("page") ?? "1") || 1;
+  const networksOnly = url.searchParams.get("networksOnly") === "1";
 
   // Both in one wave: the promoted set is what lets the browser show "already
   // added" rather than offering a duplicate, and fetching it after the list
   // would make every page load two serial round trips to the home server.
   const [result, promoted] = await Promise.all([
-    listStreams({ search, page, pageSize: 50 }),
+    listStreams({ search, page, pageSize: 50, networksOnly }),
     listPromotedStreamIds(),
   ]);
 

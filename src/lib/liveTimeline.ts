@@ -8,15 +8,12 @@
  * rather than as a bug.
  */
 
-/** Dragging within this many seconds of the edge counts as asking for live. */
-export const LIVE_SNAP_SECONDS = 5;
-
 /**
- * Where a point sits along the seekable window, as a percentage.
+ * Where a point sits along a window, as a percentage.
  *
- * Clamped at both ends: `currentTime` can legitimately sit a fraction outside
- * the window, because the window is re-read on a timer while playback keeps
- * moving between reads.
+ * Clamped at both ends: `t` can legitimately sit a fraction outside the
+ * window when it's re-read on a timer while playback keeps moving between
+ * reads (live) or on a stale duration read (VOD).
  */
 export function liveTrackPercent(t: number, windowStart: number, edge: number): number {
   const span = edge - windowStart;
@@ -24,23 +21,6 @@ export function liveTrackPercent(t: number, windowStart: number, edge: number): 
   const pct = ((t - windowStart) / span) * 100;
   if (!Number.isFinite(pct)) return 0;
   return Math.max(0, Math.min(100, pct));
-}
-
-/**
- * Whether a seek target should be treated as "take me back to live".
- *
- * Without this, the right-most position is one you can never quite land on:
- * the edge advances while the pointer is moving, so a drag to the end lands a
- * second or two behind and stays there. That reads as the control being
- * broken, not as being two seconds late.
- */
-export function shouldSnapToLive(
-  target: number,
-  edge: number,
-  toleranceSeconds: number = LIVE_SNAP_SECONDS
-): boolean {
-  if (!Number.isFinite(target) || !Number.isFinite(edge)) return false;
-  return target >= edge - toleranceSeconds;
 }
 
 /**

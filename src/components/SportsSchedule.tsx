@@ -46,8 +46,25 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
     };
   }, []);
 
+  // Whether there's anything to actually watch this for, not just whether
+  // ESPN listed a game. A row with no channel and no plausible candidate is a
+  // dead end -- it used to render as plain, unclickable text, which read as
+  // "the app doesn't know" rather than "there's genuinely nothing to watch
+  // this on right now". Filtering it out says the second thing directly.
+  const watchable = useMemo(() => {
+    if (!fixtures) return null;
+    return fixtures
+      .map((f) => ({
+        fixture: f,
+        hasChannel:
+          findChannelForFixture(f, channels) != null || findCandidateChannels(f, channels, 1).length > 0,
+      }))
+      .filter((x) => x.hasChannel)
+      .map((x) => x.fixture);
+  }, [fixtures, channels]);
+
   if (error) return null; // A third party being down is not worth a page-level error.
-  if (fixtures !== null && fixtures.length === 0) return null;
+  if (watchable !== null && watchable.length === 0) return null;
 
   return (
     <section className="mt-10 mb-10">
@@ -55,31 +72,20 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
         Today
       </h2>
       <p className="streamy-page-title-x mb-4 text-sm text-white/50">
-        What&rsquo;s being played, not what&rsquo;s in the lineup — a fixture
-        feed is only live while its game is.
+        What&rsquo;s being played and where to watch it — only games with a
+        channel to try.
       </p>
 
-      {fixtures === null ? (
+      {watchable === null ? (
         <p className="streamy-page-title-x text-sm text-white/40">Loading…</p>
       ) : (
         <ul className="streamy-page-title-x space-y-1">
-          {fixtures.map((f) => {
-            // No EPG here -- nothing says which channel is airing which game
-            // -- so this is a name-based guess against your own lineup, not a
-            // fact. Conservative on purpose: no link beats a wrong one, so an
-            // unmatched fixture stays plain text exactly as it was before.
-            const channel = findChannelForFixture(f, channels);
-            // Only worth computing when there's no direct link -- a fixture
-            // that already resolved to its own channel doesn't need guesses.
-            const candidates = channel ? [] : findCandidateChannels(f, channels);
-            const row = (
-            <li
-              key={f.id}
-              className={`rounded bg-white/5 px-3 py-2 ${
-                channel ? "transition-colors hover:bg-white/10" : ""
-              }`}
-            >
-              <div className="flex items-center gap-3">
+          {watchable.map((f) => (
+            <li key={f.id}>
+              <Link
+                href={`/live/game/${encodeURIComponent(f.id)}`}
+                className="flex items-center gap-3 rounded bg-white/5 px-3 py-2 transition-colors hover:bg-white/10"
+              >
                 <span
                   className={`w-14 shrink-0 text-center text-[10px] font-bold uppercase tracking-wide ${
                     f.state === "in" ? "text-netflix-red" : "text-white/40"
@@ -98,42 +104,9 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
                   )}
                   {f.detail}
                 </span>
-              </div>
-              {/*
-                No single channel confirmed -- not nothing, either. A list of
-                networks that plausibly carry this league, so "is Buffalo on
-                tonight" has more of an answer than silence when the fixture
-                channel itself isn't promoted (or hasn't gone live yet).
-              */}
-              {candidates.length > 0 && (
-                <p className="mt-1 pl-[68px] text-xs text-white/40">
-                  Might be on:{" "}
-                  {candidates.map((c, i) => (
-                    <span key={c.id}>
-                      {i > 0 && ", "}
-                      <Link
-                        href={`/live/${encodeURIComponent(c.id)}`}
-                        className="text-white/60 underline decoration-white/20 underline-offset-2 hover:text-white"
-                      >
-                        {c.name}
-                      </Link>
-                    </span>
-                  ))}
-                </p>
-              )}
-            </li>
-            );
-            // A link over the same content rather than a whole separate
-            // presentation, so "this fixture goes to a channel" changes
-            // nothing about the row except that it is now clickable.
-            return channel ? (
-              <Link key={f.id} href={`/live/${encodeURIComponent(channel.id)}`}>
-                {row}
               </Link>
-            ) : (
-              row
-            );
-          })}
+            </li>
+          ))}
         </ul>
       )}
     </section>

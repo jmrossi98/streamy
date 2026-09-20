@@ -17,6 +17,8 @@
  * so a normal request costs one round trip and an expiry costs two.
  */
 
+import { looksLikeNetworkFeed } from "@/lib/liveTimeline";
+
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
 const DISPATCHARR_PASSWORD = process.env.DISPATCHARR_PASSWORD;
@@ -145,22 +147,63 @@ export type StreamPage = {
 };
 
 /**
+ * Upper bound for a "fetch the whole matching set" call.
+ *
+ * Comfortably above the full catalogue (4,150 measured) so one request covers
+ * it, without being unbounded -- Dispatcharr's own page_size accepts far larger
+ * values (confirmed against /api/epg/epgdata/ during the EPG investigation),
+ * but nothing here needs more than "everything there currently is".
+ */
+const FULL_CATALOGUE_PAGE_SIZE = 10_000;
+
+/**
  * A page of streams, searched server-side.
  *
  * Server-side because there are 4,150 of them: shipping the whole catalogue to
  * the browser to filter it there would be several megabytes per keystroke, and
  * Dispatcharr already indexes the search.
+ *
+ * `networksOnly` filters by `looksLikeNetworkFeed` *before* paginating, not
+ * after. Filtering the browser's own 50-item page client-side (the original
+ * approach) left `total`/page-count reflecting the unfiltered search while
+ * each page displayed only however many of its 50 happened to be networks --
+ * on the full catalogue, page after page could come back holding two or three
+ * rows, or none, against 83 pages of button. Doing it here means one larger
+ * upstream fetch (the whole matching set, not just one page) so the pagination
+ * this returns is honest about what it is paginating.
  */
 export async function listStreams(opts: {
   search?: string;
   page?: number;
   pageSize?: number;
+  networksOnly?: boolean;
 }): Promise<StreamPage | null> {
-  const params = new URLSearchParams({
-    page: String(Math.max(1, opts.page ?? 1)),
-    page_size: String(Math.min(200, Math.max(1, opts.pageSize ?? 50))),
-  });
+  const page = Math.max(1, opts.page ?? 1);
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 50));
   const q = opts.search?.trim();
+
+  if (opts.networksOnly) {
+    const params = new URLSearchParams({ page: "1", page_size: String(FULL_CATALOGUE_PAGE_SIZE) });
+    if (q) params.set("search", q);
+
+    const data = await api<{ count?: number; results?: RawStream[] } | RawStream[]>(
+      `/api/channels/streams/?${params.toString()}`
+    );
+    if (!data) return null;
+
+    const raw = Array.isArray(data) ? data : (data.results ?? []);
+    const filtered = raw
+      .map(toStream)
+      .filter((s): s is DispatcharrStream => s != null && looksLikeNetworkFeed(s.name));
+
+    const start = (page - 1) * pageSize;
+    return { items: filtered.slice(start, start + pageSize), total: filtered.length };
+  }
+
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
   if (q) params.set("search", q);
 
   const data = await api<{ count?: number; results?: RawStream[] } | RawStream[]>(
