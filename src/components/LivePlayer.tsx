@@ -604,7 +604,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
 
   return (
     <div className="w-full">
-      <div ref={containerRef} className="relative w-full overflow-hidden rounded-lg bg-black">
+      <div ref={containerRef} className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
         <video
           ref={videoRef}
           /*
@@ -621,7 +621,28 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
           playsInline
           onClick={chrome.togglePlay}
           onMouseMove={chrome.revealControls}
-          className="aspect-video w-full bg-black"
+          /*
+            absolute inset-0 h-full w-full, not aspect-video on the video
+            itself: the aspect ratio now belongs to the container above, and
+            the video just fills whatever box that container currently is.
+
+            Those are the same box in normal play -- the container is 16:9,
+            so is the video -- but not in fullscreen. requestFullscreen() is
+            called on the *container* (usePlayerChrome), and the browser's
+            fullscreen sizing forces that container to fill the real screen
+            regardless of its own aspect-ratio (aspect-ratio only resolves a
+            dimension left auto; fullscreen sets both explicitly, so it has
+            no effect there). A video still sized by aspect-video kept
+            rendering at 16:9 inside that now-taller box, leaving a real gap
+            below the picture -- which is exactly where VideoChrome's bottom
+            bar sits, since it fills the *container*, not the video. Reported
+            live as a black bar under the picture with the controls stranded
+            in it. object-contain does the letterboxing now, inside the
+            video element itself, so the video and its container are always
+            the same box and VideoChrome's overlay always lines up with what
+            is actually on screen.
+          */
+          className="absolute inset-0 h-full w-full bg-black object-contain"
         />
 
         {/* Only once something is playing: chrome over a tuning spinner is
