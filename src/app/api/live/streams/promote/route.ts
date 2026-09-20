@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession, requireAdmin } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { refreshGuide } from "@/lib/liveTv";
 import {
   isDispatcharrConfigured,
@@ -10,9 +10,14 @@ import {
 /**
  * Adds a stream to the published lineup.
  *
- * Admin only, and the stricter of the two reasons is not authorisation but
- * blast radius: a channel added here appears for every viewer, and it also
- * makes Jellyfin re-enumerate its tuner.
+ * Any signed-in viewer, not just admins: finding something in the catalogue
+ * worth adding is the same "this should be in Live TV" call whoever makes
+ * it, and there's no separate approval step for it to wait on -- it appears
+ * for everyone the moment Jellyfin picks up the change, same as it always
+ * did. Blast radius is real (a channel added here appears for every viewer,
+ * and it makes Jellyfin re-enumerate its tuner) but that's a reason for the
+ * promote flow to behave predictably, not a reason to gate who can use it --
+ * unlike removing one (see the demote route), a bad add is cheap to undo.
  *
  * The new channel does NOT appear in Streamy immediately. Jellyfin caches its
  * channel list and only picks up a lineup change on its next refresh, which is
@@ -23,8 +28,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!(await requireAdmin(await getSession()))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  if (!(await getValidSessionUserId(await getSession()))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!isDispatcharrConfigured()) {
     return NextResponse.json(

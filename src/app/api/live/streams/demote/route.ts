@@ -6,11 +6,13 @@ import { demoteChannel, isDispatcharrConfigured } from "@/lib/dispatcharr";
 /**
  * Removes a channel from the published lineup.
  *
- * Admin only, and for the same reason promoting is: a channel removed here
- * disappears for every viewer, and it also makes Jellyfin re-enumerate its
- * tuner. The underlying stream is untouched -- this demotes a channel back to
- * an ordinary catalogue entry, it does not delete anything the provider owns,
- * and the stream is promotable again later from Browse all streams.
+ * Admin only -- unlike search and promote (both open to any signed-in
+ * viewer now), removing is a one-way interruption for whoever else is
+ * watching that channel right now, not just a lineup change someone can
+ * shrug off. The underlying stream is untouched -- this demotes a channel
+ * back to an ordinary catalogue entry, it does not delete anything the
+ * provider owns, and the stream is promotable again later from Browse all
+ * streams.
  *
  * The removal does NOT disappear from Streamy immediately for the same
  * reason an addition doesn't appear immediately: Jellyfin caches its channel

@@ -428,12 +428,18 @@ export function LiveTvContent({
       <SportsSchedule channels={channels} />
 
       {/*
-        Admin only, and below the lineup rather than beside it: this is a
-        maintenance surface, not something a viewer scrolls past on the way to
-        watching something. Rendered even when the tuner is unreachable, since
-        an empty lineup is exactly when someone wants to add to it.
+        Below the lineup rather than beside it: this is a maintenance surface,
+        not something a viewer scrolls past on the way to watching something.
+        Rendered even when the tuner is unreachable, since an empty lineup is
+        exactly when someone wants to add to it.
+
+        Open to any signed-in viewer now, not just admins -- searching and
+        promoting a stream is the same "found something worth adding" action
+        whoever does it. Removing one stays admin-only inside StreamBrowser
+        itself: taking a channel away can interrupt someone else's game
+        mid-watch, which is a different, higher-stakes action than adding.
       */}
-      {isAdmin && <StreamBrowser />}
+      <StreamBrowser isAdmin={isAdmin} />
     </div>
   );
 }

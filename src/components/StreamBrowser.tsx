@@ -27,8 +27,16 @@ type Stream = {
  * the name by the same classifyChannel the channel grid uses, so they can only
  * ever apply to rows already loaded -- which is why the count says "in these
  * results" rather than implying it searched everything.
+ *
+ * Open to any signed-in viewer: searching and adding a channel is the same
+ * "found something worth watching" action whoever does it, and the API
+ * routes behind it (GET, promote) are open the same way. Only removing a
+ * channel stays admin-gated -- both here (isAdmin hides the button) and on
+ * the server (the demote route still checks requireAdmin) -- since taking a
+ * channel away can interrupt someone else mid-game, a different and higher
+ * blast radius than adding one.
  */
-export function StreamBrowser() {
+export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string>("all");
   /*
@@ -314,7 +322,7 @@ export function StreamBrowser() {
                     )}
                   </p>
                 </div>
-                {channelId != null ? (
+                {channelId != null && isAdmin ? (
                   <button
                     type="button"
                     onClick={() => demote(s, channelId)}
@@ -324,6 +332,13 @@ export function StreamBrowser() {
                   >
                     {busyId === s.id ? "Removing…" : "Remove channel"}
                   </button>
+                ) : channelId != null ? (
+                  // Removing is admin-only (see the module doc comment) --
+                  // a non-admin who already added this sees the same static
+                  // badge StreamBrowser always showed before removal existed.
+                  <span className="shrink-0 rounded bg-white/10 px-2 py-1 text-xs text-white/50">
+                    In lineup
+                  </span>
                 ) : (
                   <button
                     type="button"
