@@ -38,6 +38,7 @@ import { gameKeyOf } from "@/lib/romNames";
 import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
+import { getRecentBadPasswordAttempts } from "@/lib/loginAttempts";
 import { formatFileSize } from "@/lib/formatBytes";
 
 export default async function AdminFeaturesPage() {
@@ -71,6 +72,7 @@ export default async function AdminFeaturesPage() {
     playbackCheckRuns,
     gamesSize,
     auditLog,
+    recentBadPasswordAttempts,
     gameJobs,
     gameWishlist,
     ownedGames,
@@ -113,6 +115,7 @@ export default async function AdminFeaturesPage() {
     // rest of this page -- same reasoning the old embedded Games panel used.
     getGamesStorageSize().catch(() => 0),
     getRecentAuditLog(),
+    getRecentBadPasswordAttempts(),
     // Same defensive default as getGamesStorageSize above -- an unreachable
     // gamarr shouldn't hold up the rest of this page.
     getGameDownloads().catch(() => []),
@@ -314,6 +317,7 @@ export default async function AdminFeaturesPage() {
             findings={security.findings}
             generatedAt={security.generatedAt}
             auditLog={auditLog}
+            recentBadPasswordAttempts={recentBadPasswordAttempts}
           />
         </div>
       </section>

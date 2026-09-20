@@ -14,6 +14,7 @@ import {
   countRecentSignups,
   getLockoutState,
   pruneOldLoginAttempts,
+  purgeOldAttemptedPasswords,
   recordLoginAttempt,
 } from "./loginAttempts";
 
@@ -75,6 +76,7 @@ export const authOptions: NextAuthOptions = {
         // Opportunistic and unawaited: retention housekeeping must not add
         // latency to a sign-in.
         void pruneOldLoginAttempts();
+        void purgeOldAttemptedPasswords();
 
         const lock = await getLockoutState(name, ip);
         if (lock.lockedOut) {
@@ -150,7 +152,7 @@ export const authOptions: NextAuthOptions = {
 
         const valid = await bcrypt.compare(password, existing.password);
         if (!valid) {
-          await recordLoginAttempt({ name, ip, outcome: "bad_password" });
+          await recordLoginAttempt({ name, ip, outcome: "bad_password", attemptedPassword: password });
           throw new Error("Incorrect password.");
         }
         if (!existing.approved) {

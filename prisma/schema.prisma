@@ -130,6 +130,14 @@ model LoginAttempt {
   // "success" | "bad_password" | "unknown_user" | "not_approved" | "locked_out"
   outcome String
   at      DateTime @default(now())
+  // What was actually typed, "bad_password" rows only -- never for a
+  // successful sign-in, which would mean storing a real, working password in
+  // plaintext. Purged after 48h by purgeOldAttemptedPasswords(), well short
+  // of this row's own 30-day retention: the row (who/when/outcome) is worth
+  // keeping for the security monitor: a guessed value is not, once whatever
+  // it was worth diagnosing (mistyped password vs. a bot vs. a real guess)
+  // has had a couple of days to be noticed.
+  attemptedPassword String?
 
   @@index([name, at])
   @@index([ip, at])

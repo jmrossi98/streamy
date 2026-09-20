@@ -1,12 +1,14 @@
 import type { Finding, LoginActivity, Severity } from "@/lib/securityRules";
 import { overallSeverity } from "@/lib/securityRules";
 import type { AuditLogRow } from "@/lib/auditLog";
+import type { RecentBadPasswordAttempt } from "@/lib/loginAttempts";
 
 type Props = {
   activity: LoginActivity;
   findings: Finding[];
   generatedAt: string;
   auditLog: AuditLogRow[];
+  recentBadPasswordAttempts: RecentBadPasswordAttempt[];
 };
 
 // "movie.request" -> "Requested"; "game.artwork.save" -> "Saved artwork";
@@ -57,7 +59,13 @@ function Stat({ label, value, muted }: { label: string; value: number; muted?: b
   );
 }
 
-export function SecurityPanel({ activity, findings, generatedAt, auditLog }: Props) {
+export function SecurityPanel({
+  activity,
+  findings,
+  generatedAt,
+  auditLog,
+  recentBadPasswordAttempts,
+}: Props) {
   // Actionable findings first; the informational ones are reassurance, not news.
   const actionable = findings.filter((f) => f.severity !== "info");
   const healthy = findings.filter((f) => f.severity === "info");
@@ -130,6 +138,39 @@ export function SecurityPanel({ activity, findings, generatedAt, auditLog }: Pro
                 <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500/60" aria-hidden />
                 <span>
                   <span className="text-white/70">{f.title}</span> — {f.detail}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {recentBadPasswordAttempts.length > 0 && (
+        <details className="group border-t border-white/10 pt-4">
+          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-white/30 hover:text-white/60">
+            Recent failed logins ({recentBadPasswordAttempts.length})
+          </summary>
+          <p className="mt-2 text-xs text-white/40">
+            What was typed as the password, for diagnosing a mistyped one or a caps-lock
+            surprise. Cleared automatically after 48 hours either way.
+          </p>
+          <ul className="mt-3 max-h-72 space-y-1.5 overflow-y-auto pr-1">
+            {recentBadPasswordAttempts.map((a) => (
+              <li key={a.id} className="flex items-baseline gap-2 text-sm">
+                <span className="shrink-0 text-white/70">{a.name}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-white/90">
+                  {a.attemptedPassword ?? (
+                    <span className="italic text-white/30">cleared</span>
+                  )}
+                </span>
+                <span className="shrink-0 font-mono text-xs text-white/30">{a.ip}</span>
+                <span className="shrink-0 text-xs tabular-nums text-white/30">
+                  {new Date(a.at).toLocaleString(undefined, {
+                    month: "numeric",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
                 </span>
               </li>
             ))}
