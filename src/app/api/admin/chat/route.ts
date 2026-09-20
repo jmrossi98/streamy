@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       const snapshot = await getSnapshot();
       messages = withContext(
         messages,
-        buildStatusContext(snapshot.statuses, snapshot.containers)
+        buildStatusContext(snapshot.statuses, snapshot.containers, snapshot.logs)
       );
     } catch (err) {
       // Answering without live state beats failing the turn -- the model is

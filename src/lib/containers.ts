@@ -170,6 +170,75 @@ export function containerProblems(containers: ContainerState[]): ContainerState[
 }
 
 /**
+ * Recent log lines for one container, stripped of Docker's own framing.
+ *
+ * The logs endpoint multiplexes stdout/stderr as a sequence of frames -- an
+ * 8-byte header (1 byte stream type, 3 reserved, 4 big-endian length) before
+ * each chunk of text -- unless the container runs with a TTY, which none of
+ * mediabox's compose services do. Left unstripped, every line is prefixed
+ * with a few bytes of binary noise that reads as garbage in a chat reply.
+ *
+ * Returns null on any failure, same convention as listContainers -- "could
+ * not read" and "container has no output" must stay distinguishable.
+ */
+export async function getContainerLogs(
+  containerId: string,
+  tailLines = 60
+): Promise<string | null> {
+  if (!isContainerViewConfigured()) return null;
+  const ep = await endpointId();
+  if (!ep) return null;
+
+  const url =
+    `${env("PORTAINER_URL")}/api/endpoints/${encodeURIComponent(ep)}` +
+    `/docker/containers/${encodeURIComponent(containerId)}/logs` +
+    `?stdout=1&stderr=1&tail=${encodeURIComponent(String(tailLines))}&timestamps=0`;
+
+  let buf: ArrayBuffer;
+  try {
+    const res = await fetch(url, {
+      headers: { "X-API-Key": process.env.PORTAINER_API_KEY ?? "" },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    buf = await res.arrayBuffer();
+  } catch {
+    return null;
+  }
+
+  return demuxDockerLogs(new Uint8Array(buf));
+}
+
+/**
+ * Strips Docker's 8-byte frame headers from a raw logs response.
+ *
+ * Falls back to returning the buffer as plain text if it doesn't look
+ * framed at all (byte 0 isn't a valid stream type) -- a TTY-enabled
+ * container, or a Portainer version that already de-multiplexes, should
+ * still produce readable output rather than nothing.
+ */
+export function demuxDockerLogs(bytes: Uint8Array): string {
+  const decoder = new TextDecoder();
+  if (bytes.length < 8 || bytes[0] > 2) {
+    return decoder.decode(bytes);
+  }
+
+  const chunks: string[] = [];
+  let offset = 0;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  while (offset + 8 <= bytes.length) {
+    const streamType = bytes[offset];
+    if (streamType > 2) break; // Not a frame header -- stop rather than misread the rest.
+    const length = view.getUint32(offset + 4, false);
+    const start = offset + 8;
+    const end = Math.min(start + length, bytes.length);
+    chunks.push(decoder.decode(bytes.subarray(start, end)));
+    offset = end;
+  }
+  return chunks.join("");
+}
+
+/**
  * Dependents whose namespace container no longer exists.
  *
  * `network_mode: container:<id>` pointing at an id that is not in the running
