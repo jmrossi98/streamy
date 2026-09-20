@@ -219,21 +219,32 @@ export async function listStreams(opts: {
   };
 }
 
-/** Stream ids already promoted, so the browser can mark them rather than offer them twice. */
-export async function listPromotedStreamIds(): Promise<Set<number> | null> {
+/**
+ * Stream id -> the channel id publishing it, so the browser can both mark a
+ * stream as already promoted (rather than offer it twice) and let an admin
+ * demote it -- which needs the channel id, not the stream id; Dispatcharr
+ * deletes channels, not the promotion itself.
+ *
+ * A stream promoted under more than one channel is possible but not sensible
+ * (two lineup entries for the same feed), so the last channel seen simply
+ * wins; nothing here depends on picking a particular one.
+ */
+export async function listPromotedStreamIds(): Promise<Map<number, number> | null> {
   const data = await api<
-    { results?: { streams?: number[] }[] } | { streams?: number[] }[]
+    | { results?: { id?: number; streams?: number[] }[] }
+    | { id?: number; streams?: number[] }[]
   >(`/api/channels/channels/?page_size=1000`);
   if (!data) return null;
 
   const rows = Array.isArray(data) ? data : (data.results ?? []);
-  const ids = new Set<number>();
+  const byStreamId = new Map<number, number>();
   for (const row of rows) {
-    for (const id of row?.streams ?? []) {
-      if (typeof id === "number") ids.add(id);
+    if (typeof row?.id !== "number") continue;
+    for (const streamId of row.streams ?? []) {
+      if (typeof streamId === "number") byStreamId.set(streamId, row.id);
     }
   }
-  return ids;
+  return byStreamId;
 }
 
 /**
@@ -353,6 +364,32 @@ export async function promoteStreamToChannel(input: {
     body: JSON.stringify(body),
   });
   return typeof created?.id === "number" ? { id: created.id } : null;
+}
+
+/**
+ * Removes a channel from the published lineup.
+ *
+ * A demote, not a delete of anything the provider owns: a Dispatcharr channel
+ * is its own record that merely references a stream id, so removing it
+ * leaves the underlying stream exactly where it was in the catalogue --
+ * unpublished, still visible in Browse all streams, promotable again later.
+ * Nothing about the provider's own listing is touched.
+ *
+ * Returns whether the delete succeeded. Deliberately not throwing, same
+ * reasoning as promoteStreamToChannel: a channel already gone (removed by
+ * someone else, or directly in Dispatcharr, between the admin's page load
+ * and their click) is an ordinary outcome for the panel to report, not an
+ * exception -- though in that specific case Dispatcharr 404s and this
+ * reports it as a failure to remove, which is honest: nothing was removed
+ * *by this call*, it was already gone.
+ */
+export async function demoteChannel(channelId: number): Promise<boolean> {
+  const res = await api<unknown>(`/api/channels/channels/${channelId}/`, {
+    method: "DELETE",
+  });
+  // api() returns undefined (not null) for a 204's empty body, same as any
+  // other successful-but-bodyless response -- only a genuine failure is null.
+  return res !== null;
 }
 
 /**

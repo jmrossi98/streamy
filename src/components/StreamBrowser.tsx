@@ -41,7 +41,9 @@ export function StreamBrowser() {
   */
   const [networksOnly, setNetworksOnly] = useState(true);
   const [streams, setStreams] = useState<Stream[]>([]);
-  const [promotedIds, setPromotedIds] = useState<Set<number>>(new Set());
+  // Stream id -> the channel id publishing it. A Map rather than the Set this
+  // used to be: demoting needs the channel id, not just "is this promoted".
+  const [promoted, setPromoted] = useState<Map<number, number>>(new Map());
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -71,12 +73,12 @@ export function StreamBrowser() {
       const data = (await res.json()) as {
         items: Stream[];
         total: number;
-        promotedIds: number[];
+        promoted: [number, number][];
       };
       if (seq !== requestSeq.current) return;
       setStreams(data.items);
       setTotal(data.total);
-      setPromotedIds(new Set(data.promotedIds));
+      setPromoted(new Map(data.promoted));
     } catch {
       if (seq === requestSeq.current) setError("Couldn't load streams.");
     } finally {
@@ -136,7 +138,7 @@ export function StreamBrowser() {
         }),
       });
       const body = (await res.json().catch(() => null)) as
-        | { error?: string; channelNumber?: number; note?: string }
+        | { error?: string; id?: number; channelNumber?: number; note?: string }
         | null;
       if (!res.ok) {
         setNote(body?.error ?? "Couldn't add that stream.");
@@ -144,7 +146,9 @@ export function StreamBrowser() {
       }
       // Marked locally rather than refetching: the list is paged and a refetch
       // would scroll the reader back to the top of it.
-      setPromotedIds((prev) => new Set(prev).add(stream.id));
+      if (typeof body?.id === "number") {
+        setPromoted((prev) => new Map(prev).set(stream.id, body.id!));
+      }
       // The server's own wording, not a guess: it knows whether Jellyfin
       // accepted the guide refresh, and "refreshing now" and "wait for the
       // next scheduled update" are very different promises to make.
@@ -154,6 +158,36 @@ export function StreamBrowser() {
       );
     } catch {
       setNote("Couldn't add that stream.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function demote(stream: Stream, channelId: number) {
+    if (busyId !== null) return;
+    setBusyId(stream.id);
+    setNote(null);
+    try {
+      const res = await fetch("/api/live/streams/demote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { error?: string; note?: string }
+        | null;
+      if (!res.ok) {
+        setNote(body?.error ?? "Couldn't remove that channel.");
+        return;
+      }
+      setPromoted((prev) => {
+        const next = new Map(prev);
+        next.delete(stream.id);
+        return next;
+      });
+      setNote(`Removed “${stream.name}” from Live TV. ` + (body?.note ?? ""));
+    } catch {
+      setNote("Couldn't remove that channel.");
     } finally {
       setBusyId(null);
     }
@@ -249,7 +283,7 @@ export function StreamBrowser() {
       ) : (
         <ul className="streamy-page-title-x space-y-1">
           {visible.map((s) => {
-            const added = promotedIds.has(s.id);
+            const channelId = promoted.get(s.id);
             return (
               <li
                 key={s.id}
@@ -280,10 +314,16 @@ export function StreamBrowser() {
                     )}
                   </p>
                 </div>
-                {added ? (
-                  <span className="shrink-0 rounded bg-white/10 px-2 py-1 text-xs text-white/50">
-                    In lineup
-                  </span>
+                {channelId != null ? (
+                  <button
+                    type="button"
+                    onClick={() => demote(s, channelId)}
+                    disabled={busyId !== null}
+                    title="Remove this channel from Live TV -- the stream stays in the catalogue"
+                    className="shrink-0 rounded border border-white/20 px-3 py-1.5 text-xs text-white/60 transition-colors hover:border-red-400/50 hover:text-red-400 disabled:opacity-50"
+                  >
+                    {busyId === s.id ? "Removing…" : "Remove channel"}
+                  </button>
                 ) : (
                   <button
                     type="button"

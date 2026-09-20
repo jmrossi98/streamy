@@ -60,6 +60,10 @@ export async function GET(request: Request) {
     items: result.items,
     total: result.total,
     page,
-    promotedIds: promoted ? [...promoted] : [],
+    // [streamId, channelId] pairs -- a plain array survives JSON where a Map
+    // wouldn't, and reconstructs into one client-side with `new Map(...)`.
+    // The channel id is what a "remove channel" action needs; the stream id
+    // alone (the old shape here) was only ever enough to say "already added".
+    promoted: promoted ? [...promoted.entries()] : [],
   });
 }
