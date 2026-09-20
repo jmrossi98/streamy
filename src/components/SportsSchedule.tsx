@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { findCandidateChannels, findChannelForFixture } from "@/lib/liveTimeline";
+import { findCandidateChannels, resolveChannelForFixture } from "@/lib/liveTimeline";
 
 type Fixture = {
   id: string;
@@ -13,6 +13,8 @@ type Fixture = {
   name: string;
   awayTeam: string | null;
   homeTeam: string | null;
+  /** Channel names Dispatcharr's real EPG confirms are airing this fixture right now. */
+  epgConfirmedChannelNames: string[];
 };
 
 type ScheduleChannel = { id: string; name: string };
@@ -57,7 +59,8 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
       .map((f) => ({
         fixture: f,
         hasChannel:
-          findChannelForFixture(f, channels) != null || findCandidateChannels(f, channels, 1).length > 0,
+          resolveChannelForFixture(f, channels, f.epgConfirmedChannelNames) != null ||
+          findCandidateChannels(f, channels, 1).length > 0,
       }))
       .filter((x) => x.hasChannel)
       .map((x) => x.fixture);

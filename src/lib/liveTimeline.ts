@@ -163,7 +163,30 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   { pattern: /\btennis\s*channel\b/, leagues: [] },
   { pattern: /\bmotortrend\b|\bmotorsport\b/, leagues: [] },
   { pattern: /\bwillow\b/, leagues: [] },
+  // Not sports brands -- general-purpose always-on networks, added so
+  // "Networks only" isn't a sports-only filter. Untagged (no league carries
+  // through these) since they're never a game candidate, only a browse-list
+  // inclusion.
+  { pattern: /\bcnn\b|\bfox\s*news\b|\bmsnbc\b|\bnewsmax\b|\bnews\s*(nation|max)\b/, leagues: [] },
+  { pattern: /\bcnbc\b|\bbloomberg\b/, leagues: [] },
+  { pattern: /\bhbo\b|\bshowtime\b|\bstarz\b|\bcinemax\b/, leagues: [] },
+  { pattern: /\bdiscovery\b|\bhistory\s*channel\b|\btlc\b|\bhgtv\b|\bfood\s*network\b/, leagues: [] },
+  { pattern: /\bamc\b|\bfx\b|\bcomedy\s*central\b|\bbravo\b|\be!\b|\blifetime\b|\bhallmark\b/, leagues: [] },
+  { pattern: /\bcartoon\s*network\b|\bnickelodeon\b|\bdisney\s*(channel|junior|xd)?\b/, leagues: [] },
+  { pattern: /\bweather\s*channel\b/, leagues: [] },
 ];
+
+/**
+ * A US broadcast call sign in parens at the end of a local affiliate's name
+ * -- "USA - CBS 13 BALTIMORE MD (WJZ)" (three letters, one of the older
+ * grandfathered calls), "ABC 7 BUFFALO NY (WKBW)" (four, the modern norm).
+ * W east of the Mississippi and K west is an FCC-assigned licence: an
+ * unambiguous "this is a real station", not a guess the way a brand-name
+ * regex is. Kept separate from NETWORK_BRANDS because it isn't a brand at
+ * all -- there is no fixed list of affiliates to enumerate -- and it carries
+ * no league tag, only "worth including when browsing".
+ */
+const CALLSIGN_AFFILIATE = /\((?:[wk][a-z]{2,3})\)/i;
 
 export function looksLikeNetworkFeed(name: string): boolean {
   const n = name.toLowerCase();
@@ -171,7 +194,7 @@ export function looksLikeNetworkFeed(name: string): boolean {
   // JETS") must not qualify: the broadcaster is incidental, the fixture is the
   // subject. Checked first so the allowlist cannot override it.
   if (looksLikeEventFeed(n)) return false;
-  return NETWORK_BRANDS.some((b) => b.pattern.test(n));
+  return NETWORK_BRANDS.some((b) => b.pattern.test(n)) || CALLSIGN_AFFILIATE.test(n);
 }
 
 /**
@@ -206,6 +229,27 @@ function teamNickname(teamName: string | null): string | null {
   return last;
 }
 
+/**
+ * The market a team plays in, for matching against a local affiliate's own
+ * name -- "USA - CBS 13 BALTIMORE MD (WJZ)" carries no team name at all, but
+ * a home game for a Baltimore team is exactly the kind of thing a market's
+ * CBS/FOX/NBC/ABC affiliate is likely to air. Everything except the last word
+ * of the team's display name, mirroring teamNickname's own "last word is the
+ * mascot" split in reverse -- "Baltimore" out of "Baltimore Ravens", "Kansas
+ * City" out of "Kansas City Chiefs", "New England" out of "New England
+ * Patriots".
+ *
+ * A single-word team name ("Arsenal") has no separable city and returns
+ * null rather than guessing.
+ */
+function teamCity(teamName: string | null): string | null {
+  if (!teamName) return null;
+  const words = teamName.trim().split(/\s+/);
+  if (words.length < 2) return null;
+  const city = words.slice(0, -1).join(" ");
+  return city.length < 4 ? null : city;
+}
+
 export function findChannelForFixture<C extends { id: string; name: string }>(
   fixture: { awayTeam: string | null; homeTeam: string | null },
   channels: C[]
@@ -229,35 +273,163 @@ export function findChannelForFixture<C extends { id: string; name: string }>(
   return null;
 }
 
+/** One channel's real schedule entry, already fetched -- see dispatcharr.ts. */
+export type ChannelProgramme = {
+  title: string;
+  description: string;
+  startUtc: string;
+  endUtc: string;
+};
+
+/**
+ * Channel names whose *currently airing* real programme names both sides of
+ * a fixture -- an actual fact from Dispatcharr's EPG, not the name-based
+ * guess every other function here makes.
+ *
+ * Deliberately conservative in the same direction as everywhere else: both
+ * teams have to appear in the one programme airing right now, not just one
+ * of them (a highlight show mentioning a single team by itself is not the
+ * same claim as "this is that game, live"). A fixture with only one side
+ * (F1, UFC) falls back to that one name -- there is nothing stricter to ask
+ * of it.
+ *
+ * `programsByChannelName` only ever holds entries for channels Dispatcharr
+ * has real programme data for (see getMappedChannelPrograms) -- today a
+ * small, deliberately-mapped set, but the check itself is not specific to
+ * any one league or channel, so it applies to whatever gets mapped next.
+ */
+export function findEpgConfirmedChannelNames(
+  fixture: { awayTeam: string | null; homeTeam: string | null },
+  programsByChannelName: Map<string, ChannelProgramme[]>,
+  nowUtc: string = new Date().toISOString()
+): string[] {
+  const away = fixture.awayTeam?.trim().toLowerCase() || null;
+  const home = fixture.homeTeam?.trim().toLowerCase() || null;
+  if (!away && !home) return [];
+  const now = Date.parse(nowUtc);
+  if (!Number.isFinite(now)) return [];
+
+  const confirmed: string[] = [];
+  for (const [channelName, programmes] of programsByChannelName) {
+    const current = programmes.find((p) => {
+      const start = Date.parse(p.startUtc);
+      const end = Date.parse(p.endUtc);
+      return Number.isFinite(start) && Number.isFinite(end) && now >= start && now < end;
+    });
+    if (!current) continue;
+
+    const text = `${current.title} ${current.description}`.toLowerCase();
+    const mentions =
+      away && home ? text.includes(away) && text.includes(home) : text.includes((away ?? home)!);
+    if (mentions) confirmed.push(channelName);
+  }
+  return confirmed;
+}
+
+/**
+ * `findEpgConfirmedChannelNames` for a whole schedule at once, so a caller
+ * with several fixtures (the schedule route, effectively every caller)
+ * fetches Dispatcharr's programme data once rather than once per fixture.
+ */
+export function matchFixturesToEpgProgrammes(
+  fixtures: { id: string; awayTeam: string | null; homeTeam: string | null }[],
+  programsByChannelName: Map<string, ChannelProgramme[]>,
+  nowUtc: string = new Date().toISOString()
+): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const fixture of fixtures) {
+    const names = findEpgConfirmedChannelNames(fixture, programsByChannelName, nowUtc);
+    if (names.length > 0) result.set(fixture.id, names);
+  }
+  return result;
+}
+
+/** The first channel in `channels` named in `confirmedNames`, or null. */
+export function findEpgConfirmedChannel<C extends { id: string; name: string }>(
+  confirmedNames: string[],
+  channels: C[]
+): C | null {
+  for (const name of confirmedNames) {
+    const match = channels.find((c) => c.name === name);
+    if (match) return match;
+  }
+  return null;
+}
+
+/**
+ * The single channel to default to for a fixture, in order of how much that
+ * default can actually be trusted: real EPG confirmation first (an actual
+ * fact about what is airing right now), then the name-based guess
+ * `findChannelForFixture` makes when there is no EPG data to ask.
+ */
+export function resolveChannelForFixture<C extends { id: string; name: string }>(
+  fixture: { awayTeam: string | null; homeTeam: string | null },
+  channels: C[],
+  epgConfirmedNames: string[] = []
+): C | null {
+  return findEpgConfirmedChannel(epgConfirmedNames, channels) ?? findChannelForFixture(fixture, channels);
+}
+
 /**
  * Channels plausibly carrying a fixture's league, for when
- * `findChannelForFixture` finds nothing to link to.
+ * `findChannelForFixture` (and, above it, real EPG confirmation -- see
+ * `resolveChannelForFixture`) both find nothing to link to.
  *
- * There is still no EPG confirming this -- checked, and the one channel here
- * with real programme data (Dispatcharr only stores it for channels mapped to
- * an EPG source, and only one is) lists generic blocks like "Live: WNBA
- * Basketball" rather than naming teams, so it cannot confirm a specific
- * fixture either. This is the same honest downgrade `looksLikeNetworkFeed`
- * makes: not "this channel has the game", only "this is a network that
- * carries this league, worth a look".
+ * Two independent signals, either one enough to list a channel:
  *
- * Capped, and ordered by how specific the brand is -- a dedicated single-sport
- * network (NBA TV for an NBA fixture) is a better guess than a generalist
- * (ESPN) that also covers nine other things this list tracks.
+ *   - NETWORK BRAND. This channel's own name is a broadcaster known to carry
+ *     this fixture's league (NBA TV for an NBA fixture, ESPN for several).
+ *   - MARKET. This channel is a local affiliate for a market one of the two
+ *     teams plays in -- "USA - CBS 13 BALTIMORE MD (WJZ)" for a Baltimore
+ *     team's game. Regional affiliates routinely carry their home team's
+ *     broadcast, which a brand check alone has no way to know: WJZ carries
+ *     no team name, and "CBS" alone is far too broad to mean anything.
+ *
+ * Still not EPG confirmation -- a real fact about what a channel is airing
+ * right now lives in `resolveChannelForFixture`, checked before this ever
+ * runs. This is the same honest downgrade `looksLikeNetworkFeed` makes: not
+ * "this channel has the game", only "worth a look".
+ *
+ * Capped, and ordered by how specific the signal is -- a dedicated
+ * single-sport network or a market match (this team, not just this league)
+ * outranks a generalist like ESPN that also covers nine other things this
+ * list tracks.
  */
 export function findCandidateChannels<C extends { id: string; name: string }>(
-  fixture: { league: string },
+  fixture: { league: string; awayTeam?: string | null; homeTeam?: string | null },
   channels: C[],
   limit = 4
 ): C[] {
-  const matches: { channel: C; specificity: number }[] = [];
+  const cities = [teamCity(fixture.awayTeam ?? null), teamCity(fixture.homeTeam ?? null)].filter(
+    (c): c is string => c != null
+  );
+
+  const matches = new Map<string, { channel: C; specificity: number }>();
+  const consider = (channel: C, specificity: number) => {
+    const existing = matches.get(channel.id);
+    if (!existing || specificity < existing.specificity) {
+      matches.set(channel.id, { channel, specificity });
+    }
+  };
+
   for (const channel of channels) {
     const n = channel.name.toLowerCase();
     if (looksLikeEventFeed(n)) continue;
+
     const brand = NETWORK_BRANDS.find((b) => b.pattern.test(n));
-    if (!brand || !brand.leagues.includes(fixture.league)) continue;
-    matches.push({ channel, specificity: brand.leagues.length });
+    if (brand && brand.leagues.includes(fixture.league)) {
+      consider(channel, brand.leagues.length);
+    }
+
+    // Whole-word, so "Miami" doesn't also light up something that merely
+    // contains it as a substring of a longer word.
+    if (cities.some((city) => new RegExp(`\\b${city}\\b`, "i").test(channel.name))) {
+      consider(channel, 1);
+    }
   }
-  matches.sort((a, b) => a.specificity - b.specificity);
-  return matches.slice(0, limit).map((m) => m.channel);
+
+  return [...matches.values()]
+    .sort((a, b) => a.specificity - b.specificity)
+    .slice(0, limit)
+    .map((m) => m.channel);
 }

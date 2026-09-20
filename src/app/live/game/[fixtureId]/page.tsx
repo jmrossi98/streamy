@@ -4,7 +4,8 @@ import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
-import { findCandidateChannels, findChannelForFixture } from "@/lib/liveTimeline";
+import { getMappedChannelPrograms } from "@/lib/dispatcharr";
+import { findCandidateChannels, findEpgConfirmedChannelNames, resolveChannelForFixture } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -43,7 +44,19 @@ export default async function GamePage({
   const fixture = fixtures.find((f) => f.id === fixtureId);
   if (!fixture) notFound();
 
-  const channel = findChannelForFixture(fixture, channels);
+  // Best effort, same reasoning as the schedule route: a Dispatcharr hiccup
+  // must not take the page down, only cost it the (already best-effort)
+  // upgrade from a name-based guess to a real confirmed channel.
+  let epgConfirmedNames: string[] = [];
+  try {
+    const programs = await getMappedChannelPrograms();
+    if (programs) epgConfirmedNames = findEpgConfirmedChannelNames(fixture, programs);
+  } catch (err) {
+    console.error("[live/game] EPG match failed:", err);
+  }
+
+  const channel = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
+  const channelConfirmed = channel != null && epgConfirmedNames.includes(channel.name);
   // Never both: a fixture with a confident match doesn't also get itself
   // listed among the guesses, and candidates are already excess-of-one.
   const candidates = channel ? [] : findCandidateChannels(fixture, channels, 8);
@@ -76,7 +89,7 @@ export default async function GamePage({
           </p>
         </div>
 
-        <GameChannelPicker channel={channel} candidates={candidates} />
+        <GameChannelPicker channel={channel} channelConfirmed={channelConfirmed} candidates={candidates} />
       </div>
     </div>
   );
