@@ -57,9 +57,25 @@ export default async function GamePage({
 
   const channel = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
   const channelConfirmed = channel != null && epgConfirmedNames.includes(channel.name);
-  // Never both: a fixture with a confident match doesn't also get itself
-  // listed among the guesses, and candidates are already excess-of-one.
-  const candidates = channel ? [] : findCandidateChannels(fixture, channels, 8);
+  /*
+    Only a real EPG fact suppresses the rest -- a confirmed channel needs no
+    guesses alongside it. `channel` being non-null on its own is not that:
+    without EPG data, resolveChannelForFixture falls back to the same kind of
+    name-based guess candidates are (a channel promoted under one team's own
+    name), and that guess being wrong is exactly when a viewer wants another
+    option to try. This used to hide every candidate -- NHL Network, ESPN,
+    any network airing the league -- the moment a fixture-named channel like
+    "NHL SAN JOSE SHARKS" existed at all, reported live for a Sharks game
+    that had nothing else to switch to.
+
+    Filtered by id rather than left to dedupe itself: a fixture-named channel
+    like that one also matches its own team's market (see findCandidateChannels'
+    city matching), so without this it would appear twice -- once as `channel`
+    itself, once again inside `candidates`.
+  */
+  const candidates = channelConfirmed
+    ? []
+    : findCandidateChannels(fixture, channels, 8).filter((c) => c.id !== channel?.id);
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
