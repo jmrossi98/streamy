@@ -173,6 +173,17 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   /** Autoplay was refused. Not a failure -- it needs a click, and says so. */
   const [needsGesture, setNeedsGesture] = useState(false);
   /**
+   * Mirrors `needsGesture` for the tune effect's closures to read live.
+   *
+   * The effect only re-runs on [channelId, goLive, retryToken], so a plain
+   * read of the `needsGesture` state variable inside it would see whatever
+   * value was current when the effect last ran, not whatever a handler set a
+   * moment ago. scheduleRetry needs the live value: see its own comment for
+   * why retrying while this is true only burns the retry budget on a retry
+   * that cannot succeed.
+   */
+  const needsGestureRef = useRef(false);
+  /**
    * Seconds behind the live edge. Null until the stream reports a seekable
    * range. Re-read on every timeupdate -- HLS drops segments off the back as
    * it adds them to the front, so the edge moves. Drives `isBehind` below,
@@ -219,6 +230,32 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
    * a stall, a backgrounded tab). Live players offer a way back rather than
    * leaving you permanently minutes late with no indication why.
    */
+  /**
+   * Resumes playback after an automatic seek, treating a blocked autoplay
+   * the same way startPlayback's own first attempt does: not a failure, and
+   * not something a further automatic retry can fix either, since none of
+   * these calls carry a fresh user gesture any more than the last one did.
+   *
+   * Silently swallowing this instead -- what both call sites below used to
+   * do -- was the actual bug behind "reconnecting forever, then a generic
+   * failure": the player kept re-issuing play() with no gesture, nothing
+   * told the viewer why nothing was happening, and eventually an unrelated
+   * hls.js watchdog gave up and reported a stream failure that was never the
+   * real problem.
+   */
+  const resumePlayback = useCallback((v: HTMLVideoElement) => {
+    v.play().catch((err: unknown) => {
+      const name = err instanceof Error ? err.name : "";
+      if (name === "NotAllowedError" || name === "AbortError") {
+        needsGestureRef.current = true;
+        setNeedsGesture(true);
+        // Not still reconnecting -- waiting on a click now, a different and
+        // more actionable thing to tell the viewer. See the render below.
+        setRebuffering(false);
+      }
+    });
+  }, []);
+
   const goLive = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -228,8 +265,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     // playback rather than restore it.
     stayBehindRef.current = false;
     if (!seekToLiveEdge(v)) return;
-    void v.play().catch(() => {});
-  }, []);
+    resumePlayback(v);
+  }, [resumePlayback]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -312,6 +349,13 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
      * shows, not a flash of an error that then heals itself.
      */
     const scheduleRetry = (finalError: string) => {
+      // A blocked autoplay never heals itself by retrying: the retried
+      // startPlayback() carries no more of a user gesture than the attempt
+      // that just got NotAllowedError, so it is guaranteed to fail the same
+      // way. Spending the retry budget on that used to run out silently and
+      // end in this exact "Playback failed." -- masking the one thing that
+      // was actually true and already on screen, that a click would fix it.
+      if (needsGestureRef.current) return;
       if (retryCountRef.current >= MAX_RETRIES) {
         setError(finalError);
         setLoading(false);
@@ -346,6 +390,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       clearStallTimer();
       setLoading(false);
       setRebuffering(false);
+      needsGestureRef.current = false;
       setNeedsGesture(false);
       // A channel that plays fine now shouldn't have its retry budget
       // dented by trouble from ten minutes ago -- only a run of failures
@@ -401,6 +446,11 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     };
 
     const onWaiting = () => {
+      // Already known to be waiting on a click, not a stall (see
+      // resumePlayback) -- hls.js can keep firing waiting/stalled while
+      // paused, and re-flipping this to "Reconnecting..." on every one of
+      // those would fight the message that's already correctly on screen.
+      if (needsGestureRef.current) return;
       setRebuffering(true);
       if (stallTimer !== null) return;
       stallTimer = setTimeout(() => {
@@ -413,7 +463,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
         if (stayBehindRef.current) return;
         // forwardOnly: recovery must never rewind (see seekToLiveEdge).
         if (seekToLiveEdge(video, { forwardOnly: true })) {
-          void video.play().catch(() => {});
+          resumePlayback(video);
         }
       }, EDGE_STALL_RECOVERY_MS);
     };
@@ -432,6 +482,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
           // Not a failure -- the browser is waiting for a click, and nothing
           // about retrying would change that, so this doesn't touch the
           // retry budget at all.
+          needsGestureRef.current = true;
           setNeedsGesture(true);
           setLoading(false);
         } else {
@@ -589,7 +640,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     // so scheduleRetry's setRetryToken(t => t + 1) forces this effect to
     // re-run, giving a retry the same teardown-and-restart a channel change
     // already gets.
-  }, [channelId, goLive, retryToken]);
+  }, [channelId, goLive, resumePlayback, retryToken]);
 
   /*
     "Behind live" means meaningfully behind, not merely cushioned.
@@ -663,8 +714,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
         )}
         {/* Rebuffering is drawn over the frozen frame rather than replacing it,
             and only once playback has started -- otherwise a stall during the
-            initial tune would stack two spinners. */}
-        {rebuffering && !loading && !error && (
+            initial tune would stack two spinners. Also not when needsGesture
+            is set: resumePlayback always clears rebuffering the moment it
+            discovers a blocked autoplay, but this guard keeps the two from
+            ever rendering stacked even if some future path doesn't, since
+            needsGesture is the more actionable of the two messages -- it
+            says the one thing actually true, that nothing further happens
+            without a click. */}
+        {rebuffering && !loading && !error && !needsGesture && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
             <Spinner label="Reconnecting…" />
           </span>
