@@ -55,11 +55,11 @@ export default async function GamePage({
     console.error("[live/game] EPG match failed:", err);
   }
 
-  const channel = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
-  const channelConfirmed = channel != null && epgConfirmedNames.includes(channel.name);
+  const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
+  const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);
   /*
     Only a real EPG fact suppresses the rest -- a confirmed channel needs no
-    guesses alongside it. `channel` being non-null on its own is not that:
+    guesses alongside it. `resolved` being non-null on its own is not that:
     without EPG data, resolveChannelForFixture falls back to the same kind of
     name-based guess candidates are (a channel promoted under one team's own
     name), and that guess being wrong is exactly when a viewer wants another
@@ -70,12 +70,31 @@ export default async function GamePage({
 
     Filtered by id rather than left to dedupe itself: a fixture-named channel
     like that one also matches its own team's market (see findCandidateChannels'
-    city matching), so without this it would appear twice -- once as `channel`
-    itself, once again inside `candidates`.
+    city matching), so without this it would appear twice -- once as the
+    primary pick, once again inside the candidate list.
   */
-  const candidates = channelConfirmed
+  const networkOrMarketCandidates = channelConfirmed
     ? []
-    : findCandidateChannels(fixture, channels, 8).filter((c) => c.id !== channel?.id);
+    : findCandidateChannels(fixture, channels, 8).filter((c) => c.id !== resolved?.id);
+
+  /*
+    An unconfirmed `resolved` is, by construction, exactly the category
+    findChannelForFixture matches: a channel promoted under one team's own
+    name -- the one-off fixture type looksLikeEventFeed already warns about
+    elsewhere (StreamBrowser), and confirmed live 2026-09-20 to show a
+    permanent "the stream is starting" placeholder loop on *every* one
+    tried, never the actual game. Not trustworthy enough to keep the
+    privileged default slot over an actual network or local-affiliate
+    candidate when one exists -- demoted to the end of the candidate list
+    instead of dropped outright, since it might still work and there is
+    nothing better to offer when it's genuinely the only option.
+  */
+  const demoteUnconfirmedFixtureGuess =
+    resolved != null && !channelConfirmed && networkOrMarketCandidates.length > 0;
+  const channel = demoteUnconfirmedFixtureGuess ? null : resolved;
+  const candidates = demoteUnconfirmedFixtureGuess
+    ? [...networkOrMarketCandidates, resolved!]
+    : networkOrMarketCandidates;
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
