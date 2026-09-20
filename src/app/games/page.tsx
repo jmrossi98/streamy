@@ -74,26 +74,17 @@ export default async function GamesPage() {
         Games
       </h1>
 
-      {/* Flash first: it is the half everyone can see, and the half that has
-          rows. My List is pinned at the top of it by buildRows. Search sits
-          above the shelves -- it is the same audience and the same click ->
-          play flow, just for a specific title rather than a curated genre. */}
-      <FlashSearchBar ownedFlashpointIds={ownedFlashpointIds} />
-
-      <FlashGamesRows rows={flashRows} myListSlugs={myFlashSlugs} />
-
-      <FlashBrowseRows rows={browseRows} ownedFlashpointIds={ownedFlashpointIds} />
-
       {admin && (
-        // Everything below the rule is admin-only and a different kind of
-        // thing -- the ROM/emulator half. Previously it ran straight on from
-        // the browsing rows with nothing marking the change of audience.
+        // ROMs/emulators first for an admin -- the half only they see, and
+        // the one their own management attention actually goes to. A
+        // non-admin's page is unaffected either way: this block never
+        // renders for them, so there is nothing here for order to change.
         //
         // The "Manage library" block that used to sit here is gone: its only
         // control was a sync for hand-dropped SWFs on mediabox, and every
         // game now arrives through the catalogue and the search bar, which
         // need no admin step at all.
-        <div className="mt-12 border-t border-white/10 pt-8">
+        <div className="border-b border-white/10 pb-8">
           <div className="px-4 md:px-6">
             <h2 className="mb-1 font-display text-2xl font-bold text-white">
               ROMs &amp; emulators
@@ -110,6 +101,24 @@ export default async function GamesPage() {
           />
         </div>
       )}
+
+      {/* Flash: the half everyone can see, and for a non-admin the only half
+          there is. My List is pinned at the top of it by buildRows. Search
+          sits above the shelves -- it is the same audience and the same
+          click -> play flow, just for a specific title rather than a
+          curated genre.
+
+          mt-12 only for an admin, to separate it from the ROMs block above
+          the same way that block used to separate itself from this one --
+          a non-admin's spacing is exactly the h1's own mb-6 and nothing
+          more, unchanged from before this reorder. */}
+      <div className={admin ? "mt-12" : undefined}>
+        <FlashSearchBar ownedFlashpointIds={ownedFlashpointIds} />
+
+        <FlashGamesRows rows={flashRows} myListSlugs={myFlashSlugs} />
+
+        <FlashBrowseRows rows={browseRows} ownedFlashpointIds={ownedFlashpointIds} />
+      </div>
     </div>
   );
 }
