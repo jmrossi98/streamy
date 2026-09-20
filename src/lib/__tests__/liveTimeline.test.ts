@@ -6,8 +6,13 @@ import {
   looksLikeNetworkFeed,
   findCandidateChannels,
   findChannelForFixture,
+  findEpgConfirmedChannel,
+  findEpgConfirmedChannelNames,
+  matchFixturesToEpgProgrammes,
+  resolveChannelForFixture,
   liveTrackPercent,
   secondsBehindLive,
+  type ChannelProgramme,
 } from "@/lib/liveTimeline";
 
 describe("liveTrackPercent", () => {
@@ -148,6 +153,20 @@ describe("looksLikeNetworkFeed", () => {
     expect(looksLikeNetworkFeed("NHL BUFFALO SABRES")).toBe(false);
     expect(looksLikeNetworkFeed("NBA 07 :")).toBe(false);
   });
+
+  it("recognises a local affiliate by its FCC call sign", () => {
+    // Four letters, W or K, in parens at the end -- real stations, not a
+    // guess the way a brand-name regex is.
+    expect(looksLikeNetworkFeed("USA - CBS 13 BALTIMORE MD (WJZ)")).toBe(true);
+    expect(looksLikeNetworkFeed("USA - FOX 47 ROCHESTER MN (KXLT)")).toBe(true);
+  });
+
+  it("recognises general-purpose networks, not just sports ones", () => {
+    // The point of the expansion: "Networks only" is not a sports-only filter.
+    expect(looksLikeNetworkFeed("USA - CNN HD")).toBe(true);
+    expect(looksLikeNetworkFeed("USA - DISCOVERY CHANNEL HD")).toBe(true);
+    expect(looksLikeNetworkFeed("USA - HBO EAST HD")).toBe(true);
+  });
 });
 
 describe("findChannelForFixture", () => {
@@ -233,5 +252,171 @@ describe("findCandidateChannels", () => {
 
   it("returns nothing for a league no lineup channel carries", () => {
     expect(findCandidateChannels({ league: "Formula 1" }, channels)).toEqual([]);
+  });
+
+  describe("market matching", () => {
+    const localChannels = [
+      { id: "10", name: "USA - CBS 13 BALTIMORE MD (WJZ)" },
+      { id: "11", name: "USA - FOX 47 ROCHESTER MN (KXLT)" },
+      { id: "12", name: "USA - NBC 10 BUFFALO NY (WGRZ)" },
+    ];
+
+    it("lists a market's local affiliate for a home team's game", () => {
+      // The exact case reported live: WJZ carries no team name and "CBS"
+      // alone is too broad to mean anything, but it is Baltimore's own
+      // station -- worth a look for a Baltimore team's game specifically.
+      const fixture = { league: "NFL", awayTeam: "Pittsburgh Steelers", homeTeam: "Baltimore Ravens" };
+      const ids = findCandidateChannels(fixture, localChannels).map((c) => c.id);
+      expect(ids).toContain("10");
+    });
+
+    it("does not list a market with no connection to either team", () => {
+      const fixture = { league: "NFL", awayTeam: "Pittsburgh Steelers", homeTeam: "Baltimore Ravens" };
+      const ids = findCandidateChannels(fixture, localChannels).map((c) => c.id);
+      expect(ids).not.toContain("11");
+      expect(ids).not.toContain("12");
+    });
+
+    it("matches a multi-word market in full", () => {
+      const fixture = { league: "NFL", awayTeam: "Kansas City Chiefs", homeTeam: "Denver Broncos" };
+      const withKC = [...localChannels, { id: "13", name: "USA - FOX 4 KANSAS CITY MO (WDAF)" }];
+      const ids = findCandidateChannels(fixture, withKC).map((c) => c.id);
+      expect(ids).toContain("13");
+    });
+
+    it("never lists the same channel twice when it matches both signals", () => {
+      // ESPN both carries the league and, incidentally, could share a word
+      // with a city -- the point is de-duplication, not this specific case.
+      const fixture = { league: "NHL", awayTeam: "Buffalo Sabres", homeTeam: "Toronto Maple Leafs" };
+      const ids = findCandidateChannels(fixture, channels).map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("does not require team names -- a league-only fixture still works", () => {
+      // findCandidateChannels must keep working for callers (like the old
+      // signature) that never pass awayTeam/homeTeam at all.
+      const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
+      expect(ids).toContain("3");
+    });
+  });
+});
+
+describe("findEpgConfirmedChannelNames", () => {
+  const programme = (over: Partial<ChannelProgramme> = {}): ChannelProgramme => ({
+    title: "NFL Football",
+    description: "The Minnesota Vikings host the Chicago Bears.",
+    startUtc: "2026-09-21T17:00:00Z",
+    endUtc: "2026-09-21T20:00:00Z",
+    ...over,
+  });
+  const now = "2026-09-21T18:00:00Z"; // Inside the programme's window.
+  const fixture = { awayTeam: "Minnesota Vikings", homeTeam: "Chicago Bears" };
+
+  it("confirms a channel whose current programme names both teams", () => {
+    const programs = new Map([["NFL - NFL NETWORK HD", [programme()]]]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now)).toEqual(["NFL - NFL NETWORK HD"]);
+  });
+
+  it("does not confirm a channel naming only one side", () => {
+    // A highlight show mentioning one team is not the same claim as "this is
+    // that game, live" -- both teams have to appear.
+    const programs = new Map([
+      ["NFL - NFL NETWORK HD", [programme({ description: "Vikings news and analysis." })]],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now)).toEqual([]);
+  });
+
+  it("does not confirm a channel whose matching programme already ended", () => {
+    const programs = new Map([["NFL - NFL NETWORK HD", [programme()]]]);
+    const later = "2026-09-21T21:00:00Z";
+    expect(findEpgConfirmedChannelNames(fixture, programs, later)).toEqual([]);
+  });
+
+  it("does not confirm a different game naming different teams", () => {
+    const programs = new Map([
+      [
+        "NFL - NFL NETWORK HD",
+        [programme({ description: "The Kansas City Chiefs host the Denver Broncos." })],
+      ],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now)).toEqual([]);
+  });
+
+  it("falls back to a single side for a fixture with no two teams", () => {
+    // F1, UFC: there is nothing stricter to ask of these than one match.
+    const programs = new Map([
+      ["SP - UFC NETWORK HD", [programme({ description: "Live coverage of Jon Jones tonight." })]],
+    ]);
+    const oneSided = { awayTeam: null, homeTeam: "Jon Jones" };
+    expect(findEpgConfirmedChannelNames(oneSided, programs, now)).toEqual(["SP - UFC NETWORK HD"]);
+  });
+
+  it("returns nothing for a fixture with no team names at all", () => {
+    const programs = new Map([["NFL - NFL NETWORK HD", [programme()]]]);
+    expect(findEpgConfirmedChannelNames({ awayTeam: null, homeTeam: null }, programs, now)).toEqual([]);
+  });
+
+  it("confirms more than one channel when more than one airs the same game", () => {
+    const programs = new Map([
+      ["NFL - NFL NETWORK HD", [programme()]],
+      ["USA - CBS 13 BALTIMORE MD (WJZ)", [programme()]],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now).sort()).toEqual(
+      ["NFL - NFL NETWORK HD", "USA - CBS 13 BALTIMORE MD (WJZ)"].sort()
+    );
+  });
+});
+
+describe("matchFixturesToEpgProgrammes", () => {
+  const programme: ChannelProgramme = {
+    title: "NFL Football",
+    description: "The Minnesota Vikings host the Chicago Bears.",
+    startUtc: "2026-09-21T17:00:00Z",
+    endUtc: "2026-09-21T20:00:00Z",
+  };
+  const now = "2026-09-21T18:00:00Z";
+
+  it("keys results by fixture id, one Dispatcharr fetch for the whole schedule", () => {
+    const fixtures = [
+      { id: "nfl:1", awayTeam: "Minnesota Vikings", homeTeam: "Chicago Bears" },
+      { id: "nfl:2", awayTeam: "Dallas Cowboys", homeTeam: "New York Giants" },
+    ];
+    const programs = new Map([["NFL - NFL NETWORK HD", [programme]]]);
+    const result = matchFixturesToEpgProgrammes(fixtures, programs, now);
+    expect(result.get("nfl:1")).toEqual(["NFL - NFL NETWORK HD"]);
+    expect(result.has("nfl:2")).toBe(false);
+  });
+});
+
+describe("findEpgConfirmedChannel / resolveChannelForFixture", () => {
+  const channels = [
+    { id: "1", name: "NHL BUFFALO SABRES" },
+    { id: "2", name: "NFL - NFL NETWORK HD" },
+  ];
+
+  it("finds the channel object named in a confirmed-names list", () => {
+    expect(findEpgConfirmedChannel(["NFL - NFL NETWORK HD"], channels)?.id).toBe("2");
+  });
+
+  it("returns null when nothing in the confirmed list is in the lineup", () => {
+    expect(findEpgConfirmedChannel(["ESPN"], channels)).toBeNull();
+  });
+
+  it("resolveChannelForFixture prefers EPG confirmation over a name-based guess", () => {
+    // A fixture whose nickname match would resolve to the Sabres channel,
+    // but EPG confirms a completely different channel -- the real fact wins.
+    const fixture = { awayTeam: "Toronto Maple Leafs", homeTeam: "Buffalo Sabres" };
+    const result = resolveChannelForFixture(fixture, channels, ["NFL - NFL NETWORK HD"]);
+    expect(result?.id).toBe("2");
+  });
+
+  it("resolveChannelForFixture falls back to the name-based guess with no EPG data", () => {
+    const fixture = { awayTeam: "Toronto Maple Leafs", homeTeam: "Buffalo Sabres" };
+    expect(resolveChannelForFixture(fixture, channels, [])?.id).toBe("1");
+  });
+
+  it("resolveChannelForFixture returns null when neither finds anything", () => {
+    const fixture = { awayTeam: "Los Angeles Lakers", homeTeam: "Golden State Warriors" };
+    expect(resolveChannelForFixture(fixture, channels, [])).toBeNull();
   });
 });

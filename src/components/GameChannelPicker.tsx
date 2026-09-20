@@ -5,8 +5,10 @@ import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 
 type Props = {
-  /** The confident match (a fixture channel promoted under this team's name), or null. */
+  /** The best single match -- EPG-confirmed or a name-based guess, or null. */
   channel: LiveChannel | null;
+  /** Whether `channel` is a real fact (Dispatcharr's EPG names both teams in what's airing right now) rather than a guess. */
+  channelConfirmed: boolean;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
   candidates: LiveChannel[];
 };
@@ -14,18 +16,22 @@ type Props = {
 /**
  * Plays a game, with a channel switcher rather than a single fixed source.
  *
- * `channel` comes first when present -- it is as close to "we're sure" as
- * this app gets, a channel promoted under one of the two teams' own names.
- * `candidates` are guesses (a network that carries this league, nothing more
- * specific), offered because a guess beats nothing when there's no confident
- * match, not because any one of them is known to be showing this game.
+ * `channel` comes first when present, in one of two ways that get told apart
+ * in the UI (`channelConfirmed`): a real fact from Dispatcharr's EPG (the
+ * programme airing right now on that channel names both teams), or -- when
+ * there's no EPG data to ask -- the same name-based guess this always made
+ * (a channel promoted under one of the two teams' own names). `candidates`
+ * are a looser guess still (a network that carries this game's league,
+ * nothing more specific), offered because a guess beats nothing when there
+ * is no better match, not because any one of them is known to be showing
+ * this particular game.
  *
  * Switching channels changes only which id LivePlayer is handed. Its own tune
  * effect is keyed on channelId, so it already tears down the old HLS session
  * and Jellyfin tune and starts a fresh one on a change -- nothing here has to
  * reimplement that.
  */
-export function GameChannelPicker({ channel, candidates }: Props) {
+export function GameChannelPicker({ channel, channelConfirmed, candidates }: Props) {
   const options = channel ? [channel, ...candidates] : candidates;
   const [selectedId, setSelectedId] = useState<string | null>(options[0]?.id ?? null);
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
@@ -58,9 +64,9 @@ export function GameChannelPicker({ channel, candidates }: Props) {
           <ul className="space-y-1.5">
             {options.map((c, i) => {
               const isSelected = c.id === selected.id;
-              // Only the confident match earns the "Best match" badge, and
-              // only when it's actually one of the options -- the badge is a
-              // claim about the match, not about being first in the list.
+              // Only the single best match earns a badge, and only when
+              // it's actually one of the options -- the badge is a claim
+              // about the match, not about being first in the list.
               const isBestMatch = channel != null && i === 0;
               return (
                 <li key={c.id}>
@@ -78,7 +84,15 @@ export function GameChannelPicker({ channel, candidates }: Props) {
                       <span className="shrink-0 tabular-nums text-xs text-white/40">{c.number}</span>
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm text-white/90">{c.name}</span>
-                    {isBestMatch && (
+                    {isBestMatch && channelConfirmed && (
+                      <span
+                        className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400"
+                        title="Dispatcharr's own schedule names both teams in what's airing right now"
+                      >
+                        Confirmed
+                      </span>
+                    )}
+                    {isBestMatch && !channelConfirmed && (
                       <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/60">
                         Best match
                       </span>

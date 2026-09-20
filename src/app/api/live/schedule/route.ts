@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
+import { getMappedChannelPrograms } from "@/lib/dispatcharr";
+import { matchFixturesToEpgProgrammes } from "@/lib/liveTimeline";
 
 /**
  * Today's fixtures, for the Live TV "what's on" panel.
@@ -22,8 +24,26 @@ export async function GET() {
   }
 
   const fixtures = await getTodaysFixtures();
+
+  // Best effort, and never lets a Dispatcharr hiccup take the whole schedule
+  // down with it: this endpoint's job is the schedule, which ESPN alone
+  // already answers -- EPG confirmation only ever adds a channel name, and
+  // an empty result here just means none of today's fixtures get one.
+  let epgConfirmedByFixtureId = new Map<string, string[]>();
+  try {
+    const programs = await getMappedChannelPrograms();
+    if (programs) epgConfirmedByFixtureId = matchFixturesToEpgProgrammes(fixtures, programs);
+  } catch (err) {
+    console.error("[live/schedule] EPG match failed:", err);
+  }
+
+  const withEpg = fixtures.map((f) => ({
+    ...f,
+    epgConfirmedChannelNames: epgConfirmedByFixtureId.get(f.id) ?? [],
+  }));
+
   return NextResponse.json(
-    { fixtures },
+    { fixtures: withEpg },
     { headers: { "Cache-Control": "public, max-age=60" } }
   );
 }

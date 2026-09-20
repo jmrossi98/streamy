@@ -309,6 +309,92 @@ export async function listChannels(): Promise<DispatcharrChannel[] | null> {
     }));
 }
 
+export type ChannelProgram = {
+  title: string;
+  description: string;
+  startUtc: string;
+  endUtc: string;
+};
+
+/**
+ * Real EPG programme data for whichever published channels happen to be
+ * mapped to a real EPG source entry, keyed by the channel's own name --
+ * which is what a fixture-matching caller actually has to key off of, since
+ * Jellyfin's channel list (what the rest of Live TV works from) carries the
+ * same names via the M3U Dispatcharr publishes, not Dispatcharr's channel
+ * ids.
+ *
+ * Most published channels have no such mapping. Dispatcharr's EPG source
+ * here only carries a small slice of the underlying catalogue, mapping is a
+ * manual per-channel step, and a fixture-named channel (a promoted
+ * single-team stream) essentially never has a real listing of its own to
+ * map to -- so this returns data only for the channels that do, which today
+ * is a small, deliberately-curated set. Returns null only when Dispatcharr
+ * itself couldn't be read; an empty map (nothing mapped) is a normal answer.
+ *
+ * Three separate lists combined client-side rather than one filtered call:
+ * Dispatcharr's `epg_data` query param on `/api/epg/programs/` is
+ * documented to filter but does not -- confirmed live, a real id and a
+ * nonexistent one return the identical, unfiltered set. Every list here is
+ * already this small (the point above), so filtering after one full fetch
+ * of each costs nothing extra.
+ */
+export async function getMappedChannelPrograms(): Promise<Map<string, ChannelProgram[]> | null> {
+  const [channelsData, epgData, programsData] = await Promise.all([
+    api<
+      | { results?: { id?: number; name?: string; epg_data_id?: number | null }[] }
+      | { id?: number; name?: string; epg_data_id?: number | null }[]
+    >(`/api/channels/channels/?page_size=1000`),
+    api<{ results?: { id?: number; tvg_id?: string }[] } | { id?: number; tvg_id?: string }[]>(
+      `/api/epg/epgdata/?page_size=5000`
+    ),
+    api<
+      | {
+          results?: {
+            title?: string;
+            description?: string;
+            start_time?: string;
+            end_time?: string;
+            tvg_id?: string;
+          }[];
+        }
+      | { title?: string; description?: string; start_time?: string; end_time?: string; tvg_id?: string }[]
+    >(`/api/epg/programs/?page_size=5000`),
+  ]);
+  if (!channelsData || !epgData || !programsData) return null;
+
+  const channels = Array.isArray(channelsData) ? channelsData : (channelsData.results ?? []);
+  const epgRows = Array.isArray(epgData) ? epgData : (epgData.results ?? []);
+  const programs = Array.isArray(programsData) ? programsData : (programsData.results ?? []);
+
+  const tvgIdByEpgDataId = new Map<number, string>();
+  for (const row of epgRows) {
+    if (typeof row.id === "number" && row.tvg_id) tvgIdByEpgDataId.set(row.id, row.tvg_id);
+  }
+
+  const programsByTvgId = new Map<string, ChannelProgram[]>();
+  for (const p of programs) {
+    if (!p.tvg_id || !p.title || !p.start_time || !p.end_time) continue;
+    const list = programsByTvgId.get(p.tvg_id) ?? [];
+    list.push({
+      title: p.title,
+      description: p.description ?? "",
+      startUtc: p.start_time,
+      endUtc: p.end_time,
+    });
+    programsByTvgId.set(p.tvg_id, list);
+  }
+
+  const result = new Map<string, ChannelProgram[]>();
+  for (const c of channels) {
+    if (typeof c.id !== "number" || !c.name || typeof c.epg_data_id !== "number") continue;
+    const tvgId = tvgIdByEpgDataId.get(c.epg_data_id);
+    const channelPrograms = tvgId ? programsByTvgId.get(tvgId) : undefined;
+    if (channelPrograms) result.set(c.name, channelPrograms);
+  }
+  return result;
+}
+
 /** One stream by id, so a channel can borrow its artwork. */
 export async function getStream(id: number): Promise<DispatcharrStream | null> {
   const raw = await api<RawStream>(`/api/channels/streams/${id}/`);
