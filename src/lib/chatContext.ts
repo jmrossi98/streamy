@@ -38,6 +38,16 @@ const STATE_ORDER: Record<ServiceStatus["state"], number> = {
 };
 
 /**
+ * Caps how much of a log excerpt reaches the prompt.
+ *
+ * getContainerLogs() already bounds line count at the source (60), but a
+ * single unbroken line -- a stack trace, a JSON blob some services log as one
+ * line -- can still be huge. This is a second, character-based ceiling on top
+ * of that one.
+ */
+const MAX_LOG_EXCERPT_CHARS = 2000;
+
+/**
  * The container section, or "" when there is nothing worth saying.
  *
  * Only faults are rendered. Twenty healthy container lines in a 3B model's
@@ -47,8 +57,15 @@ const STATE_ORDER: Record<ServiceStatus["state"], number> = {
  * `null` means Portainer could not be read, which is reported as such. Silently
  * omitting the section would let "we could not look" read as "nothing is
  * wrong", the same mistake as reporting an unverifiable VPN as healthy.
+ *
+ * `logs` is already-fetched text, keyed by container name -- this function
+ * stays pure (no I/O) so it can be unit-tested without a network, matching
+ * every other function in this file. Fetching lives in chatStatus.ts.
  */
-function containerSection(containers: ContainerState[] | null): string {
+function containerSection(
+  containers: ContainerState[] | null,
+  logs: Record<string, string> = {}
+): string {
   if (containers === null) return "";
   if (containers.length === 0) {
     return "\n\nContainer state: could not be read.";
@@ -63,9 +80,22 @@ function containerSection(containers: ContainerState[] | null): string {
     return `\n\nAll ${containers.length} containers are running.`;
   }
 
+  const logExcerpt = (name: string): string => {
+    const text = logs[name];
+    if (!text) return "";
+    const trimmed =
+      text.length > MAX_LOG_EXCERPT_CHARS
+        ? "…(truncated)…\n" + text.slice(-MAX_LOG_EXCERPT_CHARS)
+        : text;
+    return `\n  Recent log lines for ${name}:\n  \`\`\`\n${trimmed.trimEnd()}\n  \`\`\``;
+  };
+
   const lines: string[] = [];
   for (const c of problems) {
-    lines.push(`- ${c.name}: ${c.state}${c.health === "unhealthy" ? " (unhealthy)" : ""} — ${c.status || "no status"}`);
+    lines.push(
+      `- ${c.name}: ${c.state}${c.health === "unhealthy" ? " (unhealthy)" : ""} — ${c.status || "no status"}` +
+        logExcerpt(c.name)
+    );
   }
   // Called out separately because it is invisible to every other signal: the
   // container is running, its own healthcheck may pass, and it has no network
@@ -75,7 +105,8 @@ function containerSection(containers: ContainerState[] | null): string {
     lines.push(
       `- ${c.name}: RUNNING BUT HAS NO NETWORK — it shares a network namespace ` +
         `with a container that no longer exists. It must be RECREATED, not ` +
-        `restarted; restarting re-enters the dead namespace and fails.`
+        `restarted; restarting re-enters the dead namespace and fails.` +
+        logExcerpt(c.name)
     );
   }
 
@@ -83,9 +114,11 @@ function containerSection(containers: ContainerState[] | null): string {
     "\n\n--- BEGIN CONTAINER PROBLEMS ---\n" +
     lines.join("\n") +
     "\n--- END CONTAINER PROBLEMS ---\n" +
-    "These are container-level faults on mediabox. When one explains a failing " +
-    "service above, say so and tell the admin to restart or recreate it in " +
-    "Portainer. You cannot restart anything yourself."
+    "These are container-level faults on mediabox, including their own recent " +
+    "log lines where available -- read them for the actual error before " +
+    "guessing at a cause. When one explains a failing service above, say so " +
+    "and tell the admin to restart or recreate it in Portainer. You cannot " +
+    "restart anything yourself."
   );
 }
 
@@ -104,10 +137,15 @@ function containerSection(containers: ContainerState[] | null): string {
  *
  * `containers` defaults to null -- "not looked at" -- so every existing caller
  * and test keeps its exact previous output.
+ *
+ * `logs` is recent output for whichever flagged containers chatStatus.ts
+ * fetched it for (see containerSection) -- always safe to omit, since it is
+ * only ever consulted for names that also appear in `containers`.
  */
 export function buildStatusContext(
   statuses: ServiceStatus[],
-  containers: ContainerState[] | null = null
+  containers: ContainerState[] | null = null,
+  logs: Record<string, string> = {}
 ): ChatMessage {
   const sorted = [...statuses].sort(
     (a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.name.localeCompare(b.name)
@@ -139,6 +177,7 @@ export function buildStatusContext(
       "check could not run, so the state is genuinely not known (do not report " +
       "this as an outage). unconfigured = optional integration never set up " +
       "(not a fault).\n\n" +
-      `--- BEGIN STACK STATUS ---\n${body}\n--- END STACK STATUS ---`,
+      `--- BEGIN STACK STATUS ---\n${body}\n--- END STACK STATUS ---` +
+      containerSection(containers, logs),
   };
 }
