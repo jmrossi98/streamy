@@ -309,6 +309,22 @@ export async function listChannels(): Promise<DispatcharrChannel[] | null> {
     }));
 }
 
+/**
+ * Dispatcharr's numeric channel id for a channel Jellyfin already knows by
+ * name.
+ *
+ * Jellyfin's Live TV API (what the channel page renders from) only ever
+ * hands back its own GUID-like id, never Dispatcharr's -- the two systems
+ * are correlated by name alone, via the M3U Dispatcharr publishes and
+ * Jellyfin tunes to (see getMappedChannelPrograms' own comment on the same
+ * point). Demoting needs Dispatcharr's id specifically, so a channel page
+ * that wants to offer it has to look the name up here first.
+ */
+export async function findChannelIdByName(name: string): Promise<number | null> {
+  const channels = await listChannels();
+  return channels?.find((c) => c.name === name)?.id ?? null;
+}
+
 export type ChannelProgram = {
   title: string;
   description: string;
