@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel } from "@/lib/liveTv";
-import { looksLikeEventFeed, looksLikeNetworkFeed } from "@/lib/liveTimeline";
+import { looksLikeEventFeed } from "@/lib/liveTimeline";
 
 type Stream = {
   id: number;
@@ -53,13 +53,13 @@ export function StreamBrowser() {
   // fires three requests and they do not necessarily return in order.
   const requestSeq = useRef(0);
 
-  const load = useCallback(async (q: string, p: number) => {
+  const load = useCallback(async (q: string, p: number, netOnly: boolean) => {
     const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(
-        `/api/live/streams?q=${encodeURIComponent(q)}&page=${p}`
+        `/api/live/streams?q=${encodeURIComponent(q)}&page=${p}&networksOnly=${netOnly ? "1" : "0"}`
       );
       if (seq !== requestSeq.current) return;
       if (!res.ok) {
@@ -89,9 +89,12 @@ export function StreamBrowser() {
   useEffect(() => {
     const t = setTimeout(() => {
       setPage(1);
-      void load(query, 1);
+      void load(query, 1, networksOnly);
     }, 300);
     return () => clearTimeout(t);
+    // networksOnly deliberately excluded: its own toggle handler below reloads
+    // immediately rather than waiting out this debounce, since it isn't typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, load]);
 
   const categoryOf = useMemo(
@@ -99,19 +102,14 @@ export function StreamBrowser() {
     [streams]
   );
 
+  // Networks-only is now filtered server-side, before pagination -- see
+  // listStreams(). What's loaded here is already the right set; only the
+  // (unpaginated, load-more-costly-to-do-server-side) category slice happens
+  // client-side, same as before.
   const visible = useMemo(() => {
-    let list = streams;
-    if (networksOnly) list = list.filter((s) => looksLikeNetworkFeed(s.name));
-    if (category !== "all") list = list.filter((s) => categoryOf.get(s.id) === category);
-    return list;
-  }, [streams, category, categoryOf, networksOnly]);
-
-  // How many the network filter is holding back, so the toggle can say so
-  // rather than leaving a short list looking like a failed search.
-  const hiddenByNetworkFilter = useMemo(
-    () => (networksOnly ? streams.filter((s) => !looksLikeNetworkFeed(s.name)).length : 0),
-    [streams, networksOnly]
-  );
+    if (category === "all") return streams;
+    return streams.filter((s) => categoryOf.get(s.id) === category);
+  }, [streams, category, categoryOf]);
 
   // Only categories present in what is loaded, with counts. An empty option
   // that filters to nothing is worse than no option.
@@ -191,7 +189,12 @@ export function StreamBrowser() {
       <div className="streamy-page-title-x mb-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => setNetworksOnly((v) => !v)}
+          onClick={() => {
+            const next = !networksOnly;
+            setNetworksOnly(next);
+            setPage(1);
+            void load(query, 1, next);
+          }}
           className={`rounded-full px-3 py-1 text-xs transition-colors ${
             networksOnly
               ? "bg-white font-semibold text-netflix-black"
@@ -201,12 +204,6 @@ export function StreamBrowser() {
         >
           Networks only
         </button>
-        {networksOnly && hiddenByNetworkFilter > 0 && (
-          <span className="text-xs text-white/40">
-            {hiddenByNetworkFilter} one-off event
-            {hiddenByNetworkFilter === 1 ? "" : "s"} hidden on this page
-          </span>
-        )}
       </div>
 
       {availableCategories.length > 0 && (
@@ -244,10 +241,10 @@ export function StreamBrowser() {
       ) : visible.length === 0 ? (
         <p className="streamy-page-title-x text-sm text-white/40">
           {streams.length === 0
-            ? "No streams match that search."
-            : networksOnly
-              ? "No recognised networks on this page — turn off “Networks only” to see one-off events."
-              : "No streams in that category on this page."}
+            ? networksOnly
+              ? "No recognised networks match that search — turn off “Networks only” to see one-off events."
+              : "No streams match that search."
+            : "No streams in that category on this page."}
         </p>
       ) : (
         <ul className="streamy-page-title-x space-y-1">
@@ -311,7 +308,7 @@ export function StreamBrowser() {
             onClick={() => {
               const p = page - 1;
               setPage(p);
-              void load(query, p);
+              void load(query, p, networksOnly);
             }}
             className="rounded border border-white/20 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10 disabled:opacity-40"
           >
@@ -326,7 +323,7 @@ export function StreamBrowser() {
             onClick={() => {
               const p = page + 1;
               setPage(p);
-              void load(query, p);
+              void load(query, p, networksOnly);
             }}
             className="rounded border border-white/20 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10 disabled:opacity-40"
           >

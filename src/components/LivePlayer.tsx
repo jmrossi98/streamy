@@ -55,13 +55,17 @@ const TUNE_TIMEOUT_MS = 60_000;
 const LIVE_SYNC_SECONDS = 8;
 
 /**
- * How much history to keep for scrubbing back.
+ * How much back-buffer hls.js keeps client-side.
  *
- * Jellyfin's playlist is EVENT-type and never drops segments, so the server
- * side of this is free -- the only cost is browser memory, which is what this
- * bounds.
+ * Used to be 1800s (30 minutes) to support scrubbing back through a DVR
+ * window -- that control is gone (see VideoChrome: no scrubber in live mode
+ * anymore), so there is nothing left that seeks backward. What is left that
+ * still touches this is the edge-stall recovery below, which only ever seeks
+ * *forward* to the live edge -- it needs no history at all, just enough
+ * slack that a momentary stall doesn't immediately evict the segment
+ * playback is sitting on. A minute is generous for that.
  */
-const DVR_WINDOW_SECONDS = 1800;
+const BACK_BUFFER_SECONDS = 60;
 
 /**
  * A stall this long at the live edge is treated as having fallen off the end,
@@ -152,15 +156,15 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   /** Seconds behind the live edge. Null until the stream reports a seekable range. */
   const [behind, setBehind] = useState<number | null>(null);
   /**
-   * The seekable window, as the stream currently reports it.
+   * The live edge, as the stream currently reports it.
    *
-   * Both ends move: HLS drops segments off the back as it adds them to the
-   * front, so this is re-read on every timeupdate rather than measured once.
-   * How much is in it is Jellyfin's decision, not this player's -- the bar
-   * shows whatever is actually there, which may be a couple of minutes or a
-   * couple of seconds.
+   * Re-read on every timeupdate rather than measured once -- HLS drops
+   * segments off the back as it adds them to the front, so it moves. Just the
+   * edge now, not the whole window: with no scrubber, nothing downstream
+   * needs to know where the window *starts* anymore, only the VideoChrome
+   * "how far behind" readout, which needs this end alone.
    */
-  const [dvr, setDvr] = useState<{ start: number; edge: number } | null>(null);
+  const [liveEdge, setLiveEdge] = useState<number | null>(null);
 
   /*
     Whether the viewer deliberately scrubbed back into the DVR window.
@@ -347,14 +351,13 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     const onTimeUpdate = () => {
       if (video.seekable.length === 0) {
         setBehind(null);
-        setDvr(null);
+        setLiveEdge(null);
         return;
       }
       const last = video.seekable.length - 1;
       const edge = video.seekable.end(last);
-      const start = video.seekable.start(0);
       setBehind(Math.max(0, edge - video.currentTime));
-      setDvr({ start, edge });
+      setLiveEdge(edge);
     };
 
     /*
@@ -413,10 +416,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
           Falling behind unintentionally is handled by the stall recovery
           below, which knows the difference because it checks stayBehindRef.
         */
-        // Keep a real DVR window to scrub back through, rather than the
-        // default's small one. The segments exist on the server anyway --
-        // Jellyfin's playlist is EVENT-type and never drops any.
-        backBufferLength: DVR_WINDOW_SECONDS,
+        backBufferLength: BACK_BUFFER_SECONDS,
         enableWorker: true,
         lowLatencyMode: false,
       });
@@ -508,8 +508,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
             subtitle={nowPlaying ?? undefined}
             chrome={chrome}
             live={{
-              windowStart: dvr?.start ?? 0,
-              edge: dvr?.edge ?? 0,
+              edge: liveEdge ?? 0,
               atLive: !isBehind,
               goLive,
             }}

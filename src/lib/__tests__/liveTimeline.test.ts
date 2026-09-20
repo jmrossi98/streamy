@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  LIVE_SNAP_SECONDS,
   isAtLiveEdge,
   liveSeekTarget,
   looksLikeEventFeed,
@@ -9,7 +8,6 @@ import {
   findChannelForFixture,
   liveTrackPercent,
   secondsBehindLive,
-  shouldSnapToLive,
 } from "@/lib/liveTimeline";
 
 describe("liveTrackPercent", () => {
@@ -41,29 +39,6 @@ describe("liveTrackPercent", () => {
     expect(liveTrackPercent(0, 0, 0)).toBe(0);
     expect(liveTrackPercent(10, 100, 100)).toBe(0);
     expect(liveTrackPercent(10, 0, Infinity)).toBe(0);
-  });
-});
-
-describe("shouldSnapToLive", () => {
-  it("treats a drag to the end as asking for live", () => {
-    expect(shouldSnapToLive(1120, 1120)).toBe(true);
-  });
-
-  it("snaps from just short of the edge", () => {
-    // The edge advances while the pointer moves, so an exact landing is not
-    // something a person can do. Without the tolerance, dragging fully right
-    // leaves you a second behind and stuck there.
-    expect(shouldSnapToLive(1120 - (LIVE_SNAP_SECONDS - 1), 1120)).toBe(true);
-  });
-
-  it("leaves a deliberate seek back alone", () => {
-    expect(shouldSnapToLive(1060, 1120)).toBe(false);
-    expect(shouldSnapToLive(1120 - (LIVE_SNAP_SECONDS + 1), 1120)).toBe(false);
-  });
-
-  it("is safe before an edge is known", () => {
-    expect(shouldSnapToLive(NaN, 1120)).toBe(false);
-    expect(shouldSnapToLive(10, NaN)).toBe(false);
   });
 });
 

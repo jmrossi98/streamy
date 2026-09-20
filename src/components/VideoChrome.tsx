@@ -3,12 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
-import {
-  LIVE_SNAP_SECONDS,
-  liveTrackPercent,
-  secondsBehindLive,
-  shouldSnapToLive,
-} from "@/lib/liveTimeline";
+import { liveTrackPercent, secondsBehindLive } from "@/lib/liveTimeline";
 
 type ChromeState = {
   isPlaying: boolean;
@@ -29,15 +24,13 @@ type ChromeState = {
 /**
  * Live playback, where a timeline means something different.
  *
- * A broadcast has no duration and no fixed start. What it has is a sliding
- * window of segments the player is still holding -- so the scrubber spans
- * `windowStart..edge` rather than `0..duration`, and both ends advance in real
- * time as the stream runs.
+ * A broadcast has no duration and no fixed start, and no scrubber either --
+ * see the bottom control bar below. What it has is a live edge that keeps
+ * moving, which is what this describes: whether playback is at it, and by
+ * how much it isn't when it's not.
  */
 export type LiveState = {
-  /** Earliest point still seekable: the start of the DVR window. */
-  windowStart: number;
-  /** The live edge. */
+  /** The live edge, for the "how far behind" readout on the LIVE badge. */
   edge: number;
   /** At (or close enough to) the edge to call it live. */
   atLive: boolean;
@@ -85,50 +78,25 @@ export function VideoChrome({
     toggleFullscreen,
   } = chrome;
 
-  // Live maps the bar onto the DVR window; everything else onto the runtime.
-  const trackStart = live ? live.windowStart : 0;
-  const trackEnd = live ? live.edge : duration;
-  // liveTimeline.ts owns the arithmetic for both modes -- VOD is just a window
-  // that happens to start at zero -- so it is unit-tested without a browser.
-  const along = (t: number) => liveTrackPercent(t, trackStart, trackEnd);
+  // VOD only now -- live has no scrubber to map a track onto (see the bottom
+  // bar below). liveTimeline.ts still owns this arithmetic so it stays
+  // unit-tested without a browser.
+  const along = (t: number) => liveTrackPercent(t, 0, duration);
 
   /*
     While the thumb is being dragged, the drag wins.
 
-    Both ends of a live window advance in real time, so a bar driven purely by
-    playback state fights the finger: the value is recomputed underneath the
-    drag and the thumb springs back. Holding the dragged value until release is
-    what makes scrubbing feel attached to the pointer rather than advisory.
+    A bar driven purely by playback state fights the finger: the value is
+    recomputed underneath the drag and the thumb springs back. Holding the
+    dragged value until release is what makes scrubbing feel attached to the
+    pointer rather than advisory.
   */
   const [dragValue, setDragValue] = useState<number | null>(null);
   const dragging = dragValue !== null;
 
-  /*
-    At live, the playhead is drawn AT the right edge -- not at its true
-    position.
-
-    Playback deliberately sits a few seconds back from the edge so an upstream
-    hiccup has something buffered to play through (LIVE_SYNC_SECONDS in
-    LivePlayer). That cushion is an implementation detail: rendering it
-    honestly leaves a permanent gap between the thumb and the end of the bar,
-    which reads as "stuck slightly behind" rather than as "live". Every major
-    platform pins the thumb to the end while you are in the live window and
-    shows the offset only once you have genuinely scrubbed back.
-  */
-  const livePct = live?.atLive ? 100 : along(currentTime);
-  const pct = dragging ? along(dragValue) : live ? livePct : along(currentTime);
-  // For live, `buffered` is ahead of the playhead inside the same window, so
-  // the same mapping applies -- it just usually reaches the right-hand end.
+  const pct = dragging ? along(dragValue) : along(currentTime);
   const bufPct = along(buffered);
-
-  /** Seeking, with the live edge snapping so "drag to the end" means "go live". */
-  const onSeek = (t: number) => {
-    if (live && shouldSnapToLive(t, live.edge, LIVE_SNAP_SECONDS)) {
-      live.goLive();
-      return;
-    }
-    seek(t);
-  };
+  const onSeek = seek;
 
   const behind = live ? secondsBehindLive(currentTime, live.edge) : 0;
   const show = controlsVisible || !isPlaying;
@@ -189,41 +157,48 @@ export function VideoChrome({
 
       {/* Bottom control bar. */}
       <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-3 pb-3 pt-8 sm:px-5 sm:pb-4 ${interactive}`}>
-        {/* Scrubber */}
-        <div className="group relative flex h-4 items-center">
-          <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
-            <div className="absolute inset-y-0 left-0 bg-white/25" style={{ width: `${bufPct}%` }} />
-            <div className="absolute inset-y-0 left-0 bg-netflix-red" style={{ width: `${pct}%` }} />
+        {/*
+          Scrubber -- VOD only.
+
+          A live broadcast used to get one too, spanning the DVR window, but a
+          draggable bar is an offer to seek, and the only two things dragging
+          one back actually did were let you re-watch a few minutes (nobody
+          asked for it) or land you stalled a few seconds off the live edge
+          (everybody hit this by accident). Every no-frills live platform skips
+          the bar entirely rather than build a scrubber whose only reliable use
+          is confusing the person holding it -- the LIVE indicator below is the
+          entire live transport control now.
+        */}
+        {!live && (
+          <div className="group relative flex h-4 items-center">
+            <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
+              <div className="absolute inset-y-0 left-0 bg-white/25" style={{ width: `${bufPct}%` }} />
+              <div className="absolute inset-y-0 left-0 bg-netflix-red" style={{ width: `${pct}%` }} />
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step="any"
+              value={dragging ? dragValue : Math.max(0, Math.min(currentTime, duration || 0))}
+              // Tracked while dragging so the thumb follows the pointer; the seek
+              // itself happens on release, so scrubbing does not fire a seek per
+              // pixel.
+              onChange={(e) => setDragValue(Number(e.target.value))}
+              onPointerUp={() => {
+                if (dragValue !== null) onSeek(dragValue);
+                setDragValue(null);
+              }}
+              onKeyUp={() => {
+                if (dragValue !== null) onSeek(dragValue);
+                setDragValue(null);
+              }}
+              onBlur={() => setDragValue(null)}
+              aria-label="Seek"
+              className="player-scrubber relative z-10 h-4 w-full cursor-pointer appearance-none bg-transparent"
+            />
           </div>
-          <input
-            type="range"
-            min={trackStart}
-            max={trackEnd || 0}
-            step="any"
-            value={
-              dragging
-                ? dragValue
-                : live?.atLive
-                  ? trackEnd || 0
-                  : Math.max(trackStart, Math.min(currentTime, trackEnd || 0))
-            }
-            // Tracked while dragging so the thumb follows the pointer; the seek
-            // itself happens on release, so scrubbing across a live window does
-            // not fire a seek per pixel.
-            onChange={(e) => setDragValue(Number(e.target.value))}
-            onPointerUp={() => {
-              if (dragValue !== null) onSeek(dragValue);
-              setDragValue(null);
-            }}
-            onKeyUp={() => {
-              if (dragValue !== null) onSeek(dragValue);
-              setDragValue(null);
-            }}
-            onBlur={() => setDragValue(null)}
-            aria-label={live ? "Seek within the live buffer" : "Seek"}
-            className="player-scrubber relative z-10 h-4 w-full cursor-pointer appearance-none bg-transparent"
-          />
-        </div>
+        )}
 
         <div className="mt-1 flex items-center gap-3 text-white">
           <button type="button" onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className="shrink-0 touch-manipulation">
