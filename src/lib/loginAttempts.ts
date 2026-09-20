@@ -25,6 +25,16 @@ import {
  */
 const RETENTION_DAYS = 30;
 
+/**
+ * How long an actual attempted password value is kept, separate from (and far
+ * shorter than) the row's own RETENTION_DAYS. The row itself -- who, when,
+ * that it failed -- is worth a month for the security monitor; the literal
+ * value someone typed is a different kind of data (it can be a near-miss on
+ * a real password used elsewhere) and is only useful for the short window in
+ * which an admin might actually go looking, e.g. "why can't my kid log in".
+ */
+const ATTEMPTED_PASSWORD_RETENTION_HOURS = 48;
+
 export type AttemptOutcome =
   | "success"
   | "signup"
@@ -37,6 +47,13 @@ export async function recordLoginAttempt(input: {
   name: string;
   ip: string;
   outcome: AttemptOutcome;
+  /**
+   * What was typed as the password, only ever stored for a "bad_password"
+   * outcome -- ignored for every other outcome so a successful sign-in's
+   * real, working password can never end up here. Capped short: nothing
+   * about diagnosing a failed login needs more than a glance at the value.
+   */
+  attemptedPassword?: string;
 }): Promise<void> {
   try {
     await prisma.loginAttempt.create({
@@ -45,6 +62,10 @@ export async function recordLoginAttempt(input: {
         ip: input.ip.slice(0, 100),
         success: input.outcome === "success",
         outcome: input.outcome,
+        attemptedPassword:
+          input.outcome === "bad_password" && input.attemptedPassword
+            ? input.attemptedPassword.slice(0, 200)
+            : null,
       },
     });
   } catch (err) {
@@ -126,5 +147,55 @@ export async function pruneOldLoginAttempts(): Promise<void> {
     await prisma.loginAttempt.deleteMany({ where: { at: { lt: cutoff } } });
   } catch (err) {
     console.error("[loginAttempts] prune failed:", err);
+  }
+}
+
+/**
+ * Clears attemptedPassword past its own, much shorter retention -- the row
+ * itself (who, when, that it failed) stays for pruneOldLoginAttempts' normal
+ * 30-day window; only the literal value someone typed is cleared early.
+ * updateMany rather than delete: the attempt still counts toward lockout and
+ * the security monitor's failure totals after this runs, only the sensitive
+ * value is gone.
+ */
+export async function purgeOldAttemptedPasswords(): Promise<void> {
+  const cutoff = new Date(Date.now() - ATTEMPTED_PASSWORD_RETENTION_HOURS * 60 * 60 * 1000);
+  try {
+    await prisma.loginAttempt.updateMany({
+      where: { attemptedPassword: { not: null }, at: { lt: cutoff } },
+      data: { attemptedPassword: null },
+    });
+  } catch (err) {
+    console.error("[loginAttempts] attempted-password purge failed:", err);
+  }
+}
+
+export type RecentBadPasswordAttempt = {
+  id: string;
+  name: string;
+  ip: string;
+  at: Date;
+  /** Null once purged (see purgeOldAttemptedPasswords) or if none was captured. */
+  attemptedPassword: string | null;
+};
+
+/**
+ * Recent failed sign-ins, for an admin trying to work out why someone can't
+ * get in -- a mistyped password, caps lock, an old password from before a
+ * reset, or a stranger guessing. Newest first, capped: this is for glancing
+ * at what just happened, not an audit export (pruneOldLoginAttempts and the
+ * security monitor's own aggregates cover the longer view).
+ */
+export async function getRecentBadPasswordAttempts(limit = 25): Promise<RecentBadPasswordAttempt[]> {
+  try {
+    return await prisma.loginAttempt.findMany({
+      where: { outcome: "bad_password" },
+      orderBy: { at: "desc" },
+      take: limit,
+      select: { id: true, name: true, ip: true, at: true, attemptedPassword: true },
+    });
+  } catch (err) {
+    console.error("[loginAttempts] failed to read recent bad-password attempts:", err);
+    return [];
   }
 }
