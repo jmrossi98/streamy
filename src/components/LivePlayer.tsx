@@ -153,18 +153,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
   const [rebuffering, setRebuffering] = useState(false);
   /** Autoplay was refused. Not a failure -- it needs a click, and says so. */
   const [needsGesture, setNeedsGesture] = useState(false);
-  /** Seconds behind the live edge. Null until the stream reports a seekable range. */
-  const [behind, setBehind] = useState<number | null>(null);
   /**
-   * The live edge, as the stream currently reports it.
-   *
-   * Re-read on every timeupdate rather than measured once -- HLS drops
-   * segments off the back as it adds them to the front, so it moves. Just the
-   * edge now, not the whole window: with no scrubber, nothing downstream
-   * needs to know where the window *starts* anymore, only the VideoChrome
-   * "how far behind" readout, which needs this end alone.
+   * Seconds behind the live edge. Null until the stream reports a seekable
+   * range. Re-read on every timeupdate -- HLS drops segments off the back as
+   * it adds them to the front, so the edge moves. Drives `isBehind` below,
+   * which is now only for the LIVE badge's colour: catching back up is
+   * automatic (see `onPlay`, `onWaiting`), not something a viewer triggers.
    */
-  const [liveEdge, setLiveEdge] = useState<number | null>(null);
+  const [behind, setBehind] = useState<number | null>(null);
 
   /*
     Whether the viewer deliberately scrubbed back into the DVR window.
@@ -284,6 +280,29 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       setRebuffering(false);
       setNeedsGesture(false);
     };
+
+    /*
+      Resuming (a pause, or anything else that leaves playback parked) lands
+      back at the live cushion rather than wherever the pause left it.
+
+      Without this, pausing was a way to silently fall arbitrarily far behind
+      live with no way back except this -- there is no scrubber anymore to
+      manually catch up with (see VideoChrome), so automatic is the only way
+      "back to live" happens at all now. The threshold matches `isBehind`
+      below: the cushion itself is not behind, only meaningfully past it.
+
+      Also covers the initial start on native HLS (Safari): unlike the
+      hls.js path, that one has no explicit seek-to-edge before playback
+      begins, so the first `play` can legitimately find itself behind too.
+    */
+    const onPlay = () => {
+      if (video.seekable.length === 0) return;
+      const edge = video.seekable.end(video.seekable.length - 1);
+      if (edge - video.currentTime > LIVE_SYNC_SECONDS + 4) {
+        setRebuffering(true);
+        goLive();
+      }
+    };
     // Mid-stream stalls get the spinner back rather than a frozen frame, and
     // are kept distinct from the initial tune so the timeout above doesn't
     // treat a brief rebuffer as a dead channel.
@@ -351,13 +370,11 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     const onTimeUpdate = () => {
       if (video.seekable.length === 0) {
         setBehind(null);
-        setLiveEdge(null);
         return;
       }
       const last = video.seekable.length - 1;
       const edge = video.seekable.end(last);
       setBehind(Math.max(0, edge - video.currentTime));
-      setLiveEdge(edge);
     };
 
     /*
@@ -372,6 +389,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     };
 
     video.addEventListener("seeked", onSeeked);
+    video.addEventListener("play", onPlay);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("waiting", onWaiting);
@@ -450,6 +468,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     return () => {
       clearTuneTimer();
       video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("play", onPlay);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("waiting", onWaiting);
@@ -465,7 +484,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       video.removeAttribute("src");
       video.load();
     };
-  }, [channelId]);
+  }, [channelId, goLive]);
 
   /*
     "Behind live" means meaningfully behind, not merely cushioned.
@@ -507,11 +526,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
             title={channelName}
             subtitle={nowPlaying ?? undefined}
             chrome={chrome}
-            live={{
-              edge: liveEdge ?? 0,
-              atLive: !isBehind,
-              goLive,
-            }}
+            live={{ atLive: !isBehind }}
           />
         )}
 
