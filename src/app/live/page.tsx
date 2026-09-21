@@ -9,6 +9,7 @@ import {
   isJellyfinReachable,
   MAX_CHANNELS,
 } from "@/lib/liveTv";
+import { getChannelProviders } from "@/lib/dispatcharr";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -33,6 +34,19 @@ export default async function LivePage() {
   const envSet = isJellyfinConfiguredForLiveTv();
   const reachable = envSet ? await isJellyfinReachable() : false;
   const channels = reachable ? await attachNextPrograms(await getLiveChannels()) : [];
+
+  // Best effort, same reasoning as everywhere else this gets joined against
+  // Jellyfin's own channel list: a Dispatcharr hiccup must not take the grid
+  // down, only cost it the provider badge. Plain object, not the Map
+  // getChannelProviders returns -- this crosses the server/client boundary
+  // as a prop, which a Map does not survive.
+  let providerByChannel: Record<string, string> = {};
+  try {
+    const providers = await getChannelProviders();
+    if (providers) providerByChannel = Object.fromEntries(providers);
+  } catch (err) {
+    console.error("[live] getChannelProviders failed:", err);
+  }
 
   // Gates the stream browser below. Re-checked against the database rather
   // than read from the session token, like every other admin surface here.
@@ -62,6 +76,7 @@ export default async function LivePage() {
         myListIds={myListIds}
         hiddenChannels={hidden}
         isAdmin={isAdmin}
+        providerByChannel={providerByChannel}
       />
     </div>
   );

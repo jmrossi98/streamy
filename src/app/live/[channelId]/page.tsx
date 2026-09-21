@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { DemoteChannelButton } from "@/components/DemoteChannelButton";
 import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
-import { findChannelIdByName, isDispatcharrConfigured } from "@/lib/dispatcharr";
+import { findChannelIdByName, getChannelProviders, isDispatcharrConfigured } from "@/lib/dispatcharr";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -48,6 +48,19 @@ export default async function LiveChannelPage({
   const dispatcharrChannelId =
     admin && isDispatcharrConfigured() ? await findChannelIdByName(channel.name) : null;
 
+  // Every viewer, not just admins -- which provider a channel is actually
+  // on is informational, the same as its logo or its guide data, not an
+  // admin-only fact. Best effort: a Dispatcharr hiccup costs this line, not
+  // the page.
+  let provider: string | null = null;
+  if (isDispatcharrConfigured()) {
+    try {
+      provider = (await getChannelProviders())?.get(channel.name) ?? null;
+    } catch (err) {
+      console.error("[live/channel] getChannelProviders failed:", err);
+    }
+  }
+
   const now = channel.now;
 
   return (
@@ -64,6 +77,7 @@ export default async function LiveChannelPage({
           <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">
             {channel.name}
           </h1>
+          {provider && <span className="shrink-0 text-sm text-white/40">{provider}</span>}
           <span className="ml-auto flex items-center gap-2">
             <WatchlistToggle
               kind="channel"
