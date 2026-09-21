@@ -25,6 +25,7 @@ import { SpendPanel } from "@/components/SpendPanel";
 import { computeTotals, daysUntil } from "@/lib/spendRules";
 import { awsSpend, openRouterCredits } from "@/lib/spend";
 import { getAutomaticRenewals } from "@/lib/renewals";
+import { getJellyfinLoginSummary } from "@/lib/jellyfinLogins";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
 import { EpgBackfillButton } from "@/components/EpgBackfillButton";
@@ -97,6 +98,7 @@ export default async function AdminFeaturesPage() {
     aws,
     openRouter,
     autoRenewals,
+    jellyfinLogins,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -156,6 +158,9 @@ export default async function AdminFeaturesPage() {
     // Cert, domain and IPTV expiry. Each answers for itself and none of them
     // can fail the page -- see lib/renewals.ts.
     getAutomaticRenewals(),
+    // Read-only view of what mediabox's jellyfin_login_guard.py already did;
+    // never throws, same reasoning as the renewal probes above.
+    getJellyfinLoginSummary(),
   ]);
 
   // AWS and OpenRouter are the only two here that can report themselves.
@@ -366,6 +371,7 @@ export default async function AdminFeaturesPage() {
             generatedAt={security.generatedAt}
             auditLog={auditLog}
             recentBadPasswordAttempts={recentBadPasswordAttempts}
+            jellyfinLogins={jellyfinLogins}
           />
         </div>
       </section>
