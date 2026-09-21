@@ -276,6 +276,17 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     if (retryChannelIdRef.current !== channelId) {
       retryChannelIdRef.current = channelId;
       retryCountRef.current = 0;
+      // error and loading are otherwise only ever set once and never
+      // cleared -- reasonable for a single tune, wrong the moment a caller
+      // (GameChannelPicker's channel switcher) reuses one LivePlayer
+      // instance across channels. Without this, a channel that had already
+      // failed left its "Playback failed." text on screen forever: `!error`
+      // gates every other branch below, including the one that shows a new
+      // tune actually progressing, so a switch away from a dead channel
+      // looked like it silently did nothing even though a fresh tune was
+      // genuinely starting behind that stale message.
+      setError(null);
+      setLoading(true);
     }
 
     /*
