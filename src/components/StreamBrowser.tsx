@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CHANNEL_CATEGORIES, classifyChannel } from "@/lib/liveTv";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { classifyChannel } from "@/lib/liveTv";
 import { looksLikeEventFeed } from "@/lib/liveTimeline";
 
 type Stream = {
@@ -49,6 +49,10 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
     one click away for when a specific game is genuinely what you want.
   */
   const [networksOnly, setNetworksOnly] = useState(true);
+  const [provider, setProvider] = useState<string>("all");
+  // Counted server-side over the whole matching set, not this page.
+  const [categories, setCategories] = useState<{ name: string; count: number }[]>([]);
+  const [providers, setProviders] = useState<{ name: string; count: number }[]>([]);
   const [streams, setStreams] = useState<Stream[]>([]);
   // Stream id -> the channel id publishing it. A Map rather than the Set this
   // used to be: demoting needs the channel id, not just "is this promoted".
@@ -64,13 +68,16 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
   // fires three requests and they do not necessarily return in order.
   const requestSeq = useRef(0);
 
-  const load = useCallback(async (q: string, p: number, netOnly: boolean) => {
+  const load = useCallback(
+    async (q: string, p: number, netOnly: boolean, cat: string, prov: string) => {
     const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(
-        `/api/live/streams?q=${encodeURIComponent(q)}&page=${p}&networksOnly=${netOnly ? "1" : "0"}`
+        `/api/live/streams?q=${encodeURIComponent(q)}&page=${p}` +
+          `&networksOnly=${netOnly ? "1" : "0"}` +
+          `&category=${encodeURIComponent(cat)}&provider=${encodeURIComponent(prov)}`
       );
       if (seq !== requestSeq.current) return;
       if (!res.ok) {
@@ -83,54 +90,43 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
         items: Stream[];
         total: number;
         promoted: [number, number][];
+        categories: { name: string; count: number }[];
+        providers: { name: string; count: number }[];
       };
       if (seq !== requestSeq.current) return;
       setStreams(data.items);
       setTotal(data.total);
       setPromoted(new Map(data.promoted));
+      setCategories(data.categories ?? []);
+      setProviders(data.providers ?? []);
     } catch {
       if (seq === requestSeq.current) setError("Couldn't load streams.");
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, []);
+  },
+    []
+  );
 
   // Debounced: this reaches across the tailnet to the home server, and a
   // request per keystroke is both slow and pointless.
   useEffect(() => {
     const t = setTimeout(() => {
       setPage(1);
-      void load(query, 1, networksOnly);
+      void load(query, 1, networksOnly, category, provider);
     }, 300);
     return () => clearTimeout(t);
     // networksOnly deliberately excluded: its own toggle handler below reloads
     // immediately rather than waiting out this debounce, since it isn't typing.
+    // Category and provider are in, though -- they now filter server-side, so
+    // picking one is a new search rather than a re-slice of what's loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, load]);
+  }, [query, category, provider, load]);
 
-  const categoryOf = useMemo(
-    () => new Map(streams.map((s) => [s.id, classifyChannel(s.name)])),
-    [streams]
-  );
-
-  // Networks-only is now filtered server-side, before pagination -- see
-  // listStreams(). What's loaded here is already the right set; only the
-  // (unpaginated, load-more-costly-to-do-server-side) category slice happens
-  // client-side, same as before.
-  const visible = useMemo(() => {
-    if (category === "all") return streams;
-    return streams.filter((s) => categoryOf.get(s.id) === category);
-  }, [streams, category, categoryOf]);
-
-  // Only categories present in what is loaded, with counts. An empty option
-  // that filters to nothing is worse than no option.
-  const availableCategories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of categoryOf.values()) counts.set(c, (counts.get(c) ?? 0) + 1);
-    return [...CHANNEL_CATEGORIES, "Other"]
-      .filter((c) => (counts.get(c) ?? 0) > 0)
-      .map((c) => ({ name: c, count: counts.get(c)! }));
-  }, [categoryOf]);
+  // Nothing is sliced here any more. Category, provider and networks-only
+  // all filter the whole matching set server-side, so what arrives is the
+  // page -- which is what makes the chip counts and the page numbers agree.
+  const visible = streams;
 
   async function promote(stream: Stream) {
     if (busyId !== null) return;
@@ -236,7 +232,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
             const next = !networksOnly;
             setNetworksOnly(next);
             setPage(1);
-            void load(query, 1, next);
+            void load(query, 1, next, category, provider);
           }}
           className={`rounded-full px-3 py-1 text-xs transition-colors ${
             networksOnly
@@ -249,19 +245,42 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
         </button>
       </div>
 
-      {availableCategories.length > 0 && (
-        <div className="streamy-page-title-x mb-4 flex flex-wrap gap-2">
+      {/* Counts are across everything that matched, not the page. They used
+          to be counted from the fifty rows in hand, so "Sports (3)" could sit
+          above four hundred sports streams. */}
+      {categories.length > 0 && (
+        <div className="streamy-page-title-x mb-2 flex flex-wrap gap-2">
           <CategoryChip
             label="All"
             active={category === "all"}
             onClick={() => setCategory("all")}
           />
-          {availableCategories.map((c) => (
+          {categories.map((c) => (
             <CategoryChip
               key={c.name}
-              label={`${c.name} (${c.count})`}
+              label={`${c.name} (${c.count.toLocaleString()})`}
               active={category === c.name}
               onClick={() => setCategory(c.name)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Only worth showing with more than one provider: with a single one
+          every row carries the same label and the chip decides nothing. */}
+      {providers.length > 1 && (
+        <div className="streamy-page-title-x mb-4 flex flex-wrap gap-2">
+          <CategoryChip
+            label="Any provider"
+            active={provider === "all"}
+            onClick={() => setProvider("all")}
+          />
+          {providers.map((p) => (
+            <CategoryChip
+              key={p.name}
+              label={`${p.name} (${p.count.toLocaleString()})`}
+              active={provider === p.name}
+              onClick={() => setProvider(p.name)}
             />
           ))}
         </div>
@@ -283,11 +302,11 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
         <p className="streamy-page-title-x text-sm text-white/40">Loading…</p>
       ) : visible.length === 0 ? (
         <p className="streamy-page-title-x text-sm text-white/40">
-          {streams.length === 0
-            ? networksOnly
+          {category !== "all" || provider !== "all"
+            ? "Nothing matches those filters. Clear one to widen the search."
+            : networksOnly
               ? "No recognised networks match that search - turn off “Networks only” to see one-off events."
-              : "No streams match that search."
-            : "No streams in that category on this page."}
+              : "No streams match that search."}
         </p>
       ) : (
         <ul className="streamy-page-title-x space-y-1">
@@ -303,7 +322,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
                   <p className="text-xs text-white/40">
                     {s.provider && <span className="text-white/50">{s.provider}</span>}
                     {s.provider && " · "}
-                    {categoryOf.get(s.id)}
+                    {classifyChannel(s.name)}
                     {/* Dispatcharr's own judgement, surfaced rather than
                         hidden: two of the five already-published channels have
                         dead upstreams, and adding more of those is how "live
@@ -366,7 +385,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
             onClick={() => {
               const p = page - 1;
               setPage(p);
-              void load(query, p, networksOnly);
+              void load(query, p, networksOnly, category, provider);
             }}
             className="rounded border border-white/20 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10 disabled:opacity-40"
           >
@@ -381,7 +400,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
             onClick={() => {
               const p = page + 1;
               setPage(p);
-              void load(query, p, networksOnly);
+              void load(query, p, networksOnly, category, provider);
             }}
             className="rounded border border-white/20 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10 disabled:opacity-40"
           >

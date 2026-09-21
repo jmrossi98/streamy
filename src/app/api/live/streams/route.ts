@@ -37,12 +37,16 @@ export async function GET(request: Request) {
   const search = url.searchParams.get("q") ?? "";
   const page = Number(url.searchParams.get("page") ?? "1") || 1;
   const networksOnly = url.searchParams.get("networksOnly") === "1";
+  // Both applied server-side now: they filter the whole matching set, not
+  // the page in hand, so paging through a category actually pages it.
+  const category = url.searchParams.get("category") ?? "all";
+  const provider = url.searchParams.get("provider") ?? "all";
 
   // Both in one wave: the promoted set is what lets the browser show "already
   // added" rather than offering a duplicate, and fetching it after the list
   // would make every page load two serial round trips to the home server.
   const [result, promoted] = await Promise.all([
-    listStreams({ search, page, pageSize: 50, networksOnly }),
+    listStreams({ search, page, pageSize: 50, networksOnly, category, provider }),
     listPromotedStreamIds(),
   ]);
 
@@ -61,6 +65,9 @@ export async function GET(request: Request) {
     items: result.items,
     total: result.total,
     page,
+    // Counted across everything that matched, not this page -- see StreamPage.
+    categories: result.categories,
+    providers: result.providers,
     // [streamId, channelId] pairs -- a plain array survives JSON where a Map
     // wouldn't, and reconstructs into one client-side with `new Map(...)`.
     // The channel id is what a "remove channel" action needs; the stream id

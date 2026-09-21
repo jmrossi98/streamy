@@ -19,6 +19,8 @@
 
 import { looksLikeNetworkFeed, looksLikePlaceholder } from "@/lib/liveTimeline";
 import { cleanText } from "./text";
+import { cached } from "./ttlCache";
+import { sliceStreamPage } from "./streamSearch";
 
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
@@ -256,6 +258,18 @@ export type StreamPage = {
   items: DispatcharrStream[];
   /** Total matching the query, not the page -- the UI needs it for "N results". */
   total: number;
+  /**
+   * Every category present in the whole matching set, with its count.
+   *
+   * Counted here rather than in the browser because the browser only ever
+   * holds one page: the chips used to say "Sports (3)" when the catalogue
+   * had four hundred, and picking one filtered fifty rows instead of the
+   * search. Both are answers about the result set, so both are computed
+   * where the result set is.
+   */
+  categories: { name: string; count: number }[];
+  /** Providers present in the whole matching set, same reasoning. */
+  providers: { name: string; count: number }[];
 };
 
 /**
@@ -284,23 +298,36 @@ const FULL_CATALOGUE_PAGE_SIZE = 10_000;
  * upstream fetch (the whole matching set, not just one page) so the pagination
  * this returns is honest about what it is paginating.
  */
-export async function listStreams(opts: {
-  search?: string;
-  page?: number;
-  pageSize?: number;
-  networksOnly?: boolean;
-}): Promise<StreamPage | null> {
-  const page = Math.max(1, opts.page ?? 1);
-  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 50));
-  const q = opts.search?.trim();
-  // Fetched alongside the search itself either way, not just when it turns
-  // out to be needed -- both branches below map every returned row through
-  // toStream(), which wants this to resolve `provider`.
-  const accountNameById = await getAccountNameById();
+/**
+ * How long a fetched catalogue slice stays good.
+ *
+ * Paging and clicking a chip re-ask the same question, and the answer is a
+ * provider playlist that refreshes hourly at best. Short enough that a
+ * playlist refresh shows up quickly, long enough that browsing is free.
+ */
+const CATALOGUE_TTL_MS = 60_000;
 
-  if (opts.networksOnly) {
-    const params = new URLSearchParams({ page: "1", page_size: String(FULL_CATALOGUE_PAGE_SIZE) });
-    if (q) params.set("search", q);
+/**
+ * Every stream matching a search, filtered and mapped, before pagination.
+ *
+ * Dispatcharr's own pagination can't be used any more: the categories and
+ * the placeholder filter are ours, and both have to be applied to the whole
+ * matching set for a count or a page number to mean anything. So the set is
+ * fetched once and cached -- paging through results and clicking between
+ * chips then costs nothing, which is what made the old server-paginated
+ * version feel cheaper than it was.
+ */
+async function matchingStreams(
+  search: string,
+  networksOnly: boolean
+): Promise<DispatcharrStream[] | null> {
+  return cached(`streams:${networksOnly ? "net" : "all"}:${search}`, CATALOGUE_TTL_MS, async () => {
+    const accountNameById = await getAccountNameById();
+    const params = new URLSearchParams({
+      page: "1",
+      page_size: String(FULL_CATALOGUE_PAGE_SIZE),
+    });
+    if (search) params.set("search", search);
 
     const data = await api<{ count?: number; results?: RawStream[] } | RawStream[]>(
       `/api/channels/streams/?${params.toString()}`
@@ -308,42 +335,38 @@ export async function listStreams(opts: {
     if (!data) return null;
 
     const raw = Array.isArray(data) ? data : (data.results ?? []);
-    const filtered = raw
+    return raw
       .map((s) => toStream(s, accountNameById))
       .filter(
         (s): s is DispatcharrStream =>
-          s != null && !looksLikePlaceholder(s.name) && looksLikeNetworkFeed(s.name)
+          s != null &&
+          !looksLikePlaceholder(s.name) &&
+          (!networksOnly || looksLikeNetworkFeed(s.name))
       );
+  }, { skipCacheIf: (v) => v === null });
+}
 
-    const start = (page - 1) * pageSize;
-    return { items: filtered.slice(start, start + pageSize), total: filtered.length };
-  }
+export async function listStreams(opts: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  networksOnly?: boolean;
+  /** One of classifyChannel's categories, or undefined for all of them. */
+  category?: string;
+  /** An m3u account name, as shown on the provider chips. */
+  provider?: string;
+}): Promise<StreamPage | null> {
+  const page = Math.max(1, opts.page ?? 1);
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 50));
+  const all = await matchingStreams(opts.search?.trim() ?? "", !!opts.networksOnly);
+  if (!all) return null;
 
-  const params = new URLSearchParams({
-    page: String(page),
-    page_size: String(pageSize),
+  return sliceStreamPage(all, {
+    page,
+    pageSize,
+    category: opts.category,
+    provider: opts.provider,
   });
-  if (q) params.set("search", q);
-
-  const data = await api<{ count?: number; results?: RawStream[] } | RawStream[]>(
-    `/api/channels/streams/?${params.toString()}`
-  );
-  if (!data) return null;
-
-  const raw = Array.isArray(data) ? data : (data.results ?? []);
-  // `total` stays Dispatcharr's own count, deliberately. This branch
-  // paginates server-side, so placeholders can only be dropped from the page
-  // actually in hand -- a page of 50 may render 48. Correcting the total
-  // would mean fetching the whole matching set on every keystroke (what the
-  // networksOnly branch above does, and why it has to) for a cosmetic
-  // difference of a row or two.
-  const total = Array.isArray(data) ? raw.length : (data.count ?? raw.length);
-  return {
-    items: raw
-      .map((s) => toStream(s, accountNameById))
-      .filter((s): s is DispatcharrStream => s != null && !looksLikePlaceholder(s.name)),
-    total,
-  };
 }
 
 /**
