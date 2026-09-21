@@ -96,3 +96,26 @@ export function describeCost(cost: number, cadence: string): string {
       return `${formatUsd(cost)}/mo`;
   }
 }
+
+/**
+ * Why there is no AWS figure, when there isn't one.
+ *
+ * Here rather than in spend.ts because the panel is a client component and
+ * spend.ts reaches for the AWS SDK -- these are strings and shapes, and they
+ * have no business pulling a server module into the browser bundle.
+ */
+export type AwsSpendProblem = "unconfigured" | "denied" | "notEnabled" | "error";
+
+export type AwsBreakdown = { service: string; amount: number }[];
+
+export type AwsSpend =
+  | { ok: true; monthToDate: number; byService: AwsBreakdown }
+  | { ok: false; reason: AwsSpendProblem; detail: string };
+
+/** What the panel should tell an admin to go do about it. */
+export const AWS_SPEND_PROBLEMS: Record<AwsSpendProblem, string> = {
+  unconfigured: "No AWS credentials set on the server.",
+  denied: "The AWS credential is missing the ce:GetCostAndUsage permission.",
+  notEnabled: "Cost Explorer hasn't been enabled for this AWS account yet.",
+  error: "Cost Explorer couldn't be reached.",
+};

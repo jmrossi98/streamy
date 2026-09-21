@@ -18,6 +18,7 @@
  */
 
 import { looksLikeNetworkFeed, looksLikePlaceholder } from "@/lib/liveTimeline";
+import { cleanText } from "./text";
 
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
@@ -196,7 +197,7 @@ function toStream(s: RawStream, accountNameById?: Map<number, string>): Dispatch
   if (typeof s.id !== "number" || !s.name) return null;
   return {
     id: s.id,
-    name: s.name,
+    name: cleanText(s.name),
     logoUrl: s.logo_url || null,
     groupId: typeof s.channel_group === "number" ? s.channel_group : null,
     suggestedNumber: typeof s.stream_chno === "number" ? s.stream_chno : null,

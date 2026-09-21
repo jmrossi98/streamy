@@ -18,6 +18,8 @@
  */
 
 /** Generous: ten parallel calls to a third party on a page load. */
+import { cleanText } from "./text";
+
 const ESPN_TIMEOUT_MS = 8_000;
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports";
@@ -111,11 +113,12 @@ function toFixture(league: string, e: EspnEvent): Fixture | null {
     id: `${league}:${e.id}`,
     league,
     startUtc: e.date ?? null,
-    detail: type?.shortDetail ?? type?.detail ?? "",
+    // ESPN writes "7:00 PM ET — TNT" and similar; ours is the plain form.
+    detail: cleanText(type?.shortDetail ?? type?.detail ?? ""),
     state,
-    name,
-    awayTeam: away?.displayName ?? null,
-    homeTeam: home?.displayName ?? null,
+    name: cleanText(name),
+    awayTeam: cleanText(away?.displayName) || null,
+    homeTeam: cleanText(home?.displayName) || null,
   };
 }
 
