@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
-import { getSession } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import type { StoredChoice } from "@/lib/gameChannelChoice";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
@@ -43,6 +45,23 @@ export default async function GamePage({
   const [fixtures, channels] = await Promise.all([getTodaysFixtures(), getLiveChannels()]);
   const fixture = fixtures.find((f) => f.id === fixtureId);
   if (!fixture) notFound();
+
+  // Which channel this viewer picked for this game last time, if any. Best
+  // effort on purpose: a database hiccup should cost the remembered pick and
+  // fall back to the best match, not take the game page down.
+  let storedChoice: StoredChoice | null = null;
+  try {
+    const userId = await getValidSessionUserId(session);
+    if (userId) {
+      const row = await prisma.gameChannelChoice.findUnique({
+        where: { userId_fixtureId: { userId, fixtureId } },
+        select: { channelId: true, name: true },
+      });
+      storedChoice = row ?? null;
+    }
+  } catch (err) {
+    console.error("[live/game] stored channel lookup failed:", err);
+  }
 
   // Best effort, same reasoning as the schedule route: a Dispatcharr hiccup
   // must not take the page down, only cost it the (already best-effort)
@@ -173,6 +192,8 @@ export default async function GamePage({
           channelConfirmed={channelConfirmed}
           candidates={candidates}
           infoByChannel={infoByChannel}
+          fixtureId={fixtureId}
+          storedChoice={storedChoice}
         />
       </div>
     </div>
