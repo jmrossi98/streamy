@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { unstable_noStore } from "next/cache";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
@@ -42,6 +43,15 @@ import { getRecentBadPasswordAttempts } from "@/lib/loginAttempts";
 import { formatFileSize } from "@/lib/formatBytes";
 
 export default async function AdminFeaturesPage() {
+  // Every fetch below (Radarr/Sonarr's queue chief among them) needs to be
+  // genuinely live, not whatever Next cached from the last render. Without
+  // this, DownloadsPanel's own 2.5s client poll (router.refresh()) could
+  // keep re-rendering the same cached snapshot -- indistinguishable from not
+  // polling at all -- while only a full page reload's fresh navigation
+  // happened to see new data. Every other page in this app with live data
+  // already does this; this one was the one exception.
+  unstable_noStore();
+
   // Authorization comes from the database, not the session's isAdmin claim:
   // a demoted, un-approved, or deleted admin must lose this page immediately
   // rather than when their 30-day token happens to expire.
