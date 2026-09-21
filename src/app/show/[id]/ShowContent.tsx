@@ -408,7 +408,7 @@ export function ShowContent({
                     aria-label={
                       playable
                         ? `Play ${ep.name}`
-                        : `${ep.name} — not downloaded yet`
+                        : `${ep.name} - not downloaded yet`
                     }
                     className={`flex gap-4 flex-1 min-w-0 text-left ${
                       playable ? "" : "cursor-default"

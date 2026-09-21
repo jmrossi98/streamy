@@ -28,7 +28,7 @@ export async function POST() {
   );
 
   return NextResponse.json(
-    sent ? { ok: true } : { ok: false, error: "SNS publish failed — check the server logs and IAM permissions." },
+    sent ? { ok: true } : { ok: false, error: "SNS publish failed - check the server logs and IAM permissions." },
     { status: sent ? 200 : 502 }
   );
 }

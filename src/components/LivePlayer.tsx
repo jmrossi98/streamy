@@ -375,7 +375,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
     let tuneTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       tuneTimer = null;
       scheduleRetry(
-        "This channel didn’t start. The stream is most likely off air — " +
+        "This channel didn’t start. The stream is most likely off air - " +
           "the channel list includes it either way."
       );
     }, TUNE_TIMEOUT_MS);

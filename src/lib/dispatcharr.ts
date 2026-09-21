@@ -77,7 +77,36 @@ type RawStream = {
 /** Cached access token. Dispatcharr's JWT is short-lived; 401 means refetch. */
 let cachedToken: string | null = null;
 
-async function fetchToken(): Promise<string | null> {
+/**
+ * The token fetch currently in flight, if any.
+ *
+ * Without this, an expired token means every concurrent call independently
+ * discovers the 401 and independently logs in again. That was survivable
+ * when a page made one Dispatcharr call; it is not now that the Live TV,
+ * channel and game pages make two to five each, plus one per stream search.
+ * Dispatcharr throttles /api/accounts/token/ (DRF, a few seconds' window),
+ * so a burst of simultaneous logins trips it -- and then every one of those
+ * calls fails, the next page load tries again, and the throttle never gets
+ * a chance to lapse. Confirmed live: the token endpoint answering 429
+ * "Request was throttled" while the app reported "Couldn't reach
+ * Dispatcharr" on every search.
+ *
+ * Sharing one in-flight promise collapses that burst back into the single
+ * login it always should have been.
+ */
+let tokenFetchInFlight: Promise<string | null> | null = null;
+
+/**
+ * When the throttle said to stop asking, as an epoch ms.
+ *
+ * Honouring Retry-After matters more than it looks: retrying into an active
+ * throttle is what keeps it active, so ignoring it turns a few seconds of
+ * backoff into an outage that lasts as long as traffic does.
+ */
+let tokenRetryAfterMs = 0;
+
+async function fetchTokenUncached(): Promise<string | null> {
+  if (Date.now() < tokenRetryAfterMs) return null;
   try {
     const res = await fetch(`${DISPATCHARR_URL}/api/accounts/token/`, {
       method: "POST",
@@ -89,13 +118,36 @@ async function fetchToken(): Promise<string | null> {
       signal: AbortSignal.timeout(DISPATCHARR_TIMEOUT_MS),
       cache: "no-store",
     });
-    if (!res.ok) return null;
+    if (res.status === 429) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 10) * 1000;
+      tokenRetryAfterMs = Date.now() + waitMs;
+      console.error(`[dispatcharr] login throttled, backing off ${waitMs}ms`);
+      return null;
+    }
+    if (!res.ok) {
+      // Logged rather than swallowed: this returning null silently is why a
+      // total auth failure showed up only as "Couldn't reach Dispatcharr"
+      // in the UI, with nothing at all in the server logs to say why.
+      console.error(`[dispatcharr] login failed: HTTP ${res.status}`);
+      return null;
+    }
     const data = (await res.json()) as { access?: string };
     cachedToken = data?.access ?? null;
     return cachedToken;
-  } catch {
+  } catch (err) {
+    console.error("[dispatcharr] login error:", err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+function fetchToken(): Promise<string | null> {
+  if (!tokenFetchInFlight) {
+    tokenFetchInFlight = fetchTokenUncached().finally(() => {
+      tokenFetchInFlight = null;
+    });
+  }
+  return tokenFetchInFlight;
 }
 
 /**
@@ -154,8 +206,36 @@ function toStream(s: RawStream, accountNameById?: Map<number, string>): Dispatch
   };
 }
 
+/**
+ * A short in-process memo for slow-changing reads.
+ *
+ * The provider list and the channel list are read on every Live TV, channel
+ * and game page load, and on every stream search, but change only when
+ * someone adds a provider or promotes a channel. Re-fetching them per
+ * request is what pushed Dispatcharr's call volume up far enough to matter
+ * (see tokenFetchInFlight for what that cost). Deliberately short: a
+ * channel promoted through Streamy should show up in the grid seconds
+ * later, not minutes.
+ *
+ * Not used for anything a write depends on -- `listChannels` stays uncached
+ * because the demote path resolves a channel id through it, and acting on a
+ * stale id is a different and worse problem than a stale label.
+ */
+const MEMO_TTL_MS = 30_000;
+const memos = new Map<string, { at: number; value: unknown }>();
+
+async function memoized<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = memos.get(key);
+  if (hit && Date.now() - hit.at < MEMO_TTL_MS) return hit.value as T;
+  const value = await fn();
+  // Failures aren't cached: a null here means Dispatcharr was unreachable,
+  // and holding onto that for 30s would extend a blip into an outage.
+  if (value != null) memos.set(key, { at: Date.now(), value });
+  return value;
+}
+
 /** Every configured M3U provider's own name, keyed by its Dispatcharr id. */
-async function getAccountNameById(): Promise<Map<number, string>> {
+async function getAccountNameByIdUncached(): Promise<Map<number, string>> {
   const data = await api<{ results?: { id?: number; name?: string }[] } | { id?: number; name?: string }[]>(
     `/api/m3u/accounts/`
   );
@@ -165,6 +245,10 @@ async function getAccountNameById(): Promise<Map<number, string>> {
     if (typeof a.id === "number" && a.name) map.set(a.id, a.name);
   }
   return map;
+}
+
+function getAccountNameById(): Promise<Map<number, string>> {
+  return memoized("accounts", getAccountNameByIdUncached);
 }
 
 export type StreamPage = {
@@ -402,7 +486,7 @@ export type ChannelInfo = {
   stale: boolean;
 };
 
-export async function getChannelInfo(): Promise<Map<string, ChannelInfo> | null> {
+async function getChannelInfoUncached(): Promise<Map<string, ChannelInfo> | null> {
   const [channelsData, accountNameById] = await Promise.all([
     api<
       | { results?: { name?: string; streams?: { m3u_account?: number; is_stale?: boolean }[] }[] }
@@ -426,6 +510,10 @@ export async function getChannelInfo(): Promise<Map<string, ChannelInfo> | null>
     });
   }
   return result;
+}
+
+export function getChannelInfo(): Promise<Map<string, ChannelInfo> | null> {
+  return memoized("channelInfo", getChannelInfoUncached);
 }
 
 export type ChannelProgram = {

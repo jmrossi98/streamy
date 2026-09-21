@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     refreshing,
     note: refreshing
-      ? "Removed. Jellyfin is refreshing its guide now — it disappears from Live TV in a moment."
+      ? "Removed. Jellyfin is refreshing its guide now - it disappears from Live TV in a moment."
       : "Removed from Dispatcharr, but Jellyfin didn't accept a refresh. It disappears on Jellyfin's next scheduled guide update.",
   });
 }

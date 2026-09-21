@@ -20,7 +20,7 @@ export async function POST(request: Request) {
 
   if (!isBlogPublishingConfigured()) {
     return NextResponse.json(
-      { error: "Publishing isn't configured — GITHUB_BLOG_TOKEN is unset on the server." },
+      { error: "Publishing isn't configured - GITHUB_BLOG_TOKEN is unset on the server." },
       { status: 503 }
     );
   }

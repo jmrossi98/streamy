@@ -71,11 +71,14 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
 
   return (
     <section className="mt-10 mb-10">
+      {/* Not "Today": the slate reaches past midnight UTC and regularly
+          shows tomorrow's fixtures alongside tonight's, so the heading was
+          claiming a narrower window than the list actually covers. */}
       <h2 className="streamy-page-title-x mb-1 font-display text-2xl font-bold text-white">
-        Today
+        Game Schedule
       </h2>
       <p className="streamy-page-title-x mb-4 text-sm text-white/50">
-        What&rsquo;s being played and where to watch it — only games with a
+        What&rsquo;s being played and where to watch it - only games with a
         channel to try.
       </p>
 

@@ -111,7 +111,7 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
           // Said out loud rather than folded in as zero: a total that quietly
           // omits something is worse than one that admits what it is missing.
           <p className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
-            Not included &mdash; no live figure for {totals.unknownMetered.join(", ")}. The
+            Not included - no live figure for {totals.unknownMetered.join(", ")}. The
             real total is higher.
           </p>
         )}
@@ -199,7 +199,7 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
 
         {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-white/40">
-            Nothing listed yet. Add what you pay for &mdash; nothing can discover it
+            Nothing listed yet. Add what you pay for - nothing can discover it
             automatically, which is rather the point.
           </p>
         ) : (

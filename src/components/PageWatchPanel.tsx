@@ -16,7 +16,7 @@ function timeAgo(iso: string | null): string {
 }
 
 function formatDate(date: string | null): string {
-  if (!date) return "—";
+  if (!date) return "-";
   const parsed = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return date;
   return parsed.toLocaleDateString(undefined, {
@@ -126,7 +126,7 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
             {egressEnabled
               ? egressProxied
                 ? `Watch requests route through the VPN${egressEnforced ? " and fail closed if it drops" : ""}. Live status in Services → System.`
-                : "On, but no proxy is configured — set PAGE_WATCH_PROXY_URL."
+                : "On, but no proxy is configured - set PAGE_WATCH_PROXY_URL."
               : "Watch requests go direct, from this server's own IP."}
           </p>
         </div>

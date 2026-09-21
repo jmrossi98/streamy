@@ -23,7 +23,7 @@ export async function POST() {
   }
   if (!isFlashLibraryConfigured()) {
     return NextResponse.json(
-      { error: "Flash library not configured — FLASH_LIBRARY_URL is unset on the server." },
+      { error: "Flash library not configured - FLASH_LIBRARY_URL is unset on the server." },
       { status: 503 }
     );
   }

@@ -137,7 +137,7 @@ export function SecurityPanel({
               <li key={f.id} className="flex gap-2 text-xs text-white/50">
                 <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500/60" aria-hidden />
                 <span>
-                  <span className="text-white/70">{f.title}</span> — {f.detail}
+                  <span className="text-white/70">{f.title}</span> - {f.detail}
                 </span>
               </li>
             ))}

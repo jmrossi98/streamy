@@ -14,8 +14,8 @@ import { pinRadius, type MapPin, type VisitSource } from "@/lib/visitorMap";
 const SOURCE_META: Record<VisitSource, { label: string; color: string }> = {
   portfolio: { label: "Portfolio", color: "#38bdf8" }, // sky
   streamy: { label: "Streamy", color: "#e50914" }, // netflix red
-  "login-success": { label: "Sign-ins", color: "#22c55e" }, // green — got in
-  "login-fail": { label: "Failed sign-ins", color: "#f59e0b" }, // amber — didn't
+  "login-success": { label: "Sign-ins", color: "#22c55e" }, // green - got in
+  "login-fail": { label: "Failed sign-ins", color: "#f59e0b" }, // amber - didn't
 };
 
 function dominantSource(pin: MapPin): VisitSource {
@@ -160,7 +160,7 @@ export function VisitorMapPanel() {
       />
 
       <p className="text-xs text-white/30">
-        City-level from GeoLite2, resolved on this server — no visitor address is sent anywhere.
+        City-level from GeoLite2, resolved on this server - no visitor address is sent anywhere.
         Basemap tiles are from OpenStreetMap. Positions are approximate.
       </p>
     </div>

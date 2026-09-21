@@ -207,7 +207,7 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
 
   if ("networkError" in login) {
     return [
-      { name: "qBittorrent", group, state: "down", detail: `unreachable — ${login.networkError}` },
+      { name: "qBittorrent", group, state: "down", detail: `unreachable - ${login.networkError}` },
       { name: "VPN", group, state: "unknown", detail: "qBittorrent unreachable, can't verify" },
     ];
   }
@@ -219,7 +219,7 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
         name: "qBittorrent",
         group,
         state: "down",
-        detail: `auth rejected (HTTP ${login.status}) — check QBITTORRENT_PASSWORD`,
+        detail: `auth rejected (HTTP ${login.status}) - check QBITTORRENT_PASSWORD`,
       },
       { name: "VPN", group, state: "unknown", detail: "qBittorrent auth failed, can't verify" },
     ];
@@ -259,7 +259,7 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
       vpn = !hostIp
         ? { name: "VPN", group, state: "unknown", detail: "Couldn't determine this host's own IP" }
         : torrentIp === hostIp
-          ? { name: "VPN", group, state: "down", detail: `Torrents leaving from ${hostIp} — NOT protected` }
+          ? { name: "VPN", group, state: "down", detail: `Torrents leaving from ${hostIp} - NOT protected` }
           : { name: "VPN", group, state: "up", detail: `Torrents exit via ${torrentIp}` };
     }
 
@@ -311,12 +311,12 @@ async function arrIntegrationStatus(
 
   const errors = issues.filter((i) => i.type === "error");
   if (errors.length > 0) {
-    const detail = [errors.map((i) => i.message).join("; "), stuckDetail].filter(Boolean).join(" — ");
+    const detail = [errors.map((i) => i.message).join("; "), stuckDetail].filter(Boolean).join(" - ");
     return { name: label, group, state: "down", detail };
   }
   const warnings = issues.filter((i) => i.type === "warning");
   const warningDetail = warnings.length > 0 ? warnings.map((i) => i.message).join("; ") : null;
-  const combined = [warningDetail, stuckDetail].filter(Boolean).join(" — ");
+  const combined = [warningDetail, stuckDetail].filter(Boolean).join(" - ");
   return { name: label, group, state: "up", detail: combined || "healthy" };
 }
 
@@ -524,7 +524,7 @@ async function vpnRotationStatus(): Promise<ServiceStatus> {
     return { name, group: SYSTEM, state: "unknown", detail: "Couldn't reach mediabox" };
   }
   if (rotation === "never") {
-    return { name, group: SYSTEM, state: "up", detail: "No rotation recorded — exit IP has been stable" };
+    return { name, group: SYSTEM, state: "up", detail: "No rotation recorded - exit IP has been stable" };
   }
   const ageMs = Date.now() - Date.parse(rotation.lastRotationUtc);
   const ageLabel =
@@ -533,7 +533,7 @@ async function vpnRotationStatus(): Promise<ServiceStatus> {
     name,
     group: SYSTEM,
     state: "up",
-    detail: `${rotation.currentRegion}, ${ageLabel}` + (rotation.reason ? ` — ${rotation.reason}` : ""),
+    detail: `${rotation.currentRegion}, ${ageLabel}` + (rotation.reason ? ` - ${rotation.reason}` : ""),
   };
 }
 
@@ -608,7 +608,7 @@ async function tlsCertStatus(): Promise<ServiceStatus> {
             daysLeft <= 0
               ? "expired"
               : daysLeft <= 14
-                ? `expires in ${daysLeft}d — renewal may be stuck`
+                ? `expires in ${daysLeft}d - renewal may be stuck`
                 : `valid for ${daysLeft}d`,
         });
       }
@@ -718,7 +718,7 @@ async function egressStatus(): Promise<ServiceStatus> {
     case "protected":
       return { name: "VPN egress", group: SYSTEM, state: "up", detail: `exits via ${e.exitIp}` };
     case "leaking":
-      return { name: "VPN egress", group: SYSTEM, state: "down", detail: `leaking — exits from ${e.ip}` };
+      return { name: "VPN egress", group: SYSTEM, state: "down", detail: `leaking - exits from ${e.ip}` };
     case "down":
       return { name: "VPN egress", group: SYSTEM, state: "down", detail: `proxy unreachable (${e.error})` };
   }
@@ -957,7 +957,7 @@ async function sabnzbdStatus(): Promise<ServiceStatus> {
     // "HTTP 403" sends you looking at the API key instead.
     const detail =
       res.status === 403
-        ? "403 — this address is not in SABnzbd's host_whitelist"
+        ? "403 - this address is not in SABnzbd's host_whitelist"
         : res.error ?? `HTTP ${res.status}`;
     return { name, group, state: "down", detail, address };
   }
@@ -976,7 +976,7 @@ async function sabnzbdStatus(): Promise<ServiceStatus> {
       // deliberately once and then forgotten about for weeks.
       state: q.paused ? "down" : "up",
       detail: q.paused
-        ? `PAUSED — ${queued} job(s) waiting`
+        ? `PAUSED - ${queued} job(s) waiting`
         : `${q.status ?? "idle"}, ${queued} queued`,
       address,
     };
@@ -1068,7 +1068,7 @@ async function webdavStatus(): Promise<ServiceStatus> {
   }
   // 200 without auth would mean the share is open to the tailnet, which is not
   // how it is configured -- worth flagging rather than quietly calling it fine.
-  return { name, group: SYSTEM, state: "unknown", detail: "answered without auth — check config", address };
+  return { name, group: SYSTEM, state: "unknown", detail: "answered without auth - check config", address };
 }
 
 /**

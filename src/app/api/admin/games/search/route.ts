@@ -82,7 +82,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error: timedOut
-          ? "The search timed out. gamarr queries every indexer and can be slow — try again, or narrow it with a platform filter."
+          ? "The search timed out. gamarr queries every indexer and can be slow - try again, or narrow it with a platform filter."
           : err instanceof Error
             ? err.message
             : "Search failed",

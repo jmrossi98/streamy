@@ -37,7 +37,7 @@ export function BlogEditor({ configured, existingSlugs }: Props) {
   if (!configured) {
     return (
       <p className="text-sm text-white/50">
-        Publishing isn&apos;t configured — set <code className="text-white/70">GITHUB_BLOG_TOKEN</code>{" "}
+        Publishing isn&apos;t configured - set <code className="text-white/70">GITHUB_BLOG_TOKEN</code>{" "}
         on the server.
       </p>
     );
@@ -96,14 +96,14 @@ export function BlogEditor({ configured, existingSlugs }: Props) {
             ? result.updated
               ? "Post updated."
               : "Post published."
-            : "Pull request opened — needs merging."}
+            : "Pull request opened - needs merging."}
         </p>
         <p className="text-sm text-white/60">
           {result.merged
             ? "Merged to the website repo, which triggers its deploy. It usually takes a minute or two to appear."
-            : "The post is committed and the pull request is open, but the merge was refused — most likely branch protection requiring a review. Nothing is lost; merge it on GitHub and it will deploy."}
+            : "The post is committed and the pull request is open, but the merge was refused - most likely branch protection requiring a review. Nothing is lost; merge it on GitHub and it will deploy."}
           {result.merged && result.scheduled
-            ? " This one is a draft or scheduled, so it stays hidden until the site rebuilds after its publish date — the site builds on a daily cron, so that can be up to a day."
+            ? " This one is a draft or scheduled, so it stays hidden until the site rebuilds after its publish date - the site builds on a daily cron, so that can be up to a day."
             : ""}
         </p>
         <div className="flex flex-wrap gap-3">
@@ -154,7 +154,7 @@ export function BlogEditor({ configured, existingSlugs }: Props) {
           <p className="mt-1 text-xs text-white/40">
             /blog/{slug}
             {overwrites && (
-              <span className="ml-2 text-amber-400">— a post with this slug exists; publishing replaces it</span>
+              <span className="ml-2 text-amber-400">- a post with this slug exists; publishing replaces it</span>
             )}
           </p>
         )}

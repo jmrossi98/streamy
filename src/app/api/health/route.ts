@@ -57,7 +57,7 @@ export async function GET() {
       },
       hint: ok
         ? "All required env + DB reachable."
-        : "Fix failing checks, then redeploy. Edge middleware needs NEXTAUTH_SECRET at *build* time — CI must pass build-arg NEXTAUTH_SECRET (same value as runtime).",
+        : "Fix failing checks, then redeploy. Edge middleware needs NEXTAUTH_SECRET at *build* time - CI must pass build-arg NEXTAUTH_SECRET (same value as runtime).",
     },
     { status }
   );

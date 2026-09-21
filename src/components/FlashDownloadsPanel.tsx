@@ -72,7 +72,7 @@ export function FlashDownloadsPanel({ rows }: { rows: FlashDownloadRow[] }) {
               {g.title}
             </Link>
             <span className="shrink-0 tabular-nums text-xs text-white/40">
-              {formatFileSize(g.fileSize) ?? "—"}
+              {formatFileSize(g.fileSize) ?? "-"}
             </span>
             {g.storage === "mediabox" && (
               // Worth showing: that copy lives on the read-only share, so

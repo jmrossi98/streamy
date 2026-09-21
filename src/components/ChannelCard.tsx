@@ -59,7 +59,7 @@ function ProgramLine({ program, label }: { program: LiveProgram | null; label: s
         </span>
       )}
       <span className="text-white/80">{program.name}</span>
-      {program.episodeTitle && <span className="text-white/50"> — {program.episodeTitle}</span>}
+      {program.episodeTitle && <span className="text-white/50"> - {program.episodeTitle}</span>}
     </p>
   );
 }

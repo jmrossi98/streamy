@@ -81,7 +81,7 @@ async function watchFetch(url: string, init: RequestInit): Promise<Response> {
     ? resolveEgress(egressProxyUrl(), egressProxyRequired())
     : ({ via: "direct" } as const);
   if (decision.via === "blocked") {
-    throw new Error("Egress proxy required but PAGE_WATCH_PROXY_URL is unset — refusing to fetch");
+    throw new Error("Egress proxy required but PAGE_WATCH_PROXY_URL is unset - refusing to fetch");
   }
   // `dispatcher` is an undici extension to RequestInit that the global fetch
   // honours at runtime but the DOM types don't describe.

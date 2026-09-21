@@ -118,7 +118,7 @@ export async function publishPost(input: {
   title: string;
 }): Promise<PublishResult> {
   if (!isBlogPublishingConfigured()) {
-    return { ok: false, error: "Publishing isn't configured — GITHUB_BLOG_TOKEN is unset." };
+    return { ok: false, error: "Publishing isn't configured - GITHUB_BLOG_TOKEN is unset." };
   }
 
   const path = `${POSTS_DIR}/${input.slug}.md`;

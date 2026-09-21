@@ -219,7 +219,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search 4,000+ streams — try NFL, NBA, Arsenal…"
+          placeholder="Search 4,000+ streams - try NFL, NBA, Arsenal…"
           className="min-w-0 flex-1 rounded border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder-white/40 focus:border-netflix-red focus:outline-none"
         />
         {total > 0 && (
@@ -285,7 +285,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
         <p className="streamy-page-title-x text-sm text-white/40">
           {streams.length === 0
             ? networksOnly
-              ? "No recognised networks match that search — turn off “Networks only” to see one-off events."
+              ? "No recognised networks match that search - turn off “Networks only” to see one-off events."
               : "No streams match that search."
             : "No streams in that category on this page."}
         </p>

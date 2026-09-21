@@ -142,7 +142,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
       setResults(data.results ?? []);
       setResultsCached(!!data.cached);
     } catch {
-      setSearchError("Search failed — Streamy couldn't reach gamarr.");
+      setSearchError("Search failed - Streamy couldn't reach gamarr.");
     } finally {
       setSearching(false);
     }
@@ -168,7 +168,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   if (!configured) {
     return (
       <p className={`text-sm text-white/50 ${ROW_SECTION_CLASS}`}>
-        Games are unavailable right now — gamarr isn&apos;t configured or unreachable.
+        Games are unavailable right now - gamarr isn&apos;t configured or unreachable.
       </p>
     );
   }
@@ -220,7 +220,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
 
         {searching && (
           <p className="text-sm text-white/50">
-            Querying every indexer — this usually takes ~30s. {elapsed}s elapsed…
+            Querying every indexer - this usually takes ~30s. {elapsed}s elapsed…
           </p>
         )}
         {searchError && (
@@ -238,14 +238,14 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
             <span className="whitespace-nowrap">Open Vimm ↗</span>, download the file, then drop it
             in the folder shown under each result (on the{" "}
             <code className="rounded bg-black/30 px-1">\\mediabox\roms</code> share). Everything
-            after that is automatic — filed, compressed, synced to the Deck, and given cover art
+            after that is automatic - filed, compressed, synced to the Deck, and given cover art
             within the hour.
           </p>
         )}
         {results && results.length > 0 && (
           <>
             {resultsCached && (
-              <p className="text-xs text-white/30">⚡ Instant — same search in the last 5 minutes.</p>
+              <p className="text-xs text-white/30">⚡ Instant - same search in the last 5 minutes.</p>
             )}
             <ul className="max-h-[24rem] space-y-2 overflow-y-auto pr-1">
               {results.map((r, i) => {
@@ -375,7 +375,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
                     Sort: Recently added
                   </option>
                   <option value="title" className="bg-netflix-dark">
-                    Sort: A–Z
+                    Sort: A-Z
                   </option>
                   <option value="system" className="bg-netflix-dark">
                     Sort: System
@@ -415,7 +415,7 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
         downloading.length === 0 &&
         queued.length === 0 && (
           <p className={`text-sm text-white/50 ${ROW_SECTION_CLASS}`}>
-            No games yet — search above to find and download your first one.
+            No games yet - search above to find and download your first one.
           </p>
         )
       )}

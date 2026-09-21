@@ -315,7 +315,7 @@ export function GameDetailContent({
           </>
         ) : (
           <p className="text-sm text-white/50">
-            Available once this game finishes downloading — there&apos;s no file to attach artwork to yet.
+            Available once this game finishes downloading - there&apos;s no file to attach artwork to yet.
           </p>
         )}
       </div>
