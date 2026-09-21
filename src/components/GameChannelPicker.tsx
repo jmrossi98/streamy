@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
+import type { ChannelInfo } from "@/lib/dispatcharr";
 
 type Props = {
   /** The best single match -- EPG-confirmed or a name-based guess, or null. */
@@ -11,8 +12,8 @@ type Props = {
   channelConfirmed: boolean;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
   candidates: LiveChannel[];
-  /** Channel name -> provider name ("strong8k", "trex"), best effort. */
-  providerByChannel: Record<string, string>;
+  /** Channel name -> provider and dead-stream state, best effort. */
+  infoByChannel: Record<string, ChannelInfo>;
 };
 
 /**
@@ -33,7 +34,7 @@ type Props = {
  * and Jellyfin tune and starts a fresh one on a change -- nothing here has to
  * reimplement that.
  */
-export function GameChannelPicker({ channel, channelConfirmed, candidates, providerByChannel }: Props) {
+export function GameChannelPicker({ channel, channelConfirmed, candidates, infoByChannel }: Props) {
   const options = channel ? [channel, ...candidates] : candidates;
   const [selectedId, setSelectedId] = useState<string | null>(options[0]?.id ?? null);
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
@@ -87,10 +88,21 @@ export function GameChannelPicker({ channel, channelConfirmed, candidates, provi
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm text-white/90">
                       {c.name}
-                      {providerByChannel[c.name] && (
-                        <span className="ml-2 text-xs text-white/35">{providerByChannel[c.name]}</span>
+                      {infoByChannel[c.name]?.provider && (
+                        <span className="ml-2 text-xs text-white/35">
+                          {infoByChannel[c.name].provider}
+                        </span>
                       )}
                     </span>
+                    {/* Why this one is down here rather than at the top: the
+                        provider has marked it dead. Still clickable -- the
+                        flag can lag a stream that came back, and a dead
+                        option beats no option when it is the only one. */}
+                    {infoByChannel[c.name]?.stale && (
+                      <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
+                        Dead
+                      </span>
+                    )}
                     {isBestMatch && channelConfirmed && (
                       <span
                         className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400"

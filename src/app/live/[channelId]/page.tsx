@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { DemoteChannelButton } from "@/components/DemoteChannelButton";
 import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
-import { findChannelIdByName, getChannelProviders, isDispatcharrConfigured } from "@/lib/dispatcharr";
+import { findChannelIdByName, getChannelInfo, isDispatcharrConfigured } from "@/lib/dispatcharr";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -53,11 +53,14 @@ export default async function LiveChannelPage({
   // admin-only fact. Best effort: a Dispatcharr hiccup costs this line, not
   // the page.
   let provider: string | null = null;
+  let stale = false;
   if (isDispatcharrConfigured()) {
     try {
-      provider = (await getChannelProviders())?.get(channel.name) ?? null;
+      const info = (await getChannelInfo())?.get(channel.name);
+      provider = info?.provider ?? null;
+      stale = info?.stale ?? false;
     } catch (err) {
-      console.error("[live/channel] getChannelProviders failed:", err);
+      console.error("[live/channel] getChannelInfo failed:", err);
     }
   }
 
@@ -78,6 +81,15 @@ export default async function LiveChannelPage({
             {channel.name}
           </h1>
           {provider && <span className="shrink-0 text-sm text-white/40">{provider}</span>}
+          {/* Said up front rather than discovered after a minute of spinner:
+              the provider itself has marked the stream behind this channel
+              dead, so tuning it is very likely to fail. Not a hard block --
+              Dispatcharr's flag can lag a stream that came back. */}
+          {stale && (
+            <span className="shrink-0 rounded bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">
+              Provider reports this as dead
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-2">
             <WatchlistToggle
               kind="channel"

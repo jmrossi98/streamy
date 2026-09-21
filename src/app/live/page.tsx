@@ -9,7 +9,7 @@ import {
   isJellyfinReachable,
   MAX_CHANNELS,
 } from "@/lib/liveTv";
-import { getChannelProviders } from "@/lib/dispatcharr";
+import { getChannelInfo, type ChannelInfo } from "@/lib/dispatcharr";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -37,15 +37,15 @@ export default async function LivePage() {
 
   // Best effort, same reasoning as everywhere else this gets joined against
   // Jellyfin's own channel list: a Dispatcharr hiccup must not take the grid
-  // down, only cost it the provider badge. Plain object, not the Map
-  // getChannelProviders returns -- this crosses the server/client boundary
-  // as a prop, which a Map does not survive.
-  let providerByChannel: Record<string, string> = {};
+  // down, only cost it the provider and dead-stream labels. Plain object,
+  // not the Map getChannelInfo returns -- this crosses the server/client
+  // boundary as a prop, which a Map does not survive.
+  let infoByChannel: Record<string, ChannelInfo> = {};
   try {
-    const providers = await getChannelProviders();
-    if (providers) providerByChannel = Object.fromEntries(providers);
+    const info = await getChannelInfo();
+    if (info) infoByChannel = Object.fromEntries(info);
   } catch (err) {
-    console.error("[live] getChannelProviders failed:", err);
+    console.error("[live] getChannelInfo failed:", err);
   }
 
   // Gates the stream browser below. Re-checked against the database rather
@@ -76,7 +76,7 @@ export default async function LivePage() {
         myListIds={myListIds}
         hiddenChannels={hidden}
         isAdmin={isAdmin}
-        providerByChannel={providerByChannel}
+        infoByChannel={infoByChannel}
       />
     </div>
   );

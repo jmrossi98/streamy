@@ -386,21 +386,44 @@ export async function findChannelIdByName(name: string): Promise<number | null> 
  * Multi-stream channels (a primary plus manually-added fallbacks) take the
  * first stream's provider, since that is Dispatcharr's own default pick.
  */
-export async function getChannelProviders(): Promise<Map<string, string> | null> {
+export type ChannelInfo = {
+  /** Which configured provider ("strong8k", "trex") carries this channel. */
+  provider: string | null;
+  /**
+   * Dispatcharr's own judgement that the stream behind this channel has
+   * stopped working.
+   *
+   * The same `is_stale` the stream browser already warns on, carried
+   * through to the channel level -- a channel whose only stream is stale
+   * will not tune, and offering it as a candidate for a game is how a
+   * viewer ends up discovering that themselves, 60 seconds of spinner at a
+   * time.
+   */
+  stale: boolean;
+};
+
+export async function getChannelInfo(): Promise<Map<string, ChannelInfo> | null> {
   const [channelsData, accountNameById] = await Promise.all([
     api<
-      | { results?: { name?: string; streams?: { m3u_account?: number }[] }[] }
-      | { name?: string; streams?: { m3u_account?: number }[] }[]
+      | { results?: { name?: string; streams?: { m3u_account?: number; is_stale?: boolean }[] }[] }
+      | { name?: string; streams?: { m3u_account?: number; is_stale?: boolean }[] }[]
     >(`/api/channels/channels/?page_size=1000&include_streams=true`),
     getAccountNameById(),
   ]);
   if (!channelsData) return null;
 
-  const result = new Map<string, string>();
+  const result = new Map<string, ChannelInfo>();
   for (const c of Array.isArray(channelsData) ? channelsData : (channelsData.results ?? [])) {
-    const accountId = c.streams?.[0]?.m3u_account;
-    const providerName = typeof accountId === "number" ? accountNameById.get(accountId) : undefined;
-    if (c.name && providerName) result.set(c.name, providerName);
+    if (!c.name) continue;
+    const streams = c.streams ?? [];
+    const accountId = streams[0]?.m3u_account;
+    result.set(c.name, {
+      provider: typeof accountId === "number" ? (accountNameById.get(accountId) ?? null) : null,
+      // Stale only when *every* stream behind it is: a channel with a
+      // working fallback still tunes, and calling that one dead would hide
+      // a channel that works.
+      stale: streams.length > 0 && streams.every((s) => s.is_stale === true),
+    });
   }
   return result;
 }
@@ -526,14 +549,83 @@ export async function setChannelLogo(channelId: number, logoId: number): Promise
  * newly-added EPG source's rows need to be visible on the very next promote
  * rather than behind a stale cache.
  */
-async function findEpgDataIdByTvgId(tvgId: string): Promise<number | null> {
+async function getEpgDataIdByTvgId(): Promise<Map<string, number> | null> {
   const data = await api<{ results?: { id?: number; tvg_id?: string }[] } | { id?: number; tvg_id?: string }[]>(
     `/api/epg/epgdata/`
   );
   if (!data) return null;
   const rows = Array.isArray(data) ? data : (data.results ?? []);
-  const match = rows.find((r) => r.tvg_id === tvgId);
-  return typeof match?.id === "number" ? match.id : null;
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (r.tvg_id && typeof r.id === "number") map.set(r.tvg_id, r.id);
+  }
+  return map;
+}
+
+async function findEpgDataIdByTvgId(tvgId: string): Promise<number | null> {
+  return (await getEpgDataIdByTvgId())?.get(tvgId) ?? null;
+}
+
+export type EpgBackfillResult = {
+  /** Channels that already had EPG, so nothing to do. */
+  alreadyMapped: number;
+  /** Channels this run gave EPG to. */
+  mapped: number;
+  /** Names of channels with no tvg_id, or whose tvg_id matches no EPG row. */
+  unmatched: string[];
+};
+
+/**
+ * Gives EPG to already-promoted channels the same way promoteStreamToChannel
+ * now gives it to new ones: the provider's own tvg_id on the underlying
+ * stream, resolved to Dispatcharr's EPGData row.
+ *
+ * Needed because auto-mapping only covers channels promoted *through
+ * Streamy* from that change onward. Anything promoted earlier, or created
+ * directly in Dispatcharr's own UI, still has none -- and EPG is the only
+ * signal that is a fact about which game is airing rather than a guess from
+ * a channel's name, so those channels can never be confirmed for a fixture.
+ *
+ * Idempotent: channels that already have an epg_data_id are left alone, so
+ * running it twice does nothing the second time. The whole EPGData table is
+ * fetched once and matched in memory rather than per channel -- it is 8,415
+ * rows here, and the alternative is that many fetches times every channel.
+ */
+export async function backfillChannelEpg(): Promise<EpgBackfillResult | null> {
+  const [channelsData, epgIdByTvgId] = await Promise.all([
+    api<
+      | { results?: { id?: number; name?: string; epg_data_id?: number | null; streams?: { tvg_id?: string }[] }[] }
+      | { id?: number; name?: string; epg_data_id?: number | null; streams?: { tvg_id?: string }[] }[]
+    >(`/api/channels/channels/?page_size=1000&include_streams=true`),
+    getEpgDataIdByTvgId(),
+  ]);
+  if (!channelsData || !epgIdByTvgId) return null;
+
+  const rows = Array.isArray(channelsData) ? channelsData : (channelsData.results ?? []);
+  const result: EpgBackfillResult = { alreadyMapped: 0, mapped: 0, unmatched: [] };
+
+  for (const c of rows) {
+    if (typeof c.id !== "number" || !c.name) continue;
+    if (typeof c.epg_data_id === "number") {
+      result.alreadyMapped++;
+      continue;
+    }
+    const tvgId = c.streams?.find((s) => s.tvg_id)?.tvg_id;
+    const epgDataId = tvgId ? epgIdByTvgId.get(tvgId) : undefined;
+    if (epgDataId == null) {
+      // Expected for fixture channels (a one-off game has no listing
+      // anywhere) and for anything a provider ships without a tvg_id.
+      result.unmatched.push(c.name);
+      continue;
+    }
+    const patched = await api<{ id?: number }>(`/api/channels/channels/${c.id}/`, {
+      method: "PATCH",
+      body: JSON.stringify({ epg_data_id: epgDataId }),
+    });
+    if (patched != null) result.mapped++;
+    else result.unmatched.push(c.name);
+  }
+  return result;
 }
 
 /**
