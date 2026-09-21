@@ -11,6 +11,7 @@ import { deleteTorrents } from "./qbittorrent";
 import { expireBlocklist } from "./radarr";
 import { computeProgress } from "./radarr";
 import { normalizeProtocol, type DownloadProtocol } from "./radarr";
+import { IMPORTING_STATES } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
@@ -189,6 +190,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
         size: number;
         sizeleft: number;
         protocol?: string;
+        trackedDownloadState?: string;
       }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
@@ -199,6 +201,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
       progress: computeProgress(r.size, r.sizeleft),
       protocol: normalizeProtocol(r.protocol),
       sizeBytes: r.size > 0 ? r.size : null,
+      importing: IMPORTING_STATES.has(r.trackedDownloadState ?? ""),
     }));
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);

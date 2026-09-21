@@ -29,6 +29,10 @@ export type DownloadRow = {
    *  `size`) and a completed file (movieFile/episodefile's `size`); absent
    *  while still only searching, since there's no release chosen yet. */
   sizeBytes?: number | null;
+  /** The transfer is done (progress reads 100%) but Radarr/Sonarr is still
+   *  moving the file into the library -- see ActiveDownload's own comment.
+   *  Only ever true for an active queue entry; absent everywhere else. */
+  importing?: boolean;
 };
 
 /**
@@ -279,9 +283,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                         ? "Downloaded"
                         : d.searching
                           ? "Searching…"
-                          : d.progress != null
-                            ? `${d.progress}%`
-                            : "metadata…"}
+                          : d.importing
+                            ? "Importing…"
+                            : d.progress != null
+                              ? `${d.progress}%`
+                              : "metadata…"}
                     </span>
                     <button
                       type="button"
@@ -296,6 +302,13 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                   {d.completed ? (
                     <div className="h-full w-full rounded-full bg-netflix-red" />
+                  ) : d.importing ? (
+                    // A full but pulsing bar, not the same solid fill as
+                    // `completed` -- the transfer really is done (that part
+                    // isn't a lie), but a static 100% bar next to
+                    // "Importing..." still reads as stalled without some
+                    // sign that something is still happening.
+                    <div className="h-full w-full animate-pulse rounded-full bg-netflix-red" />
                   ) : d.progress != null ? (
                     <div
                       className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
