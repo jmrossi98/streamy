@@ -39,6 +39,7 @@ model User {
   flashGameSaves      FlashGameSave[]
   watchlistChannels   WatchlistChannelItem[]
   hiddenChannels      HiddenChannelItem[]
+  gameChannelChoices  GameChannelChoice[]
   progress            WatchProgress[]
   episodeProgress     EpisodeProgress[]
 }
@@ -666,4 +667,37 @@ model AuditLogEntry {
 
   @@index([createdAt])
   @@index([action, createdAt])
+}
+
+// Which channel this user picked for a given game.
+//
+// A game page offers several plausible channels -- an EPG-confirmed match
+// where one exists, then networks that merely carry the league -- and the
+// first one is only ever a best guess. Switching away from it was a per-tab
+// useState, so a reload, a phone handed to the TV, or simply coming back at
+// halftime all silently dropped the correction and re-tuned to the guess.
+//
+// Keyed per user rather than globally: two people can be watching the same
+// fixture on different providers, and one correcting their own pick has no
+// business re-tuning the other's.
+//
+// Stores a name snapshot alongside the id, for the same reason
+// HiddenChannelItem does: channels live in Jellyfin's tuner rather than in
+// this database, and a playlist-backed tuner churns its ids whenever the
+// source updates. The id is tried first and the name is the fallback, so a
+// pick survives the overnight refresh that renumbers everything.
+model GameChannelChoice {
+  userId    String
+  // The fixture id from sportsSchedule, as it appears in the page URL.
+  fixtureId String
+  channelId String
+  name      String
+  pickedAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, fixtureId])
+  @@index([userId])
+  // Supports the opportunistic sweep of finished games on write.
+  @@index([pickedAt])
 }

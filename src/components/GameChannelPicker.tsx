@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
+import { resolveStoredChoice, type StoredChoice } from "@/lib/gameChannelChoice";
 
 type Props = {
   /** The best single match -- EPG-confirmed or a name-based guess, or null. */
@@ -14,6 +15,10 @@ type Props = {
   candidates: LiveChannel[];
   /** Channel name -> provider and dead-stream state, best effort. */
   infoByChannel: Record<string, ChannelInfo>;
+  /** This game's id, so a pick can be remembered against it. */
+  fixtureId: string;
+  /** What this user picked last time, if anything. Null for signed-out viewers. */
+  storedChoice: StoredChoice | null;
 };
 
 /**
@@ -33,11 +38,43 @@ type Props = {
  * effect is keyed on channelId, so it already tears down the old HLS session
  * and Jellyfin tune and starts a fresh one on a change -- nothing here has to
  * reimplement that.
+ *
+ * A pick is remembered per user against this fixture. The reason it has to be
+ * is that the first option is a guess: when it's wrong -- a dead stream, the
+ * wrong regional feed -- switching away is a correction, and a correction that
+ * a reload throws away is one you make again at every ad break. The stored
+ * pick beats `channel` precisely because the person overrode `channel` once
+ * already.
  */
-export function GameChannelPicker({ channel, channelConfirmed, candidates, infoByChannel }: Props) {
+export function GameChannelPicker({
+  channel,
+  channelConfirmed,
+  candidates,
+  infoByChannel,
+  fixtureId,
+  storedChoice,
+}: Props) {
   const options = channel ? [channel, ...candidates] : candidates;
-  const [selectedId, setSelectedId] = useState<string | null>(options[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    // The remembered pick if it's still in the lineup, otherwise the best
+    // match. resolveStoredChoice returns null on a miss rather than guessing.
+    (resolveStoredChoice(options, storedChoice) ?? options[0])?.id ?? null
+  );
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
+
+  /**
+   * Optimistic on purpose: the switch has already happened in the player, and
+   * a failed write costs a remembered preference, not the thing being watched.
+   * Blocking the tune on a round trip would be the worse trade.
+   */
+  function pick(c: LiveChannel) {
+    setSelectedId(c.id);
+    void fetch("/api/live/game-channel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fixtureId, channelId: c.id, name: c.name }),
+    }).catch(() => {});
+  }
 
   if (!selected) {
     return (
@@ -75,7 +112,7 @@ export function GameChannelPicker({ channel, channelConfirmed, candidates, infoB
                 <li key={c.id}>
                   <button
                     type="button"
-                    onClick={() => setSelectedId(c.id)}
+                    onClick={() => pick(c)}
                     aria-pressed={isSelected}
                     className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors ${
                       isSelected
