@@ -9,26 +9,37 @@
  * stays testable without either.
  */
 
+import { cached } from "./ttlCache";
+import { AWS_SPEND_PROBLEMS, type AwsBreakdown, type AwsSpend, type AwsSpendProblem } from "./spendRules";
+
 /** Billing APIs are not on a critical path, but a page still has to render. */
 const BILLING_TIMEOUT_MS = 12_000;
 
 /**
  * AWS month-to-date, via Cost Explorer.
  *
- * Lifted from the old health check, which asked a different question: it
- * compared spend to a ceiling and reported pass/fail. A threshold alarm tells
- * you when something is wrong; it never tells you what you are paying, and the
- * second is what was actually wanted.
+ * One request, grouped by service, answering both questions: the per-service
+ * rows are the breakdown, and their sum is the month-to-date total. It used
+ * to be two calls asking the same period twice, which mattered because Cost
+ * Explorer bills a cent per request.
  *
  * Needs ce:GetCostAndUsage on the alerting credential (scoped to sns:Publish
- * by default) and Cost Explorer enabled once for the account. Returns null
- * rather than throwing when either is missing -- unconfigured, not broken.
+ * by default) and Cost Explorer enabled once for the account.
+ *
+ * Reports *why* it has no figure rather than answering null for everything.
+ * The silent version was indistinguishable from "this account costs nothing",
+ * so a credential missing the Cost Explorer permission looked like a working
+ * panel with an empty section, which is exactly what happened.
  */
-export async function awsMonthToDate(): Promise<number | null> {
+export type { AwsSpend, AwsSpendProblem, AwsBreakdown } from "./spendRules";
+
+async function awsSpendUncached(): Promise<AwsSpend> {
   const accessKeyId = process.env.ALERT_AWS_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
   const secretAccessKey =
     process.env.ALERT_AWS_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
-  if (!accessKeyId || !secretAccessKey) return null;
+  if (!accessKeyId || !secretAccessKey) {
+    return { ok: false, reason: "unconfigured", detail: AWS_SPEND_PROBLEMS.unconfigured };
+  }
 
   try {
     const { CostExplorerClient, GetCostAndUsageCommand } = await import(
@@ -52,62 +63,44 @@ export async function awsMonthToDate(): Promise<number | null> {
         TimePeriod: { Start: iso(startOfMonth), End: iso(tomorrow) },
         Granularity: "MONTHLY",
         Metrics: ["UnblendedCost"],
-      })
-    );
-    const mtd = result.ResultsByTime?.reduce(
-      (sum, r) => sum + Number(r.Total?.UnblendedCost?.Amount ?? 0),
-      0
-    );
-    return mtd != null && Number.isFinite(mtd) ? mtd : null;
-  } catch {
-    return null;
-  }
-}
-
-export type AwsBreakdown = { service: string; amount: number }[];
-
-/** Which AWS services the spend actually went to -- the "some detail" asked for. */
-export async function awsBreakdown(): Promise<AwsBreakdown> {
-  const accessKeyId = process.env.ALERT_AWS_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey =
-    process.env.ALERT_AWS_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY;
-  if (!accessKeyId || !secretAccessKey) return [];
-
-  try {
-    const { CostExplorerClient, GetCostAndUsageCommand } = await import(
-      "@aws-sdk/client-cost-explorer"
-    );
-    const client = new CostExplorerClient({
-      region: "us-east-1",
-      credentials: { accessKeyId, secretAccessKey },
-    });
-    const now = new Date();
-    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const tomorrow = new Date(now.getTime() + 24 * 3_600_000);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-
-    const result = await client.send(
-      new GetCostAndUsageCommand({
-        TimePeriod: { Start: iso(startOfMonth), End: iso(tomorrow) },
-        Granularity: "MONTHLY",
-        Metrics: ["UnblendedCost"],
         GroupBy: [{ Type: "DIMENSION", Key: "SERVICE" }],
       })
     );
 
-    const rows: AwsBreakdown = [];
+    // With GroupBy set, Cost Explorer leaves the period Total empty and puts
+    // everything in Groups, so the total is the sum of the rows -- including
+    // the sub-cent ones the breakdown hides.
+    let monthToDate = 0;
+    const byService: AwsBreakdown = [];
     for (const period of result.ResultsByTime ?? []) {
       for (const group of period.Groups ?? []) {
         const amount = Number(group.Metrics?.UnblendedCost?.Amount ?? 0);
-        // Cost Explorer returns a row per service whether or not it cost
-        // anything; a page of $0.00 lines is noise.
-        if (!Number.isFinite(amount) || amount <= 0.005) continue;
-        rows.push({ service: group.Keys?.[0] ?? "Unknown", amount });
+        if (!Number.isFinite(amount)) continue;
+        monthToDate += amount;
+        // A row per service comes back whether or not it cost anything; a
+        // page of $0.00 lines is noise.
+        if (amount <= 0.005) continue;
+        byService.push({ service: group.Keys?.[0] ?? "Unknown", amount });
       }
     }
-    return rows.sort((a, b) => b.amount - a.amount);
-  } catch {
-    return [];
+    byService.sort((a, b) => b.amount - a.amount);
+    return { ok: true, monthToDate, byService };
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    const reason: AwsSpendProblem =
+      name === "AccessDeniedException" || name === "UnrecognizedClientException"
+        ? "denied"
+        : name === "DataUnavailableException"
+          ? "notEnabled"
+          : "error";
+    // Logged because the panel only shows the category; the SDK message is
+    // what actually names the missing permission.
+    console.error("[spend] Cost Explorer failed:", name, err);
+    return {
+      ok: false,
+      reason,
+      detail: err instanceof Error && err.message ? err.message : AWS_SPEND_PROBLEMS[reason],
+    };
   }
 }
 
@@ -121,7 +114,7 @@ export type OpenRouterCredits = { used: number; limit: number | null };
  * with no cap set, which is not the same as zero -- one means unlimited, the
  * other means spent out.
  */
-export async function openRouterCredits(): Promise<OpenRouterCredits | null> {
+async function openRouterCreditsUncached(): Promise<OpenRouterCredits | null> {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) return null;
   try {
@@ -142,4 +135,27 @@ export async function openRouterCredits(): Promise<OpenRouterCredits | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * How long a billing figure is allowed to be stale.
+ *
+ * Six hours for AWS because Cost Explorer only refreshes its own data a few
+ * times a day, and because it bills a cent per request -- the admin panel
+ * re-renders on a timer, so uncached this was a standing charge for a number
+ * that hadn't moved. Ten minutes for OpenRouter: free to ask, but credits
+ * only move when someone uses the chat panel.
+ */
+const AWS_TTL_MS = 6 * 3_600_000;
+const OPENROUTER_TTL_MS = 10 * 60_000;
+
+export function awsSpend(): Promise<AwsSpend> {
+  // Failures are cached too, and deliberately: a denied credential stays
+  // denied until someone changes an IAM policy, and retrying it on every
+  // render is a request billed to say so again.
+  return cached("spend:aws", AWS_TTL_MS, awsSpendUncached);
+}
+
+export function openRouterCredits(): Promise<OpenRouterCredits | null> {
+  return cached("spend:openrouter", OPENROUTER_TTL_MS, openRouterCreditsUncached);
 }

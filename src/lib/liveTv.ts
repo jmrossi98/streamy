@@ -15,6 +15,8 @@
  * directly cannot be wrong the way an inferred signal can.
  */
 
+import { cleanText } from "./text";
+
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
 const JELLYFIN_USER_ID = process.env.JELLYFIN_USER_ID;
@@ -133,9 +135,10 @@ function toProgram(p: JfProgram | undefined | null): LiveProgram | null {
   if (!p?.Id || !p?.Name) return null;
   return {
     id: p.Id,
-    name: p.Name,
-    episodeTitle: p.EpisodeTitle || null,
-    overview: p.Overview || null,
+    // Guide text is the provider's, not ours -- see cleanText.
+    name: cleanText(p.Name),
+    episodeTitle: cleanText(p.EpisodeTitle) || null,
+    overview: cleanText(p.Overview) || null,
     startUtc: p.StartDate || null,
     endUtc: p.EndDate || null,
     isLive: !!p.IsLive,
@@ -191,7 +194,7 @@ export async function getLiveChannels(): Promise<LiveChannel[]> {
       .filter((c): c is JfChannel & { Id: string; Name: string } => !!c.Id && !!c.Name)
       .map((c) => ({
         id: c.Id,
-        name: c.Name,
+        name: cleanText(c.Name),
         number: c.ChannelNumber || null,
         logoUrl: logoUrl(c),
         now: toProgram(c.CurrentProgram),
@@ -468,7 +471,7 @@ export async function getLiveChannel(channelId: string): Promise<LiveChannel | n
     if (c?.Id && c?.Name) {
       return {
         id: c.Id,
-        name: c.Name,
+        name: cleanText(c.Name),
         number: c.ChannelNumber || null,
         logoUrl: logoUrl(c),
         now: toProgram(c.CurrentProgram),

@@ -534,6 +534,14 @@ model Subscription {
   /// Kept rather than deleted when cancelled, so the history stays readable.
   active   Boolean @default(true)
 
+  /// When this next bills, for the ones nothing can be asked automatically.
+  ///
+  /// The IPTV providers report their own expiry (Xtream player_api), the TLS
+  /// cert carries its own notAfter, and the domain's is in RDAP -- those are
+  /// read live and never stored here. This is for the rest: usenet blocks,
+  /// anything bought as a term rather than a running subscription.
+  renewsAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

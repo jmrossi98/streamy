@@ -15,6 +15,19 @@ export const runtime = "nodejs";
 
 const CADENCES = new Set(["monthly", "yearly", "metered", "free"]);
 
+/**
+ * A date input's "YYYY-MM-DD", or nothing.
+ *
+ * Parsed as UTC noon rather than midnight: a bare date parses as UTC
+ * midnight, which is the previous evening in every western timezone, so a
+ * renewal typed as the 15th displayed as the 14th.
+ */
+function parseRenewsAt(raw: unknown): Date | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const d = new Date(`${raw.trim()}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export async function POST(request: Request) {
   if (!(await requireAdmin(await getSession()))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
@@ -38,6 +51,7 @@ export async function POST(request: Request) {
       cadence,
       url: typeof body.url === "string" ? body.url.trim() : "",
       notes: typeof body.notes === "string" ? body.notes.trim() : "",
+      renewsAt: parseRenewsAt(body.renewsAt),
     },
   });
   return NextResponse.json({ id: sub.id });
@@ -51,11 +65,16 @@ export async function PATCH(request: Request) {
   const id = typeof body.id === "string" ? body.id : "";
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  // Only `active` is togglable here -- cancelling is the edit that matters,
-  // and the row is kept rather than deleted so the history stays readable.
+  // `active` and the renewal date. Cancelling is the edit that matters, and
+  // the row is kept rather than deleted so the history stays readable; the
+  // date is here because it's the one field that goes stale on its own, so
+  // it gets corrected far more often than anything else on the row.
   await prisma.subscription.update({
     where: { id },
-    data: { active: !!body.active },
+    data: {
+      ...(typeof body.active === "boolean" ? { active: body.active } : {}),
+      ...("renewsAt" in body ? { renewsAt: parseRenewsAt(body.renewsAt) } : {}),
+    },
   });
   return NextResponse.json({ ok: true });
 }

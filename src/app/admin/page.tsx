@@ -22,8 +22,10 @@ import { runSecurityChecks } from "@/lib/securityChecks";
 import { SecurityPanel } from "@/components/SecurityPanel";
 import { ServicesPanel } from "@/components/ServicesPanel";
 import { SpendPanel } from "@/components/SpendPanel";
+import { RenewalsPanel } from "@/components/RenewalsPanel";
 import { computeTotals } from "@/lib/spendRules";
-import { awsBreakdown, awsMonthToDate, openRouterCredits } from "@/lib/spend";
+import { awsSpend, openRouterCredits } from "@/lib/spend";
+import { getAutomaticRenewals, manualRenewals, sortRenewals } from "@/lib/renewals";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
 import { EpgBackfillButton } from "@/components/EpgBackfillButton";
@@ -93,9 +95,9 @@ export default async function AdminFeaturesPage() {
     ownedGames,
     flashDownloads,
     subscriptions,
-    awsMtd,
-    awsServices,
+    aws,
     openRouter,
+    autoRenewals,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -150,9 +152,11 @@ export default async function AdminFeaturesPage() {
     // credential or an unreachable OpenRouter costs those figures and not the
     // page. The panel then names what it could not read rather than quietly
     // reporting a total that is too low.
-    awsMonthToDate(),
-    awsBreakdown(),
+    awsSpend(),
     openRouterCredits(),
+    // Cert, domain and IPTV expiry. Each answers for itself and none of them
+    // can fail the page -- see lib/renewals.ts.
+    getAutomaticRenewals(),
   ]);
 
   // AWS and OpenRouter are the only two here that can report themselves.
@@ -163,10 +167,13 @@ export default async function AdminFeaturesPage() {
   for (const sub of subscriptions) {
     if (sub.cadence !== "metered") continue;
     const name = sub.name.toLowerCase();
-    if (name.includes("aws")) meteredActuals[sub.name] = awsMtd;
+    if (name.includes("aws")) meteredActuals[sub.name] = aws.ok ? aws.monthToDate : null;
     else if (name.includes("openrouter")) meteredActuals[sub.name] = openRouter?.used ?? null;
     else meteredActuals[sub.name] = null;
   }
+
+  // The probed dates plus the typed-in ones, as one list.
+  const renewals = sortRenewals([...autoRenewals, ...manualRenewals(subscriptions)]);
 
   const spendTotals = computeTotals(subscriptions, meteredActuals);
   const spendRows = subscriptions.map((sub) => ({
@@ -179,6 +186,7 @@ export default async function AdminFeaturesPage() {
     notes: sub.notes,
     active: sub.active,
     actual: meteredActuals[sub.name] ?? null,
+    renewsAt: sub.renewsAt?.toISOString() ?? null,
   }));
 
   // Straight from gamarr's own downloads/wishlist, not the deduped public
@@ -399,12 +407,15 @@ export default async function AdminFeaturesPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <SpendPanel
-            rows={spendRows}
-            totals={spendTotals}
-            awsBreakdown={awsServices}
-            openRouter={openRouter}
-          />
+          <div className="space-y-4">
+            <RenewalsPanel renewals={renewals} />
+            <SpendPanel
+              rows={spendRows}
+              totals={spendTotals}
+              aws={aws}
+              openRouter={openRouter}
+            />
+          </div>
         </div>
       </section>
 

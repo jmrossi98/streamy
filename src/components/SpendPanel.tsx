@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { describeCost, formatUsd, type SpendTotals } from "@/lib/spendRules";
+import {
+  AWS_SPEND_PROBLEMS,
+  describeCost,
+  formatUsd,
+  type AwsSpend,
+  type SpendTotals,
+} from "@/lib/spendRules";
 
 export type SpendRow = {
   id: string;
@@ -15,12 +21,14 @@ export type SpendRow = {
   active: boolean;
   /** Month-to-date, for the metered ones that can report it. */
   actual?: number | null;
+  /** ISO date, for the ones nothing can be asked automatically. */
+  renewsAt?: string | null;
 };
 
 type Props = {
   rows: SpendRow[];
   totals: SpendTotals;
-  awsBreakdown: { service: string; amount: number }[];
+  aws: AwsSpend;
   openRouter: { used: number; limit: number | null } | null;
 };
 
@@ -41,7 +49,7 @@ const INPUT_CLASS =
  * for "what has this person signed up for" -- which is exactly why the panel
  * is needed at all.
  */
-export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
+export function SpendPanel({ rows, totals, aws, openRouter }: Props) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,6 +65,7 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.get("name"),
+          renewsAt: form.get("renewsAt"),
           category: form.get("category"),
           cost: Number(form.get("cost")),
           cadence: form.get("cadence"),
@@ -68,6 +77,23 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
         setAdding(false);
         router.refresh();
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setRenewal(row: SpendRow, value: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/subscriptions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // No `active` sent: the handler only writes the fields it's given,
+        // so clearing a date can't accidentally revive a cancelled row.
+        body: JSON.stringify({ id: row.id, renewsAt: value }),
+      });
+      if (res.ok) router.refresh();
     } finally {
       setBusy(false);
     }
@@ -117,38 +143,53 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
         )}
       </div>
 
-      {(awsBreakdown.length > 0 || openRouter) && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {awsBreakdown.length > 0 && (
-            <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-              <h4 className="mb-2 text-sm font-semibold text-white">AWS, month to date</h4>
-              <ul className="space-y-1 text-sm">
-                {awsBreakdown.map((r) => (
-                  <li key={r.service} className="flex justify-between gap-3">
-                    <span className="truncate text-white/60">{r.service}</span>
-                    <span className="shrink-0 tabular-nums text-white/80">
-                      {formatUsd(r.amount)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {openRouter && (
-            <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-              <h4 className="mb-2 text-sm font-semibold text-white">OpenRouter</h4>
-              <p className="text-sm text-white/70">
-                {formatUsd(openRouter.used)} used
-                {openRouter.limit !== null ? ` of ${formatUsd(openRouter.limit)}` : ""}
-              </p>
-              {openRouter.limit === null && (
-                <p className="mt-1 text-xs text-white/40">No spend limit set on this key.</p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {/* Always rendered, even with no figure. An empty section read as
+            "AWS costs nothing"; the failure it was actually hiding was a
+            credential without the Cost Explorer permission. */}
+        <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+          <h4 className="mb-2 flex items-baseline justify-between gap-3 text-sm font-semibold text-white">
+            <span>AWS, month to date</span>
+            {aws.ok && (
+              <span className="tabular-nums text-white/80">{formatUsd(aws.monthToDate)}</span>
+            )}
+          </h4>
+          {!aws.ok ? (
+            <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
+              <p>{AWS_SPEND_PROBLEMS[aws.reason]}</p>
+              {aws.detail !== AWS_SPEND_PROBLEMS[aws.reason] && (
+                <p className="mt-1 text-amber-200/60">{aws.detail}</p>
               )}
             </div>
+          ) : aws.byService.length === 0 ? (
+            <p className="text-sm text-white/40">Nothing billed yet this month.</p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {aws.byService.map((r) => (
+                <li key={r.service} className="flex justify-between gap-3">
+                  <span className="truncate text-white/60">{r.service}</span>
+                  <span className="shrink-0 tabular-nums text-white/80">
+                    {formatUsd(r.amount)}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-      )}
+
+        {openRouter && (
+          <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+            <h4 className="mb-2 text-sm font-semibold text-white">OpenRouter</h4>
+            <p className="text-sm text-white/70">
+              {formatUsd(openRouter.used)} used
+              {openRouter.limit !== null ? ` of ${formatUsd(openRouter.limit)}` : ""}
+            </p>
+            {openRouter.limit === null && (
+              <p className="mt-1 text-xs text-white/40">No spend limit set on this key.</p>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="rounded-lg border border-white/10 bg-netflix-dark/60">
         <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
@@ -186,6 +227,10 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
               placeholder="Where it is managed (URL)"
               className={INPUT_CLASS + " sm:col-span-2"}
             />
+            <label className="flex flex-col gap-1 text-xs text-white/40 sm:col-span-2">
+              Renews on (leave blank for anything that reports its own date)
+              <input name="renewsAt" type="date" className={INPUT_CLASS} />
+            </label>
             <input name="notes" placeholder="Notes" className={INPUT_CLASS + " sm:col-span-2"} />
             <button
               type="submit"
@@ -245,6 +290,17 @@ export function SpendPanel({ rows, totals, awsBreakdown, openRouter }: Props) {
                     </p>
                   )}
                 </div>
+                {/* Editable in place: a renewal date is the one field on a
+                    row that goes stale by itself, so correcting it shouldn't
+                    mean re-entering the subscription. */}
+                <input
+                  type="date"
+                  value={row.renewsAt?.slice(0, 10) ?? ""}
+                  onChange={(e) => setRenewal(row, e.target.value)}
+                  disabled={busy}
+                  title="Renews on"
+                  className="shrink-0 rounded border border-white/10 bg-black/40 px-2 py-1 text-xs text-white/60 disabled:opacity-40"
+                />
                 <button
                   type="button"
                   onClick={() => toggle(row)}
