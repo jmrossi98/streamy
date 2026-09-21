@@ -429,7 +429,7 @@ export function LiveTvContent({
             // Said out loud rather than silently cutting the list off, which
             // is what the old hard cap did.
             <p className="mt-4 text-center text-xs text-white/30">
-              Showing the first {channels.length} channels. Your tuner reports more —
+              Showing the first {channels.length} channels. Your tuner reports more -
               narrow the playlist in Jellyfin if you need the rest.
             </p>
           )}

@@ -65,13 +65,13 @@ export async function POST(request: Request) {
 
   if (remote && !isOpenRouterConfigured()) {
     return NextResponse.json(
-      { error: "Cloud models aren't configured — OPENROUTER_API_KEY is unset on the server." },
+      { error: "Cloud models aren't configured - OPENROUTER_API_KEY is unset on the server." },
       { status: 503 }
     );
   }
   if (!remote && !isOllamaConfigured()) {
     return NextResponse.json(
-      { error: "Chat is not configured — OLLAMA_URL is unset on the server." },
+      { error: "Chat is not configured - OLLAMA_URL is unset on the server." },
       { status: 503 }
     );
   }

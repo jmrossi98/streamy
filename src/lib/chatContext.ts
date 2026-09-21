@@ -93,7 +93,7 @@ function containerSection(
   const lines: string[] = [];
   for (const c of problems) {
     lines.push(
-      `- ${c.name}: ${c.state}${c.health === "unhealthy" ? " (unhealthy)" : ""} — ${c.status || "no status"}` +
+      `- ${c.name}: ${c.state}${c.health === "unhealthy" ? " (unhealthy)" : ""} - ${c.status || "no status"}` +
         logExcerpt(c.name)
     );
   }
@@ -103,7 +103,7 @@ function containerSection(
   // namespace and fails.
   for (const c of stale) {
     lines.push(
-      `- ${c.name}: RUNNING BUT HAS NO NETWORK — it shares a network namespace ` +
+      `- ${c.name}: RUNNING BUT HAS NO NETWORK - it shares a network namespace ` +
         `with a container that no longer exists. It must be RECREATED, not ` +
         `restarted; restarting re-enters the dead namespace and fails.` +
         logExcerpt(c.name)

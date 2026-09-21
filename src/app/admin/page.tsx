@@ -471,7 +471,7 @@ export default async function AdminFeaturesPage() {
             />
           ) : (
             <p className="text-white/50 text-sm">
-              Storage info unavailable — mediabox isn&apos;t reachable.
+              Storage info unavailable - mediabox isn&apos;t reachable.
             </p>
           )}
         </div>

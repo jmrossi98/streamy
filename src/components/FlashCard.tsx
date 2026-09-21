@@ -75,7 +75,7 @@ export function FlashCard({
           // The difference between a game that runs and one that doesn't, and
           // finding out after clicking is worse.
           <span
-            title="Uses ActionScript 3 — the Flash emulator supports it only partially"
+            title="Uses ActionScript 3 - the Flash emulator supports it only partially"
             className="absolute right-1 top-1 rounded bg-amber-500/80 px-1 text-[10px] font-bold text-black"
           >
             AS3

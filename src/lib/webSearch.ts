@@ -43,7 +43,7 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
     // `formats: [html, json]` is missing from settings.yml rather than a bug.
     throw new Error(
       res.status === 403
-        ? "SearXNG rejected the request — is `json` enabled under search.formats?"
+        ? "SearXNG rejected the request - is `json` enabled under search.formats?"
         : `SearXNG returned HTTP ${res.status}`
     );
   }

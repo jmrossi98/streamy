@@ -166,7 +166,7 @@ export function OpsChat({
   if (!localAvailable && !remoteAvailable) {
     return (
       <p className="text-sm text-white/50">
-        Chat isn&apos;t configured — set <code className="text-white/70">OLLAMA_URL</code> or{" "}
+        Chat isn&apos;t configured - set <code className="text-white/70">OLLAMA_URL</code> or{" "}
         <code className="text-white/70">OPENROUTER_API_KEY</code> on the server.
       </p>
     );
@@ -196,7 +196,7 @@ export function OpsChat({
                 title={
                   enabled
                     ? b.hint
-                    : `Unavailable — ${
+                    : `Unavailable - ${
                         isRemoteBackend(b.id) ? "OPENROUTER_API_KEY" : "OLLAMA_URL"
                       } is unset on the server.`
                 }
@@ -246,7 +246,7 @@ export function OpsChat({
         ) : (
           <>
             <span className="text-white/50">{modelId}</span>
-            {" — "}
+            {" - "}
             {backendById(backend).hint}
             {/* The local model never leaves the house; the cloud ones do. That
                 distinction matters when the thing being pasted in is a log. */}
@@ -268,7 +268,7 @@ export function OpsChat({
       >
         {turns.length === 0 && (
           <p className="py-6 text-center text-sm text-white/30">
-            Ask about the stack — with “Stack status” on it can see live service
+            Ask about the stack - with “Stack status” on it can see live service
             health, disk, and backups.
             {searchAvailable ? " Tick “Search the web” for anything current." : ""}
           </p>

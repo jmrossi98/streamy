@@ -252,8 +252,8 @@ export function RequestButton({
             {status === "downloading"
               ? detail.importing
                 ? "Importing…"
-                : `Downloading${typeof progress === "number" ? ` — ${progress}%` : "…"}`
-              : "Queued — searching…"}
+                : `Downloading${typeof progress === "number" ? ` - ${progress}%` : "…"}`
+              : "Queued - searching…"}
           </span>
           {authStatus === "authenticated" && (
             <button
@@ -284,7 +284,7 @@ export function RequestButton({
             {detail.notice}
           </p>
         )}
-        {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t cancel — try again</p>}
+        {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t cancel - try again</p>}
       </div>
     );
   }
@@ -298,8 +298,8 @@ export function RequestButton({
     const label = checking
       ? "Checking…"
       : stillSyncing
-        ? "Still syncing to the library — tap to check again"
-        : "Downloaded — tap to refresh";
+        ? "Still syncing to the library - tap to check again"
+        : "Downloaded - tap to refresh";
     return (
       <div className={DOWNLOADING_BADGE_CLASS}>
         <div className="flex items-center justify-between gap-3">
@@ -325,7 +325,7 @@ export function RequestButton({
             </button>
           )}
         </div>
-        {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t delete — try again</p>}
+        {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t delete - try again</p>}
       </div>
     );
   }
@@ -346,7 +346,7 @@ export function RequestButton({
       ) : (
         <DownloadIcon />
       )}
-      {error ? "Couldn't download — try again" : downloadLabel}
+      {error ? "Couldn't download - try again" : downloadLabel}
     </button>
   );
 }

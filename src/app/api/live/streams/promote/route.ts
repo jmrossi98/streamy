@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     channelNumber,
     refreshing,
     note: refreshing
-      ? "Added. Jellyfin is refreshing its guide now — it appears in Live TV in a moment."
+      ? "Added. Jellyfin is refreshing its guide now - it appears in Live TV in a moment."
       : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",
   });
 }

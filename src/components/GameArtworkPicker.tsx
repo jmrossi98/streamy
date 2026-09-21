@@ -94,7 +94,7 @@ export function GameArtworkPicker({
       })
       .catch(() => {
         if (cancelled) return;
-        setGamesResult({ term: activeTerm, games: null, error: "Lookup failed — couldn't reach SteamGridDB." });
+        setGamesResult({ term: activeTerm, games: null, error: "Lookup failed - couldn't reach SteamGridDB." });
         setSelectedGame(null);
       });
     return () => {

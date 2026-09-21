@@ -79,7 +79,7 @@ export function ScrollableRow({ title, href, children }: ScrollableRowProps) {
           >
             &rsaquo;
           </span>
-          <span className="sr-only">— see all</span>
+          <span className="sr-only">- see all</span>
         </Link>
       ) : (
         <h2 className={ROW_H2_CLASS}>{title}</h2>

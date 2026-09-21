@@ -40,7 +40,7 @@ export function TestAlertButton({ configured }: { configured: boolean }) {
       >
         {state === "sending" ? "Sending…" : "Send test alert"}
       </button>
-      {state === "sent" && <span className="text-sm text-green-300">Sent — check your inbox.</span>}
+      {state === "sent" && <span className="text-sm text-green-300">Sent - check your inbox.</span>}
       {state === "error" && <span className="text-sm text-red-300">{error}</span>}
     </div>
   );

@@ -68,7 +68,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                 <span className="shrink-0 text-white/40">{p.count}</span>
               </li>
             ))}
-            {topPages.length === 0 && <li className="text-sm text-white/40">—</li>}
+            {topPages.length === 0 && <li className="text-sm text-white/40">-</li>}
           </ul>
         </div>
 
@@ -83,7 +83,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                 <span className="shrink-0 text-white/40">{r.count}</span>
               </li>
             ))}
-            {topReferrers.length === 0 && <li className="text-sm text-white/40">—</li>}
+            {topReferrers.length === 0 && <li className="text-sm text-white/40">-</li>}
           </ul>
         </div>
       </div>
@@ -134,7 +134,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                       {v.path}
                     </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/60">
-                      {v.location ?? <span className="text-white/25">—</span>}
+                      {v.location ?? <span className="text-white/25">-</span>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-white/60">
                       {v.ip}
@@ -151,7 +151,7 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
       </div>
 
       <p className="text-xs text-white/30">
-        Beacon-based, so only clients that run JavaScript appear here — bots and scanners
+        Beacon-based, so only clients that run JavaScript appear here - bots and scanners
         do not.
       </p>
     </div>

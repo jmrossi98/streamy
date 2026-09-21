@@ -89,7 +89,7 @@ export const movies: Movie[] = [
     id: "6",
     title: "Dark Matter",
     overview:
-      "Scientists at the edge of the universe make a discovery that could rewrite the laws of physics—or destroy them.",
+      "Scientists at the edge of the universe make a discovery that could rewrite the laws of physics - or destroy them.",
     poster: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400",
     backdrop: "https://images.unsplash.com/photo-1462331940025-496dfbfc7564?w=1920",
     year: "2024",
@@ -101,7 +101,7 @@ export const movies: Movie[] = [
     id: "7",
     title: "Haunting at Blackwood",
     overview:
-      "A family moves into an ancestral estate only to find that the house has been waiting for them—and it has a long memory.",
+      "A family moves into an ancestral estate only to find that the house has been waiting for them - and it has a long memory.",
     poster: "https://images.unsplash.com/photo-1509248961158-e54f6934749c?w=400",
     backdrop: "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1920",
     year: "2023",
@@ -113,7 +113,7 @@ export const movies: Movie[] = [
     id: "8",
     title: "Planet of the Past",
     overview:
-      "Documentary crew embarks on a journey to document the last untouched ecosystems before they vanish forever.",
+      "A documentary crew races to film the last untouched ecosystems before they are gone.",
     poster: "https://images.unsplash.com/photo-1453928582365-b6ad33cbcf64?w=400",
     backdrop: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1920",
     year: "2024",
@@ -125,7 +125,7 @@ export const movies: Movie[] = [
     id: "9",
     title: "Velocity",
     overview:
-      "A street racer is forced to run one final race to save her brother—but the finish line might be a trap.",
+      "A street racer is forced to run one final race to save her brother - but the finish line might be a trap.",
     poster: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400",
     backdrop: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1920",
     year: "2023",

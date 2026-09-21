@@ -43,7 +43,7 @@ export function describeRequestNotice(input: {
   const { status, replacing, rejections } = input;
 
   if (replacing) {
-    return `Unsafe release found — ${REASON_TEXT[replacing]}. Removing it and searching for another…`;
+    return `Unsafe release found - ${REASON_TEXT[replacing]}. Removing it and searching for another…`;
   }
   if (!rejections || rejections.count === 0) return null;
 
