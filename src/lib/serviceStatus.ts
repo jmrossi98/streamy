@@ -32,6 +32,7 @@ import { prisma } from "./db";
 import { isContainerViewConfigured, listContainers } from "./containers";
 import { isOpenRouterConfigured } from "./openrouter";
 import { openRouterCredits } from "./spend";
+import { getLastVpnRotation, isVpnRotationConfigured } from "./vpnRotation";
 
 const PROBE_TIMEOUT_MS = 5_000;
 
@@ -502,6 +503,37 @@ async function flashLibraryStatus(): Promise<ServiceStatus> {
     state: "up",
     detail: `${files.length} file(s) on the share`,
     address: env("FLASH_LIBRARY_URL"),
+  };
+}
+
+/**
+ * Last automatic VPN exit-IP rotation, per mediabox's own record of it
+ * (vpn-failover.py; see its README section). Purely informational -- the
+ * rotation already happened or it didn't, there is nothing this check
+ * itself could report as failing -- so this is "up" whenever the record is
+ * actually readable, including "never rotated", which is good news (a
+ * stable exit IP) rather than a gap.
+ */
+async function vpnRotationStatus(): Promise<ServiceStatus> {
+  const name = "VPN rotation";
+  if (!isVpnRotationConfigured()) {
+    return { name, group: SYSTEM, state: "unconfigured", detail: "FLASH_LIBRARY_URL unset" };
+  }
+  const rotation = await getLastVpnRotation();
+  if (rotation === null) {
+    return { name, group: SYSTEM, state: "unknown", detail: "Couldn't reach mediabox" };
+  }
+  if (rotation === "never") {
+    return { name, group: SYSTEM, state: "up", detail: "No rotation recorded — exit IP has been stable" };
+  }
+  const ageMs = Date.now() - Date.parse(rotation.lastRotationUtc);
+  const ageLabel =
+    ageMs < 3_600_000 ? `${Math.max(0, Math.round(ageMs / 60_000))}m ago` : `${(ageMs / 3_600_000).toFixed(1)}h ago`;
+  return {
+    name,
+    group: SYSTEM,
+    state: "up",
+    detail: `${rotation.currentRegion}, ${ageLabel}` + (rotation.reason ? ` — ${rotation.reason}` : ""),
   };
 }
 
@@ -1113,6 +1145,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     portainer,
     openRouter,
     tmdb,
+    vpnRotation,
   ] = await Promise.all([
     servarrStatus("Radarr", "Media", env("RADARR_URL"), process.env.RADARR_API_KEY ?? "", isRadarrConfigured()),
     servarrStatus("Sonarr", "Media", env("SONARR_URL"), process.env.SONARR_API_KEY ?? "", isSonarrConfigured()),
@@ -1153,6 +1186,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     portainerStatus(),
     openRouterStatus(),
     tmdbStatus(),
+    vpnRotationStatus(),
   ]);
 
   return [
@@ -1197,6 +1231,10 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     geoip,
     tourWatch,
     egress,
+    // Next to egress -- the other half of "is the VPN doing what it
+    // should": egress proves traffic leaves through the tunnel right now,
+    // this says when the exit IP itself last had to change.
+    vpnRotation,
     alertingStatus(),
   ];
 }
