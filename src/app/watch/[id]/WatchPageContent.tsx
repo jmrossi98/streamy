@@ -6,6 +6,7 @@ import { getMovieFromCache, setMovieInCache } from "@/lib/movieCache";
 import { InfoHero } from "@/components/InfoHero";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
+import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
 import { Credits } from "@/components/Credits";
 import { MovieRow } from "@/components/MovieRow";
 
@@ -19,6 +20,7 @@ type Props = {
   requestConfigured?: boolean;
   initialRequestStatus?: string | null;
   initialProgress?: number | null;
+  initialRequestDetail?: RequestDetail;
   similar?: Movie[];
 };
 
@@ -40,6 +42,7 @@ export function WatchPageContent({
   requestConfigured = false,
   initialRequestStatus = null,
   initialProgress = null,
+  initialRequestDetail = NO_DETAIL,
   similar = [],
 }: Props) {
   const cached = getMovieFromCache(id);
@@ -114,7 +117,12 @@ export function WatchPageContent({
         playLabel={progressSeconds > 0 ? "Resume" : "Watch now"}
         playNode={
           showRequestFlow ? (
-            <RequestButton movieId={id} initialStatus={initialRequestStatus} initialProgress={initialProgress} />
+            <RequestButton
+              movieId={id}
+              initialStatus={initialRequestStatus}
+              initialProgress={initialProgress}
+              initialDetail={initialRequestDetail}
+            />
           ) : undefined
         }
       />

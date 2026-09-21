@@ -6,6 +6,7 @@
  */
 
 import { deleteTorrents } from "./qbittorrent";
+import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
 
 const RADARR_URL = process.env.RADARR_URL?.replace(/\/$/, "");
 const RADARR_API_KEY = process.env.RADARR_API_KEY;
@@ -200,6 +201,43 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
   }
 }
 
+export type RadarrQueueDetail = {
+  progress: number | null;
+  importing: boolean;
+  unsafe: BadReleaseReason | null;
+};
+
+/**
+ * What one movie's queue entry is doing right now. Replaces asking only for a
+ * percent: a percent of 100 could mean "moving the file into the library" or
+ * "a fake that will never import", and the button needs to say which.
+ */
+export async function getRadarrQueueDetail(radarrId: number): Promise<RadarrQueueDetail | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const queue = await radarrFetch<{
+      records: {
+        movieId: number;
+        size: number;
+        sizeleft: number;
+        trackedDownloadState?: string;
+        statusMessages?: { messages?: string[] }[];
+      }[];
+    }>(`/api/v3/queue`);
+    const entry = queue.records.find((r) => r.movieId === radarrId);
+    if (!entry) return null;
+    const unsafe = classifyBadRelease(entry);
+    return {
+      progress: computeProgress(entry.size, entry.sizeleft),
+      importing: !unsafe && IMPORTING_STATES.has(entry.trackedDownloadState ?? ""),
+      unsafe,
+    };
+  } catch (err) {
+    console.error("[radarr] getRadarrQueueDetail failed:", err);
+    return null;
+  }
+}
+
 // progress is null while the torrent's metadata (and therefore its real
 // size) hasn't resolved yet -- distinct from 0%, which would wrongly imply
 // data transfer has actually started.
@@ -253,6 +291,10 @@ export type ActiveDownload = {
    * there was no way to tell the two apart.
    */
   importing: boolean;
+  /** Finished downloading but the payload is something that must never be
+   *  imported (an executable posing as a movie). Set only until the healer
+   *  removes it -- a window worth showing rather than leaving at "100%". */
+  unsafe?: BadReleaseReason;
 };
 
 /**
@@ -275,17 +317,23 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
         sizeleft: number;
         protocol?: string;
         trackedDownloadState?: string;
+        statusMessages?: { messages?: string[] }[];
       }[];
     }>(`/api/v3/queue`);
-    return queue.records.map((r) => ({
-      queueId: r.id,
-      externalId: r.movieId,
-      title: r.title,
-      progress: computeProgress(r.size, r.sizeleft),
-      protocol: normalizeProtocol(r.protocol),
-      sizeBytes: r.size > 0 ? r.size : null,
-      importing: IMPORTING_STATES.has(r.trackedDownloadState ?? ""),
-    }));
+    return queue.records.map((r) => {
+      const unsafe = classifyBadRelease(r);
+      return {
+        queueId: r.id,
+        externalId: r.movieId,
+        title: r.title,
+        progress: computeProgress(r.size, r.sizeleft),
+        protocol: normalizeProtocol(r.protocol),
+        sizeBytes: r.size > 0 ? r.size : null,
+        // An unsafe entry is not "importing" -- it never will be.
+        importing: !unsafe && IMPORTING_STATES.has(r.trackedDownloadState ?? ""),
+        ...(unsafe ? { unsafe } : {}),
+      };
+    });
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
     return [];
@@ -293,10 +341,13 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
 }
 
 /** Cancels one specific queued download, leaving a series' other episodes alone. */
-export async function cancelRadarrQueueItem(queueId: number): Promise<boolean> {
+export async function cancelRadarrQueueItem(
+  queueId: number,
+  { blocklist = false }: { blocklist?: boolean } = {}
+): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
-    await radarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=false`, {
+    await radarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=${blocklist}`, {
       method: "DELETE",
     });
     return true;
@@ -440,9 +491,12 @@ export async function setRadarrMovieMonitored(
  * downloaded). Expiring entries lets a good release become eligible again
  * once whatever was actually wrong has passed.
  */
-export async function expireRadarrBlocklist(maxAgeHours: number): Promise<number> {
+export async function expireRadarrBlocklist(
+  maxAgeHours: number,
+  keep?: (record: BlocklistRecord) => boolean
+): Promise<number> {
   if (!isRadarrConfigured()) return 0;
-  return expireBlocklist(radarrFetch, maxAgeHours, "radarr");
+  return expireBlocklist(radarrFetch, maxAgeHours, "radarr", keep);
 }
 
 type Fetcher = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -450,15 +504,18 @@ type Fetcher = <T>(path: string, init?: RequestInit) => Promise<T>;
 export async function expireBlocklist(
   fetcher: Fetcher,
   maxAgeHours: number,
-  label: string
+  label: string,
+  // Entries that must outlive the TTL -- a release rejected as unsafe was never
+  // "blocked by a transient stall", so letting it expire would just re-grab it.
+  keep: (record: BlocklistRecord) => boolean = () => false
 ): Promise<number> {
   try {
-    const list = await fetcher<{ records: { id: number; date?: string }[] }>(
+    const list = await fetcher<{ records: ({ id: number; date?: string } & BlocklistRecord)[] }>(
       `/api/v3/blocklist?pageSize=200`
     );
     const cutoff = Date.now() - maxAgeHours * 3600_000;
     const stale = list.records
-      .filter((r) => !r.date || Date.parse(r.date) < cutoff)
+      .filter((r) => (!r.date || Date.parse(r.date) < cutoff) && !keep(r))
       .map((r) => r.id);
     if (stale.length === 0) return 0;
     await fetcher(`/api/v3/blocklist/bulk`, {
@@ -511,8 +568,16 @@ export async function searchRadarrMovie(radarrId: number): Promise<void> {
 }
 
 export type QueueHealth = {
+  /** This queue entry itself -- what removing one specific download targets. */
+  queueId: number;
   /** Radarr movieId / Sonarr seriesId. */
   externalId: number;
+  /** Sonarr only: the episode this entry is for, so a re-search can be scoped to it. */
+  episodeId?: number;
+  /** The download client's id for it (a torrent's info hash). */
+  downloadId: string | null;
+  /** Set when the finished payload is something that must be discarded. */
+  unsafe: BadReleaseReason | null;
   title: string;
   /** Radarr/Sonarr's own diagnosis, e.g. "The download is stalled with no connections". */
   errorMessage: string | null;
@@ -521,16 +586,24 @@ export type QueueHealth = {
   hasProgress: boolean;
 };
 
-function toQueueHealth(r: {
+export function toQueueHealth(r: {
+  id: number;
   title: string;
   size: number;
   sizeleft: number;
   added?: string;
   errorMessage?: string;
   status?: string;
+  downloadId?: string;
+  episodeId?: number;
+  statusMessages?: { messages?: string[] }[];
 }, externalId: number): QueueHealth {
   const added = r.added ? Date.parse(r.added) : Date.now();
   return {
+    queueId: r.id,
+    episodeId: r.episodeId,
+    downloadId: r.downloadId ?? null,
+    unsafe: classifyBadRelease(r),
     externalId,
     title: r.title,
     errorMessage: r.errorMessage ?? (r.status === "warning" || r.status === "failed" ? r.status : null),
@@ -545,6 +618,7 @@ export async function getRadarrQueueHealth(): Promise<QueueHealth[]> {
   try {
     const queue = await radarrFetch<{
       records: {
+        id: number;
         movieId: number;
         title: string;
         size: number;
@@ -552,8 +626,10 @@ export async function getRadarrQueueHealth(): Promise<QueueHealth[]> {
         added?: string;
         errorMessage?: string;
         status?: string;
+        downloadId?: string;
+        statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue`);
+    }>(`/api/v3/queue?pageSize=250`);
     return queue.records.map((r) => toQueueHealth(r, r.movieId));
   } catch (err) {
     console.error("[radarr] getRadarrQueueHealth failed:", err);

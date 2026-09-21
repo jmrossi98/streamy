@@ -8,6 +8,9 @@ import { getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sona
 import { getDiskUsage } from "@/lib/diskUsage";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
+import { describeRequestNotice } from "@/lib/requestNotice";
+import { getRejectionSummary } from "@/lib/rejectedReleases";
+import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { AdminApprovals } from "@/components/AdminApprovals";
 import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
@@ -107,7 +110,9 @@ export default async function AdminFeaturesPage() {
     // the admin panel for however long the search takes, which read as
     // "doesn't show up until after search" even though it was already in
     // flight the whole time.
-    prisma.mediaRequest.findMany({ where: { status: "requested" } }),
+    // "noReleaseFound" rows are fetched too, but only shown when a release
+    // was rejected for them -- see searchingRows below.
+    prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } }),
     // Probed server-side so an unreachable model shows up on load rather than
     // on the first message.
     isOllamaConfigured() ? getOllamaStatus() : Promise.resolve(null),
@@ -233,9 +238,16 @@ export default async function AdminFeaturesPage() {
       })),
   ];
 
+  const withNotice = (d: (typeof radarrDownloads)[number]) => ({
+    ...d,
+    completed: false,
+    notice: d.unsafe
+      ? describeRequestNotice({ status: "downloading", replacing: d.unsafe, rejections: null })
+      : null,
+  });
   const downloads: DownloadRow[] = [
-    ...radarrDownloads.map((d) => ({ ...d, mediaType: "movie" as const, completed: false })),
-    ...sonarrDownloads.map((d) => ({ ...d, mediaType: "show" as const, completed: false })),
+    ...radarrDownloads.map((d) => ({ ...withNotice(d), mediaType: "movie" as const })),
+    ...sonarrDownloads.map((d) => ({ ...withNotice(d), mediaType: "show" as const })),
   ].sort((a, b) => (b.progress ?? -1) - (a.progress ?? -1));
 
   downloads.push(
@@ -280,19 +292,36 @@ export default async function AdminFeaturesPage() {
   const searchingRows = (
     await Promise.all(
       stillSearching.map(async (r): Promise<DownloadRow | null> => {
+        if (r.externalId == null) return null;
+        const mediaType = r.mediaType as "movie" | "show";
+        // A title that had a release rejected gets its live state re-read, so
+        // the panel can say "no release found" the moment that is true rather
+        // than whenever a viewer's title page next happens to. Only these: a
+        // plain search costs nothing extra, and a plain "no release" was never
+        // shown here.
+        const rejections = await getRejectionSummary(mediaType, r.externalId).catch(() => null);
+        const resolved = rejections ? await resolveMediaRequestStatus(r.tmdbId, mediaType) : null;
+        const status = resolved?.status ?? r.status;
+        if (r.status === "noReleaseFound" && !rejections) return null;
+        // Grabbed, finished or cancelled since -- shown elsewhere or gone.
+        if (resolved && status !== "requested" && status !== "noReleaseFound") return null;
+
         const title =
-          r.mediaType === "movie"
+          mediaType === "movie"
             ? (await getMovieById(r.tmdbId))?.title
             : (await getShowById(r.tmdbId))?.name;
-        if (!title || r.externalId == null) return null;
+        if (!title) return null;
+        const noRelease = status === "noReleaseFound";
         return {
           queueId: null,
           externalId: r.externalId,
           title,
           progress: null,
-          mediaType: r.mediaType as "movie" | "show",
+          mediaType,
           completed: false,
-          searching: true,
+          searching: !noRelease,
+          noRelease,
+          notice: resolved?.detail.notice ?? null,
         };
       })
     )

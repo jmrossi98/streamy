@@ -40,6 +40,7 @@ export default async function WatchPage({ params }: Props) {
       requestConfigured={isRadarrConfigured()}
       initialRequestStatus={requestStatus.status}
       initialProgress={requestStatus.progress}
+      initialRequestDetail={requestStatus.detail}
       similar={similar}
     />
   );

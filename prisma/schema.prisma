@@ -112,6 +112,29 @@ model MediaRequest {
   @@index([tvdbId])
 }
 
+// A release Radarr/Sonarr grabbed that turned out to be unusable -- today only
+// a "video" whose payload was an executable. Two jobs: the healer's blocklist
+// expiry skips these so a fake is never eligible to be grabbed again, and the
+// title's page can say why it is searching again (or why it found nothing)
+// instead of leaving the viewer to guess.
+model RejectedRelease {
+  id           Int      @id @default(autoincrement())
+  // "movie" | "show"
+  mediaType    String
+  // Radarr movie id / Sonarr series id, same as MediaRequest.externalId.
+  externalId   Int
+  // The release name exactly as the queue reported it.
+  releaseTitle String
+  // Torrent info hash, when the download client gave one.
+  downloadId   String?
+  // "executable"
+  reason       String
+  createdAt    DateTime @default(now())
+
+  @@index([mediaType, externalId])
+  @@index([downloadId])
+}
+
 // Every sign-in attempt, successful or not.
 //
 // Two consumers: the lockout check in front of the login form, and the

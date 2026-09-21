@@ -41,3 +41,81 @@ export function isUnhealthy(entry: DownloadHealth): boolean {
 export function shouldBlocklist(errorMessage: string | null): boolean {
   return /error|failed|corrupt/i.test(errorMessage ?? "");
 }
+
+/** Why a finished download was thrown away as unusable. Only "executable" for
+ *  now; a union so a new reason is a type error everywhere it needs a label. */
+export type BadReleaseReason = "executable";
+
+export type QueueItemMessages = { statusMessages?: { messages?: string[] }[] };
+
+// Radarr/Sonarr's own wording once a completed download turns out to hold
+// something that isn't media: "Caution: Found executable file with extension:
+// '.exe'" and "...potentially dangerous file with extension...". Real
+// occurrence this exists for: a "1080p AMZN WEB-DL" of a film still in
+// cinemas whose entire payload was one 1.1 GB .exe. Radarr refuses to import
+// it but leaves it in the queue forever, so it sat at 100% looking merely slow.
+const UNSAFE_FILE_PATTERN = /(?:executable|potentially dangerous) file/i;
+
+/**
+ * Whether a queue entry is a release that must never be imported or kept.
+ *
+ * Deliberately narrow: only a file the app itself calls dangerous. A quality
+ * rejection, a missing file or a "matched by ID" confidence block can all be
+ * legitimate releases that need a human, and throwing those away would be
+ * wrong -- see isConfidenceBlockedQueueItem in radarr.ts.
+ */
+export function classifyBadRelease(item: QueueItemMessages): BadReleaseReason | null {
+  const messages = (item.statusMessages ?? []).flatMap((sm) => sm.messages ?? []);
+  return messages.some((m) => UNSAFE_FILE_PATTERN.test(m)) ? "executable" : null;
+}
+
+/** Lowercased, punctuation-free form of a release name, for comparing the
+ *  same release as spelled by the queue, the blocklist and our own records. */
+export function normalizeReleaseTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Whether two spellings name the same release. The queue reports the torrent's
+ * own name (".exe" suffix included) while the blocklist stores the release
+ * title without it, so an exact match alone would miss exactly the entries this
+ * matters for -- a prefix on a word boundary covers that without conflating
+ * two different releases.
+ */
+export function sameRelease(a: string, b: string): boolean {
+  const x = normalizeReleaseTitle(a);
+  const y = normalizeReleaseTitle(b);
+  if (!x || !y) return false;
+  return x === y || x.startsWith(`${y} `) || y.startsWith(`${x} `);
+}
+
+export type RejectedReleaseKey = { releaseTitle: string; downloadId: string | null };
+export type BlocklistRecord = { sourceTitle?: string; torrentInfoHash?: string | null };
+
+/**
+ * Whether a blocklist entry is one we rejected as unsafe. The healer expires
+ * old blocklist entries so a good release blocked by a transient stall becomes
+ * eligible again -- that must never apply to a release that was never good.
+ */
+export function isPermanentlyBlocked(
+  record: BlocklistRecord,
+  rejected: readonly RejectedReleaseKey[]
+): boolean {
+  const hash = record.torrentInfoHash?.toLowerCase();
+  return rejected.some(
+    (r) =>
+      (hash != null && r.downloadId != null && r.downloadId.toLowerCase() === hash) ||
+      (record.sourceTitle != null && sameRelease(record.sourceTitle, r.releaseTitle))
+  );
+}
+
+// After a rejection the healer searches again straight away, so the next
+// alternative is found in seconds instead of after the next scan. This bounds
+// that chain: a title whose every release is a fake would otherwise download
+// one after another indefinitely. Past the cap it falls back to the slower
+// idle-title retry, which still keeps trying, just not back to back.
+export const MAX_IMMEDIATE_RESEARCHES_PER_HOUR = 5;
+
+export function shouldSearchImmediately(rejectionsInLastHour: number): boolean {
+  return rejectionsInLastHour <= MAX_IMMEDIATE_RESEARCHES_PER_HOUR;
+}

@@ -1,8 +1,15 @@
-import { isUnhealthy, shouldBlocklist } from "./downloadHealthRules";
+import {
+  isPermanentlyBlocked,
+  isUnhealthy,
+  shouldBlocklist,
+  shouldSearchImmediately,
+  type BadReleaseReason,
+} from "./downloadHealthRules";
 import {
   getRadarrQueueHealth,
   getIdleWantedMovies,
   cancelRadarrDownload,
+  cancelRadarrQueueItem,
   searchRadarrMovie,
   expireRadarrBlocklist,
   type QueueHealth,
@@ -12,9 +19,11 @@ import {
   getIdleWantedEpisodes,
   searchSonarrEpisodes,
   cancelSonarrDownload,
+  cancelSonarrQueueItem,
   searchSonarrSeries,
   expireSonarrBlocklist,
 } from "./sonarr";
+import { countRecentRejections, getPermanentBlocks, recordRejection } from "./rejectedReleases";
 
 /**
  * Auto-recovery for downloads that will never finish on their own.
@@ -80,6 +89,66 @@ async function healOne(
   }
 }
 
+type UnsafeEntry = QueueHealth & { unsafe: BadReleaseReason };
+
+/**
+ * Throws away a finished download that turned out not to be media, and looks
+ * for another release straight away.
+ *
+ * Radarr/Sonarr refuse to import an executable but leave it in the queue, so
+ * without this it sat at 100% forever -- a fake "1080p WEB-DL" whose only file
+ * was a 1.1 GB .exe. Unlike a stall, this is never about conditions: the
+ * release itself is bad, so it is blocklisted for good (see the expiry skip in
+ * healStalledDownloads) and the title's next-best release is fetched at once.
+ * If that one is fake too it goes the same way, so every alternative gets its
+ * turn; when none is left the title reports "no release found" along with why.
+ */
+async function rejectUnsafe(
+  mediaType: "movie" | "show",
+  entry: UnsafeEntry
+): Promise<HealedDownload | null> {
+  try {
+    // Record before removing: the record is what keeps the blocklist entry
+    // from expiring, and it is idempotent so a failed removal that retries on
+    // the next scan does not double-count. A DB failure must not stop the
+    // removal though -- getting the file off the disk matters more than the
+    // bookkeeping.
+    await recordRejection({
+      mediaType,
+      externalId: entry.externalId,
+      releaseTitle: entry.title,
+      downloadId: entry.downloadId,
+      reason: entry.unsafe,
+    }).catch((err) => console.error("[healer] could not record rejection:", err));
+
+    const removed =
+      mediaType === "movie"
+        ? await cancelRadarrQueueItem(entry.queueId, { blocklist: true })
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: true });
+    if (!removed) return null;
+
+    const recent = await countRecentRejections(mediaType, entry.externalId).catch(() => 0);
+    if (shouldSearchImmediately(recent)) {
+      if (mediaType === "movie") {
+        await searchRadarrMovie(entry.externalId);
+        // This scan's idle-title pass would otherwise fire a second, identical
+        // search a moment later.
+        lastHealedAt.set(`idle:movie:${entry.externalId}`, Date.now());
+      } else if (entry.episodeId != null) {
+        await searchSonarrEpisodes([entry.episodeId]);
+        lastHealedAt.set(`idle:episode:${entry.episodeId}`, Date.now());
+      } else {
+        await searchSonarrSeries(entry.externalId);
+      }
+    }
+    console.warn(`[healer] rejected unsafe release "${entry.title}" (${entry.unsafe})`);
+    return { title: entry.title, reason: `unsafe release removed (${entry.unsafe})` };
+  } catch (err) {
+    console.error(`[healer] failed to reject "${entry.title}":`, err);
+    return null;
+  }
+}
+
 /**
  * Re-searches titles Radarr still wants but has nothing in flight for.
  *
@@ -140,20 +209,36 @@ const BLOCKLIST_TTL_HOURS = 6;
 /** Re-grabs anything stalled or errored, and re-searches anything wanted but idle. */
 export async function healStalledDownloads(): Promise<HealedDownload[]> {
   // Do this first so the searches below can see releases whose block has aged
-  // out, rather than settling for a worse-seeded alternative.
-  await Promise.all([
-    expireRadarrBlocklist(BLOCKLIST_TTL_HOURS),
-    expireSonarrBlocklist(BLOCKLIST_TTL_HOURS),
-  ]);
+  // out, rather than settling for a worse-seeded alternative. Releases we
+  // rejected as unsafe are exempt: they were never blocked by conditions, and
+  // expiring them would just let the same fake be grabbed again. If the list of
+  // those can't be read, skip the expiry entirely rather than risk that.
+  try {
+    const rejected = await getPermanentBlocks();
+    const keep = (record: Parameters<typeof isPermanentlyBlocked>[0]) =>
+      isPermanentlyBlocked(record, rejected);
+    await Promise.all([
+      expireRadarrBlocklist(BLOCKLIST_TTL_HOURS, keep),
+      expireSonarrBlocklist(BLOCKLIST_TTL_HOURS, keep),
+    ]);
+  } catch (err) {
+    console.error("[healer] skipped blocklist expiry (could not read rejected releases):", err);
+  }
 
   const [radarrQueue, sonarrQueue] = await Promise.all([
     getRadarrQueueHealth(),
     getSonarrQueueHealth(),
   ]);
 
+  const isUnsafe = (e: QueueHealth): e is UnsafeEntry => e.unsafe != null;
+  // An unsafe entry is dealt with on its own path and kept out of the stall
+  // rules below: those re-grab without blocklisting, which for a fake would
+  // just fetch the same one again.
   const healed = await Promise.all([
-    ...radarrQueue.filter(isUnhealthy).map((e) => healOne("movie", e)),
-    ...sonarrQueue.filter(isUnhealthy).map((e) => healOne("show", e)),
+    ...radarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("movie", e)),
+    ...sonarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("show", e)),
+    ...radarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e)),
+    ...sonarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e)),
   ]);
   const idleHealed = await healIdleWantedTitles();
   return [...healed.filter((h): h is HealedDownload => h !== null), ...idleHealed];
