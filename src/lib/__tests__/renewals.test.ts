@@ -28,13 +28,17 @@ describe("manualRenewals", () => {
   });
 
   it("counts days from a stored date", () => {
-    const in10Days = new Date(Date.now() + 10 * 86_400_000);
+    // Half a day past the mark, so the floor is 10 however many milliseconds
+    // pass between building the date and manualRenewals reading the clock.
+    // An exact multiple of 86_400_000 races those two Date.now() calls and
+    // lands on 9 or 10 depending on how fast the machine is.
+    const in10AndAHalfDays = new Date(Date.now() + 10.5 * 86_400_000);
     const [r] = manualRenewals([
-      { name: "Usenet block", renewsAt: in10Days, active: true },
+      { name: "Usenet block", renewsAt: in10AndAHalfDays, active: true },
     ]);
     expect(r.name).toBe("Usenet block");
     expect(r.source).toBe("manual");
-    expect(r.daysLeft).toBe(9); // floor of just under 10 whole days
+    expect(r.daysLeft).toBe(10); // floor of 10.5 whole days
   });
 
   it("reports a lapsed date as negative rather than dropping it", () => {
