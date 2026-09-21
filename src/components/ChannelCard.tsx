@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
+import type { ChannelInfo } from "@/lib/dispatcharr";
 
 /**
  * Extracted from LiveTvContent so /watchlist can show the same card for a
@@ -74,11 +75,11 @@ type Props = {
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
-  /** Which configured provider ("strong8k", "trex") this channel is on, when known. */
-  provider?: string;
+  /** Provider and dead-stream state from Dispatcharr, when the join found it. */
+  info?: ChannelInfo;
 };
 
-export function ChannelCard({ channel, inList, selectMode, selected, onToggleSelect, provider }: Props) {
+export function ChannelCard({ channel, inList, selectMode, selected, onToggleSelect, info }: Props) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -173,12 +174,17 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
           )}
         </div>
 
-        {/* Which provider this channel is actually on -- worth knowing once
-            a lineup spans more than one (strong8k, trex), since the two are
-            not equally reliable (see the group-filtering work that split
-            them by content). Absent, not "Unknown", when the join against
-            Dispatcharr's own channel list failed or found nothing. */}
-        {provider && <p className="truncate text-[11px] text-white/35">{provider}</p>}
+        {/* Which provider this channel is on, and whether the provider has
+            given up on the stream behind it. Absent, not "Unknown", when
+            the join against Dispatcharr's own channel list found nothing --
+            a missing label is quieter than a wrong one. */}
+        {(info?.provider || info?.stale) && (
+          <p className="truncate text-[11px] text-white/35">
+            {info.provider}
+            {info.provider && info.stale && " · "}
+            {info.stale && <span className="text-amber-400/80">provider reports this as dead</span>}
+          </p>
+        )}
 
         {/* The wrapper goes too when there is nothing in it, otherwise every
             card keeps a margin reserved for absent guide lines and the row

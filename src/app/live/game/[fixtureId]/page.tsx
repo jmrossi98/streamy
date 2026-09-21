@@ -4,7 +4,7 @@ import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
-import { getChannelProviders, getMappedChannelPrograms } from "@/lib/dispatcharr";
+import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
 import { findCandidateChannels, findEpgConfirmedChannelNames, resolveChannelForFixture } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -55,16 +55,18 @@ export default async function GamePage({
     console.error("[live/game] EPG match failed:", err);
   }
 
-  // Same best-effort reasoning as the EPG lookup above -- which provider each
-  // option is on is informational, worth knowing when picking between
-  // several candidates, not worth failing the page over.
-  let providerByChannel: Record<string, string> = {};
+  // Same best-effort reasoning as the EPG lookup above. Two things come out
+  // of this: which provider each option is on (informational), and which
+  // options Dispatcharr has already marked dead -- the second of which
+  // actually reorders the list below.
+  let infoByChannel: Record<string, ChannelInfo> = {};
   try {
-    const providers = await getChannelProviders();
-    if (providers) providerByChannel = Object.fromEntries(providers);
+    const info = await getChannelInfo();
+    if (info) infoByChannel = Object.fromEntries(info);
   } catch (err) {
-    console.error("[live/game] getChannelProviders failed:", err);
+    console.error("[live/game] getChannelInfo failed:", err);
   }
+  const isStale = (name: string) => infoByChannel[name]?.stale === true;
 
   const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);
@@ -102,10 +104,41 @@ export default async function GamePage({
   */
   const demoteUnconfirmedFixtureGuess =
     resolved != null && !channelConfirmed && networkOrMarketCandidates.length > 0;
-  const channel = demoteUnconfirmedFixtureGuess ? null : resolved;
-  const candidates = demoteUnconfirmedFixtureGuess
+  const primary = demoteUnconfirmedFixtureGuess ? null : resolved;
+  const restCandidates = demoteUnconfirmedFixtureGuess
     ? [...networkOrMarketCandidates, resolved!]
     : networkOrMarketCandidates;
+
+  /*
+    Dead streams sink, they don't disappear.
+
+    Dispatcharr already knows which streams it has given up on (`is_stale`,
+    the same flag the stream browser warns on) and nothing here consulted
+    it, so a channel the provider itself considers dead could be handed to
+    a viewer as the default pick -- who then finds out the only way anyone
+    was finding out: a minute of spinner followed by a failure.
+
+    Sorted rather than filtered, and stably so, because the flag is a
+    provider's opinion and can lag a stream that has come back. A dead
+    option is still better than no option when it is the only one left, so
+    it keeps its place in the list, just not at the front of it. A stale
+    primary loses the default slot the same way an unconfirmed fixture
+    guess does above -- unless there is nothing else, in which case it
+    stays, since demoting it to an empty list helps no one.
+
+    An EPG-confirmed channel is exempt: that is a fact about what is airing
+    right now, which beats a staleness flag that may simply not have caught
+    up yet.
+  */
+  const primaryIsDead = primary != null && !channelConfirmed && isStale(primary.name);
+  const liveCandidates = restCandidates.filter((c) => !isStale(c.name));
+  const deadCandidates = restCandidates.filter((c) => isStale(c.name));
+  const demoteDeadPrimary = primaryIsDead && liveCandidates.length > 0;
+
+  const channel = demoteDeadPrimary ? null : primary;
+  const candidates = demoteDeadPrimary
+    ? [...liveCandidates, primary!, ...deadCandidates]
+    : [...liveCandidates, ...deadCandidates];
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
@@ -139,7 +172,7 @@ export default async function GamePage({
           channel={channel}
           channelConfirmed={channelConfirmed}
           candidates={candidates}
-          providerByChannel={providerByChannel}
+          infoByChannel={infoByChannel}
         />
       </div>
     </div>

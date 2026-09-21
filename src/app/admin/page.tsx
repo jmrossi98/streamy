@@ -26,6 +26,8 @@ import { computeTotals } from "@/lib/spendRules";
 import { awsBreakdown, awsMonthToDate, openRouterCredits } from "@/lib/spend";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
+import { EpgBackfillButton } from "@/components/EpgBackfillButton";
+import { isDispatcharrConfigured } from "@/lib/dispatcharr";
 import { isNotifyConfigured } from "@/lib/notify";
 import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
@@ -380,6 +382,7 @@ export default async function AdminFeaturesPage() {
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6 space-y-6">
           <ServicesPanel services={services} />
           <TestAlertButton configured={isNotifyConfigured()} />
+          <EpgBackfillButton configured={isDispatcharrConfigured()} />
           {/* Same section, not its own -- this is itself a health check (the
               one real end-to-end signal: request a title, wait for it to
               actually download, then exercise real playback), so it belongs

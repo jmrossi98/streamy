@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
+import type { ChannelInfo } from "@/lib/dispatcharr";
 import { ChannelCard } from "@/components/ChannelCard";
 import { StreamBrowser } from "@/components/StreamBrowser";
 import { SportsSchedule } from "@/components/SportsSchedule";
@@ -24,8 +25,8 @@ type Props = {
   hiddenChannels: HiddenEntry[];
   /** Gates the stream browser: adding a channel publishes it to everyone. */
   isAdmin: boolean;
-  /** Channel name -> provider name ("strong8k", "trex"), best effort. */
-  providerByChannel: Record<string, string>;
+  /** Channel name -> provider and dead-stream state, best effort. */
+  infoByChannel: Record<string, ChannelInfo>;
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
@@ -39,7 +40,7 @@ function numberValue(number: string | null): number {
 }
 
 export function LiveTvContent({
-  envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, providerByChannel,
+  envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
 }: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
@@ -371,7 +372,7 @@ export function LiveTvContent({
                     key={`mine:${c.id}`}
                     channel={c}
                     inList
-                    provider={providerByChannel[c.name]}
+                    info={infoByChannel[c.name]}
                   />
                 ))}
               </div>
@@ -401,7 +402,7 @@ export function LiveTvContent({
                 selectMode={selectMode}
                 selected={selectedIds.has(c.id)}
                 onToggleSelect={() => toggleSelect(c.id)}
-                provider={providerByChannel[c.name]}
+                info={infoByChannel[c.name]}
               />
             ))}
           </div>
