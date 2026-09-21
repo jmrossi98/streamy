@@ -17,7 +17,7 @@
  * so a normal request costs one round trip and an expiry costs two.
  */
 
-import { looksLikeNetworkFeed } from "@/lib/liveTimeline";
+import { looksLikeNetworkFeed, looksLikePlaceholder } from "@/lib/liveTimeline";
 
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
@@ -59,11 +59,14 @@ export type DispatcharrStream = {
    * Auto-Match.
    */
   tvgId: string | null;
+  /** Which configured provider ("strong8k", "trex") this stream is from. */
+  provider: string | null;
 };
 
 type RawStream = {
   id?: number;
   name?: string;
+  m3u_account?: number;
   logo_url?: string | null;
   channel_group?: number | null;
   stream_chno?: number | null;
@@ -137,7 +140,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
-function toStream(s: RawStream): DispatcharrStream | null {
+function toStream(s: RawStream, accountNameById?: Map<number, string>): DispatcharrStream | null {
   if (typeof s.id !== "number" || !s.name) return null;
   return {
     id: s.id,
@@ -147,7 +150,21 @@ function toStream(s: RawStream): DispatcharrStream | null {
     suggestedNumber: typeof s.stream_chno === "number" ? s.stream_chno : null,
     stale: !!s.is_stale,
     tvgId: s.tvg_id || null,
+    provider: typeof s.m3u_account === "number" ? (accountNameById?.get(s.m3u_account) ?? null) : null,
   };
+}
+
+/** Every configured M3U provider's own name, keyed by its Dispatcharr id. */
+async function getAccountNameById(): Promise<Map<number, string>> {
+  const data = await api<{ results?: { id?: number; name?: string }[] } | { id?: number; name?: string }[]>(
+    `/api/m3u/accounts/`
+  );
+  const map = new Map<number, string>();
+  if (!data) return map;
+  for (const a of Array.isArray(data) ? data : (data.results ?? [])) {
+    if (typeof a.id === "number" && a.name) map.set(a.id, a.name);
+  }
+  return map;
 }
 
 export type StreamPage = {
@@ -191,6 +208,10 @@ export async function listStreams(opts: {
   const page = Math.max(1, opts.page ?? 1);
   const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 50));
   const q = opts.search?.trim();
+  // Fetched alongside the search itself either way, not just when it turns
+  // out to be needed -- both branches below map every returned row through
+  // toStream(), which wants this to resolve `provider`.
+  const accountNameById = await getAccountNameById();
 
   if (opts.networksOnly) {
     const params = new URLSearchParams({ page: "1", page_size: String(FULL_CATALOGUE_PAGE_SIZE) });
@@ -203,8 +224,11 @@ export async function listStreams(opts: {
 
     const raw = Array.isArray(data) ? data : (data.results ?? []);
     const filtered = raw
-      .map(toStream)
-      .filter((s): s is DispatcharrStream => s != null && looksLikeNetworkFeed(s.name));
+      .map((s) => toStream(s, accountNameById))
+      .filter(
+        (s): s is DispatcharrStream =>
+          s != null && !looksLikePlaceholder(s.name) && looksLikeNetworkFeed(s.name)
+      );
 
     const start = (page - 1) * pageSize;
     return { items: filtered.slice(start, start + pageSize), total: filtered.length };
@@ -222,9 +246,17 @@ export async function listStreams(opts: {
   if (!data) return null;
 
   const raw = Array.isArray(data) ? data : (data.results ?? []);
+  // `total` stays Dispatcharr's own count, deliberately. This branch
+  // paginates server-side, so placeholders can only be dropped from the page
+  // actually in hand -- a page of 50 may render 48. Correcting the total
+  // would mean fetching the whole matching set on every keystroke (what the
+  // networksOnly branch above does, and why it has to) for a cosmetic
+  // difference of a row or two.
   const total = Array.isArray(data) ? raw.length : (data.count ?? raw.length);
   return {
-    items: raw.map(toStream).filter((s): s is DispatcharrStream => s != null),
+    items: raw
+      .map((s) => toStream(s, accountNameById))
+      .filter((s): s is DispatcharrStream => s != null && !looksLikePlaceholder(s.name)),
     total,
   };
 }
@@ -333,6 +365,44 @@ export async function listChannels(): Promise<DispatcharrChannel[] | null> {
 export async function findChannelIdByName(name: string): Promise<number | null> {
   const channels = await listChannels();
   return channels?.find((c) => c.name === name)?.id ?? null;
+}
+
+/**
+ * Every published channel's provider name ("strong8k", "trex"), keyed by
+ * channel name -- same key convention as getMappedChannelPrograms and
+ * findChannelIdByName, for the same reason: Jellyfin's Live TV API (what
+ * every channel-rendering caller actually has) only ever knows a channel by
+ * name, never Dispatcharr's id.
+ *
+ * Two providers can carry the same-looking content at very different
+ * reliability (confirmed live 2026-09-20/21: strong8k got Cloudflare-
+ * blocked twice in one evening, trex stayed up throughout), so which one a
+ * channel is actually on is worth showing, not just implied by its name.
+ *
+ * `include_streams=true` gets each channel's stream(s) inline in the same
+ * request rather than N follow-up calls per channel -- confirmed live this
+ * parameter exists and returns full stream objects (each carrying its own
+ * `m3u_account` id), not just the id list `listChannels()` reads.
+ * Multi-stream channels (a primary plus manually-added fallbacks) take the
+ * first stream's provider, since that is Dispatcharr's own default pick.
+ */
+export async function getChannelProviders(): Promise<Map<string, string> | null> {
+  const [channelsData, accountNameById] = await Promise.all([
+    api<
+      | { results?: { name?: string; streams?: { m3u_account?: number }[] }[] }
+      | { name?: string; streams?: { m3u_account?: number }[] }[]
+    >(`/api/channels/channels/?page_size=1000&include_streams=true`),
+    getAccountNameById(),
+  ]);
+  if (!channelsData) return null;
+
+  const result = new Map<string, string>();
+  for (const c of Array.isArray(channelsData) ? channelsData : (channelsData.results ?? [])) {
+    const accountId = c.streams?.[0]?.m3u_account;
+    const providerName = typeof accountId === "number" ? accountNameById.get(accountId) : undefined;
+    if (c.name && providerName) result.set(c.name, providerName);
+  }
+  return result;
 }
 
 export type ChannelProgram = {

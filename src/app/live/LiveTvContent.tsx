@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
+import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import { ChannelCard } from "@/components/ChannelCard";
 import { StreamBrowser } from "@/components/StreamBrowser";
 import { SportsSchedule } from "@/components/SportsSchedule";
@@ -23,6 +24,8 @@ type Props = {
   hiddenChannels: HiddenEntry[];
   /** Gates the stream browser: adding a channel publishes it to everyone. */
   isAdmin: boolean;
+  /** Channel name -> provider name ("strong8k", "trex"), best effort. */
+  providerByChannel: Record<string, string>;
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
@@ -36,7 +39,7 @@ function numberValue(number: string | null): number {
 }
 
 export function LiveTvContent({
-  envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin,
+  envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, providerByChannel,
 }: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
@@ -52,6 +55,7 @@ export function LiveTvContent({
   const [hiding, setHiding] = useState(false);
 
   const hiddenIds = useMemo(() => new Set(hidden.map((h) => h.channelId)), [hidden]);
+  const listed = useMemo(() => new Set(myListIds), [myListIds]);
   const channelById = useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels]);
 
   // Computed once over the whole lineup rather than per render of a card:
@@ -74,7 +78,11 @@ export function LiveTvContent({
   }, [categoryById]);
 
   const sorted = useMemo(() => {
-    const arr = [...channels];
+    // Placeholders filtered here rather than only in the stream browser: one
+    // promoted before that filter existed is still in the lineup, and a
+    // channel named "#####" is no more watchable from the grid than it was
+    // from the catalogue.
+    const arr = channels.filter((c) => !looksLikePlaceholder(c.name));
     if (sortBy === "number") {
       arr.sort((a, b) => {
         const an = numberValue(a.number);
@@ -90,14 +98,18 @@ export function LiveTvContent({
     return arr;
   }, [channels, sortBy]);
 
+  // Excludes My List, not just hidden -- a starred channel already has its
+  // own shelf above (My Stations), and showing it a second time down here
+  // was the literal meaning of "duplicated on the page", reported live.
   const unfilteredVisible = useMemo(
     () =>
       sorted.filter(
         (c) =>
           !hiddenIds.has(c.id) &&
+          !listed.has(c.id) &&
           (category === "all" || categoryById.get(c.id) === category)
       ),
-    [sorted, hiddenIds, category, categoryById]
+    [sorted, hiddenIds, listed, category, categoryById]
   );
 
   const filtered = useMemo(() => {
@@ -113,12 +125,9 @@ export function LiveTvContent({
     );
   }, [unfilteredVisible, query]);
 
-  const listed = new Set(myListIds);
-  // Pinned above the rest, and excluded from search so it stays a stable
-  // shelf rather than disappearing the moment someone types. Left out of
-  // bulk-hide on purpose -- favorites are managed with the star button, and
-  // mixing the two actions on the same shelf invites hiding something you
-  // just starred.
+  // Pinned above the rest. Left out of bulk-hide on purpose -- favorites are
+  // managed with the star button, and mixing the two actions on the same
+  // shelf invites hiding something you just starred.
   const mine = channels.filter((c) => listed.has(c.id) && !hiddenIds.has(c.id));
   const visible = filtered.slice(0, shown);
 
@@ -227,24 +236,28 @@ export function LiveTvContent({
 
       {channels.length > 0 && !empty && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          {channels.length > PAGE_SIZE && (
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                // Reset paging here rather than in an effect: it is a consequence
-                // of the edit, not of the render. Without it the reveal count from
-                // the previous search carries over and results look arbitrarily
-                // long.
-                setShown(PAGE_SIZE);
-              }}
-              placeholder="Search channels…"
-              // text-base on mobile: iOS zooms the viewport on a focused input
-              // under 16px and there is no way back out without pinching.
-              className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
-            />
-          )}
+          {/* Always shown, not gated on a channel count worth paging through --
+              that gate hid search entirely on a lineup smaller than PAGE_SIZE
+              (60), which a curated promoted-channel lineup usually is. Finding
+              a specific channel by name is the same need at 23 channels as at
+              600; only *paging* through the grid is what actually needs a
+              lineup that large. */}
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // Reset paging here rather than in an effect: it is a consequence
+              // of the edit, not of the render. Without it the reveal count from
+              // the previous search carries over and results look arbitrarily
+              // long.
+              setShown(PAGE_SIZE);
+            }}
+            placeholder="Search channels…"
+            // text-base on mobile: iOS zooms the viewport on a focused input
+            // under 16px and there is no way back out without pinching.
+            className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
+          />
 
           {availableCategories.length > 1 && (
             <select
@@ -354,7 +367,12 @@ export function LiveTvContent({
               <h2 className="mb-3 font-display text-xl font-bold text-white">My Stations</h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {mine.map((c) => (
-                  <ChannelCard key={`mine:${c.id}`} channel={c} inList />
+                  <ChannelCard
+                    key={`mine:${c.id}`}
+                    channel={c}
+                    inList
+                    provider={providerByChannel[c.name]}
+                  />
                 ))}
               </div>
             </section>
@@ -383,6 +401,7 @@ export function LiveTvContent({
                 selectMode={selectMode}
                 selected={selectedIds.has(c.id)}
                 onToggleSelect={() => toggleSelect(c.id)}
+                provider={providerByChannel[c.name]}
               />
             ))}
           </div>

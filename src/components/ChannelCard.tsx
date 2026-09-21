@@ -74,9 +74,11 @@ type Props = {
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
+  /** Which configured provider ("strong8k", "trex") this channel is on, when known. */
+  provider?: string;
 };
 
-export function ChannelCard({ channel, inList, selectMode, selected, onToggleSelect }: Props) {
+export function ChannelCard({ channel, inList, selectMode, selected, onToggleSelect, provider }: Props) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -170,6 +172,13 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
             </span>
           )}
         </div>
+
+        {/* Which provider this channel is actually on -- worth knowing once
+            a lineup spans more than one (strong8k, trex), since the two are
+            not equally reliable (see the group-filtering work that split
+            them by content). Absent, not "Unknown", when the join against
+            Dispatcharr's own channel list failed or found nothing. */}
+        {provider && <p className="truncate text-[11px] text-white/35">{provider}</p>}
 
         {/* The wrapper goes too when there is nothing in it, otherwise every
             card keeps a margin reserved for absent guide lines and the row

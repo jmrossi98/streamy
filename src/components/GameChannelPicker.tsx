@@ -11,6 +11,8 @@ type Props = {
   channelConfirmed: boolean;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
   candidates: LiveChannel[];
+  /** Channel name -> provider name ("strong8k", "trex"), best effort. */
+  providerByChannel: Record<string, string>;
 };
 
 /**
@@ -31,7 +33,7 @@ type Props = {
  * and Jellyfin tune and starts a fresh one on a change -- nothing here has to
  * reimplement that.
  */
-export function GameChannelPicker({ channel, channelConfirmed, candidates }: Props) {
+export function GameChannelPicker({ channel, channelConfirmed, candidates, providerByChannel }: Props) {
   const options = channel ? [channel, ...candidates] : candidates;
   const [selectedId, setSelectedId] = useState<string | null>(options[0]?.id ?? null);
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
@@ -83,7 +85,12 @@ export function GameChannelPicker({ channel, channelConfirmed, candidates }: Pro
                     {c.number && (
                       <span className="shrink-0 tabular-nums text-xs text-white/40">{c.number}</span>
                     )}
-                    <span className="min-w-0 flex-1 truncate text-sm text-white/90">{c.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-white/90">
+                      {c.name}
+                      {providerByChannel[c.name] && (
+                        <span className="ml-2 text-xs text-white/35">{providerByChannel[c.name]}</span>
+                      )}
+                    </span>
                     {isBestMatch && channelConfirmed && (
                       <span
                         className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400"

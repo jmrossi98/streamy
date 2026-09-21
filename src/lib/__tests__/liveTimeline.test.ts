@@ -4,6 +4,7 @@ import {
   liveSeekTarget,
   looksLikeEventFeed,
   looksLikeNetworkFeed,
+  looksLikePlaceholder,
   findCandidateChannels,
   findChannelForFixture,
   findEpgConfirmedChannel,
@@ -110,6 +111,32 @@ describe("liveSeekTarget", () => {
   });
 });
 
+describe("looksLikePlaceholder", () => {
+  it("flags the provider's own padding conventions", () => {
+    // The reported case: repeated hashes standing in for a reserved slot.
+    expect(looksLikePlaceholder("#####")).toBe(true);
+    expect(looksLikePlaceholder("US| ###### ᴴᴰ")).toBe(true);
+    expect(looksLikePlaceholder("## 24/7 REALITY ##")).toBe(true);
+    expect(looksLikePlaceholder("N/A")).toBe(true);
+    expect(looksLikePlaceholder("UK| RESERVED 12")).toBe(true);
+    expect(looksLikePlaceholder("coming soon")).toBe(true);
+    // Dividers and empties: no letters at all is never a channel name.
+    expect(looksLikePlaceholder("--------")).toBe(true);
+    expect(looksLikePlaceholder("   ")).toBe(true);
+    expect(looksLikePlaceholder("=== 1234 ===")).toBe(true);
+  });
+
+  it("leaves real channel names alone, including a lone hash", () => {
+    expect(looksLikePlaceholder("SP - NHL NETWORK HD")).toBe(false);
+    expect(looksLikePlaceholder("USA - CBS 13 BALTIMORE MD (WJZ)")).toBe(false);
+    expect(looksLikePlaceholder("Channel #5")).toBe(false);
+    // Non-Latin scripts are still letters -- \p{L}, not [A-Za-z], is what
+    // keeps an Arabic or Greek channel name out of the no-letters branch.
+    expect(looksLikePlaceholder("قناة الكأس")).toBe(false);
+    expect(looksLikePlaceholder("ΕΡΤ1 HD")).toBe(false);
+  });
+});
+
 describe("looksLikeEventFeed", () => {
   it("flags the fixture-style names that turned out to be dead", () => {
     // Both real: promoted here, then reported as "won't stream".
@@ -189,6 +216,16 @@ describe("looksLikeNetworkFeed", () => {
     // tests for why that stays narrow.
     expect(looksLikeNetworkFeed("USA - Peacock HD")).toBe(true);
   });
+
+  it("recognises the streaming services that hold whole competitions", () => {
+    // Paramount+ holds the US Champions League rights outright -- matched on
+    // the "+"/"plus", since bare "Paramount" is a studio name on movie
+    // channels that carry no sport at all.
+    expect(looksLikeNetworkFeed("US| PARAMOUNT+ ᴴᴰ")).toBe(true);
+    expect(looksLikeNetworkFeed("US| PARAMOUNT PLUS")).toBe(true);
+    expect(looksLikeNetworkFeed("US| PARAMOUNT MOVIE NETWORK")).toBe(false);
+    expect(looksLikeNetworkFeed("US| F1 TV PRO")).toBe(true);
+  });
 });
 
 describe("findChannelForFixture", () => {
@@ -240,6 +277,23 @@ describe("findCandidateChannels", () => {
     { id: "6", name: "ABC News AU" },
   ];
 
+  it("offers the streamers that actually hold each competition's US rights", () => {
+    // The gap these tags close: a Champions League or Formula 1 fixture had
+    // no candidate at all, even with the channel sitting in the lineup.
+    const streamers = [
+      { id: "20", name: "US| PARAMOUNT+ ᴴᴰ" },
+      { id: "21", name: "US| PEACOCK ᴴᴰ" },
+      { id: "22", name: "USA - ESPN2 HD" },
+      { id: "23", name: "SP - TNT HD" },
+    ];
+    expect(findCandidateChannels({ league: "Champions League" }, streamers).map((c) => c.id)).toContain("20");
+    expect(findCandidateChannels({ league: "Premier League" }, streamers).map((c) => c.id)).toContain("21");
+    expect(findCandidateChannels({ league: "Formula 1" }, streamers).map((c) => c.id)).toContain("22");
+    expect(findCandidateChannels({ league: "La Liga" }, streamers).map((c) => c.id)).toContain("22");
+    // TNT carries NHL in the US and was previously tagged NBA-only.
+    expect(findCandidateChannels({ league: "NHL" }, streamers).map((c) => c.id)).toContain("23");
+  });
+
   it("lists networks tagged for the fixture's league", () => {
     const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
     expect(ids).toContain("3"); // NHL Network
@@ -273,7 +327,10 @@ describe("findCandidateChannels", () => {
   });
 
   it("returns nothing for a league no lineup channel carries", () => {
-    expect(findCandidateChannels({ league: "Formula 1" }, channels)).toEqual([]);
+    // Was "Formula 1" until ESPN picked up its own F1 tag (ESPN holds the US
+    // rights) -- which this fixture list has, via ESPN2. MLS is the league
+    // none of these six carry: it is an Apple exclusive.
+    expect(findCandidateChannels({ league: "MLS" }, channels)).toEqual([]);
   });
 
   describe("market matching", () => {

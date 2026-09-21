@@ -11,6 +11,7 @@ type Stream = {
   groupId: number | null;
   suggestedNumber: number | null;
   stale: boolean;
+  provider: string | null;
 };
 
 /**
@@ -300,6 +301,8 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm text-white/90">{s.name}</p>
                   <p className="text-xs text-white/40">
+                    {s.provider && <span className="text-white/50">{s.provider}</span>}
+                    {s.provider && " · "}
                     {categoryOf.get(s.id)}
                     {/* Dispatcharr's own judgement, surfaced rather than
                         hidden: two of the five already-published channels have

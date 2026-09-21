@@ -84,6 +84,35 @@ export function liveSeekTarget(
 }
 
 /**
+ * Whether a name is a placeholder slot rather than a real channel.
+ *
+ * Providers pad their catalogues with reserved/empty entries -- "#####",
+ * "US| ###### ᴴᴰ", "N/A", a row of dashes -- that carry a stream URL and are
+ * indistinguishable from real channels by every other signal, so they reach
+ * the browser, get promoted by someone who doesn't know better, and produce
+ * exactly the dead channel the event-feed heuristic below exists to avoid.
+ *
+ * Unlike that one, this errs toward *not* flagging: the patterns here are
+ * deliberate provider conventions ("#" repeated is not something a real
+ * channel name contains), so a match is close to certain rather than a
+ * guess, and anything filtered out on this basis disappears from the
+ * catalogue entirely rather than just being badged.
+ */
+export function looksLikePlaceholder(name: string): boolean {
+  const n = name.trim();
+  if (!n) return true;
+  // The convention actually seen here: two or more consecutive hashes. A real
+  // name uses at most one ("Channel #5"), and even that is rare.
+  if (/#{2,}/.test(n)) return true;
+  // The words providers reach for when a slot exists but has nothing in it.
+  if (/\b(n\/?a|placeholder|reserved|tbd|unknown|empty|unused|coming soon)\b/i.test(n)) return true;
+  // No letters at all -- just digits, punctuation or box-drawing filler. A
+  // channel always names something; a divider row does not.
+  if (!/\p{L}/u.test(n)) return true;
+  return false;
+}
+
+/**
  * Whether a provider stream name looks like a one-off event rather than a channel.
  *
  * Providers mix two very different things in one list, and nothing in the API
@@ -151,13 +180,35 @@ export function looksLikeEventFeed(name: string): boolean {
  * `looksLikeNetworkFeed` only needs the pattern half, not the tag.
  */
 const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
-  { pattern: /\bespn\s*(news|u|deportes|\d)?\b/, leagues: ["NFL", "NHL", "NBA", "College Football", "College Basketball", "UFC"] },
+  // La Liga and Formula 1 are both ESPN properties in the US (La Liga on
+  // ESPN+ specifically, F1 on ESPN's linear channels) -- neither was tagged
+  // here, so a La Liga or F1 fixture never offered ESPN as a candidate even
+  // with ESPN channels sitting in the lineup.
+  {
+    pattern: /\bespn\s*(news|u|deportes|\d)?\b/,
+    leagues: ["NFL", "NHL", "NBA", "College Football", "College Basketball", "UFC", "La Liga", "Formula 1"],
+  },
+  // F1 TV is the series' own subscription service -- unlike the ESPN
+  // pattern above it carries nothing else, so it is worth its own entry
+  // rather than a broader "motorsport" match.
+  { pattern: /\bf1\s*tv\b/, leagues: ["Formula 1"] },
   { pattern: /\bnba\s*tv\b/, leagues: ["NBA"] },
   { pattern: /\bnhl\s*network\b/, leagues: ["NHL"] },
   { pattern: /\bnfl\s*(network|redzone)\b/, leagues: ["NFL"] },
   { pattern: /\bmlb\s*network\b/, leagues: [] },
   { pattern: /\bfox\s*sports?\b/, leagues: ["NFL", "College Football", "College Basketball"] },
   { pattern: /\bcbs\s*sports?\b/, leagues: ["NFL", "College Basketball", "Champions League"] },
+  // Paramount+ is CBS's streamer and holds the US Champions League rights
+  // outright -- every match, most of them not on CBS Sports' linear
+  // channels at all, so the cbs pattern above does not cover it. Matched on
+  // the "+"/"plus" specifically: bare "paramount" is a studio name that
+  // turns up on unrelated movie channels.
+  //
+  // No trailing \b after the "+": `+` is not a word character, so between it
+  // and the space that usually follows there is no boundary at all and the
+  // pattern never matched "PARAMOUNT+ HD" -- caught by the test below. The
+  // alternation carries its own boundary only on the spelled-out "plus".
+  { pattern: /\bparamount\s*(?:\+|plus\b)/, leagues: ["Champions League", "NFL"] },
   // Not widened to bare "nbc": every market has its own local NBC affiliate
   // (see the market-matching tests below, "USA - NBC 10 BUFFALO NY (WGRZ)"),
   // and unlike a team-name match, "NBC" alone says nothing about which game a
@@ -169,7 +220,7 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   // NBCUniversal's streamer, carrying most Premier League matches since
   // NBCSN shut down in 2021 -- the games that don't air on NBC/USA Network
   // itself moved here, not to a separate cable channel.
-  { pattern: /\bpeacock\b/, leagues: ["NFL", "Premier League"] },
+  { pattern: /\bpeacock\b/, leagues: ["NFL", "Premier League", "College Football"] },
   { pattern: /\bsky\s*sports?\b/, leagues: ["Premier League", "La Liga", "Champions League"] },
   { pattern: /\bbein\s*sports?\b/, leagues: ["La Liga", "Champions League"] },
   { pattern: /\bdazn\b/, leagues: ["La Liga", "Champions League"] },
@@ -178,7 +229,10 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   // generic "Apple TV" brand, which would false-positive on every unrelated
   // Apple TV+ show and movie channel in the catalogue.
   { pattern: /\bmls\s*season\s*pass\b/, leagues: ["MLS"] },
-  { pattern: /\btnt\b|\btbs\b|\btruTV\b/i, leagues: ["NBA", "College Basketball"] },
+  // NHL added: TNT Sports has carried NHL games in the US since 2021, which
+  // this was still missing -- an NHL fixture would offer NHL Network and
+  // ESPN but never TNT, even though TNT is where a given game often is.
+  { pattern: /\btnt\b|\btbs\b|\btruTV\b/i, leagues: ["NBA", "College Basketball", "NHL"] },
   { pattern: /\bbally\s*sports?\b/, leagues: ["NHL", "NBA"] },
   { pattern: /\bmsg\b|\byes\s*network\b/, leagues: ["NHL", "NBA"] },
   { pattern: /\busa\s*network\b/, leagues: ["Premier League"] },

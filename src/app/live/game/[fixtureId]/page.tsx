@@ -4,7 +4,7 @@ import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
-import { getMappedChannelPrograms } from "@/lib/dispatcharr";
+import { getChannelProviders, getMappedChannelPrograms } from "@/lib/dispatcharr";
 import { findCandidateChannels, findEpgConfirmedChannelNames, resolveChannelForFixture } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -53,6 +53,17 @@ export default async function GamePage({
     if (programs) epgConfirmedNames = findEpgConfirmedChannelNames(fixture, programs);
   } catch (err) {
     console.error("[live/game] EPG match failed:", err);
+  }
+
+  // Same best-effort reasoning as the EPG lookup above -- which provider each
+  // option is on is informational, worth knowing when picking between
+  // several candidates, not worth failing the page over.
+  let providerByChannel: Record<string, string> = {};
+  try {
+    const providers = await getChannelProviders();
+    if (providers) providerByChannel = Object.fromEntries(providers);
+  } catch (err) {
+    console.error("[live/game] getChannelProviders failed:", err);
   }
 
   const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
@@ -124,7 +135,12 @@ export default async function GamePage({
           </p>
         </div>
 
-        <GameChannelPicker channel={channel} channelConfirmed={channelConfirmed} candidates={candidates} />
+        <GameChannelPicker
+          channel={channel}
+          channelConfirmed={channelConfirmed}
+          candidates={candidates}
+          providerByChannel={providerByChannel}
+        />
       </div>
     </div>
   );
