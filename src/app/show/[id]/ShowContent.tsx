@@ -8,6 +8,7 @@ import type { ShowDetail, TVSeason, TVEpisode, TVShow } from "@/lib/tmdb";
 import { Credits } from "@/components/Credits";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
+import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { TVRow } from "@/components/TVRow";
@@ -34,6 +35,7 @@ type ShowContentProps = {
   requestConfigured?: boolean;
   initialRequestStatus?: string | null;
   initialProgress?: number | null;
+  initialRequestDetail?: RequestDetail;
   initialEpisodeStatuses?: Record<number, EpisodeState>;
   initialEpisodeStatusSeason?: number;
   similar?: TVShow[];
@@ -79,6 +81,7 @@ export function ShowContent({
   requestConfigured = false,
   initialRequestStatus = null,
   initialProgress = null,
+  initialRequestDetail = NO_DETAIL,
   initialEpisodeStatuses,
   initialEpisodeStatusSeason,
   similar = [],
@@ -282,7 +285,12 @@ export function ShowContent({
         playLabel={resumePlayLabel}
         playNode={
           showRequestFlow ? (
-            <RequestButton showId={show.id} initialStatus={initialRequestStatus} initialProgress={initialProgress} />
+            <RequestButton
+              showId={show.id}
+              initialStatus={initialRequestStatus}
+              initialProgress={initialProgress}
+              initialDetail={initialRequestDetail}
+            />
           ) : (
             <button
               type="button"

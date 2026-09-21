@@ -8,7 +8,8 @@
 
 import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
-import { expireBlocklist } from "./radarr";
+import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
+import { expireBlocklist, toQueueHealth } from "./radarr";
 import { computeProgress } from "./radarr";
 import { normalizeProtocol, type DownloadProtocol } from "./radarr";
 import { IMPORTING_STATES } from "./radarr";
@@ -191,18 +192,23 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
         sizeleft: number;
         protocol?: string;
         trackedDownloadState?: string;
+        statusMessages?: { messages?: string[] }[];
       }[];
     }>(`/api/v3/queue`);
-    return queue.records.map((r) => ({
-      queueId: r.id,
-      externalId: r.seriesId,
-      episodeId: r.episodeId,
-      title: r.title,
-      progress: computeProgress(r.size, r.sizeleft),
-      protocol: normalizeProtocol(r.protocol),
-      sizeBytes: r.size > 0 ? r.size : null,
-      importing: IMPORTING_STATES.has(r.trackedDownloadState ?? ""),
-    }));
+    return queue.records.map((r) => {
+      const unsafe = classifyBadRelease(r);
+      return {
+        queueId: r.id,
+        externalId: r.seriesId,
+        episodeId: r.episodeId,
+        title: r.title,
+        progress: computeProgress(r.size, r.sizeleft),
+        protocol: normalizeProtocol(r.protocol),
+        sizeBytes: r.size > 0 ? r.size : null,
+        importing: !unsafe && IMPORTING_STATES.has(r.trackedDownloadState ?? ""),
+        ...(unsafe ? { unsafe } : {}),
+      };
+    });
   } catch (err) {
     console.error("[sonarr] getSonarrActiveDownloads failed:", err);
     return [];
@@ -440,16 +446,22 @@ export async function getSonarrDownloadIds(episodeIds: number[]): Promise<string
 }
 
 /** Sonarr twin of expireRadarrBlocklist -- see that function for why this exists. */
-export async function expireSonarrBlocklist(maxAgeHours: number): Promise<number> {
+export async function expireSonarrBlocklist(
+  maxAgeHours: number,
+  keep?: (record: BlocklistRecord) => boolean
+): Promise<number> {
   if (!isSonarrConfigured()) return 0;
-  return expireBlocklist(sonarrFetch, maxAgeHours, "sonarr");
+  return expireBlocklist(sonarrFetch, maxAgeHours, "sonarr", keep);
 }
 
 /** Cancels one specific queued download, leaving the series' other episodes alone. */
-export async function cancelSonarrQueueItem(queueId: number): Promise<boolean> {
+export async function cancelSonarrQueueItem(
+  queueId: number,
+  { blocklist = false }: { blocklist?: boolean } = {}
+): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
-    await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=false`, {
+    await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=${blocklist}`, {
       method: "DELETE",
     });
     return true;
@@ -474,26 +486,20 @@ export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
   try {
     const queue = await sonarrFetch<{
       records: {
+        id: number;
         seriesId: number;
+        episodeId?: number;
         title: string;
         size: number;
         sizeleft: number;
         added?: string;
         errorMessage?: string;
         status?: string;
+        downloadId?: string;
+        statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue`);
-    return queue.records.map((r) => {
-      const added = r.added ? Date.parse(r.added) : Date.now();
-      return {
-        externalId: r.seriesId,
-        title: r.title,
-        errorMessage:
-          r.errorMessage ?? (r.status === "warning" || r.status === "failed" ? r.status : null),
-        ageMinutes: (Date.now() - added) / 60000,
-        hasProgress: r.size > 0 && r.sizeleft < r.size,
-      };
-    });
+    }>(`/api/v3/queue?pageSize=250`);
+    return queue.records.map((r) => toQueueHealth(r, r.seriesId));
   } catch (err) {
     console.error("[sonarr] getSonarrQueueHealth failed:", err);
     return [];

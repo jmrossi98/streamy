@@ -33,6 +33,15 @@ export type DownloadRow = {
    *  moving the file into the library -- see ActiveDownload's own comment.
    *  Only ever true for an active queue entry; absent everywhere else. */
   importing?: boolean;
+  /** Searched and found nothing. Shown as an error, not a spinner -- the two
+   *  used to look the same, so a dead end read as a search still in progress. */
+  noRelease?: boolean;
+  /** Why the finished payload is unusable (e.g. "executable"), while it is
+   *  still in the queue waiting to be removed. Only ever set on a queue entry. */
+  unsafe?: string;
+  /** One line explaining a rejected release: what was removed and what is
+   *  happening next, or why nothing was found. */
+  notice?: string | null;
 };
 
 /**
@@ -278,16 +287,24 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                     )}
                   </span>
                   <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-white/50 tabular-nums">
+                    <span
+                      className={`tabular-nums ${
+                        d.noRelease || d.unsafe ? "font-medium text-netflix-red" : "text-white/50"
+                      }`}
+                    >
                       {d.completed
                         ? "Downloaded"
-                        : d.searching
-                          ? "Searching…"
-                          : d.importing
-                            ? "Importing…"
-                            : d.progress != null
-                              ? `${d.progress}%`
-                              : "metadata…"}
+                        : d.noRelease
+                          ? "No release found"
+                          : d.unsafe
+                            ? "Unsafe release"
+                            : d.searching
+                              ? "Searching…"
+                              : d.importing
+                                ? "Importing…"
+                                : d.progress != null
+                                  ? `${d.progress}%`
+                                  : "metadata…"}
                     </span>
                     <button
                       type="button"
@@ -300,7 +317,12 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                   </div>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  {d.completed ? (
+                  {d.noRelease ? (
+                    // Empty on purpose: there is nothing in flight to show.
+                    null
+                  ) : d.unsafe ? (
+                    <div className="h-full w-full animate-pulse rounded-full bg-netflix-red" />
+                  ) : d.completed ? (
                     <div className="h-full w-full rounded-full bg-netflix-red" />
                   ) : d.importing ? (
                     // A full but pulsing bar, not the same solid fill as
@@ -318,6 +340,15 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                     <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
                   )}
                 </div>
+                {d.notice && (
+                  <p
+                    className={`text-xs ${
+                      d.noRelease || d.unsafe ? "text-netflix-red" : "text-amber-300"
+                    }`}
+                  >
+                    {d.notice}
+                  </p>
+                )}
               </li>
             );
           })}

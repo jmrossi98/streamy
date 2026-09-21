@@ -128,6 +128,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
       requestConfigured={isSonarrConfigured()}
       initialRequestStatus={requestStatus.status}
       initialProgress={requestStatus.progress}
+      initialRequestDetail={requestStatus.detail}
       initialEpisodeStatuses={initialEpisodeStatuses}
       initialEpisodeStatusSeason={initialSeasonNum}
       similar={similar}

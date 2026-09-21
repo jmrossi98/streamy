@@ -5,11 +5,16 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOutIfStaleSession } from "@/lib/staleSession";
+import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
 
 // Actively downloading: refresh often enough that the percentage visibly
 // climbs. Queued/searching: nothing moves second-to-second, so back off.
 const POLL_INTERVAL_DOWNLOADING_MS = 5000;
 const POLL_INTERVAL_QUEUED_MS = 15000;
+// "No release found" is a dead end only until the healer's own periodic
+// re-search turns something up. Without a slow poll here the button stayed on
+// the error until the page was reloaded, even after a download had started.
+const POLL_INTERVAL_NO_RELEASE_MS = 30000;
 
 export type RequestButtonProps = {
   movieId?: string;
@@ -18,6 +23,8 @@ export type RequestButtonProps = {
   initialStatus: string | null;
   /** Server-computed initial download percent (0-100), only meaningful while downloading. */
   initialProgress?: number | null;
+  /** Server-computed context: importing state and any explanatory notice. */
+  initialDetail?: RequestDetail;
 };
 
 const PRIMARY_CLASS =
@@ -31,7 +38,13 @@ const BADGE_CLICKABLE_CLASS = `${BADGE_CLASS} hover:bg-white/20 transition-color
 const DOWNLOADING_BADGE_CLASS =
   "flex w-full flex-col gap-2 rounded-2xl border border-white/30 bg-white/10 px-6 py-4 text-white/90 md:w-auto md:min-w-[220px] md:rounded md:px-6 md:py-3";
 
-export function RequestButton({ movieId, showId, initialStatus, initialProgress = null }: RequestButtonProps) {
+export function RequestButton({
+  movieId,
+  showId,
+  initialStatus,
+  initialProgress = null,
+  initialDetail = NO_DETAIL,
+}: RequestButtonProps) {
   const id = movieId ?? showId ?? "";
   const mediaType = movieId ? "movie" : "show";
   const { data: session, status: authStatus } = useSession();
@@ -39,6 +52,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
 
   const [status, setStatus] = useState<string | null>(initialStatus);
   const [progress, setProgress] = useState<number | null>(initialProgress);
+  const [detail, setDetail] = useState<RequestDetail>(initialDetail);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [managing, setManaging] = useState<"cancel" | "delete" | null>(null);
@@ -63,6 +77,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
     // button idle that whole time reads as an unregistered click and invites
     // a second one. Rolled back below if the request actually fails.
     setStatus("requested");
+    setDetail(NO_DETAIL);
     try {
       const res = await fetch("/api/requests", {
         method: "POST",
@@ -102,6 +117,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
       const prevProgress = progress;
       setStatus(null);
       setProgress(null);
+      setDetail(NO_DETAIL);
       try {
         const res = await fetch("/api/requests/manage", {
           method: "POST",
@@ -132,9 +148,13 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
   // download progress) up. Shared/global status, so this also picks up
   // downloads started by a different user.
   useEffect(() => {
-    if (status !== "requested" && status !== "downloading") return;
+    if (status !== "requested" && status !== "downloading" && status !== "noReleaseFound") return;
     const intervalMs =
-      status === "downloading" ? POLL_INTERVAL_DOWNLOADING_MS : POLL_INTERVAL_QUEUED_MS;
+      status === "downloading"
+        ? POLL_INTERVAL_DOWNLOADING_MS
+        : status === "noReleaseFound"
+          ? POLL_INTERVAL_NO_RELEASE_MS
+          : POLL_INTERVAL_QUEUED_MS;
     const interval = setInterval(() => {
       fetch(`/api/requests/check?tmdbId=${encodeURIComponent(id)}&mediaType=${mediaType}`)
         .then((r) => r.json())
@@ -143,6 +163,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
           // back as null -- reset rather than freezing on the old status.
           setStatus(data.status ?? null);
           setProgress(typeof data.progress === "number" ? data.progress : null);
+          setDetail(data.detail ?? NO_DETAIL);
         })
         .catch(() => {});
     }, intervalMs);
@@ -196,7 +217,7 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
         <div className="flex items-center justify-between gap-3">
           <span
             className="text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal"
-            title="No release met the quality/seeder bar"
+            title={detail.notice ? undefined : "No release met the quality/seeder bar"}
           >
             No release found
           </span>
@@ -211,6 +232,13 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
             </button>
           )}
         </div>
+        {/* Said outright rather than left for the viewer to work out -- an
+            unexplained dead end reads as a broken button. */}
+        {detail.notice && (
+          <p className="text-xs normal-case tracking-normal text-netflix-red" role="alert">
+            {detail.notice}
+          </p>
+        )}
       </div>
     );
   }
@@ -222,7 +250,9 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
           <span className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal">
             <span className="h-4 w-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin" />
             {status === "downloading"
-              ? `Downloading${typeof progress === "number" ? ` — ${progress}%` : "…"}`
+              ? detail.importing
+                ? "Importing…"
+                : `Downloading${typeof progress === "number" ? ` — ${progress}%` : "…"}`
               : "Queued — searching…"}
           </span>
           {authStatus === "authenticated" && (
@@ -239,10 +269,20 @@ export function RequestButton({ movieId, showId, initialStatus, initialProgress 
         {status === "downloading" && (
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
             <div
-              className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
-              style={{ width: `${progress ?? 0}%` }}
+              // A full bar that pulses while importing: the transfer really is
+              // done, but a static 100% next to a label that still reads as in
+              // progress looks stalled.
+              className={`h-full rounded-full bg-netflix-red transition-[width] duration-500 ${
+                detail.importing ? "animate-pulse" : ""
+              }`}
+              style={{ width: `${detail.importing ? 100 : (progress ?? 0)}%` }}
             />
           </div>
+        )}
+        {detail.notice && (
+          <p className="text-xs normal-case tracking-normal text-amber-300" role="status">
+            {detail.notice}
+          </p>
         )}
         {error && <p className="text-xs normal-case tracking-normal text-netflix-red">Couldn&apos;t cancel — try again</p>}
       </div>
