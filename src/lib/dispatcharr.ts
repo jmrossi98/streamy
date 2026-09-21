@@ -51,6 +51,14 @@ export type DispatcharrStream = {
    * them is how "live TV is broken" gets reported when only one channel is.
    */
   stale: boolean;
+  /**
+   * The provider's own XMLTV channel id for this stream ("NBCSportsWashington.us"),
+   * when it supplies one -- confirmed present on both configured providers here.
+   * What promoteStreamToChannel uses to resolve EPG automatically; see its own
+   * comment for why this is worth doing over Dispatcharr's fuzzy name-based
+   * Auto-Match.
+   */
+  tvgId: string | null;
 };
 
 type RawStream = {
@@ -60,6 +68,7 @@ type RawStream = {
   channel_group?: number | null;
   stream_chno?: number | null;
   is_stale?: boolean;
+  tvg_id?: string | null;
 };
 
 /** Cached access token. Dispatcharr's JWT is short-lived; 401 means refetch. */
@@ -137,6 +146,7 @@ function toStream(s: RawStream): DispatcharrStream | null {
     groupId: typeof s.channel_group === "number" ? s.channel_group : null,
     suggestedNumber: typeof s.stream_chno === "number" ? s.stream_chno : null,
     stale: !!s.is_stale,
+    tvgId: s.tvg_id || null,
   };
 }
 
@@ -427,6 +437,36 @@ export async function setChannelLogo(channelId: number, logoId: number): Promise
 }
 
 /**
+ * Dispatcharr's own EPGData row id for a provider's XMLTV channel id
+ * ("NBCSportsWashington.us"), across every configured EPG source.
+ *
+ * The alternative -- Dispatcharr's fuzzy name-matching "Auto-Match" -- misses
+ * real matches constantly: confirmed live against this exact catalogue that
+ * "SP - NHL NETWORK HD" and "SP - NBA TV HD" both had exact EPGData rows
+ * (via their stream's own tvg_id) that Auto-Match, bulk or per-channel,
+ * failed to find. tvg_id is an exact identifier the provider already
+ * supplies; there is no guessing involved once it's known.
+ *
+ * Fetches the whole table rather than filtering server-side: confirmed live
+ * that `/api/epg/epgdata/`'s own query params (page_size included) are
+ * ignored and it always returns everything regardless, the same undocumented
+ * behaviour already known from `/api/epg/programs/`'s epg_data filter (see
+ * getMappedChannelPrograms). 8,415 rows measured on this catalogue -- cheap
+ * enough for the one-off cost of a promote, not something to cache, since a
+ * newly-added EPG source's rows need to be visible on the very next promote
+ * rather than behind a stale cache.
+ */
+async function findEpgDataIdByTvgId(tvgId: string): Promise<number | null> {
+  const data = await api<{ results?: { id?: number; tvg_id?: string }[] } | { id?: number; tvg_id?: string }[]>(
+    `/api/epg/epgdata/`
+  );
+  if (!data) return null;
+  const rows = Array.isArray(data) ? data : (data.results ?? []);
+  const match = rows.find((r) => r.tvg_id === tvgId);
+  return typeof match?.id === "number" ? match.id : null;
+}
+
+/**
  * Promotes a stream into the published lineup.
  *
  * `name` is the only field Dispatcharr requires. The channel number is chosen
@@ -459,6 +499,17 @@ export async function promoteStreamToChannel(input: {
   if (input.logoUrl) {
     const logoId = await ensureLogo(input.name, input.logoUrl);
     if (logoId != null) body.logo_id = logoId;
+  }
+
+  // EPG, resolved from the stream's own tvg_id rather than left to
+  // Dispatcharr's fuzzy Auto-Match -- see findEpgDataIdByTvgId's own comment
+  // for why that misses real matches this doesn't. Best effort, same
+  // reasoning as the logo above: a channel that lands with no programme
+  // guide is a lesser problem than a promote failing outright over it.
+  const stream = await getStream(input.streamId);
+  if (stream?.tvgId) {
+    const epgDataId = await findEpgDataIdByTvgId(stream.tvgId);
+    if (epgDataId != null) body.epg_data_id = epgDataId;
   }
 
   const created = await api<{ id?: number }>(`/api/channels/channels/`, {
