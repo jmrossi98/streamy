@@ -22,10 +22,9 @@ import { runSecurityChecks } from "@/lib/securityChecks";
 import { SecurityPanel } from "@/components/SecurityPanel";
 import { ServicesPanel } from "@/components/ServicesPanel";
 import { SpendPanel } from "@/components/SpendPanel";
-import { RenewalsPanel } from "@/components/RenewalsPanel";
-import { computeTotals } from "@/lib/spendRules";
+import { computeTotals, daysUntil } from "@/lib/spendRules";
 import { awsSpend, openRouterCredits } from "@/lib/spend";
-import { getAutomaticRenewals, manualRenewals, sortRenewals } from "@/lib/renewals";
+import { getAutomaticRenewals } from "@/lib/renewals";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
 import { EpgBackfillButton } from "@/components/EpgBackfillButton";
@@ -172,9 +171,6 @@ export default async function AdminFeaturesPage() {
     else meteredActuals[sub.name] = null;
   }
 
-  // The probed dates plus the typed-in ones, as one list.
-  const renewals = sortRenewals([...autoRenewals, ...manualRenewals(subscriptions)]);
-
   const spendTotals = computeTotals(subscriptions, meteredActuals);
   const spendRows = subscriptions.map((sub) => ({
     id: sub.id,
@@ -187,6 +183,9 @@ export default async function AdminFeaturesPage() {
     active: sub.active,
     actual: meteredActuals[sub.name] ?? null,
     renewsAt: sub.renewsAt?.toISOString() ?? null,
+    // Computed here rather than in the panel so the row carries its own
+    // expiry, which is what let the separate renewals list go away.
+    daysLeft: sub.renewsAt ? daysUntil(sub.renewsAt.toISOString()) : null,
   }));
 
   // Straight from gamarr's own downloads/wishlist, not the deduped public
@@ -408,12 +407,12 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <div className="space-y-4">
-            <RenewalsPanel renewals={renewals} />
             <SpendPanel
               rows={spendRows}
               totals={spendTotals}
               aws={aws}
               openRouter={openRouter}
+              autoRenewals={autoRenewals}
             />
           </div>
         </div>

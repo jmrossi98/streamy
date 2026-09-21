@@ -7,19 +7,24 @@
  * IPTV subscriptions running out looks like live TV being broken; a domain
  * lapsing looks like the whole site being down.
  *
- * Three of the four can be asked directly, so they are, and only the
- * remainder is typed in by hand:
+ * This module covers only the three that can be asked directly:
  *
  *  - IPTV providers report exp_date through their Xtream panel. Asked on
  *    mediabox (credentials are already there, and providers are only ever
  *    contacted over the VPN) and read here from the published snapshot.
  *  - The TLS certificate carries its own notAfter; a socket answers it.
  *  - Domain registration expiry is public in RDAP.
- *  - Everything else comes off Subscription.renewsAt.
+ *
+ * A typed-in subscription's own renewsAt is deliberately NOT turned into a
+ * Renewal here. It used to be, which meant the same usenet block appeared
+ * twice in the admin page -- once as a date in the renewals list and once as
+ * a price in the spend list. It now carries its due date on its own spend
+ * row; see SpendPanel.
  */
 
 import { connect } from "node:tls";
 import { cached } from "./ttlCache";
+import { daysUntil } from "./spendRules";
 
 const PROBE_TIMEOUT_MS = 8_000;
 
@@ -40,10 +45,6 @@ export type Renewal = {
   /** Set when this one couldn't be read, so the row says so instead of vanishing. */
   problem?: string;
 };
-
-function daysUntil(iso: string): number {
-  return Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000);
-}
 
 /**
  * Subscriptions read off the IPTV providers themselves.
@@ -220,23 +221,6 @@ async function domainRenewal(): Promise<Renewal[]> {
  * Passed in rather than queried so this module stays free of the database
  * and remains testable without one.
  */
-export function manualRenewals(
-  subscriptions: { name: string; renewsAt: Date | null; active: boolean }[]
-): Renewal[] {
-  return subscriptions
-    .filter((s) => s.active && s.renewsAt)
-    .map((s) => {
-      const expires = s.renewsAt!.toISOString();
-      return {
-        name: s.name,
-        source: "manual" as const,
-        expiresUtc: expires,
-        daysLeft: daysUntil(expires),
-        detail: "",
-      };
-    });
-}
-
 /**
  * Everything that can be asked, soonest first.
  *
