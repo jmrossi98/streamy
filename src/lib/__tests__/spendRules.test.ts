@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { computeTotals, describeCost, monthlyEquivalent } from "../spendRules";
+import {
+  byDueSoonest,
+  computeTotals,
+  daysUntil,
+  describeCost,
+  describeDue,
+  dueUrgencyClass,
+  monthlyEquivalent,
+} from "../spendRules";
 
 const sub = (name: string, cost: number, cadence: string, active = true) => ({
   name, cost, cadence, active,
@@ -82,5 +90,74 @@ describe("describeCost", () => {
 
   it("shows a monthly price plainly", () => {
     expect(describeCost(8.99, "monthly")).toBe("$8.99/mo");
+  });
+});
+
+describe("daysUntil", () => {
+  it("counts whole days forward", () => {
+    // Half a day past the mark, so the floor is 10 however many milliseconds
+    // pass before daysUntil reads the clock. An exact multiple of 86_400_000
+    // races the two Date.now() calls and lands on 9 or 10 by machine speed.
+    const target = new Date(Date.now() + 10.5 * 86_400_000).toISOString();
+    expect(daysUntil(target)).toBe(10);
+  });
+
+  it("goes negative once the date has passed", () => {
+    const target = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    expect(daysUntil(target)).toBeLessThan(0);
+  });
+});
+
+describe("describeDue", () => {
+  it("names the near dates rather than counting them", () => {
+    expect(describeDue(0)).toBe("today");
+    expect(describeDue(1)).toBe("tomorrow");
+  });
+
+  it("counts forward in days beyond that", () => {
+    expect(describeDue(24)).toBe("in 24d");
+  });
+
+  it("says how far overdue, not how negative", () => {
+    expect(describeDue(-3)).toBe("3d overdue");
+  });
+
+  it("distinguishes no date from an unreadable one", () => {
+    expect(describeDue(null)).toBe("no date");
+    expect(describeDue(null, "RDAP timed out")).toBe("unknown");
+    // A problem wins even when a stale number is still on the row.
+    expect(describeDue(12, "RDAP timed out")).toBe("unknown");
+  });
+});
+
+describe("dueUrgencyClass", () => {
+  it("escalates as the date approaches", () => {
+    expect(dueUrgencyClass(-1)).toContain("red");
+    expect(dueUrgencyClass(3)).toContain("amber-300");
+    expect(dueUrgencyClass(14)).toContain("amber-200");
+    expect(dueUrgencyClass(90)).toContain("white");
+  });
+
+  it("does not alarm about a row with no date", () => {
+    expect(dueUrgencyClass(null)).toContain("white");
+  });
+});
+
+describe("byDueSoonest", () => {
+  it("puts the soonest first", () => {
+    const sorted = [{ daysLeft: 30 }, { daysLeft: 2 }, { daysLeft: 9 }].sort(byDueSoonest);
+    expect(sorted.map((r) => r.daysLeft)).toEqual([2, 9, 30]);
+  });
+
+  it("keeps overdue rows at the very top", () => {
+    const sorted = [{ daysLeft: 1 }, { daysLeft: -5 }].sort(byDueSoonest);
+    expect(sorted[0].daysLeft).toBe(-5);
+  });
+
+  it("sinks undated rows rather than treating them as urgent", () => {
+    // Both spellings of "no date": a probed renewal sets null, a spend row
+    // simply omits the field.
+    const sorted = [{ daysLeft: null }, {}, { daysLeft: 40 }].sort(byDueSoonest);
+    expect(sorted[0].daysLeft).toBe(40);
   });
 });

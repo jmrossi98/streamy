@@ -4,11 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AWS_SPEND_PROBLEMS,
+  byDueSoonest,
   describeCost,
+  describeDue,
+  dueUrgencyClass,
   formatUsd,
   type AwsSpend,
   type SpendTotals,
 } from "@/lib/spendRules";
+// Type-only: renewals.ts opens a TLS socket and must not reach the browser.
+import type { Renewal } from "@/lib/renewals";
 
 export type SpendRow = {
   id: string;
@@ -23,6 +28,8 @@ export type SpendRow = {
   actual?: number | null;
   /** ISO date, for the ones nothing can be asked automatically. */
   renewsAt?: string | null;
+  /** Whole days until renewsAt; null when no date is set. */
+  daysLeft?: number | null;
 };
 
 type Props = {
@@ -30,6 +37,8 @@ type Props = {
   totals: SpendTotals;
   aws: AwsSpend;
   openRouter: { used: number; limit: number | null } | null;
+  /** The probed expiries -- IPTV, the cert, the domain. Read-only. */
+  autoRenewals: Renewal[];
 };
 
 const CADENCES = ["monthly", "yearly", "metered", "free"];
@@ -48,8 +57,16 @@ const INPUT_CLASS =
  * The list is hand-maintained because nothing can discover it. There is no API
  * for "what has this person signed up for" -- which is exactly why the panel
  * is needed at all.
+ *
+ * Renewals used to be a panel of their own directly above this one, which
+ * meant a subscription with a date on it was printed twice: once as "in 24d"
+ * up there and once as "$12/mo" down here, with an editable date field that
+ * silently drove the other list. Cost and expiry are two facts about one
+ * thing, so they now share a row. The three probed expiries (IPTV, the cert,
+ * the domain) have no price and nothing to edit, so they sit underneath in
+ * the same list rather than in a separate card.
  */
-export function SpendPanel({ rows, totals, aws, openRouter }: Props) {
+export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Props) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -114,7 +131,10 @@ export function SpendPanel({ rows, totals, aws, openRouter }: Props) {
     }
   }
 
-  const active = rows.filter((r) => r.active);
+  // Soonest first, so the list answers "is anything about to lapse" by being
+  // read from the top. Cancelled rows keep their own order at the bottom --
+  // they're kept for the record, and nothing about them is due.
+  const active = rows.filter((r) => r.active).sort(byDueSoonest);
   const cancelled = rows.filter((r) => !r.active);
 
   return (
@@ -193,7 +213,7 @@ export function SpendPanel({ rows, totals, aws, openRouter }: Props) {
 
       <div className="rounded-lg border border-white/10 bg-netflix-dark/60">
         <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
-          <h4 className="text-sm font-semibold text-white">Subscriptions</h4>
+          <h4 className="text-sm font-semibold text-white">Subscriptions &amp; renewals</h4>
           <button
             type="button"
             onClick={() => setAdding((v) => !v)}
@@ -290,6 +310,17 @@ export function SpendPanel({ rows, totals, aws, openRouter }: Props) {
                     </p>
                   )}
                 </div>
+                {/* The renewal, on the same row as the price -- this is what
+                    the separate Renewals panel used to say about this exact
+                    subscription. Only shown once a date is set; an undated
+                    row would otherwise print a permanent grey "no date". */}
+                {row.active && typeof row.daysLeft === "number" && (
+                  <div className="shrink-0 w-20 text-right">
+                    <p className={`text-sm tabular-nums ${dueUrgencyClass(row.daysLeft)}`}>
+                      {describeDue(row.daysLeft)}
+                    </p>
+                  </div>
+                )}
                 {/* Editable in place: a renewal date is the one field on a
                     row that goes stale by itself, so correcting it shouldn't
                     mean re-entering the subscription. */}
@@ -310,6 +341,55 @@ export function SpendPanel({ rows, totals, aws, openRouter }: Props) {
                 >
                   {row.active ? "Cancel" : "Restore"}
                 </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* The three that answer for themselves. No price and nothing to edit,
+            so they're a plain read-only tail on the same list rather than the
+            separate card they used to live in -- "what expires next" and "what
+            do I pay" are the same glance. */}
+        {autoRenewals.length > 0 && (
+          <ul className="divide-y divide-white/5 border-t border-white/10">
+            {autoRenewals.map((r) => (
+              <li
+                key={`${r.source}:${r.name}`}
+                className="flex items-center gap-3 px-4 py-2.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="truncate text-sm text-white/90">{r.name}</span>
+                    <span className="rounded bg-white/10 px-1.5 py-0.5 text-[11px] text-white/50">
+                      {r.source}
+                    </span>
+                  </div>
+                  {(r.detail || r.problem) && (
+                    <p
+                      className={`truncate text-xs ${
+                        r.problem ? "text-amber-200/70" : "text-white/40"
+                      }`}
+                    >
+                      {r.problem || r.detail}
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0 text-right">
+                  {r.expiresUtc && (
+                    <p className="text-xs tabular-nums text-white/35">
+                      {new Date(r.expiresUtc).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0 w-20 text-right">
+                  <p className={`text-sm tabular-nums ${dueUrgencyClass(r.daysLeft)}`}>
+                    {describeDue(r.daysLeft, r.problem)}
+                  </p>
+                </div>
               </li>
             ))}
           </ul>

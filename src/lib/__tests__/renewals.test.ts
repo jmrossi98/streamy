@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { manualRenewals, sortRenewals, type Renewal } from "../renewals";
+import { sortRenewals, type Renewal } from "../renewals";
 
 function row(partial: Partial<Renewal>): Renewal {
   return {
@@ -11,44 +11,6 @@ function row(partial: Partial<Renewal>): Renewal {
     ...partial,
   };
 }
-
-describe("manualRenewals", () => {
-  it("ignores rows with no date, which is most of them", () => {
-    expect(
-      manualRenewals([{ name: "Plex", renewsAt: null, active: true }])
-    ).toEqual([]);
-  });
-
-  it("ignores cancelled rows", () => {
-    expect(
-      manualRenewals([
-        { name: "Old usenet block", renewsAt: new Date("2027-01-01"), active: false },
-      ])
-    ).toEqual([]);
-  });
-
-  it("counts days from a stored date", () => {
-    // Half a day past the mark, so the floor is 10 however many milliseconds
-    // pass between building the date and manualRenewals reading the clock.
-    // An exact multiple of 86_400_000 races those two Date.now() calls and
-    // lands on 9 or 10 depending on how fast the machine is.
-    const in10AndAHalfDays = new Date(Date.now() + 10.5 * 86_400_000);
-    const [r] = manualRenewals([
-      { name: "Usenet block", renewsAt: in10AndAHalfDays, active: true },
-    ]);
-    expect(r.name).toBe("Usenet block");
-    expect(r.source).toBe("manual");
-    expect(r.daysLeft).toBe(10); // floor of 10.5 whole days
-  });
-
-  it("reports a lapsed date as negative rather than dropping it", () => {
-    const yesterday = new Date(Date.now() - 2 * 86_400_000);
-    const [r] = manualRenewals([
-      { name: "Lapsed thing", renewsAt: yesterday, active: true },
-    ]);
-    expect(r.daysLeft).toBeLessThan(0);
-  });
-});
 
 describe("sortRenewals", () => {
   it("puts the soonest first", () => {

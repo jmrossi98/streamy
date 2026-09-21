@@ -119,3 +119,60 @@ export const AWS_SPEND_PROBLEMS: Record<AwsSpendProblem, string> = {
   notEnabled: "Cost Explorer hasn't been enabled for this AWS account yet.",
   error: "Cost Explorer couldn't be reached.",
 };
+
+/**
+ * Whole days from now; negative once it has lapsed.
+ *
+ * Lives here rather than in renewals.ts so the admin panel can use it. That
+ * module opens a TLS socket to read the certificate, which makes it unusable
+ * from a client component -- these are arithmetic and strings, and they have
+ * no business dragging node:tls into the browser bundle.
+ */
+export function daysUntil(iso: string): number {
+  return Math.floor((new Date(iso).getTime() - Date.now()) / 86_400_000);
+}
+
+/**
+ * Days, not a date, as the headline.
+ *
+ * A date makes you do the subtraction; "in 24 days" is the form the question
+ * was actually asked in. The date stays underneath for anyone booking it in.
+ */
+export function describeDue(daysLeft: number | null, problem?: string): string {
+  if (problem) return "unknown";
+  if (daysLeft === null) return "no date";
+  if (daysLeft < 0) return `${Math.abs(daysLeft)}d overdue`;
+  if (daysLeft === 0) return "today";
+  if (daysLeft === 1) return "tomorrow";
+  return `in ${daysLeft}d`;
+}
+
+/** Colour by how soon, so the list can be read without reading it. */
+export function dueUrgencyClass(daysLeft: number | null): string {
+  if (daysLeft === null) return "text-white/50";
+  if (daysLeft < 0) return "font-semibold text-red-300";
+  if (daysLeft <= 7) return "font-semibold text-amber-300";
+  if (daysLeft <= 21) return "text-amber-200/80";
+  return "text-white/70";
+}
+
+/**
+ * Soonest first, undated last.
+ *
+ * A row with no date isn't urgent and isn't overdue -- it's just not due. It
+ * sorts to the bottom rather than to either extreme, which is where sorting
+ * on a null date would otherwise put it.
+ */
+export function byDueSoonest(
+  a: { daysLeft?: number | null },
+  b: { daysLeft?: number | null }
+): number {
+  // undefined and null mean the same thing here -- "no date" -- because a
+  // spend row carries the field optionally and a probed renewal always sets it.
+  const x = a.daysLeft ?? null;
+  const y = b.daysLeft ?? null;
+  if (x === null && y === null) return 0;
+  if (x === null) return 1;
+  if (y === null) return -1;
+  return x - y;
+}
