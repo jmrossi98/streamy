@@ -242,14 +242,40 @@ export type ActiveDownload = {
    *  a downloading episode by something that survives the queue entry itself
    *  disappearing on import, instead of only by queueId (which does not). */
   episodeId?: number;
+  /**
+   * The transfer itself is done (sizeleft is 0, progress reads 100%) but
+   * Radarr/Sonarr hasn't finished moving the file into the library yet --
+   * copying/hardlinking and renaming a multi-gigabyte file is not instant,
+   * and the queue entry survives until that finishes. Without this the
+   * panel had nothing to show for that window but a static 100% bar next to
+   * a label that still said "downloading", reported live as a torrent that
+   * "leapt to 100% then got stuck" -- it wasn't stuck, it was importing, and
+   * there was no way to tell the two apart.
+   */
+  importing: boolean;
 };
+
+/**
+ * `trackedDownloadState` values from Radarr/Sonarr's queue that mean the
+ * transfer is done and it's now copying the file into the library, not
+ * still moving data from the download client.
+ */
+export const IMPORTING_STATES = new Set(["importPending", "importing"]);
 
 /** Every movie currently in Radarr's active download queue, with live progress. */
 export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const queue = await radarrFetch<{
-      records: { id: number; movieId: number; title: string; size: number; sizeleft: number; protocol?: string }[];
+      records: {
+        id: number;
+        movieId: number;
+        title: string;
+        size: number;
+        sizeleft: number;
+        protocol?: string;
+        trackedDownloadState?: string;
+      }[];
     }>(`/api/v3/queue`);
     return queue.records.map((r) => ({
       queueId: r.id,
@@ -258,6 +284,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
       progress: computeProgress(r.size, r.sizeleft),
       protocol: normalizeProtocol(r.protocol),
       sizeBytes: r.size > 0 ? r.size : null,
+      importing: IMPORTING_STATES.has(r.trackedDownloadState ?? ""),
     }));
   } catch (err) {
     console.error("[radarr] getRadarrActiveDownloads failed:", err);
