@@ -108,12 +108,12 @@ export async function getVisitorMap(): Promise<VisitorMap> {
       ip: a.ip,
       source: "assistant" as LocatedVisit["source"],
     })),
-    // Jellyfin logs no IP on a *successful* sign-in, so only the failures can
-    // be placed. That is the opposite of this app's own login stream, where
-    // both outcomes carry an address -- worth knowing before reading the map
-    // as "where people watch from": it is closer to "where sign-ins failed
-    // from" until Jellyfin is behind Known Proxies and logging real client
-    // IPs on success too.
+    // Both outcomes carry an address, so this layer really does read as
+    // "where people sign in from". That is only true because the publisher on
+    // mediabox reads Jellyfin's *activity log* rather than its text log --
+    // the text log records a successful sign-in with no IP at all, whatever
+    // Known Proxies is set to. The filter stays because an entry whose
+    // address couldn't be read is still worth listing, just not placing.
     ...jellyfin.attempts
       .filter((j): j is typeof j & { ip: string } => !!j.ip)
       .map((j) => ({ ip: j.ip, source: "jellyfin" as LocatedVisit["source"] })),
