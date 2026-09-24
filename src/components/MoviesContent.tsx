@@ -12,9 +12,11 @@ type Props = {
   trending: Movie[];
   genreRows: GenreRow[];
   progressList: ProgressItem[];
+  /** The viewer's saved movies. Empty for a signed-out viewer, or an empty list. */
+  myList?: Movie[];
 };
 
-export function MoviesContent({ trending, genreRows, progressList }: Props) {
+export function MoviesContent({ trending, genreRows, progressList, myList = [] }: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
 
   const progressKey = progressList.length ? progressList.map((p) => p.movieId).sort((a, b) => a - b).join(",") : "";
@@ -36,6 +38,12 @@ export function MoviesContent({ trending, genreRows, progressList }: Props) {
 
   return (
     <div className="space-y-2 [&>*:first-child]:pt-0">
+      {/* Above Trending: what the viewer chose for themselves outranks what
+          is merely popular. Hidden entirely when empty rather than shown as an
+          empty row. */}
+      {myList.length > 0 && (
+        <MovieRow title="My List" movies={myList} progressMap={progressMap} />
+      )}
       <MovieRow title="Trending Now" movies={trending} progressMap={progressMap} />
       {genreRows.map(
         (row) =>
