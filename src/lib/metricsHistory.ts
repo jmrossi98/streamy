@@ -17,7 +17,19 @@ export type MetricPoint = {
     primary: { iface: string; rxBytes: number; txBytes: number };
     tailscale: { iface: string; rxBytes: number; txBytes: number };
   };
-  temps: { cpu: number | null; ambient: number | null; disks: Record<string, number> };
+  temps: {
+    cpu: number | null;
+    ambient: number | null;
+    /** Null on a box with no NVIDIA GPU, or none the driver can read. */
+    gpu?: number | null;
+    disks: Record<string, number>;
+  };
+  /**
+   * Intel RAPL energy counters in microjoules, monotonic. Watts are derived
+   * from consecutive samples, never stored -- same reasoning as the network
+   * byte counters.
+   */
+  energy?: { packageUj: number | null; dramUj: number | null };
   /** device -> "ssd" | "hdd", read from the kernel's rotational flag. */
   diskKinds?: Record<string, string>;
   mem: { totalBytes: number; availableBytes: number };
@@ -46,9 +58,13 @@ export type TempPoint = {
   t: string;
   cpu: number | null;
   ambient: number | null;
+  gpu: number | null;
   disks: Record<string, number>;
   diskKinds: Record<string, string>;
 };
+
+/** Watts over an interval, derived from RAPL energy counters. */
+export type PowerPoint = { t: string; cpuWatts: number | null; dramWatts: number | null };
 
 function baseUrl(): string {
   return process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "") ?? "";
@@ -147,9 +163,51 @@ export function deriveTemps(history: MetricsHistory): TempPoint[] {
     t: p.t,
     cpu: p.temps?.cpu ?? null,
     ambient: p.temps?.ambient ?? null,
+    gpu: p.temps?.gpu ?? null,
     disks: p.temps?.disks ?? {},
     diskKinds: p.diskKinds ?? {},
   }));
+}
+
+/**
+ * Watts between consecutive samples, from the RAPL microjoule counters.
+ *
+ * Shares deriveThroughput's rules, and for the same reasons: real elapsed
+ * time rather than the nominal interval, a negative delta dropped as a
+ * counter reset (RAPL wraps, which would otherwise render as an enormous
+ * spike), and an over-long gap dropped rather than averaged across an
+ * outage.
+ *
+ * This is CPU package and DRAM power, not the machine. Nothing on this box
+ * reports a whole-system figure, and presenting these as "power draw" would
+ * quietly understate it by everything else in the case.
+ */
+export function derivePower(history: MetricsHistory): PowerPoint[] {
+  const out: PowerPoint[] = [];
+  const maxGapMs = history.intervalSeconds * MAX_GAP_MULTIPLE * 1000;
+
+  for (let i = 1; i < history.points.length; i++) {
+    const prev = history.points[i - 1];
+    const cur = history.points[i];
+    const prevMs = Date.parse(prev.t);
+    const curMs = Date.parse(cur.t);
+    if (!Number.isFinite(prevMs) || !Number.isFinite(curMs)) continue;
+    const elapsedS = (curMs - prevMs) / 1000;
+    if (elapsedS <= 0 || curMs - prevMs > maxGapMs) continue;
+
+    const watts = (a?: number | null, b?: number | null): number | null => {
+      if (typeof a !== "number" || typeof b !== "number") return null;
+      const d = b - a;
+      // Microjoules per second is microwatts; a negative delta is a wrap.
+      return d < 0 ? null : d / elapsedS / 1_000_000;
+    };
+
+    const cpuWatts = watts(prev.energy?.packageUj, cur.energy?.packageUj);
+    const dramWatts = watts(prev.energy?.dramUj, cur.energy?.dramUj);
+    if (cpuWatts === null && dramWatts === null) continue;
+    out.push({ t: cur.t, cpuWatts, dramWatts });
+  }
+  return out;
 }
 
 /** Every disk name that appears anywhere in the window, in stable order. */
