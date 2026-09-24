@@ -29,8 +29,17 @@ type Props = {
   /** ISO timestamps, one per index in every series. */
   times: string[];
   series: Series[];
-  /** Turns a raw value into what the tooltip and axis show. */
-  format: (v: number) => string;
+  /**
+   * Which formatter to use, as a string rather than a function.
+   *
+   * This took the admin page down once: ConnectionsPanel is a server
+   * component and this is a client one, and a function cannot cross that
+   * boundary -- React throws "Functions cannot be passed directly to Client
+   * Components" at render time. Neither tsc nor next build catches it,
+   * because it is a serialization rule, not a type error. A union of string
+   * literals cannot fail that way.
+   */
+  unit: "bytesPerSecond" | "celsius";
   height?: number;
   /** Forces the y-axis floor to 0. True for rates, false for temperatures. */
   zeroBased?: boolean;
@@ -44,13 +53,26 @@ const timeFmt = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
+function formatBytesPerSecond(v: number): string {
+  if (v < 1024) return `${Math.round(v)} B/s`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB/s`;
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB/s`;
+}
+
+const FORMATTERS: Record<Props["unit"], (v: number) => string> = {
+  bytesPerSecond: formatBytesPerSecond,
+  celsius: (v) => `${Math.round(v)}°C`,
+};
+
 export function TimeSeriesChart({
   times,
   series,
-  format,
+  unit,
   height = 160,
   zeroBased = true,
 }: Props) {
+  const format = FORMATTERS[unit];
   const [hover, setHover] = useState<number | null>(null);
   const width = 720; // viewBox units; the SVG scales to its container
 

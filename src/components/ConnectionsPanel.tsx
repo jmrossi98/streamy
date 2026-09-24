@@ -3,7 +3,6 @@ import {
   deriveThroughput,
   deriveTemps,
   diskNames,
-  formatBytesPerSecond,
   isMetricsHistoryConfigured,
 } from "@/lib/metricsHistory";
 import { TimeSeriesChart } from "@/components/TimeSeriesChart";
@@ -49,7 +48,7 @@ export async function ConnectionsPanel() {
         </div>
         <TimeSeriesChart
           times={throughput.map((p) => p.t)}
-          format={formatBytesPerSecond}
+          unit="bytesPerSecond"
           series={[
             { label: "Down", values: throughput.map((p) => p.primaryDown) },
             { label: "Up", values: throughput.map((p) => p.primaryUp) },
@@ -68,7 +67,7 @@ export async function ConnectionsPanel() {
         </div>
         <TimeSeriesChart
           times={temps.map((p) => p.t)}
-          format={(v) => `${Math.round(v)}°C`}
+          unit="celsius"
           zeroBased={false}
           series={[
             { label: "CPU", values: temps.map((p) => p.cpu) },
