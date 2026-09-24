@@ -77,8 +77,8 @@ describe("deriveThroughput", () => {
 describe("diskNames", () => {
   it("collects every disk seen anywhere in the window, sorted", () => {
     const names = diskNames([
-      { t: "", cpu: null, ambient: null, disks: { sdb: 45 }, diskKinds: {} },
-      { t: "", cpu: null, ambient: null, disks: { sda: 43, sdb: 45 }, diskKinds: {} },
+      { t: "", cpu: null, ambient: null, disks: { sdb: 45 }, diskKinds: {}, gpu: null },
+      { t: "", cpu: null, ambient: null, disks: { sda: 43, sdb: 45 }, diskKinds: {}, gpu: null },
     ]);
     expect(names).toEqual(["sda", "sdb"]);
   });

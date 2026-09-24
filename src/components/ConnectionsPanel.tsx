@@ -2,6 +2,7 @@ import {
   getMetricsHistory,
   deriveThroughput,
   deriveTemps,
+  derivePower,
   diskNames,
   diskLabel,
   isMetricsHistoryConfigured,
@@ -36,6 +37,7 @@ export async function ConnectionsPanel() {
 
   const throughput = deriveThroughput(history);
   const temps = deriveTemps(history);
+  const power = derivePower(history);
   const disks = diskNames(temps);
   // Kinds come from the newest sample that has them -- an older history
   // written before the sampler recorded them simply falls back to device
@@ -76,11 +78,30 @@ export async function ConnectionsPanel() {
           zeroBased={false}
           series={[
             { label: "CPU", values: temps.map((p) => p.cpu) },
+            { label: "GPU", values: temps.map((p) => p.gpu) },
             ...disks.map((d) => ({
               label: diskLabel(d, kinds, disks),
               values: temps.map((p) => p.disks[d] ?? null),
             })),
             { label: "Ambient", values: temps.map((p) => p.ambient) },
+          ]}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <div>
+          <h3 className="text-sm font-medium text-white/80">Power (24h)</h3>
+          <p className="text-xs text-white/35">
+            CPU package and memory only - nothing on this box reports a whole-system figure, so
+            the real draw at the wall is higher than this.
+          </p>
+        </div>
+        <TimeSeriesChart
+          times={power.map((p) => p.t)}
+          unit="watts"
+          series={[
+            { label: "CPU package", values: power.map((p) => p.cpuWatts) },
+            { label: "Memory", values: power.map((p) => p.dramWatts) },
           ]}
         />
       </section>

@@ -17,7 +17,17 @@ import { useEffect, useRef, useState } from "react";
  * never repaints the others.
  */
 
-export const SERIES_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500"] as const;
+/**
+ * Five validated categorical slots, in fixed order.
+ *
+ * Five rather than four because the temperature chart grew a GPU series and
+ * would otherwise have cycled -- `i % length` quietly gives series five the
+ * same blue as series one, which is worse than no colour at all. Every slot
+ * passes the lightness band, chroma floor, CVD separation and contrast
+ * checks against this app's #181818 panel surface; they are not eyeballed,
+ * and a sixth series needs the validator run again rather than a guess.
+ */
+export const SERIES_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"] as const;
 
 export type Series = {
   label: string;
@@ -39,7 +49,7 @@ type Props = {
    * because it is a serialization rule, not a type error. A union of string
    * literals cannot fail that way.
    */
-  unit: "bytesPerSecond" | "celsius";
+  unit: "bytesPerSecond" | "celsius" | "watts";
   height?: number;
   /** Forces the y-axis floor to 0. True for rates, false for temperatures. */
   zeroBased?: boolean;
@@ -63,6 +73,7 @@ function formatBytesPerSecond(v: number): string {
 const FORMATTERS: Record<Props["unit"], (v: number) => string> = {
   bytesPerSecond: formatBytesPerSecond,
   celsius: (v) => `${Math.round(v)}°C`,
+  watts: (v) => `${v.toFixed(1)} W`,
 };
 
 export function TimeSeriesChart({
