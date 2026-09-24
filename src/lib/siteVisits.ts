@@ -109,8 +109,8 @@ export type VisitorSummary = {
     path: string;
     /**
      * Empty string when the source genuinely has no address for the event.
-     * Jellyfin's log carries no IP on a *successful* sign-in, so those rows
-     * are real events that can be listed but never placed.
+     * Jellyfin sign-ins normally carry one for both outcomes; a row without
+     * is an entry whose address couldn't be read, still worth listing.
      */
     ip: string;
     /** "City, Country" from GeoLite2, or null when it can't be placed. */
@@ -234,8 +234,8 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       kind: "jellyfin" as const,
       site: "jellyfin",
       path: `${j.user}: ${j.outcome}`,
-      // Jellyfin logs no IP on a successful sign-in. Empty string rather than
-      // a fake one, so the row lists honestly and the map simply skips it.
+      // Empty string rather than a fake address, so a row whose IP couldn't
+      // be read lists honestly and the map simply skips it.
       ip: j.ip ?? "",
       location: null,
       referrer: null,

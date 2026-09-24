@@ -170,8 +170,8 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                       {v.location ?? <span className="text-white/25">-</span>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-white/60">
-                      {/* Jellyfin logs no IP on a successful sign-in, so those
-                          rows genuinely have none -- a dash, not a blank cell. */}
+                      {/* A row whose source had no readable address gets a
+                          dash, not a blank cell. */}
                       {v.ip || <span className="text-white/25">-</span>}
                     </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/50">
