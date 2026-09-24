@@ -810,3 +810,102 @@ export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult>
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Radarr error" };
   }
 }
+
+/**
+ * Why a grab went to torrent rather than usenet, or the other way.
+ *
+ * "Torrent wins every time" is a reasonable thing to notice and an unreasonable
+ * thing to have to reverse-engineer. Radarr's choice is the product of three
+ * separate settings across two apps plus the live health of each indexer, none
+ * of which is visible in one place -- so this assembles it.
+ *
+ * The case that motivated it: usenet was the *preferred* protocol the whole
+ * time, with a 30-minute handicap applied to torrents, and torrents still won
+ * every single grab. Not because the preference was wrong, but because no
+ * usenet release could be fetched at all. A preference you cannot act on looks
+ * identical to a preference you do not have.
+ */
+export type ProtocolPreference = {
+  preferred: "usenet" | "torrent" | "unknown";
+  usenetDelayMinutes: number;
+  torrentDelayMinutes: number;
+  usenetEnabled: boolean;
+  torrentEnabled: boolean;
+};
+
+export type GrabCounts = { usenet: number; torrent: number };
+
+export type DownloadRouting = {
+  preference: ProtocolPreference | null;
+  /** Grabs in the recent history window, split by protocol. */
+  recentGrabs: GrabCounts;
+  /** Indexers Radarr currently has enabled, by protocol. */
+  indexers: GrabCounts;
+  /** Indexers Radarr has disabled for failures right now. */
+  failingIndexerIds: number[];
+};
+
+export async function getDownloadRouting(): Promise<DownloadRouting | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const [profiles, history, indexers, status] = await Promise.all([
+      radarrFetch<
+        {
+          preferredProtocol?: number;
+          usenetDelay?: number;
+          torrentDelay?: number;
+          enableUsenet?: boolean;
+          enableTorrent?: boolean;
+        }[]
+      >("/api/v3/delayprofile"),
+      radarrFetch<{ records: { eventType: string; data?: { protocol?: string } }[] }>(
+        "/api/v3/history?pageSize=50&sortKey=date&sortDirection=descending"
+      ),
+      radarrFetch<{ protocol: string; enableAutomaticSearch: boolean }[]>("/api/v3/indexer"),
+      radarrFetch<{ indexerId: number }[]>("/api/v3/indexerstatus"),
+    ]);
+
+    // The default profile is the one with no tags; Radarr orders it first.
+    const p = profiles[0];
+    const preference: ProtocolPreference | null = p
+      ? {
+          // Radarr encodes this as 1=usenet, 2=torrent in the API even though
+          // the UI shows words.
+          preferred:
+            p.preferredProtocol === 1 ? "usenet" : p.preferredProtocol === 2 ? "torrent" : "unknown",
+          usenetDelayMinutes: p.usenetDelay ?? 0,
+          torrentDelayMinutes: p.torrentDelay ?? 0,
+          usenetEnabled: p.enableUsenet !== false,
+          torrentEnabled: p.enableTorrent !== false,
+        }
+      : null;
+
+    const recentGrabs: GrabCounts = { usenet: 0, torrent: 0 };
+    for (const r of history.records) {
+      if (r.eventType !== "grabbed") continue;
+      // Radarr writes this as the string "usenet"/"torrent" in history data,
+      // but has also used the numeric enum; accept both rather than silently
+      // counting nothing.
+      const proto = String(r.data?.protocol ?? "").toLowerCase();
+      if (proto === "usenet" || proto === "1") recentGrabs.usenet += 1;
+      else if (proto === "torrent" || proto === "2") recentGrabs.torrent += 1;
+    }
+
+    const counts: GrabCounts = { usenet: 0, torrent: 0 };
+    for (const i of indexers) {
+      if (!i.enableAutomaticSearch) continue;
+      if (i.protocol === "usenet") counts.usenet += 1;
+      else if (i.protocol === "torrent") counts.torrent += 1;
+    }
+
+    return {
+      preference,
+      recentGrabs,
+      indexers: counts,
+      failingIndexerIds: status.map((s) => s.indexerId),
+    };
+  } catch (err) {
+    console.error("[radarr] download routing read failed:", err);
+    return null;
+  }
+}
