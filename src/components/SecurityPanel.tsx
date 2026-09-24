@@ -224,9 +224,13 @@ export function SecurityPanel({
           )}
 
           {jellyfinLogins.attempts.length === 0 ? (
-            <p className="text-sm text-white/50">No sign-in attempts recorded yet.</p>
+            <p className="h-72 text-sm text-white/50">No sign-in attempts recorded yet.</p>
           ) : (
-            <ul className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+            // Fixed height rather than max-height: this list grows and shrinks
+            // on its own as attempts roll off the publisher's window, and a
+            // widget that resizes underneath you while you are reading the
+            // panel beside it is worse than one with some empty space in it.
+            <ul className="h-72 space-y-1.5 overflow-y-auto pr-1">
               {jellyfinLogins.attempts.map((a, i) => (
                 <li key={`${a.at}-${i}`} className="flex items-baseline gap-2 text-sm">
                   <span
