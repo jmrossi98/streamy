@@ -36,6 +36,7 @@ import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
 import { ConnectionsPanel } from "@/components/ConnectionsPanel";
+import { DownloadRoutingPanel } from "@/components/DownloadRoutingPanel";
 import { PanelBoundary } from "@/components/PanelBoundary";
 import { BlogEditor } from "@/components/BlogEditor";
 import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
@@ -398,6 +399,17 @@ export default async function AdminFeaturesPage() {
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <PanelBoundary name="Visitor map">
             <VisitorMapPanel />
+          </PanelBoundary>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Download routing</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PanelBoundary name="Download routing">
+            <Suspense fallback={<p className="py-4 text-sm text-white/30">Reading routing…</p>}>
+              <DownloadRoutingPanel />
+            </Suspense>
           </PanelBoundary>
         </div>
       </section>
