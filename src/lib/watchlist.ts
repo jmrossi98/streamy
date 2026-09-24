@@ -19,6 +19,43 @@ export type WatchlistData = {
   progressMap: Record<string, MovieProgress>;
 };
 
+/**
+ * Just the saved movies, for the My List row on Home and the Movies tab.
+ *
+ * Separate from getWatchlist because those pages need one row, not the whole
+ * page: getWatchlist also reaches gamarr, the Jellyfin channel guide and the
+ * Flash library, and making the Movies tab wait on all three to render a
+ * poster row would be a poor trade.
+ */
+export async function getWatchlistMovies(userId: string): Promise<Movie[]> {
+  const items = await prisma.watchlistItem.findMany({
+    where: { userId },
+    orderBy: { addedAt: "desc" },
+  });
+  if (items.length === 0) return [];
+
+  const details = await Promise.all(items.map((item) => getMovieById(item.movieId)));
+  // Narrowed to NonNullable rather than to Movie: these are MovieDetail, which
+  // is a superset, and a predicate has to be assignable to what it narrows.
+  return details.filter((m): m is NonNullable<typeof m> => m != null);
+}
+
+/** Just the saved shows. Same reasoning as getWatchlistMovies. */
+export async function getWatchlistShows(
+  userId: string
+): Promise<(TVShow & { numberOfSeasons: number })[]> {
+  const items = await prisma.watchlistShowItem.findMany({
+    where: { userId },
+    orderBy: { addedAt: "desc" },
+  });
+  if (items.length === 0) return [];
+
+  const details = await Promise.all(items.map((item) => getShowById(item.showId)));
+  return details
+    .filter((s): s is NonNullable<typeof s> => s != null)
+    .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons }));
+}
+
 /** Loads all saved movies, TV shows, games, live channels, and Flash games;
  *  poster rows scroll horizontally (ScrollableRow) like Home/Movies. */
 export async function getWatchlist(userId: string): Promise<WatchlistData> {

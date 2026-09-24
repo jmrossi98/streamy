@@ -8,6 +8,7 @@ import { HomeFeedHeader } from "@/components/HomeFeedHeader";
 import { HomeMoviesSection } from "@/components/HomeMoviesSection";
 import { HomePrefetch } from "@/components/HomePrefetch";
 import { RecentlyWatchedSection, RecentlyWatchedSkeleton } from "./RecentlyWatchedSection";
+import { MyListSection, MyListSkeleton } from "./MyListSection";
 import { getTrending, getGenres, getDiscoverByGenre, getTrendingTV } from "@/lib/tmdb";
 
 const HERO_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror, Sci-Fi
@@ -124,6 +125,12 @@ export default async function HomePage() {
             />
           </Suspense>
         )}
+        {/* Below Continue Watching, above the browse rows: what the viewer
+            saved is a stronger signal than what is trending, but a weaker one
+            than what they already have half-finished. */}
+        <Suspense fallback={<MyListSkeleton />}>
+          <MyListSection userId={session.user.id} />
+        </Suspense>
         <HomeMoviesSection
           trending={trending}
           genreRows={genreRows}

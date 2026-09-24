@@ -1,4 +1,6 @@
 import { getTrendingTV, getTVGenres, getDiscoverTVByGenre } from "@/lib/tmdb";
+import { getSession } from "@/lib/auth";
+import { getWatchlistShows } from "@/lib/watchlist";
 import { TVRow } from "@/components/TVRow";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -8,9 +10,11 @@ const TV_ROW_GENRE_LIMIT = 4;
 const SHOWS_PER_ROW = 8;
 
 export default async function TVPage() {
-  const [trending, genres] = await Promise.all([
+  const session = await getSession();
+  const [trending, genres, myList] = await Promise.all([
     getTrendingTV(10),
     getTVGenres(),
+    session?.user?.id ? getWatchlistShows(session.user.id) : Promise.resolve([]),
   ]);
 
   const genresForRows = genres.slice(0, TV_ROW_GENRE_LIMIT);
@@ -26,6 +30,9 @@ export default async function TVPage() {
   return (
     <div className={BROWSE_PAGE_CLASS}>
       <div className="space-y-2">
+        {/* Above Trending: what the viewer chose for themselves outranks what
+            is merely popular. Hidden entirely when empty. */}
+        {myList.length > 0 && <TVRow title="My List" shows={myList} />}
         <TVRow title="Trending TV" shows={trending} />
         {genreRows.map((row) => (
           <TVRow key={row.title} title={row.title} shows={row.shows} />
