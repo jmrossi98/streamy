@@ -31,6 +31,7 @@ import {
   type LocatedVisit,
   type MapPin,
   type MapTotals,
+  type VisitSource,
 } from "@/lib/visitorMap";
 
 // A visit older than this isn't interesting on a "who is around" map, and
@@ -47,11 +48,29 @@ export type VisitorMap = {
   totals: MapTotals;
   /** Visits that had an IP but no location (private/unknown), so counts reconcile. */
   unplaceable: number;
+  /**
+   * The same figure split by source, because the total alone is misleading.
+   *
+   * Every Jellyfin sign-in so far has come from the LAN (192.168.0.5), the
+   * tailnet (100.64.0.0/10) or the Docker bridge -- none of which GeoIP can
+   * place, and all of which are perfectly normal for a server watched from
+   * inside the house. The map was correct to show nothing and gave no way to
+   * tell that apart from "the feature is broken", which is the reading it
+   * actually got.
+   */
+  unplaceableBySource: Record<VisitSource, number>;
 };
 
 export async function getVisitorMap(): Promise<VisitorMap> {
   if (!isGeoipConfigured()) {
-    return { configured: false, ready: false, pins: [], totals: emptyTotals(), unplaceable: 0 };
+    return {
+      configured: false,
+      ready: false,
+      pins: [],
+      totals: emptyTotals(),
+      unplaceable: 0,
+      unplaceableBySource: emptyBySource(),
+    };
   }
 
   const ready = await isDatabaseReady();
@@ -59,7 +78,14 @@ export async function getVisitorMap(): Promise<VisitorMap> {
     // The database is still downloading; there is nothing to place yet. Say so
     // rather than querying and geolocating against a reader that will return
     // nothing.
-    return { configured: true, ready: false, pins: [], totals: emptyTotals(), unplaceable: 0 };
+    return {
+      configured: true,
+      ready: false,
+      pins: [],
+      totals: emptyTotals(),
+      unplaceable: 0,
+      unplaceableBySource: emptyBySource(),
+    };
   }
 
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
@@ -123,10 +149,12 @@ export async function getVisitorMap(): Promise<VisitorMap> {
 
   const visits: LocatedVisit[] = [];
   let unplaceable = 0;
+  const unplaceableBySource = emptyBySource();
   for (const r of raw) {
     const loc = located.get(r.ip);
     if (!loc) {
       unplaceable += 1;
+      unplaceableBySource[r.source] += 1;
       continue;
     }
     visits.push({
@@ -146,6 +174,18 @@ export async function getVisitorMap(): Promise<VisitorMap> {
     pins,
     totals: totals(pins),
     unplaceable,
+    unplaceableBySource,
+  };
+}
+
+function emptyBySource(): Record<VisitSource, number> {
+  return {
+    portfolio: 0,
+    streamy: 0,
+    "login-success": 0,
+    "login-fail": 0,
+    jellyfin: 0,
+    assistant: 0,
   };
 }
 

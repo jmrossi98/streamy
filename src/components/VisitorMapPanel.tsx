@@ -38,6 +38,16 @@ function esc(s: string): string {
 
 export function VisitorMapPanel() {
   const [map, setMap] = useState<VisitorMap | null>(null);
+  /**
+   * Which sources are shown. Empty means all of them -- the resting state,
+   * rather than "nothing", so the map is never blank on first paint.
+   *
+   * Filtering recomputes each pin from the selected sources only and drops
+   * pins left with nothing, rather than merely recolouring: a pin sized by a
+   * total that includes hidden sources is a pin that lies about what is
+   * being shown.
+   */
+  const [selected, setSelected] = useState<Set<VisitSource>>(new Set());
   const [loadError, setLoadError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -62,6 +72,10 @@ export function VisitorMapPanel() {
   // touches window/document on use).
   useEffect(() => {
     if (!map?.configured || !map.ready || map.pins.length === 0 || !containerRef.current) return;
+    const shown: VisitSource[] =
+      selected.size === 0
+        ? (Object.keys(SOURCE_META) as VisitSource[])
+        : (Object.keys(SOURCE_META) as VisitSource[]).filter((s) => selected.has(s));
     const el = containerRef.current;
     let removed = false;
     let instance: import("leaflet").Map | null = null;
@@ -76,16 +90,29 @@ export function VisitorMapPanel() {
         maxZoom: 19,
       }).addTo(instance);
 
-      const maxTotal = map.pins[0]?.total ?? 1;
+      // Totals recomputed against the visible sources, so both the pin sizes
+      // and the scale they are relative to describe what is actually drawn.
+      const visible = map.pins
+        .map((pin) => ({
+          pin,
+          total: shown.reduce((n, s) => n + pin.bySource[s], 0),
+        }))
+        .filter((p) => p.total > 0);
+
+      const maxTotal = Math.max(1, ...visible.map((p) => p.total));
       const latLngs: [number, number][] = [];
-      for (const pin of map.pins) {
-        const color = SOURCE_META[dominantSource(pin)].color;
-        const parts = (Object.keys(SOURCE_META) as VisitSource[])
+      for (const { pin, total } of visible) {
+        const dominant =
+          shown
+            .slice()
+            .sort((a, b) => pin.bySource[b] - pin.bySource[a])[0] ?? dominantSource(pin);
+        const color = SOURCE_META[dominant].color;
+        const parts = shown
           .filter((s) => pin.bySource[s] > 0)
           .map((s) => `${SOURCE_META[s].label}: ${pin.bySource[s]}`)
           .join("<br>");
         L.circleMarker([pin.lat, pin.lon], {
-          radius: pinRadius(pin.total, maxTotal),
+          radius: pinRadius(total, maxTotal),
           color,
           fillColor: color,
           fillOpacity: 0.55,
@@ -104,7 +131,7 @@ export function VisitorMapPanel() {
       removed = true;
       if (instance) instance.remove();
     };
-  }, [map]);
+  }, [map, selected]);
 
   if (loadError) {
     return <p className="text-sm text-red-300">Couldn&apos;t load the map: {loadError}</p>;
@@ -141,16 +168,43 @@ export function VisitorMapPanel() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-        {(Object.keys(SOURCE_META) as VisitSource[]).map((s) => (
-          <span key={s} className="flex items-center gap-1.5 text-white/60">
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: SOURCE_META[s].color }}
-            />
-            {SOURCE_META[s].label}
-            <span className="text-white/35">{map.totals.bySource[s]}</span>
-          </span>
-        ))}
+        {(Object.keys(SOURCE_META) as VisitSource[]).map((s) => {
+          const on = selected.size === 0 || selected.has(s);
+          const localOnly = map.unplaceableBySource?.[s] ?? 0;
+          return (
+            <button
+              key={s}
+              type="button"
+              aria-pressed={selected.has(s)}
+              onClick={() =>
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  // Clicking the only selected source clears back to "all",
+                  // so there is always a way out without a reset control.
+                  if (next.has(s)) next.delete(s);
+                  else next.add(s);
+                  return next;
+                })
+              }
+              className={`flex items-center gap-1.5 rounded px-1.5 py-0.5 transition-opacity hover:bg-white/5 ${
+                on ? "text-white/70" : "text-white/30 opacity-50"
+              }`}
+            >
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: SOURCE_META[s].color }}
+              />
+              {SOURCE_META[s].label}
+              <span className="text-white/35">{map.totals.bySource[s]}</span>
+              {/* Says why a source with events shows no pins, instead of
+                  looking broken. A server watched from inside the house
+                  produces nothing GeoIP can place. */}
+              {map.totals.bySource[s] === 0 && localOnly > 0 && (
+                <span className="text-white/30">({localOnly} local)</span>
+              )}
+            </button>
+          );
+        })}
         <span className="ml-auto text-white/40">
           {map.totals.pins} locations · {map.totals.visits} visits
           {map.unplaceable > 0 ? ` · ${map.unplaceable} unplaceable` : ""}
