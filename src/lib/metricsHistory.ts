@@ -18,6 +18,8 @@ export type MetricPoint = {
     tailscale: { iface: string; rxBytes: number; txBytes: number };
   };
   temps: { cpu: number | null; ambient: number | null; disks: Record<string, number> };
+  /** device -> "ssd" | "hdd", read from the kernel's rotational flag. */
+  diskKinds?: Record<string, string>;
   mem: { totalBytes: number; availableBytes: number };
   fs: {
     root: { totalBytes: number; freeBytes: number };
@@ -45,6 +47,7 @@ export type TempPoint = {
   cpu: number | null;
   ambient: number | null;
   disks: Record<string, number>;
+  diskKinds: Record<string, string>;
 };
 
 function baseUrl(): string {
@@ -145,6 +148,7 @@ export function deriveTemps(history: MetricsHistory): TempPoint[] {
     cpu: p.temps?.cpu ?? null,
     ambient: p.temps?.ambient ?? null,
     disks: p.temps?.disks ?? {},
+    diskKinds: p.diskKinds ?? {},
   }));
 }
 
@@ -153,6 +157,26 @@ export function diskNames(points: TempPoint[]): string[] {
   const seen = new Set<string>();
   for (const p of points) for (const k of Object.keys(p.disks)) seen.add(k);
   return [...seen].sort();
+}
+
+/**
+ * A label a person can read: "SSD" / "HDD" rather than "sda" / "sdb".
+ *
+ * Device names are meaningless in a legend and are not even stable -- which
+ * disk gets which letter can change between boots. The kind comes from the
+ * kernel's rotational flag via the sampler. The device is kept in parentheses
+ * when two disks share a kind, so the legend never has two identical entries.
+ */
+export function diskLabel(
+  device: string,
+  kinds: Record<string, string>,
+  allDevices: string[]
+): string {
+  const kind = kinds[device];
+  if (!kind) return device;
+  const pretty = kind === "ssd" ? "SSD" : kind === "hdd" ? "HDD" : kind.toUpperCase();
+  const sameKind = allDevices.filter((d) => kinds[d] === kind);
+  return sameKind.length > 1 ? `${pretty} (${device})` : pretty;
 }
 
 export function formatBytesPerSecond(v: number): string {

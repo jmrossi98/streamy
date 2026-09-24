@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { deriveThroughput, diskNames, formatBytesPerSecond, type MetricsHistory } from "../metricsHistory";
+import {
+  deriveThroughput,
+  diskNames,
+  diskLabel,
+  formatBytesPerSecond,
+  type MetricsHistory,
+} from "../metricsHistory";
 
 function point(t: string, rx: number, tx: number) {
   return {
@@ -71,8 +77,8 @@ describe("deriveThroughput", () => {
 describe("diskNames", () => {
   it("collects every disk seen anywhere in the window, sorted", () => {
     const names = diskNames([
-      { t: "", cpu: null, ambient: null, disks: { sdb: 45 } },
-      { t: "", cpu: null, ambient: null, disks: { sda: 43, sdb: 45 } },
+      { t: "", cpu: null, ambient: null, disks: { sdb: 45 }, diskKinds: {} },
+      { t: "", cpu: null, ambient: null, disks: { sda: 43, sdb: 45 }, diskKinds: {} },
     ]);
     expect(names).toEqual(["sda", "sdb"]);
   });
@@ -83,5 +89,30 @@ describe("formatBytesPerSecond", () => {
     expect(formatBytesPerSecond(512)).toBe("512 B/s");
     expect(formatBytesPerSecond(2048)).toBe("2.0 KB/s");
     expect(formatBytesPerSecond(5 * 1024 * 1024)).toBe("5.0 MB/s");
+  });
+});
+
+describe("diskLabel", () => {
+  const kinds = { sda: "ssd", sdb: "hdd" };
+
+  // "sda" means nothing to a reader, and which disk gets which letter is not
+  // even stable between boots.
+  it("names a disk by kind rather than device", () => {
+    expect(diskLabel("sda", kinds, ["sda", "sdb"])).toBe("SSD");
+    expect(diskLabel("sdb", kinds, ["sda", "sdb"])).toBe("HDD");
+  });
+
+  // Two disks of the same kind would otherwise produce two legend entries
+  // both reading "HDD", which is worse than the device name.
+  it("disambiguates when two disks share a kind", () => {
+    const two = { sdb: "hdd", sdc: "hdd" };
+    expect(diskLabel("sdb", two, ["sdb", "sdc"])).toBe("HDD (sdb)");
+    expect(diskLabel("sdc", two, ["sdb", "sdc"])).toBe("HDD (sdc)");
+  });
+
+  // History written before the sampler recorded kinds must fall back rather
+  // than mislabel.
+  it("falls back to the device name when the kind is unknown", () => {
+    expect(diskLabel("sdb", {}, ["sdb"])).toBe("sdb");
   });
 });

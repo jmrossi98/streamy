@@ -16,7 +16,7 @@ import {
   getJellyfinLibraryScanStatus,
   getJellyfinActiveTranscodeCount,
 } from "./jellyfin";
-import { isQbittorrentConfigured } from "./qbittorrent";
+import { isQbittorrentConfigured, getTorrentHealth, stalledDownloads } from "./qbittorrent";
 import { isGamarrConfigured } from "./gamarr";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
 import { getLiveChannels, isJellyfinConfiguredForLiveTv } from "./liveTv";
@@ -1159,6 +1159,58 @@ async function componentStatuses(): Promise<ServiceStatus[]> {
 }
 
 /**
+ * Downloads that are running and getting nowhere.
+ *
+ * This exists because a torrent sat at 8% overnight and nothing anywhere
+ * said a word. Radarr reports such a download as "downloading" right up
+ * until its own timeout hours later, and the services panel was all green
+ * the whole time. The client is the only thing that knows it has one
+ * connected seed out of five.
+ *
+ * Reported as "down" rather than a warning: a download that cannot progress
+ * is not a degraded state that will sort itself out, it is a thing that
+ * needs a different release picked.
+ */
+async function stalledDownloadStatus(): Promise<ServiceStatus> {
+  const name = "Download progress";
+  if (!isQbittorrentConfigured()) {
+    return { name, group: "Downloads", state: "unconfigured", detail: "qBittorrent not configured" };
+  }
+
+  const torrents = await getTorrentHealth();
+  if (!torrents) {
+    // Not "down": qBittorrent being unreachable is already its own row, and
+    // saying nothing about downloads is honest when we could not look.
+    return { name, group: "Downloads", state: "unknown", detail: "Couldn't read the torrent list" };
+  }
+
+  const stalled = stalledDownloads(torrents);
+  const active = torrents.filter((t) => t.progress < 1);
+
+  if (stalled.length === 0) {
+    return {
+      name,
+      group: "Downloads",
+      state: "up",
+      detail: active.length === 0 ? "Nothing downloading" : `${active.length} downloading, none stalled`,
+    };
+  }
+
+  // Name the worst one and say why, because "1 stalled" on its own sends you
+  // to the client anyway.
+  const worst = stalled[0];
+  const pct = Math.floor(worst.progress * 100);
+  return {
+    name,
+    group: "Downloads",
+    state: "down",
+    detail:
+      `${stalled.length} stalled - "${worst.name.slice(0, 40)}" at ${pct}%, ` +
+      `${worst.connectedSeeds} of ${worst.swarmSeeds} seeds connected`,
+  };
+}
+
+/**
  * Drive health, as distinct from drive capacity.
  *
  * The storage panel already answers "how full". This answers "is it failing",
@@ -1258,6 +1310,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     portainer,
     diskHealth,
     components,
+    stalledDownloads_,
     openRouter,
     tmdb,
     vpnRotation,
@@ -1301,6 +1354,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     portainerStatus(),
     diskHealthStatus(),
     componentStatuses(),
+    stalledDownloadStatus(),
     openRouterStatus(),
     tmdbStatus(),
     vpnRotationStatus(),
@@ -1323,6 +1377,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     radarr,
     sonarr,
     ...downloads,
+    stalledDownloads_,
     sabnzbd,
     radarrIntegrations,
     sonarrIntegrations,

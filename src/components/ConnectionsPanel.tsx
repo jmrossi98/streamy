@@ -3,6 +3,7 @@ import {
   deriveThroughput,
   deriveTemps,
   diskNames,
+  diskLabel,
   isMetricsHistoryConfigured,
 } from "@/lib/metricsHistory";
 import { TimeSeriesChart } from "@/components/TimeSeriesChart";
@@ -36,6 +37,10 @@ export async function ConnectionsPanel() {
   const throughput = deriveThroughput(history);
   const temps = deriveTemps(history);
   const disks = diskNames(temps);
+  // Kinds come from the newest sample that has them -- an older history
+  // written before the sampler recorded them simply falls back to device
+  // names rather than mislabelling anything.
+  const kinds = temps.at(-1)?.diskKinds ?? {};
 
   return (
     <div className="space-y-6">
@@ -72,7 +77,7 @@ export async function ConnectionsPanel() {
           series={[
             { label: "CPU", values: temps.map((p) => p.cpu) },
             ...disks.map((d) => ({
-              label: d,
+              label: diskLabel(d, kinds, disks),
               values: temps.map((p) => p.disks[d] ?? null),
             })),
             { label: "Ambient", values: temps.map((p) => p.ambient) },

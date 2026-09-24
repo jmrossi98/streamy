@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * A small multi-series line chart over time, in plain SVG.
@@ -69,12 +69,34 @@ export function TimeSeriesChart({
   times,
   series,
   unit,
-  height = 160,
+  height = 240,
   zeroBased = true,
 }: Props) {
   const format = FORMATTERS[unit];
   const [hover, setHover] = useState<number | null>(null);
-  const width = 720; // viewBox units; the SVG scales to its container
+
+  // The viewBox is measured, not fixed.
+  //
+  // This started as a fixed 720-unit viewBox with w-full and an explicit
+  // pixel height, which letterboxes: preserveAspectRatio scales the box to
+  // *fit* the container, the height is the binding constraint, and the chart
+  // renders 720px wide floating in the middle of a 1900px panel with dead
+  // space either side. Measuring the container and setting the viewBox to
+  // its real width makes one unit one pixel -- the plot fills the space and
+  // nothing is stretched, which preserveAspectRatio="none" would have done
+  // to the text.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(960);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width);
+      if (w > 0) setWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   if (times.length < 2) {
     return (
@@ -114,7 +136,7 @@ export function TimeSeriesChart({
   const ticks = [min, min + (max - min) / 2, max];
 
   return (
-    <div className="space-y-2">
+    <div ref={wrapRef} className="space-y-2">
       {/* Legend is always present for 2+ series, so identity is never
           carried by colour alone. */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -132,8 +154,9 @@ export function TimeSeriesChart({
 
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full"
-        style={{ height }}
+        width={width}
+        height={height}
+        className="block"
         role="img"
         aria-label={`Time series: ${series.map((s) => s.label).join(", ")}`}
         onMouseLeave={() => setHover(null)}
