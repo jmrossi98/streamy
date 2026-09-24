@@ -36,6 +36,7 @@ import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
 import { ConnectionsPanel } from "@/components/ConnectionsPanel";
+import { PanelBoundary } from "@/components/PanelBoundary";
 import { BlogEditor } from "@/components/BlogEditor";
 import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
 import { PageWatchPanel } from "@/components/PageWatchPanel";
@@ -108,10 +109,10 @@ export default async function AdminFeaturesPage() {
       select: { id: true, name: true, createdAt: true },
     }),
     getDiskUsage(),
-    getRadarrActiveDownloads(),
-    getSonarrActiveDownloads(),
-    getRadarrCompletedMovies(),
-    getSonarrCompletedEpisodes(),
+    getRadarrActiveDownloads().catch(() => []),
+    getSonarrActiveDownloads().catch(() => []),
+    getRadarrCompletedMovies().catch(() => []),
+    getSonarrCompletedEpisodes().catch(() => []),
     // Requested but not yet picked up by Radarr/Sonarr's own queue -- still
     // searching for a release. Without this, a fresh request is invisible in
     // the admin panel for however long the search takes, which read as
@@ -122,22 +123,25 @@ export default async function AdminFeaturesPage() {
     prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } }),
     // Probed server-side so an unreachable model shows up on load rather than
     // on the first message.
-    isOllamaConfigured() ? getOllamaStatus() : Promise.resolve(null),
+    isOllamaConfigured() ? getOllamaStatus().catch(() => null) : Promise.resolve(null),
     runSecurityChecks(),
-    getServiceStatuses(),
+    getServiceStatuses().catch(() => []),
     getVisitorSummary("portfolio"),
     // Only to warn before overwriting an existing post. listPosts already
     // swallows its own failures and returns [], so a GitHub outage costs the
     // warning, not the page.
     blogConfigured ? listPosts() : Promise.resolve([]),
+    // Deliberately unguarded: a fallback would have to invent egressEnabled
+    // and egressProxied, and rendering "egress disabled" when the truth is
+    // "we could not read it" is worse than the panel being absent.
     getPageWatchSummary(),
-    getPlaybackCheckHistory(),
+    getPlaybackCheckHistory().catch(() => []),
     // Kept out of the array above and defaulted to 0 on failure (it already
     // swallows its own errors) so an unreachable gamarr can't hold up the
     // rest of this page -- same reasoning the old embedded Games panel used.
     getGamesStorageSize().catch(() => 0),
-    getRecentAuditLog(),
-    getRecentBadPasswordAttempts(),
+    getRecentAuditLog().catch(() => []),
+    getRecentBadPasswordAttempts().catch(() => []),
     // Same defensive default as getGamesStorageSize above -- an unreachable
     // gamarr shouldn't hold up the rest of this page.
     getGameDownloads().catch(() => []),
@@ -367,74 +371,86 @@ export default async function AdminFeaturesPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Security</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <SecurityPanel
-            activity={security.activity}
-            findings={security.findings}
-            generatedAt={security.generatedAt}
-            auditLog={auditLog}
-            recentBadPasswordAttempts={recentBadPasswordAttempts}
-            jellyfinLogins={jellyfinLogins}
-          />
+          <PanelBoundary name="Security">
+            <SecurityPanel
+              activity={security.activity}
+              findings={security.findings}
+              generatedAt={security.generatedAt}
+              auditLog={auditLog}
+              recentBadPasswordAttempts={recentBadPasswordAttempts}
+              jellyfinLogins={jellyfinLogins}
+            />
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Visitors</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <VisitorsPanel summary={visitors} />
+          <PanelBoundary name="Visitors">
+            <VisitorsPanel summary={visitors} />
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Visitor map</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <VisitorMapPanel />
+          <PanelBoundary name="Visitor map">
+            <VisitorMapPanel />
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Connections</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          {/* Its own Suspense boundary: this reads a 24-hour history over the
-              tailnet, and the rest of the admin page has no reason to wait on
-              a chart. */}
-          <Suspense fallback={<p className="py-8 text-center text-sm text-white/30">Loading metrics…</p>}>
-            <ConnectionsPanel />
-          </Suspense>
+          <PanelBoundary name="Connections">
+            {/* Its own Suspense boundary: this reads a 24-hour history over the
+                tailnet, and the rest of the admin page has no reason to wait on
+                a chart. */}
+            <Suspense fallback={<p className="py-8 text-center text-sm text-white/30">Loading metrics…</p>}>
+              <ConnectionsPanel />
+            </Suspense>
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Services</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6 space-y-6">
-          <ServicesPanel services={services} />
-          <TestAlertButton configured={isNotifyConfigured()} />
-          <EpgBackfillButton configured={isDispatcharrConfigured()} />
-          {/* Same section, not its own -- this is itself a health check (the
-              one real end-to-end signal: request a title, wait for it to
-              actually download, then exercise real playback), so it belongs
-              alongside the rest of Services rather than off on its own. */}
-          <div className="border-t border-white/10 pt-5">
-            <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
-              Download &amp; playback check
-            </h3>
-            <PlaybackCheckPanel runs={playbackCheckRuns} />
-          </div>
+          <PanelBoundary name="Services">
+            <ServicesPanel services={services} />
+            <TestAlertButton configured={isNotifyConfigured()} />
+            <EpgBackfillButton configured={isDispatcharrConfigured()} />
+            {/* Same section, not its own -- this is itself a health check (the
+                one real end-to-end signal: request a title, wait for it to
+                actually download, then exercise real playback), so it belongs
+                alongside the rest of Services rather than off on its own. */}
+            <div className="border-t border-white/10 pt-5">
+              <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
+                Download &amp; playback check
+              </h3>
+              <PlaybackCheckPanel runs={playbackCheckRuns} />
+            </div>
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <div className="space-y-4">
-            <SpendPanel
-              rows={spendRows}
-              totals={spendTotals}
-              aws={aws}
-              openRouter={openRouter}
-              autoRenewals={autoRenewals}
-            />
-          </div>
+          <PanelBoundary name="Spend">
+            <div className="space-y-4">
+              <SpendPanel
+                rows={spendRows}
+                totals={spendTotals}
+                aws={aws}
+                openRouter={openRouter}
+                autoRenewals={autoRenewals}
+              />
+            </div>
+          </PanelBoundary>
         </div>
       </section>
 
@@ -456,7 +472,9 @@ export default async function AdminFeaturesPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Tour watch</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PageWatchPanel summary={pageWatch} />
+          <PanelBoundary name="Tour watch">
+            <PageWatchPanel summary={pageWatch} />
+          </PanelBoundary>
         </div>
       </section>
 
@@ -470,40 +488,48 @@ export default async function AdminFeaturesPage() {
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <DownloadsPanel downloads={downloads} />
+          <PanelBoundary name="Downloads">
+            <DownloadsPanel downloads={downloads} />
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Game downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <GameDownloadsPanel downloads={gameDownloads} />
+          <PanelBoundary name="Game downloads">
+            <GameDownloadsPanel downloads={gameDownloads} />
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Flash downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <FlashDownloadsPanel rows={flashDownloads} />
+          <PanelBoundary name="Flash downloads">
+            <FlashDownloadsPanel rows={flashDownloads} />
+          </PanelBoundary>
         </div>
       </section>
 
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Storage usage</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          {diskUsage ? (
-            <StorageChart
-              totalSpace={diskUsage.totalBytes}
-              freeSpace={diskUsage.freeBytes}
-              moviesSize={diskUsage.categories.movies}
-              tvSize={diskUsage.categories.tv}
-              gamesSize={gamesSize}
-            />
-          ) : (
-            <p className="text-white/50 text-sm">
-              Storage info unavailable - mediabox isn&apos;t reachable.
-            </p>
-          )}
+          <PanelBoundary name="Storage usage">
+            {diskUsage ? (
+              <StorageChart
+                totalSpace={diskUsage.totalBytes}
+                freeSpace={diskUsage.freeBytes}
+                moviesSize={diskUsage.categories.movies}
+                tvSize={diskUsage.categories.tv}
+                gamesSize={gamesSize}
+              />
+            ) : (
+              <p className="text-white/50 text-sm">
+                Storage info unavailable - mediabox isn&apos;t reachable.
+              </p>
+            )}
+          </PanelBoundary>
         </div>
       </section>
 
