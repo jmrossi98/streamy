@@ -20,11 +20,17 @@ import { clientIpFromHeaders } from "./loginAttemptRules";
 /**
  * How much of the admin's message to keep.
  *
- * Enough to recognise a request in the log without turning this table into an
- * unbounded transcript store -- and the assistant's *replies* are never stored
- * here at all, only what was asked.
+ * Was 200, which is about two sentences -- enough to recognise a request and
+ * not enough to read one. The visitors log now shows these in full, and a
+ * prompt cut mid-question is the one field in that table where the content
+ * *is* the point.
+ *
+ * Still bounded, because this is a log rather than a transcript store: the
+ * assistant's replies are never recorded here at all, only what was asked,
+ * and 2000 characters is past any realistic ops question while keeping a
+ * pathological paste from becoming a database problem.
  */
-export const PROMPT_LOG_MAX = 200;
+export const PROMPT_LOG_MAX = 2000;
 
 export function truncatePrompt(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();

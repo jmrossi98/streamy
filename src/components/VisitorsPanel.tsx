@@ -163,9 +163,22 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                         {badgeLabel(v)}
                       </span>
                     </td>
-                    <td className="max-w-[12rem] truncate px-3 py-2 text-white/80" title={v.path}>
-                      {v.path}
-                    </td>
+                    {/* Assistant rows are the one kind allowed to grow.
+                        A prompt is the content -- truncated to twelve
+                        characters of "why is the download stuck" it tells you
+                        nothing, and hovering for a title attribute does not
+                        work on the phone this panel is mostly read on. Every
+                        other row stays on one line so the table keeps its
+                        shape. */}
+                    {v.kind === "assistant" ? (
+                      <td className="max-w-[28rem] whitespace-pre-wrap break-words px-3 py-2 align-top text-white/80">
+                        {v.path}
+                      </td>
+                    ) : (
+                      <td className="max-w-[12rem] truncate px-3 py-2 text-white/80" title={v.path}>
+                        {v.path}
+                      </td>
+                    )}
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/60">
                       {v.location ?? <span className="text-white/25">-</span>}
                     </td>
