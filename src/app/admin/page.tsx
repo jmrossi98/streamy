@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
@@ -34,6 +35,7 @@ import { isNotifyConfigured } from "@/lib/notify";
 import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
+import { ConnectionsPanel } from "@/components/ConnectionsPanel";
 import { BlogEditor } from "@/components/BlogEditor";
 import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
 import { PageWatchPanel } from "@/components/PageWatchPanel";
@@ -387,6 +389,18 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Visitor map</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <VisitorMapPanel />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Connections</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          {/* Its own Suspense boundary: this reads a 24-hour history over the
+              tailnet, and the rest of the admin page has no reason to wait on
+              a chart. */}
+          <Suspense fallback={<p className="py-8 text-center text-sm text-white/30">Loading metrics…</p>}>
+            <ConnectionsPanel />
+          </Suspense>
         </div>
       </section>
 

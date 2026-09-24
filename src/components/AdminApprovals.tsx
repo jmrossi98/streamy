@@ -27,12 +27,18 @@ export function AdminApprovals({ users }: { users: PendingUser[] }) {
     }
   }
 
+  // Same fixed height as the populated list, so the widget does not change
+  // size when the queue empties -- the panels beside it would otherwise jump
+  // every time a signup is approved.
   if (pending.length === 0) {
-    return <p className="text-white/60 text-sm">No pending signups.</p>;
+    return <p className="h-72 text-sm text-white/60">No pending signups.</p>;
   }
 
   return (
-    <ul className="space-y-3">
+    // Fixed height, not max-height: a queue of two and a queue of twenty
+    // should occupy the same space, so this widget lines up with the ones
+    // next to it instead of reflowing the panel as the list changes.
+    <ul className="h-72 space-y-3 overflow-y-auto pr-1">
       {pending.map((user) => (
         <li
           key={user.id}

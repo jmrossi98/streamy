@@ -31,6 +31,7 @@ import { isNotifyConfigured } from "./notify";
 import { prisma } from "./db";
 import { isContainerViewConfigured, listContainers } from "./containers";
 import { getSmartSnapshot, isSmartHealthConfigured, summarizeSmart } from "./smartHealth";
+import { getMetricsHistory, isMetricsHistoryConfigured } from "./metricsHistory";
 import { isOpenRouterConfigured } from "./openrouter";
 import { openRouterCredits } from "./spend";
 import { getLastVpnRotation, isVpnRotationConfigured } from "./vpnRotation";
@@ -1085,6 +1086,78 @@ async function webdavStatus(): Promise<ServiceStatus> {
  * being down -- all of which come back as null, same as every other "couldn't
  * look" case in this file.
  */
+function pct(used: number, total: number): number {
+  return total > 0 ? Math.round((used / total) * 100) : 0;
+}
+
+function gib(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(bytes >= 1024 ** 4 ? 1 : 0)} GiB`;
+}
+
+/**
+ * RAM and per-filesystem capacity, from the newest metrics sample.
+ *
+ * Read from the history mediabox already publishes rather than probed
+ * separately: the sampler is running every five minutes anyway, and a second
+ * source for the same numbers is a second thing that can disagree.
+ *
+ * Capacity only. Whether a disk is *failing* is the SMART row's job, and the
+ * two are genuinely different questions -- a half-empty disk can be dying.
+ */
+async function componentStatuses(): Promise<ServiceStatus[]> {
+  const base = env("FLASH_LIBRARY_URL");
+  if (!isMetricsHistoryConfigured()) {
+    return [{ name: "Components", group: SYSTEM, state: "unconfigured", detail: "No FLASH_LIBRARY_URL" }];
+  }
+
+  const history = await getMetricsHistory();
+  const latest = history?.points.at(-1);
+  if (!latest) {
+    return [
+      {
+        name: "Components",
+        group: SYSTEM,
+        state: "unknown",
+        detail: "No metrics samples yet - is metrics-sample.sh running?",
+        address: `${base}/status/metrics-24h.json`,
+      },
+    ];
+  }
+
+  const rows: ServiceStatus[] = [];
+
+  const memUsed = latest.mem.totalBytes - latest.mem.availableBytes;
+  const memPct = pct(memUsed, latest.mem.totalBytes);
+  rows.push({
+    name: "mediabox memory",
+    group: SYSTEM,
+    // 90% of RAM genuinely in use is worth flagging; anything below is
+    // normal for a box that runs Ollama and a transcoder. Linux using free
+    // memory for page cache is not "used" -- MemAvailable already accounts
+    // for that, which is why this reads MemAvailable and not MemFree.
+    state: memPct >= 90 ? "down" : "up",
+    detail: `${memPct}% used - ${gib(memUsed)} of ${gib(latest.mem.totalBytes)}`,
+  });
+
+  const fsRows: [string, { totalBytes: number; freeBytes: number }][] = [
+    ["mediabox SSD (system)", latest.fs.root],
+    ["mediabox HDD (media)", latest.fs.data],
+  ];
+  for (const [name, fs] of fsRows) {
+    const usedPct = pct(fs.totalBytes - fs.freeBytes, fs.totalBytes);
+    rows.push({
+      name,
+      group: SYSTEM,
+      // 90% is where ext4 starts fragmenting badly and where the 2026-09-15
+      // IO-pressure incident happened, at 91% on this exact box.
+      state: usedPct >= 90 ? "down" : "up",
+      detail: `${usedPct}% used - ${gib(fs.freeBytes)} free of ${gib(fs.totalBytes)}`,
+    });
+  }
+
+  return rows;
+}
+
 /**
  * Drive health, as distinct from drive capacity.
  *
@@ -1146,6 +1219,12 @@ async function portainerStatus(): Promise<ServiceStatus> {
 }
 
 export async function getServiceStatuses(): Promise<ServiceStatus[]> {
+  // WARNING: this destructuring is positional against the Promise.all below,
+  // and every entry is a ServiceStatus, so TypeScript cannot catch a
+  // misalignment. Adding a check to the array without adding a name here
+  // shifts everything after it by one and silently drops the last result --
+  // which is exactly what happened when diskHealthStatus() was added. Add to
+  // both lists, in the same position, or not at all.
   const [
     radarr,
     sonarr,
@@ -1177,6 +1256,8 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     syncthing,
     webdav,
     portainer,
+    diskHealth,
+    components,
     openRouter,
     tmdb,
     vpnRotation,
@@ -1219,6 +1300,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     webdavStatus(),
     portainerStatus(),
     diskHealthStatus(),
+    componentStatuses(),
     openRouterStatus(),
     tmdbStatus(),
     vpnRotationStatus(),
@@ -1253,7 +1335,11 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     openRouter,
     searxng,
     // System group, in rough order of "how loudly does this failing matter".
+    // This app's own disk first (it is the one that takes the site down),
+    // then mediabox's hardware: capacity, then whether the drives are dying.
     disk,
+    ...components,
+    diskHealth,
     tls,
     database,
     backup,
