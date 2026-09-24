@@ -79,3 +79,72 @@ export async function deleteTorrents(hashes: string[]): Promise<boolean> {
     return false;
   }
 }
+
+/** One torrent, reduced to what a health check needs. */
+export type TorrentHealth = {
+  name: string;
+  state: string;
+  progress: number;
+  connectedSeeds: number;
+  swarmSeeds: number;
+  dlSpeed: number;
+};
+
+/**
+ * Every torrent's state, for the stalled-download check.
+ *
+ * Deliberately separate from the *arrs' own queue view. Radarr reports a
+ * download as "downloading" right up until its own timeout, which is why a
+ * torrent can sit at 8% overnight and nothing anywhere says a word. The
+ * client is the only thing that knows it has one connected seed out of five.
+ */
+export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
+  if (!isQbittorrentConfigured()) return null;
+  const cookie = await login();
+  if (!cookie) return null;
+  try {
+    const res = await fetch(`${QBITTORRENT_URL}/api/v2/torrents/info`, {
+      headers: { ...baseHeaders(), Cookie: cookie },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      name?: string;
+      state?: string;
+      progress?: number;
+      num_seeds?: number;
+      num_complete?: number;
+      dlspeed?: number;
+    }[];
+    return body.map((t) => ({
+      name: t.name ?? "(unnamed)",
+      state: t.state ?? "unknown",
+      progress: t.progress ?? 0,
+      connectedSeeds: t.num_seeds ?? 0,
+      swarmSeeds: t.num_complete ?? 0,
+      dlSpeed: t.dlspeed ?? 0,
+    }));
+  } catch (err) {
+    console.error("[qbittorrent] torrent health read failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Torrents that are trying to download and getting nowhere.
+ *
+ * "Stalled" is qBittorrent's own word for a torrent with no usable peers.
+ * A torrent that is downloading but pulling nothing counts too: with no
+ * inbound port, a low-seed swarm gives you whichever seeds happen to accept
+ * your outbound connection, which can be none of them.
+ *
+ * Completed torrents that are merely seeding to nobody are not a problem and
+ * are excluded -- that is the normal resting state of a finished download.
+ */
+export function stalledDownloads(torrents: TorrentHealth[]): TorrentHealth[] {
+  return torrents.filter(
+    (t) =>
+      t.progress < 1 &&
+      (t.state === "stalledDL" || (t.state === "downloading" && t.dlSpeed === 0))
+  );
+}
