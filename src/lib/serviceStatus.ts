@@ -30,6 +30,7 @@ import { checkEgress } from "./pageWatch";
 import { isNotifyConfigured } from "./notify";
 import { prisma } from "./db";
 import { isContainerViewConfigured, listContainers } from "./containers";
+import { getSmartSnapshot, isSmartHealthConfigured, summarizeSmart } from "./smartHealth";
 import { isOpenRouterConfigured } from "./openrouter";
 import { openRouterCredits } from "./spend";
 import { getLastVpnRotation, isVpnRotationConfigured } from "./vpnRotation";
@@ -1084,6 +1085,39 @@ async function webdavStatus(): Promise<ServiceStatus> {
  * being down -- all of which come back as null, same as every other "couldn't
  * look" case in this file.
  */
+/**
+ * Drive health, as distinct from drive capacity.
+ *
+ * The storage panel already answers "how full". This answers "is it failing",
+ * which is a different question with a different failure mode: a disk can be
+ * half empty and about to die. Added when the 8TB went in holding the whole
+ * library with nothing reading its SMART attributes at all.
+ */
+async function diskHealthStatus(): Promise<ServiceStatus> {
+  const name = "Disk health (SMART)";
+  const address = `${env("FLASH_LIBRARY_URL")}/status/smart.json`;
+  if (!isSmartHealthConfigured()) {
+    return { name, group: SYSTEM, state: "unconfigured", detail: "No FLASH_LIBRARY_URL" };
+  }
+
+  const snapshot = await getSmartSnapshot();
+  if (!snapshot) {
+    // Unknown rather than down: this says the snapshot could not be read,
+    // which is a statement about the publisher or the tailnet, not about the
+    // drives. Calling it "down" would read as "your disk is failing".
+    return {
+      name,
+      group: SYSTEM,
+      state: "unknown",
+      detail: "Couldn't read smart.json - is smart-report.sh running?",
+      address,
+    };
+  }
+
+  const { ok, detail } = summarizeSmart(snapshot);
+  return { name, group: SYSTEM, state: ok ? "up" : "down", detail, address };
+}
+
 async function portainerStatus(): Promise<ServiceStatus> {
   const name = "Portainer";
   const address = env("PORTAINER_URL");
@@ -1184,6 +1218,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     syncthingStatus(),
     webdavStatus(),
     portainerStatus(),
+    diskHealthStatus(),
     openRouterStatus(),
     tmdbStatus(),
     vpnRotationStatus(),
