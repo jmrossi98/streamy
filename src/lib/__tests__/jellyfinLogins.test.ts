@@ -1,11 +1,21 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { getJellyfinLoginSummary } from "../jellyfinLogins";
+import { invalidateCache } from "../ttlCache";
 
 const realFetch = global.fetch;
+
+// The summary is cached for a minute so the Security panel, the visitors log
+// and the map share one outbound fetch per render. That cache is module-level
+// and therefore outlives a single test: without clearing it, the first case to
+// run answers every later one, and the suite passes or fails on test order.
+beforeEach(() => {
+  invalidateCache("jellyfin:");
+});
 
 afterEach(() => {
   global.fetch = realFetch;
   vi.unstubAllEnvs();
+  invalidateCache("jellyfin:");
 });
 
 describe("getJellyfinLoginSummary", () => {

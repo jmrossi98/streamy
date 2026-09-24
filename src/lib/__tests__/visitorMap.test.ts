@@ -47,7 +47,14 @@ describe("aggregatePins", () => {
     ]);
     expect(pins).toHaveLength(1);
     expect(pins[0].total).toBe(3);
-    expect(pins[0].bySource).toEqual({ portfolio: 1, "login-fail": 1, streamy: 1, "login-success": 0 });
+    expect(pins[0].bySource).toEqual({
+      portfolio: 1,
+      "login-fail": 1,
+      streamy: 1,
+      "login-success": 0,
+      jellyfin: 0,
+      assistant: 0,
+    });
     expect(pins[0].label).toBe("New York, United States");
   });
 
@@ -111,7 +118,14 @@ describe("totals", () => {
     expect(totals(pins)).toEqual({
       pins: 2,
       visits: 3,
-      bySource: { portfolio: 1, streamy: 1, "login-success": 0, "login-fail": 1 },
+      bySource: {
+        portfolio: 1,
+        streamy: 1,
+        "login-success": 0,
+        "login-fail": 1,
+        jellyfin: 0,
+        assistant: 0,
+      },
     });
   });
 });

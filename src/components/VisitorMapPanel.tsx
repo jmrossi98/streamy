@@ -16,6 +16,11 @@ const SOURCE_META: Record<VisitSource, { label: string; color: string }> = {
   streamy: { label: "Streamy", color: "#e50914" }, // netflix red
   "login-success": { label: "Sign-ins", color: "#22c55e" }, // green - got in
   "login-fail": { label: "Failed sign-ins", color: "#f59e0b" }, // amber - didn't
+  jellyfin: { label: "Jellyfin sign-ins", color: "#a855f7" }, // purple
+  // Orange, and a saturated one: the nearest colour already on this map is
+  // the amber of a failed sign-in, and these two must not read as the same
+  // thing at a glance.
+  assistant: { label: "Assistant", color: "#f97316" },
 };
 
 function dominantSource(pin: MapPin): VisitSource {

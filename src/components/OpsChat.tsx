@@ -9,8 +9,22 @@ import {
   isRemoteBackend,
   type ChatBackendId,
 } from "@/lib/chatModels";
+import { parseProposal, stripProposal } from "@/lib/remediation";
+import { ActionProposal } from "./ActionProposal";
 
 type Turn = { role: "user" | "assistant"; content: string };
+
+/**
+ * Renders the confirm button when the assistant's reply contains a valid
+ * proposal, and nothing at all otherwise -- which covers a reply with no
+ * proposal, a malformed one, and one naming an action or target that isn't on
+ * the allowlist. An invented proposal is silently not a button.
+ */
+function ProposalFor({ content }: { content: string }) {
+  const proposal = parseProposal(content);
+  if (!proposal) return null;
+  return <ActionProposal actionId={proposal.actionId} target={proposal.target} />;
+}
 
 type Props = {
   /** OLLAMA_URL is set -- the self-hosted model can be picked. */
@@ -283,10 +297,16 @@ export function OpsChat({
               }`}
             >
               {t.content ? (
-                <ChatMessage role={t.role} content={t.content} />
+                <ChatMessage role={t.role} content={stripProposal(t.content)} />
               ) : streaming && i === turns.length - 1 ? (
                 <span className="text-white/40">thinking…</span>
               ) : null}
+              {/* Only once the turn has finished streaming: a half-written
+                  block parses as nothing, and a button that appears mid-token
+                  invites a press before the reasoning above it is readable. */}
+              {t.role === "assistant" && !(streaming && i === turns.length - 1) && (
+                <ProposalFor content={t.content} />
+              )}
             </div>
           </div>
         ))}

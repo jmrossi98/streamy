@@ -18,6 +18,7 @@ import {
   withContext,
 } from "@/lib/chatLimits";
 import { buildStatusContext } from "@/lib/chatContext";
+import { recordAssistantUsage } from "@/lib/assistantUsage";
 import { getSnapshot } from "@/lib/chatStatus";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
@@ -42,7 +43,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!(await requireAdmin(await getSession()))) {
+  // Kept rather than discarded: the admin's own name is what the usage log
+  // records, for the same reason AuditLogEntry stores a name and not an id.
+  const admin = await requireAdmin(await getSession());
+  if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
@@ -80,6 +84,18 @@ export async function POST(request: Request) {
   if (!hasUserTurn(messages)) {
     return NextResponse.json({ error: "Nothing to answer." }, { status: 400 });
   }
+
+  // Recorded once the turn is known to be real, but before the model is
+  // called: what the visitors log is reporting is that the assistant was
+  // *used*, which is true whether or not the model then answers successfully.
+  // Awaited rather than fired and forgotten so a turn can't outlive its own
+  // log row on a process that exits mid-stream.
+  await recordAssistantUsage({
+    actorName: admin.name,
+    backend,
+    prompt: latestUserQuery(messages) ?? "",
+    headers: request.headers,
+  });
 
   // Opt-out rather than opt-in, unlike search: this panel exists to answer
   // questions about this stack, and the common case is wanting the answer to

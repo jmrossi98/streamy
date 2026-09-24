@@ -1,20 +1,29 @@
 /**
- * Assembles the visitor map from its three sources, geolocating on the way.
+ * Assembles the visitor map from its sources, geolocating on the way.
  *
- * The three streams answer different questions and are kept distinct on the map:
+ * Each stream answers a different question, so they stay distinct on the map:
  *  - portfolio: beacon visits to jakobrossi.com
  *  - streamy:   page views inside this app (authenticated users)
  *  - login:     sign-in attempts to this app, from LoginAttempt
+ *  - jellyfin:  sign-in attempts to the Jellyfin server, from its own log
+ *  - assistant: turns taken with the admin assistant, from AssistantUsage
  *
  * Login attempts matter precisely because they include access that never got
  * in -- the portfolio and page-view streams only ever show people who succeeded
- * at reaching a page, so they can't show a stranger rattling the door.
+ * at reaching a page, so they can't show a stranger rattling the door. The
+ * Jellyfin stream is there for the same reason, for the one door on this stack
+ * that is open to the public internet.
+ *
+ * The assistant stream is a different question again: not "who is visiting"
+ * but "where is this panel being driven from", which is worth being able to
+ * see for a tool that can now propose changes to the box.
  *
  * This is the impure half (database + geo reader); the grouping and projection
  * it feeds are pure in visitorMap.ts.
  */
 
 import { prisma } from "@/lib/db";
+import { getJellyfinLoginSummary } from "@/lib/jellyfinLogins";
 import { isDatabaseReady, isGeoipConfigured, locateMany } from "@/lib/geoip";
 import {
   aggregatePins,
@@ -55,7 +64,7 @@ export async function getVisitorMap(): Promise<VisitorMap> {
 
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
-  const [siteVisits, logins] = await Promise.all([
+  const [siteVisits, logins, assistant, jellyfin] = await Promise.all([
     prisma.siteVisit.findMany({
       where: { at: { gte: since } },
       select: { ip: true, site: true },
@@ -65,6 +74,14 @@ export async function getVisitorMap(): Promise<VisitorMap> {
       select: { ip: true, success: true, at: true },
       orderBy: { at: "asc" },
     }),
+    prisma.assistantUsage.findMany({
+      where: { at: { gte: since } },
+      select: { ip: true },
+    }),
+    // Not a table: Jellyfin's own sign-in log, published as a snapshot by the
+    // guard script on mediabox and read through a short cache, so this and the
+    // visitors log share one outbound fetch per render.
+    getJellyfinLoginSummary(),
   ]);
 
   // Classify each IP by the outcome of its MOST RECENT attempt, not per attempt.
@@ -87,6 +104,19 @@ export async function getVisitorMap(): Promise<VisitorMap> {
         ? "login-success"
         : "login-fail") as LocatedVisit["source"],
     })),
+    ...assistant.map((a) => ({
+      ip: a.ip,
+      source: "assistant" as LocatedVisit["source"],
+    })),
+    // Jellyfin logs no IP on a *successful* sign-in, so only the failures can
+    // be placed. That is the opposite of this app's own login stream, where
+    // both outcomes carry an address -- worth knowing before reading the map
+    // as "where people watch from": it is closer to "where sign-ins failed
+    // from" until Jellyfin is behind Known Proxies and logging real client
+    // IPs on success too.
+    ...jellyfin.attempts
+      .filter((j): j is typeof j & { ip: string } => !!j.ip)
+      .map((j) => ({ ip: j.ip, source: "jellyfin" as LocatedVisit["source"] })),
   ];
 
   const located = await locateMany(raw.map((r) => r.ip));
@@ -123,6 +153,13 @@ function emptyTotals(): MapTotals {
   return {
     pins: 0,
     visits: 0,
-    bySource: { portfolio: 0, streamy: 0, "login-success": 0, "login-fail": 0 },
+    bySource: {
+      portfolio: 0,
+      streamy: 0,
+      "login-success": 0,
+      "login-fail": 0,
+      jellyfin: 0,
+      assistant: 0,
+    },
   };
 }
