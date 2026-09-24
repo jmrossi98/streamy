@@ -111,13 +111,29 @@ describe("prepareChatMessages", () => {
 });
 
 describe("systemPromptFor", () => {
-  // The read-only rule is what makes this panel safe to point at a homelab,
-  // so it belongs in every backend's instructions, not just the local one.
-  it("tells every backend it is read-only and cannot act", () => {
+  // The "propose, never act" rule is what makes this panel safe to point at a
+  // homelab, so it belongs in every backend's instructions, not just the
+  // local one. This replaced a flat "strictly read-only" claim, which stopped
+  // being true once remediation landed -- the model still cannot act, but it
+  // can now offer an action the admin confirms.
+  it("tells every backend it cannot run anything itself", () => {
     for (const backend of ["local", "open", "claude"] as const) {
       const prompt = systemPromptFor(backend);
-      expect(prompt).toMatch(/read-only/i);
-      expect(prompt).toMatch(/cannot run commands/i);
+      expect(prompt).toMatch(/cannot run anything yourself/i);
+      expect(prompt).toMatch(/no shell and no tools/i);
+      expect(prompt).toMatch(/confirms with a button/i);
+    }
+  });
+
+  // The three excluded containers are excluded because restarting them can
+  // cost the admin their own access. A model that offers them anyway gets
+  // rejected by the allowlist, but it shouldn't be offering them at all.
+  it("tells every backend which containers are off limits", () => {
+    for (const backend of ["local", "open", "claude"] as const) {
+      const prompt = systemPromptFor(backend);
+      expect(prompt).toMatch(/gluetun/);
+      expect(prompt).toMatch(/tailscale-exit/);
+      expect(prompt).toMatch(/jellyfin/i);
     }
   });
 

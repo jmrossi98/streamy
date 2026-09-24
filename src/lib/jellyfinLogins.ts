@@ -15,9 +15,19 @@
  * call that enforces it, stay entirely on mediabox; see the script's own
  * header for why (the short version: this app can't see the attacker's real
  * connection either, for the same reason a local firewall on mediabox can't).
+ *
+ * The admin page reads this from three places in one render (the Security
+ * panel's blocked-IP callout, the Visitors log, and the map) -- cached
+ * briefly so that costs one outbound fetch, not three, the same reasoning
+ * ttlCache.ts gives for the rest of the admin page's fan-out.
  */
 
+import { cached } from "./ttlCache";
+
 const PROBE_TIMEOUT_MS = 8_000;
+// The publisher on mediabox refreshes every 5 minutes; a much shorter TTL
+// here just multiplies requests to the flash container for no fresher data.
+const CACHE_TTL_MS = 60_000;
 
 export type JellyfinLoginAttempt = {
   at: string;
@@ -43,6 +53,15 @@ export type JellyfinLoginSummary = {
 const EMPTY: JellyfinLoginSummary = { checkedUtc: null, attempts: [], blocked: [] };
 
 export async function getJellyfinLoginSummary(): Promise<JellyfinLoginSummary> {
+  return cached("jellyfin:logins", CACHE_TTL_MS, fetchJellyfinLoginSummary, {
+    // A read that failed (unconfigured, unreachable, bad JSON) reports
+    // checkedUtc: null. Caching that would turn one bad tailnet hiccup into a
+    // minute of every panel on the page showing empty for no reason.
+    skipCacheIf: (v) => v.checkedUtc === null,
+  });
+}
+
+async function fetchJellyfinLoginSummary(): Promise<JellyfinLoginSummary> {
   const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
   if (!base) return EMPTY;
   try {

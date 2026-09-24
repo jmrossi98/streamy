@@ -26,6 +26,49 @@ function formatVisitAt(at: string): string {
   return `${visitorLogTimeFormatter.format(new Date(at))} ET`;
 }
 
+type VisitorRow = VisitorSummary["recent"][number];
+
+/**
+ * Badge colours, kept in step with the map's own legend in VisitorMapPanel:
+ * purple for Jellyfin, orange for assistant turns. Two sign-in streams now
+ * share this log -- this app's and Jellyfin's -- so they are coloured apart
+ * rather than both reading as "a sign-in".
+ *
+ * Extracted from a nested ternary that was readable at two kinds and stopped
+ * being so at four.
+ */
+function badgeClass(v: VisitorRow): string {
+  switch (v.kind) {
+    case "login":
+      return v.success
+        ? "bg-green-500/15 text-green-300"
+        : "bg-amber-500/15 text-amber-300";
+    case "jellyfin":
+      return v.success
+        ? "bg-purple-500/15 text-purple-300"
+        : "bg-purple-500/25 text-purple-200";
+    case "assistant":
+      return "bg-orange-500/15 text-orange-300";
+    default:
+      return v.site === "streamy"
+        ? "bg-red-500/15 text-red-300"
+        : "bg-sky-500/15 text-sky-300";
+  }
+}
+
+function badgeLabel(v: VisitorRow): string {
+  switch (v.kind) {
+    case "login":
+      return v.success ? "sign-in" : "sign-in ✗";
+    case "jellyfin":
+      return v.success ? "jellyfin" : "jellyfin ✗";
+    case "assistant":
+      return "assistant";
+    default:
+      return v.site;
+  }
+}
+
 function hostOf(referrer: string): string {
   if (referrer === "(direct)") return referrer;
   try {
@@ -116,18 +159,8 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                   <tr key={v.id} className="border-t border-white/5">
                     <td className="whitespace-nowrap px-3 py-2 text-white/50">{formatVisitAt(v.at)}</td>
                     <td className="whitespace-nowrap px-3 py-2">
-                      <span
-                        className={
-                          v.kind === "login"
-                            ? v.success
-                              ? "rounded bg-green-500/15 px-1.5 py-0.5 text-xs text-green-300"
-                              : "rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300"
-                            : v.site === "streamy"
-                              ? "rounded bg-red-500/15 px-1.5 py-0.5 text-xs text-red-300"
-                              : "rounded bg-sky-500/15 px-1.5 py-0.5 text-xs text-sky-300"
-                        }
-                      >
-                        {v.kind === "login" ? (v.success ? "sign-in" : "sign-in ✗") : v.site}
+                      <span className={`rounded px-1.5 py-0.5 text-xs ${badgeClass(v)}`}>
+                        {badgeLabel(v)}
                       </span>
                     </td>
                     <td className="max-w-[12rem] truncate px-3 py-2 text-white/80" title={v.path}>
@@ -137,7 +170,9 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                       {v.location ?? <span className="text-white/25">-</span>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-white/60">
-                      {v.ip}
+                      {/* Jellyfin logs no IP on a successful sign-in, so those
+                          rows genuinely have none -- a dash, not a blank cell. */}
+                      {v.ip || <span className="text-white/25">-</span>}
                     </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/50">
                       {v.referrer ? hostOf(v.referrer) : "direct"}

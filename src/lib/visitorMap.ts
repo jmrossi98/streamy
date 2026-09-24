@@ -20,13 +20,21 @@ export type LocatedVisit = {
 // Sign-ins are split into success and failure: a failed attempt is the one that
 // actually matters for "who is trying to get in", and lumping it with successes
 // hid that. The order here is also the canonical source order.
-export type VisitSource = "portfolio" | "streamy" | "login-success" | "login-fail";
+export type VisitSource =
+  | "portfolio"
+  | "streamy"
+  | "login-success"
+  | "login-fail"
+  | "jellyfin"
+  | "assistant";
 
 export const VISIT_SOURCES: readonly VisitSource[] = [
   "portfolio",
   "streamy",
   "login-success",
   "login-fail",
+  "jellyfin",
+  "assistant",
 ];
 
 export type MapPin = {
@@ -65,7 +73,14 @@ function cellKey(lat: number, lon: number): string {
 }
 
 function emptyBySource(): Record<VisitSource, number> {
-  return { portfolio: 0, streamy: 0, "login-success": 0, "login-fail": 0 };
+  return {
+    portfolio: 0,
+    streamy: 0,
+    "login-success": 0,
+    "login-fail": 0,
+    jellyfin: 0,
+    assistant: 0,
+  };
 }
 
 function labelFor(city: string | null, country: string | null, lat: number, lon: number): string {

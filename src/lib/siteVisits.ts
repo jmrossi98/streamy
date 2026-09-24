@@ -9,6 +9,7 @@
 
 import { prisma } from "./db";
 import { locateMany } from "./geoip";
+import { getJellyfinLoginSummary } from "./jellyfinLogins";
 
 /** Allowed `site` values. An unknown site is rejected rather than stored. */
 // "streamy" is this app reporting its own page views, alongside the portfolio
@@ -93,17 +94,29 @@ export type VisitorSummary = {
    */
   recent: {
     id: string;
-    /** "visit" for a page view, "login" for a sign-in attempt. */
-    kind: "visit" | "login";
-    /** "portfolio" | "streamy" for a visit; "login" for a sign-in attempt. */
+    /**
+     * "visit" for a page view, "login" for a sign-in attempt to this app,
+     * "jellyfin" for a sign-in attempt to the Jellyfin server, "assistant"
+     * for a turn taken with the admin assistant.
+     */
+    kind: "visit" | "login" | "jellyfin" | "assistant";
+    /** "portfolio" | "streamy" for a visit; the kind's own label otherwise. */
     site: string;
-    /** The page path for a visit; the attempt's "name: outcome" for a login. */
+    /**
+     * The page path for a visit; "name: outcome" for either kind of sign-in;
+     * the (truncated) prompt for an assistant turn.
+     */
     path: string;
+    /**
+     * Empty string when the source genuinely has no address for the event.
+     * Jellyfin's log carries no IP on a *successful* sign-in, so those rows
+     * are real events that can be listed but never placed.
+     */
     ip: string;
     /** "City, Country" from GeoLite2, or null when it can't be placed. */
     location: string | null;
     referrer: string | null;
-    /** Login rows only: whether the attempt succeeded. */
+    /** Sign-in rows only (either kind): whether the attempt succeeded. */
     success?: boolean;
     at: string;
   }[];
@@ -129,6 +142,9 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     allLogins,
     visitTotal,
     loginTotal,
+    allAssistant,
+    assistantTotal,
+    jellyfinLogins,
   ] = await Promise.all([
     prisma.siteVisit.count({ where: { site, at: { gte: dayAgo } } }),
     prisma.siteVisit.count({ where: { site, at: { gte: weekAgo } } }),
@@ -159,6 +175,16 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     }),
     prisma.siteVisit.count(),
     prisma.loginAttempt.count(),
+    prisma.assistantUsage.findMany({
+      orderBy: { at: "desc" },
+      take: LOG_CAP,
+      select: { id: true, actorName: true, backend: true, prompt: true, ip: true, at: true },
+    }),
+    prisma.assistantUsage.count(),
+    // Live-fetched rather than stored: these are Jellyfin's own log, published
+    // as a snapshot by the guard script on mediabox. Cached in
+    // jellyfinLogins.ts, so the map and this log share one outbound read.
+    getJellyfinLoginSummary(),
   ]);
 
   // One merged, newest-first timeline of everything.
@@ -187,7 +213,40 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       at: l.at.toISOString(),
       _at: l.at,
     })),
+    ...allAssistant.map((a) => ({
+      id: a.id,
+      kind: "assistant" as const,
+      site: "assistant",
+      // Who asked and on which model, then what they asked -- the prompt is
+      // already truncated at write time, so this is bounded.
+      path: `${a.actorName} (${a.backend}): ${a.prompt}`,
+      ip: a.ip,
+      location: null,
+      referrer: null,
+      at: a.at.toISOString(),
+      _at: a.at,
+    })),
+    ...jellyfinLogins.attempts.map((j) => ({
+      // The snapshot has no ids of its own -- it is a rolling window of log
+      // lines, so identity has to come from the event's own fields. Stable
+      // enough for a React key, which is all it is used for.
+      id: `jf:${j.at}:${j.user}:${j.ip ?? "noip"}`,
+      kind: "jellyfin" as const,
+      site: "jellyfin",
+      path: `${j.user}: ${j.outcome}`,
+      // Jellyfin logs no IP on a successful sign-in. Empty string rather than
+      // a fake one, so the row lists honestly and the map simply skips it.
+      ip: j.ip ?? "",
+      location: null,
+      referrer: null,
+      success: j.outcome === "succeeded",
+      at: j.at,
+      _at: new Date(j.at),
+    })),
   ]
+    // A snapshot line with an unparseable timestamp would sort as NaN and
+    // scramble the whole timeline, so drop those rather than trust them.
+    .filter((r) => !Number.isNaN(r._at.getTime()))
     .sort((a, b) => b._at.getTime() - a._at.getTime())
     .slice(0, LOG_CAP);
 
@@ -209,6 +268,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       count: r._count.referrer,
     })),
     recent: rows.map(({ _at, ...r }) => ({ ...r, location: locationOf(r.ip) })),
-    totalActivity: visitTotal + loginTotal,
+    totalActivity: visitTotal + loginTotal + assistantTotal + jellyfinLogins.attempts.length,
   };
 }

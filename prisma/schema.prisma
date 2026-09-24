@@ -669,6 +669,42 @@ model AuditLogEntry {
   @@index([action, createdAt])
 }
 
+/// One row per message sent to the admin assistant.
+///
+/// Separate from AuditLogEntry on purpose: that table records an *action*
+/// somebody took, and most assistant turns take no action at all. This
+/// records *use* -- who asked it something, from where, on which backend --
+/// which is the question the visitors log answers for the rest of the site.
+/// An assistant turn that does go on to run a remediation writes both: a row
+/// here for the asking, and an AuditLogEntry for the doing.
+///
+/// Carries ip/country because it is merged into the visitors log, whose rows
+/// are all "someone, somewhere, did this" -- and because the admin panel is
+/// reachable from the public internet, so *where* an admin session is being
+/// driven from is worth being able to see.
+model AssistantUsage {
+  id String @id @default(cuid())
+
+  /// Admin's own name, not their user id -- same reasoning as
+  /// AuditLogEntry.actorName: the row still reads clearly after a rename.
+  actorName String
+
+  /// Which model answered: "local", "open", or "claude". Stored per row
+  /// rather than derived, since the picker can change between turns.
+  backend String
+
+  /// The admin's message, truncated -- enough to recognise the request
+  /// without turning this table into an unbounded transcript store.
+  prompt String
+
+  ip      String
+  country String?
+
+  at DateTime @default(now())
+
+  @@index([at])
+}
+
 // Which channel this user picked for a given game.
 //
 // A game page offers several plausible channels -- an EPG-confirmed match
