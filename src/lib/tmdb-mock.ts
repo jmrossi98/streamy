@@ -177,10 +177,14 @@ export async function mockSearchTVShows(query: string, limit = 12, _page = 1): P
   return Promise.resolve(filtered.slice(0, limit));
 }
 
-export async function mockGetShowById(id: string): Promise<(TVShow & { numberOfSeasons: number }) | null> {
+export async function mockGetShowById(
+  id: string
+): Promise<(TVShow & { numberOfSeasons: number; hasSpecials: boolean }) | null> {
   const show = MOCK_TV_SHOWS.find((s) => s.id === id);
   if (!show) return null;
-  return { ...show, numberOfSeasons: 3 };
+  // No specials in mock mode: mockGetSeason only synthesises numbered
+  // seasons, so claiming otherwise would offer a tab that opens on nothing.
+  return { ...show, numberOfSeasons: 3, hasSpecials: false };
 }
 
 export async function mockGetSeason(showId: string, seasonNumber: number): Promise<TVSeason | null> {
