@@ -6,7 +6,22 @@ import { useSession } from "next-auth/react";
 // Match the movie button: tight enough that a percentage visibly climbs
 // while downloading, backed off when only a search is pending.
 const POLL_INTERVAL_DOWNLOADING_MS = 5000;
-const POLL_INTERVAL_QUEUED_MS = 12000;
+const POLL_INTERVAL_QUEUED_MS = 8000;
+
+// Right after a click, poll hard. Measured from the Lightsail box, a season
+// status read costs Sonarr 30-85ms, so the old 12-second wait for the first
+// real answer was not protecting anything -- it was just the cheapest
+// interval to have written. The click already paints optimistically; this is
+// about how fast the optimistic state gets replaced by a true one (found a
+// release, or found nothing), which is the part that actually feels slow.
+const BURST_INTERVAL_MS = 1000;
+const BURST_WINDOW_MS = 20_000;
+
+/** Exported for test: the cadence rules, without the effect around them. */
+export function pollIntervalMs(bursting: boolean, anyDownloading: boolean): number {
+  if (bursting) return BURST_INTERVAL_MS;
+  return anyDownloading ? POLL_INTERVAL_DOWNLOADING_MS : POLL_INTERVAL_QUEUED_MS;
+}
 
 // "noReleaseFound" is distinct from "requested": Sonarr searched this
 // episode and nothing cleared the quality/seeder bar, vs. still actively
@@ -45,6 +60,10 @@ export function useSeasonStatuses(
   // properly either way.
   const RECENT_WRITE_GRACE_MS = 4000;
   const recentWritesRef = useRef<Map<number, number>>(new Map());
+
+  // State rather than a ref: the polling effect has to re-run to pick up the
+  // faster interval, and a ref mutation would not retrigger it.
+  const [burstUntil, setBurstUntil] = useState(0);
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -95,14 +114,31 @@ export function useSeasonStatuses(
     if (!anyActive) return;
     const interval = setInterval(
       refresh,
-      anyDownloading ? POLL_INTERVAL_DOWNLOADING_MS : POLL_INTERVAL_QUEUED_MS
+      pollIntervalMs(Date.now() < burstUntil, anyDownloading)
     );
     return () => clearInterval(interval);
-  }, [statuses, refresh, enabled]);
+  }, [statuses, refresh, enabled, burstUntil]);
+
+  // A tab that was in the background is showing whatever it last polled,
+  // which after a few minutes away is simply wrong. Returning to it should
+  // cost one request, not up to a full interval of staring at stale rows.
+  useEffect(() => {
+    if (!enabled) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [refresh, enabled]);
 
   /** Paints one episode's state locally so a click registers before the server answers. */
   const setLocalState = useCallback((episodeNumber: number, next: EpisodeState | null) => {
     recentWritesRef.current.set(episodeNumber, Date.now());
+    setBurstUntil(Date.now() + BURST_WINDOW_MS);
     setStatuses((prev) => {
       const updated = { ...prev };
       if (next) updated[episodeNumber] = next;
@@ -119,6 +155,7 @@ export function useSeasonStatuses(
    * Episodes already downloading or on disk keep their real state.
    */
   const setLocalStates = useCallback((episodeNumbers: number[], next: EpisodeState | null) => {
+    setBurstUntil(Date.now() + BURST_WINDOW_MS);
     const now = Date.now();
     setStatuses((prev) => {
       const updated = { ...prev };
