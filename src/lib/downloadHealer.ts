@@ -47,6 +47,19 @@ import { countRecentRejections, getPermanentBlocks, recordRejection } from "./re
 // downloadHealthRules.ts so it can be tested without this file's clients.
 const lastHealedAt = new Map<string, number>();
 const idleTries = new Map<string, number>();
+// Consecutive passes a title has been missing from the idle lists. Prevents
+// one transient empty read from resetting a title's escalation.
+const absentPasses = new Map<string, number>();
+
+function stillWantedKeys(
+  movies: { externalId: number }[],
+  episodes: { episodeId: number }[]
+): Set<string> {
+  return new Set([
+    ...movies.map((m) => `idle:movie:${m.externalId}`),
+    ...episodes.map((e) => `idle:episode:${e.episodeId}`),
+  ]);
+}
 
 export type HealedDownload = { title: string; reason: string };
 
@@ -66,7 +79,10 @@ async function healOne(
   mediaType: "movie" | "show",
   entry: QueueHealth
 ): Promise<HealedDownload | null> {
-  const key = `${mediaType}:${entry.externalId}`;
+  // Keyed per queue entry, not per title. A series can have several episodes
+  // in flight, and keying on the series meant healing one of them put the
+  // others on cooldown too.
+  const key = `${mediaType}:${entry.externalId}:${entry.queueId}`;
   if (onCooldown(key)) return null;
   lastHealedAt.set(key, Date.now());
 
@@ -78,15 +94,34 @@ async function healOne(
   // pushed later searches onto steadily worse ones.
   const failed = shouldBlocklist(entry.errorMessage);
   try {
+    // Cancel this entry, never the title's whole queue.
+    //
+    // cancelSonarrDownload takes a *series* id and removes every queue entry
+    // belonging to it. One dead special therefore killed every other episode
+    // of the same series that happened to be downloading -- observed on
+    // Gurren Lagann, where a 0-seed fansub torrent repeatedly took out the
+    // movie at 26%, 29%, then 44%, each time resetting it to zero. A series
+    // with several things in flight could never finish any of them.
+    //
+    // rejectUnsafe already did this correctly per entry; healOne did not.
     const cancelled =
       mediaType === "movie"
-        ? await cancelRadarrDownload(entry.externalId, { blocklist: failed })
-        : await cancelSonarrDownload(entry.externalId, failed);
+        ? await cancelRadarrQueueItem(entry.queueId, { blocklist: failed })
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: failed });
     if (!cancelled) return null;
 
+    // Re-search only what was just cancelled. A SeriesSearch re-grabs every
+    // missing episode, which on a series with 21 monitored specials means 21
+    // new grabs for one failed download.
     if (mediaType === "movie") {
       await searchRadarrMovie(entry.externalId);
+      lastHealedAt.set(`idle:movie:${entry.externalId}`, Date.now());
+    } else if (entry.episodeId != null) {
+      await searchSonarrEpisodes([entry.episodeId]);
+      lastHealedAt.set(`idle:episode:${entry.episodeId}`, Date.now());
     } else {
+      // No episode id (an unmatched or season-pack entry): series search is
+      // the only option left, and is correct there.
       await searchSonarrSeries(entry.externalId);
     }
     console.log(`[healer] re-grabbing "${entry.title}" (${reason})`);
@@ -173,16 +208,31 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   ]);
   const healed: HealedDownload[] = [];
 
-  // A title that has dropped off the wanted list got what it needed (or was
-  // cancelled), so its escalation is forgotten. Without this, a title that
-  // succeeds after several failures would come back on a 4-hour cooldown the
-  // next time it legitimately needs a nudge.
-  const stillWanted = new Set([
-    ...movies.map((m) => `idle:movie:${m.externalId}`),
-    ...episodes.map((e) => `idle:episode:${e.episodeId}`),
-  ]);
+  // Escalation is forgotten only for titles that have genuinely left the
+  // wanted list for a while -- not the instant they stop appearing.
+  //
+  // The idle lists exclude anything currently in the download queue, so the
+  // first version of this pruned the counter for every title that started
+  // downloading. A queue that briefly reads empty -- which happens each time
+  // the pass above cancels something -- then made an active download look
+  // idle with tries reset to zero, so it was re-searched at the 15-minute
+  // base interval instead of its real backoff. That is how a download at
+  // "try 3" reappeared as "try 1" and got grabbed again.
+  //
+  // Requiring two consecutive absences costs one extra cycle of memory and
+  // makes a single transient read harmless.
   for (const key of [...idleTries.keys()]) {
-    if (!stillWanted.has(key)) idleTries.delete(key);
+    if (stillWantedKeys(movies, episodes).has(key)) {
+      absentPasses.delete(key);
+      continue;
+    }
+    const misses = (absentPasses.get(key) ?? 0) + 1;
+    if (misses >= 2) {
+      idleTries.delete(key);
+      absentPasses.delete(key);
+    } else {
+      absentPasses.set(key, misses);
+    }
   }
 
   for (const movie of movies) {

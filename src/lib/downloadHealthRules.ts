@@ -11,6 +11,9 @@
 // download that was about to start moving.
 export const STALL_GRACE_MINUTES = 12;
 
+// Longer clock for entries that are merely still starting up.
+export const TRANSIENT_GRACE_MINUTES = 30;
+
 export type DownloadHealth = {
   /** Radarr/Sonarr's own diagnosis, e.g. "stalled with no connections". */
   errorMessage: string | null;
@@ -19,9 +22,28 @@ export type DownloadHealth = {
   hasProgress: boolean;
 };
 
+// Messages Radarr/Sonarr put in the same field as real errors that are
+// actually just "this is still starting up". A torrent has no metadata until
+// it finds a peer with one, which on a thin swarm legitimately takes a while
+// -- treating that as a failure killed torrents during the one phase where
+// having no progress is expected, then re-grabbed the same release into the
+// same state.
+const TRANSIENT_STATUSES = ["downloading metadata", "pending", "queued", "delay"];
+
+function isTransient(message: string): boolean {
+  const m = message.toLowerCase();
+  return TRANSIENT_STATUSES.some((t) => m.includes(t));
+}
+
 /** Whether a queue entry is dead enough to be worth dropping and re-grabbing. */
 export function isUnhealthy(entry: DownloadHealth): boolean {
   if (entry.ageMinutes < STALL_GRACE_MINUTES) return false;
+  // A transient status still has to go somewhere eventually, so it is judged
+  // on a longer clock rather than exempted -- a torrent that cannot find
+  // metadata in half an hour is not going to.
+  if (entry.errorMessage && isTransient(entry.errorMessage)) {
+    return entry.ageMinutes >= TRANSIENT_GRACE_MINUTES;
+  }
   // An explicit error from Radarr/Sonarr ("stalled with no connections",
   // "qBittorrent is reporting an error") is reason enough.
   if (entry.errorMessage) return true;
