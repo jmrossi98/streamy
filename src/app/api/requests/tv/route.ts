@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
+import { tierForUser } from "@/lib/qualityTier";
 import {
   isSonarrConfigured,
   requestEpisode,
@@ -44,9 +45,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "tmdbId and seasonNumber required" }, { status: 400 });
   }
 
+  // Same admin-gated tier as the movie path, so requesting a show from the
+  // episode list and from the title page agree on quality.
+  const tier = tierForUser((await requireAdmin(session)) !== null);
+
   const result = hasEpisode
-    ? await requestEpisode(tmdbId, seasonNumber, episodeNumber)
-    : await requestSeason(tmdbId, seasonNumber);
+    ? await requestEpisode(tmdbId, seasonNumber, episodeNumber, tier)
+    : await requestSeason(tmdbId, seasonNumber, tier);
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 502 });
