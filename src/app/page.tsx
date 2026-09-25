@@ -9,6 +9,7 @@ import { HomeMoviesSection } from "@/components/HomeMoviesSection";
 import { HomePrefetch } from "@/components/HomePrefetch";
 import { RecentlyWatchedSection, RecentlyWatchedSkeleton } from "./RecentlyWatchedSection";
 import { MyListSection, MyListSkeleton } from "./MyListSection";
+import { DownloadedSection, DownloadedSkeleton } from "./DownloadedSection";
 import { getTrending, getGenres, getDiscoverByGenre, getTrendingTV } from "@/lib/tmdb";
 
 const HERO_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror, Sci-Fi
@@ -130,6 +131,12 @@ export default async function HomePage() {
             than what they already have half-finished. */}
         <Suspense fallback={<MyListSkeleton />}>
           <MyListSection userId={session.user.id} />
+        </Suspense>
+        {/* Below My List: what the viewer chose to save outranks what happens
+            to be on disk, and the downloaded library only grows -- above, it
+            would push their own picks further down every week. */}
+        <Suspense fallback={<DownloadedSkeleton />}>
+          <DownloadedSection />
         </Suspense>
         <HomeMoviesSection
           trending={trending}
