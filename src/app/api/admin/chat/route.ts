@@ -19,6 +19,11 @@ import {
 } from "@/lib/chatLimits";
 import { buildStatusContext } from "@/lib/chatContext";
 import { recordAssistantUsage } from "@/lib/assistantUsage";
+import {
+  buildSharedContextBlock,
+  getSharedContext,
+  isSharedContextConfigured,
+} from "@/lib/sharedContext";
 import { getSnapshot } from "@/lib/chatStatus";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
@@ -115,6 +120,20 @@ export async function POST(request: Request) {
       // Answering without live state beats failing the turn -- the model is
       // told in its prompt to say so when no status block is present.
       console.error("[chat] stack status snapshot failed:", err);
+    }
+  }
+
+  // What the other assistants already know. Unconditional, unlike search:
+  // this panel's whole weakness is starting from nothing every time, and the
+  // block is small and cheap. A failure to read it costs the context, never
+  // the answer.
+  if (isSharedContextConfigured()) {
+    try {
+      const shared = await getSharedContext();
+      const block = shared && buildSharedContextBlock(shared);
+      if (block) messages = withContext(messages, { role: "system", content: block });
+    } catch (err) {
+      console.error("[chat] shared context read failed:", err);
     }
   }
 
