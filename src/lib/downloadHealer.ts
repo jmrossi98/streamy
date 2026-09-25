@@ -1,6 +1,8 @@
 import {
+  idleBackoffMs,
   isPermanentlyBlocked,
   isUnhealthy,
+  REHEAL_COOLDOWN_MS,
   shouldBlocklist,
   shouldSearchImmediately,
   type BadReleaseReason,
@@ -41,17 +43,23 @@ import { countRecentRejections, getPermanentBlocks, recordRejection } from "./re
  * rather than a dead one.
  */
 
-// Don't re-heal the same title repeatedly -- if a fresh grab also goes bad,
-// wait before trying again so we don't churn through every release on the
-// indexer in a tight loop.
-const REHEAL_COOLDOWN_MS = 15 * 60 * 1000;
+// Per-title heal bookkeeping. The escalation policy itself lives in
+// downloadHealthRules.ts so it can be tested without this file's clients.
 const lastHealedAt = new Map<string, number>();
+const idleTries = new Map<string, number>();
 
 export type HealedDownload = { title: string; reason: string };
 
 function onCooldown(key: string): boolean {
   const last = lastHealedAt.get(key);
   return last != null && Date.now() - last < REHEAL_COOLDOWN_MS;
+}
+
+/** Cooldown for the idle pass, which escalates; the queue pass does not. */
+function onIdleCooldown(key: string): boolean {
+  const last = lastHealedAt.get(key);
+  if (last == null) return false;
+  return Date.now() - last < idleBackoffMs(idleTries.get(key) ?? 0);
 }
 
 async function healOne(
@@ -165,10 +173,23 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   ]);
   const healed: HealedDownload[] = [];
 
+  // A title that has dropped off the wanted list got what it needed (or was
+  // cancelled), so its escalation is forgotten. Without this, a title that
+  // succeeds after several failures would come back on a 4-hour cooldown the
+  // next time it legitimately needs a nudge.
+  const stillWanted = new Set([
+    ...movies.map((m) => `idle:movie:${m.externalId}`),
+    ...episodes.map((e) => `idle:episode:${e.episodeId}`),
+  ]);
+  for (const key of [...idleTries.keys()]) {
+    if (!stillWanted.has(key)) idleTries.delete(key);
+  }
+
   for (const movie of movies) {
     const key = `idle:movie:${movie.externalId}`;
-    if (onCooldown(key)) continue;
+    if (onIdleCooldown(key)) continue;
     lastHealedAt.set(key, Date.now());
+    idleTries.set(key, (idleTries.get(key) ?? 0) + 1);
     try {
       await searchRadarrMovie(movie.externalId);
       console.log(`[healer] re-searching idle "${movie.title}"`);
@@ -182,14 +203,22 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   // request per episode, so a large backlog doesn't hammer Sonarr.
   const dueEpisodes = episodes.filter((e) => {
     const key = `idle:episode:${e.episodeId}`;
-    if (onCooldown(key)) return false;
+    if (onIdleCooldown(key)) return false;
     lastHealedAt.set(key, Date.now());
+    idleTries.set(key, (idleTries.get(key) ?? 0) + 1);
     return true;
   });
   if (dueEpisodes.length > 0) {
     try {
       await searchSonarrEpisodes(dueEpisodes.map((e) => e.episodeId));
-      console.log(`[healer] re-searching ${dueEpisodes.length} idle episode(s)`);
+      // Attempt counts logged so a title quietly backing off to daily is
+      // visible in the log rather than looking like the healer stopped.
+      console.log(
+        `[healer] re-searching ${dueEpisodes.length} idle episode(s): ` +
+          dueEpisodes
+            .map((e) => `${e.title} (try ${idleTries.get(`idle:episode:${e.episodeId}`) ?? 1})`)
+            .join(", ")
+      );
       for (const e of dueEpisodes) {
         healed.push({ title: e.title, reason: "wanted but nothing in flight" });
       }
