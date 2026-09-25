@@ -7,11 +7,15 @@
 
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
+import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 
 const RADARR_URL = process.env.RADARR_URL?.replace(/\/$/, "");
 const RADARR_API_KEY = process.env.RADARR_API_KEY;
 const RADARR_ROOT_FOLDER = process.env.RADARR_ROOT_FOLDER;
 const RADARR_QUALITY_PROFILE_ID = process.env.RADARR_QUALITY_PROFILE_ID;
+// Unset until a 4K profile is configured, in which case every tier resolves
+// to the HD profile and nothing changes. See resolveQualityProfileId.
+const RADARR_QUALITY_PROFILE_ID_4K = process.env.RADARR_QUALITY_PROFILE_ID_4K;
 
 export function isRadarrConfigured(): boolean {
   return !!(
@@ -764,7 +768,10 @@ export type RadarrRequestResult =
  * its real current status instead of erroring on Radarr's duplicate-add
  * rejection.
  */
-export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult> {
+export async function requestMovie(
+  tmdbId: string,
+  tier: QualityTier = "hd"
+): Promise<RadarrRequestResult> {
   if (!isRadarrConfigured()) return { ok: false, error: "Radarr is not configured" };
 
   try {
@@ -798,7 +805,11 @@ export async function requestMovie(tmdbId: string): Promise<RadarrRequestResult>
       body: JSON.stringify({
         ...match,
         tmdbId: Number(tmdbId),
-        qualityProfileId: Number(RADARR_QUALITY_PROFILE_ID),
+        qualityProfileId: resolveQualityProfileId(
+          tier,
+          RADARR_QUALITY_PROFILE_ID,
+          RADARR_QUALITY_PROFILE_ID_4K
+        ),
         rootFolderPath: RADARR_ROOT_FOLDER,
         monitored: true,
         addOptions: { searchForMovie: true },

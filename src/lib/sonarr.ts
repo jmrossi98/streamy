@@ -16,6 +16,7 @@ import { IMPORTING_STATES } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
+import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -29,6 +30,8 @@ const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
 const SONARR_ROOT_FOLDER = process.env.SONARR_ROOT_FOLDER;
 const SONARR_QUALITY_PROFILE_ID = process.env.SONARR_QUALITY_PROFILE_ID;
+// Unset until a 4K profile is configured; every tier then resolves to HD.
+const SONARR_QUALITY_PROFILE_ID_4K = process.env.SONARR_QUALITY_PROFILE_ID_4K;
 
 export function isSonarrConfigured(): boolean {
   return !!(
@@ -543,7 +546,10 @@ export type SonarrEpisode = {
  * asking for one episode. The caller then monitors and searches exactly
  * what was requested.
  */
-async function ensureSeriesInSonarr(tmdbId: string): Promise<
+async function ensureSeriesInSonarr(
+  tmdbId: string,
+  tier: QualityTier = "hd"
+): Promise<
   { ok: true; sonarrId: number } | { ok: false; error: string }
 > {
   const { tvdbId } = await getTvExternalIds(tmdbId);
@@ -570,7 +576,11 @@ async function ensureSeriesInSonarr(tmdbId: string): Promise<
     body: JSON.stringify({
       ...match,
       tvdbId,
-      qualityProfileId: Number(SONARR_QUALITY_PROFILE_ID),
+      qualityProfileId: resolveQualityProfileId(
+        tier,
+        SONARR_QUALITY_PROFILE_ID,
+        SONARR_QUALITY_PROFILE_ID_4K
+      ),
       rootFolderPath: SONARR_ROOT_FOLDER,
       monitored: true,
       addOptions: { searchForMissingEpisodes: false },
@@ -666,11 +676,12 @@ export async function getSonarrSeasonStatuses(
 export async function requestEpisode(
   tmdbId: string,
   seasonNumber: number,
-  episodeNumber: number
+  episodeNumber: number,
+  tier: QualityTier = "hd"
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
-    const series = await ensureSeriesInSonarr(tmdbId);
+    const series = await ensureSeriesInSonarr(tmdbId, tier);
     if (!series.ok) return series;
 
     const episodes = await sonarrFetch<SonarrEpisode[]>(
@@ -769,11 +780,12 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
 /** Monitors and searches every episode in one season. */
 export async function requestSeason(
   tmdbId: string,
-  seasonNumber: number
+  seasonNumber: number,
+  tier: QualityTier = "hd"
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
-    const series = await ensureSeriesInSonarr(tmdbId);
+    const series = await ensureSeriesInSonarr(tmdbId, tier);
     if (!series.ok) return series;
 
     // Monitor the season itself so future episodes are picked up too.
@@ -918,7 +930,10 @@ export type SonarrRequestResult =
  * straight to reporting its real current status instead of erroring on
  * Sonarr's duplicate-add rejection.
  */
-export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> {
+export async function requestShow(
+  tmdbId: string,
+  tier: QualityTier = "hd"
+): Promise<SonarrRequestResult> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
 
   try {
@@ -958,7 +973,11 @@ export async function requestShow(tmdbId: string): Promise<SonarrRequestResult> 
       body: JSON.stringify({
         ...match,
         tvdbId,
-        qualityProfileId: Number(SONARR_QUALITY_PROFILE_ID),
+        qualityProfileId: resolveQualityProfileId(
+        tier,
+        SONARR_QUALITY_PROFILE_ID,
+        SONARR_QUALITY_PROFILE_ID_4K
+      ),
         rootFolderPath: SONARR_ROOT_FOLDER,
         monitored: true,
         // Sonarr's own bulk search grabs the whole show at once, in no

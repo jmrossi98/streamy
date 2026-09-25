@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
+import { tierForUser } from "@/lib/qualityTier";
 import { prisma } from "@/lib/db";
 import { requestMovie, isRadarrConfigured, searchRadarrMovie } from "@/lib/radarr";
 import { requestShow, isSonarrConfigured, searchSonarrSeries } from "@/lib/sonarr";
@@ -13,6 +14,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const actorName = session?.user?.name ?? "unknown";
+
+  // Admins request in 4K, everyone else in 1080p. Read from the database via
+  // requireAdmin rather than the session's isAdmin claim, so a demoted admin
+  // stops pulling 40GB remuxes immediately rather than when their token
+  // expires -- and because requireAdmin fails closed, an unreachable database
+  // downgrades to 1080p instead of upgrading.
+  //
+  // Note this sets the quality of the *title*, not of this user's playback:
+  // there is one file, and everyone who watches it afterwards gets it. See
+  // lib/qualityTier.ts.
+  const tier = tierForUser((await requireAdmin(session)) !== null);
 
   const body = await request.json();
   const tmdbId = body?.tmdbId != null ? String(body.tmdbId).trim() : "";
@@ -58,7 +70,7 @@ export async function POST(request: Request) {
     if (!isRadarrConfigured()) {
       return NextResponse.json({ error: "Radarr is not configured" }, { status: 503 });
     }
-    const result = await requestMovie(tmdbId);
+    const result = await requestMovie(tmdbId, tier);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 502 });
     }
@@ -70,7 +82,7 @@ export async function POST(request: Request) {
     if (!isSonarrConfigured()) {
       return NextResponse.json({ error: "Sonarr is not configured" }, { status: 503 });
     }
-    const result = await requestShow(tmdbId);
+    const result = await requestShow(tmdbId, tier);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 502 });
     }
