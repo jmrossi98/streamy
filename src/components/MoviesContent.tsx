@@ -14,9 +14,16 @@ type Props = {
   progressList: ProgressItem[];
   /** The viewer's saved movies. Empty for a signed-out viewer, or an empty list. */
   myList?: Movie[];
+  downloaded?: Movie[];
 };
 
-export function MoviesContent({ trending, genreRows, progressList, myList = [] }: Props) {
+export function MoviesContent({
+  trending,
+  genreRows,
+  progressList,
+  myList = [],
+  downloaded = [],
+}: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
 
   const progressKey = progressList.length ? progressList.map((p) => p.movieId).sort((a, b) => a - b).join(",") : "";
@@ -43,6 +50,12 @@ export function MoviesContent({ trending, genreRows, progressList, myList = [] }
           empty row. */}
       {myList.length > 0 && (
         <MovieRow title="My List" movies={myList} progressMap={progressMap} />
+      )}
+      {/* Below My List: a saved list is what the viewer chose, and the
+          downloaded library only grows -- above, it would push their own
+          picks further down every week. */}
+      {downloaded.length > 0 && (
+        <MovieRow title="Downloaded" movies={downloaded} progressMap={progressMap} />
       )}
       <MovieRow title="Trending Now" movies={trending} progressMap={progressMap} />
       {genreRows.map(

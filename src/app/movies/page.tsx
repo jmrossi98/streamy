@@ -5,6 +5,7 @@ import { getTrending, getGenres, getDiscoverByGenre, type Movie } from "@/lib/tm
 import { getWatchlistMovies } from "@/lib/watchlist";
 import { MoviesContent } from "@/components/MoviesContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
+import { getDownloadedMovies } from "@/lib/downloadedLibrary";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +27,15 @@ export default async function MoviesPage() {
     // everything else, so making it wait on the genre fan-out would delay the
     // top of the page behind the bottom of it.
     session?.user?.id ? getWatchlistMovies(session.user.id) : Promise.resolve([]),
+    // Same wave as the rest: this row sits near the top, so resolving it
+    // after the genre fan-out would delay the top of the page behind the
+    // bottom of it.
+    getDownloadedMovies(),
   ]);
 
   const allProgress = discoverAndProgress[5] as Awaited<ReturnType<typeof prisma.watchProgress.findMany>>;
   const myList = discoverAndProgress[6] as Movie[];
+  const downloaded = discoverAndProgress[7] as Movie[];
   const genreRows = MOVIE_GENRE_IDS.map((id, i) => ({
     title: genres.find((g) => g.id === id)?.name ?? "Genre",
     movies: (discoverAndProgress[i] as Awaited<ReturnType<typeof getDiscoverByGenre>>) ?? [],
@@ -54,6 +60,7 @@ export default async function MoviesPage() {
         genreRows={genreRows}
         progressList={progressList}
         myList={myList}
+        downloaded={downloaded}
       />
     </div>
   );

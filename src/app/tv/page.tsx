@@ -3,6 +3,8 @@ import { getSession } from "@/lib/auth";
 import { getWatchlistShows } from "@/lib/watchlist";
 import { TVRow } from "@/components/TVRow";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
+import { Suspense } from "react";
+import { DownloadedSection, DownloadedSkeleton } from "../DownloadedSection";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,11 @@ export default async function TVPage() {
         {/* Above Trending: what the viewer chose for themselves outranks what
             is merely popular. Hidden entirely when empty. */}
         {myList.length > 0 && <TVRow title="My List" shows={myList} />}
+        {/* Own boundary: this is a TMDB lookup per downloaded show, and the
+            rows below it should not wait on the library. */}
+        <Suspense fallback={<DownloadedSkeleton />}>
+          <DownloadedSection kind="shows" />
+        </Suspense>
         <TVRow title="Trending TV" shows={trending} />
         {genreRows.map((row) => (
           <TVRow key={row.title} title={row.title} shows={row.shows} />
