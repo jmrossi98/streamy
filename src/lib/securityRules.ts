@@ -123,6 +123,45 @@ export function assessLoginActivity(a: LoginActivity): Finding[] {
  * if it is publicly reachable, anyone can use the GPU and read every prompt.
  * SearXNG and the *arr APIs are close behind.
  */
+/**
+ * Jellyfin's own edge blocks, as a finding rather than a log.
+ *
+ * The sign-in list this replaces lived in the security panel and duplicated
+ * the visitor log, which already shows every Jellyfin sign-in with its
+ * address. What the visitor log cannot answer is the question the security
+ * panel exists for -- is anything being actively refused right now -- so the
+ * count survives here and the per-event list does not.
+ *
+ * Blocks are expected in small numbers: this instance is publicly reachable
+ * and the internet knocks. A sudden jump is the signal, which is why the
+ * threshold is a step above background rather than any block at all.
+ */
+export const ELEVATED_EDGE_BLOCKS = 5;
+
+export function assessJellyfinEdgeBlocks(blockedIpCount: number): Finding[] {
+  if (blockedIpCount >= ELEVATED_EDGE_BLOCKS) {
+    return [
+      {
+        id: "jellyfin.edge_blocks_elevated",
+        severity: "warning",
+        title: "Several addresses blocked at Jellyfin's edge",
+        detail: `${blockedIpCount} addresses are currently refused by the login guard. Normal background probing is one or two; this is worth a look at the visitor log.`,
+      },
+    ];
+  }
+  return [
+    {
+      id: "jellyfin.edge_blocks_normal",
+      severity: "info",
+      title: "Jellyfin edge blocking",
+      detail:
+        blockedIpCount === 0
+          ? "No addresses currently blocked."
+          : `${blockedIpCount} address${blockedIpCount === 1 ? "" : "es"} currently blocked, which is ordinary background probing.`,
+    },
+  ];
+}
+
 export function assessExposure(
   service: string,
   reachablePublicly: boolean,

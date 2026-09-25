@@ -10,10 +10,12 @@
 import { prisma } from "./db";
 import {
   assessExposure,
+  assessJellyfinEdgeBlocks,
   assessLoginActivity,
   type Finding,
   type LoginActivity,
 } from "./securityRules";
+import { getJellyfinLoginSummary } from "./jellyfinLogins";
 
 const WINDOW_HOURS = 24;
 const PROBE_TIMEOUT_MS = 4_000;
@@ -188,17 +190,29 @@ export type SecurityReport = {
 export async function runSecurityChecks(): Promise<SecurityReport> {
   const activity = await getLoginActivity();
 
-  const [adminFindings, exposureFindings] = await Promise.all([
+  const [adminFindings, exposureFindings, jellyfin] = await Promise.all([
     checkAdminAccounts(),
     checkExposure(
       process.env.PUBLIC_PROBE_HOST ?? null,
       process.env.PUBLIC_PROBE_HOST_V6 ?? null
     ),
+    // Only the count is wanted. The per-sign-in detail this replaces lives in
+    // the visitor log, which already shows every Jellyfin sign-in with its
+    // address -- see assessJellyfinEdgeBlocks.
+    getJellyfinLoginSummary().catch(() => null),
   ]);
 
   return {
     generatedAt: new Date().toISOString(),
     activity,
-    findings: [...assessLoginActivity(activity), ...adminFindings, ...exposureFindings],
+    findings: [
+      ...assessLoginActivity(activity),
+      ...adminFindings,
+      ...exposureFindings,
+      // An unreachable guard yields no finding rather than a false all-clear:
+      // a reassuring "0 blocked" sourced from a failed probe is worse than
+      // saying nothing at all.
+      ...(jellyfin ? assessJellyfinEdgeBlocks(jellyfin.blocked.length) : []),
+    ],
   };
 }

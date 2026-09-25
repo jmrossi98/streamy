@@ -1,16 +1,12 @@
 import type { Finding, LoginActivity, Severity } from "@/lib/securityRules";
 import { overallSeverity } from "@/lib/securityRules";
 import type { AuditLogRow } from "@/lib/auditLog";
-import type { RecentBadPasswordAttempt } from "@/lib/loginAttempts";
-import type { JellyfinLoginSummary } from "@/lib/jellyfinLogins";
 
 type Props = {
   activity: LoginActivity;
   findings: Finding[];
   generatedAt: string;
   auditLog: AuditLogRow[];
-  recentBadPasswordAttempts: RecentBadPasswordAttempt[];
-  jellyfinLogins: JellyfinLoginSummary;
 };
 
 // "movie.request" -> "Requested"; "game.artwork.save" -> "Saved artwork";
@@ -66,8 +62,6 @@ export function SecurityPanel({
   findings,
   generatedAt,
   auditLog,
-  recentBadPasswordAttempts,
-  jellyfinLogins,
 }: Props) {
   // Actionable findings first; the informational ones are reassurance, not news.
   const actionable = findings.filter((f) => f.severity !== "info");
@@ -146,115 +140,6 @@ export function SecurityPanel({
             ))}
           </ul>
         </details>
-      )}
-
-      {recentBadPasswordAttempts.length > 0 && (
-        <details className="group border-t border-white/10 pt-4">
-          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-white/30 hover:text-white/60">
-            Recent failed logins ({recentBadPasswordAttempts.length})
-          </summary>
-          <p className="mt-2 text-xs text-white/40">
-            What was typed as the password, for diagnosing a mistyped one or a caps-lock
-            surprise. Cleared automatically after 48 hours either way.
-          </p>
-          <ul className="mt-3 max-h-72 space-y-1.5 overflow-y-auto pr-1">
-            {recentBadPasswordAttempts.map((a) => (
-              <li key={a.id} className="flex items-baseline gap-2 text-sm">
-                <span className="shrink-0 text-white/70">{a.name}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-white/90">
-                  {a.attemptedPassword ?? (
-                    <span className="italic text-white/30">cleared</span>
-                  )}
-                </span>
-                <span className="shrink-0 font-mono text-xs text-white/30">{a.ip}</span>
-                <span className="shrink-0 text-xs tabular-nums text-white/30">
-                  {new Date(a.at).toLocaleString(undefined, {
-                    month: "numeric",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {jellyfinLogins.checkedUtc && (
-        <div className="border-t border-white/10 pt-4">
-          <div className="mb-2 flex items-baseline justify-between gap-2">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-white/30">
-              Jellyfin sign-ins
-            </h3>
-            <span className="text-xs text-white/30">
-              {new Date(jellyfinLogins.checkedUtc).toLocaleString()}
-            </span>
-          </div>
-          <p className="mb-3 text-xs text-white/40">
-            Off mediabox, not this app -- Jellyfin is reached through its own
-            Cloudflare tunnel. A repeat offender is blocked there automatically;
-            this is a view of that, not a control for it.
-          </p>
-
-          {jellyfinLogins.blocked.length > 0 && (
-            <div className="mb-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90">
-              <p className="font-medium">
-                {jellyfinLogins.blocked.length} IP
-                {jellyfinLogins.blocked.length === 1 ? "" : "s"} currently blocked at
-                Cloudflare&rsquo;s edge
-              </p>
-              <ul className="mt-1.5 space-y-1">
-                {jellyfinLogins.blocked.map((b) => (
-                  <li key={b.ip} className="flex items-baseline gap-2">
-                    <span className="font-mono">{b.ip}</span>
-                    <span className="text-amber-200/60">
-                      since{" "}
-                      {new Date(b.sinceUtc).toLocaleString(undefined, {
-                        month: "numeric",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {jellyfinLogins.attempts.length === 0 ? (
-            <p className="h-72 text-sm text-white/50">No sign-in attempts recorded yet.</p>
-          ) : (
-            // Fixed height rather than max-height: this list grows and shrinks
-            // on its own as attempts roll off the publisher's window, and a
-            // widget that resizes underneath you while you are reading the
-            // panel beside it is worse than one with some empty space in it.
-            <ul className="h-72 space-y-1.5 overflow-y-auto pr-1">
-              {jellyfinLogins.attempts.map((a, i) => (
-                <li key={`${a.at}-${i}`} className="flex items-baseline gap-2 text-sm">
-                  <span
-                    className={`shrink-0 text-xs font-medium uppercase tracking-wide ${
-                      a.outcome === "succeeded" ? "text-emerald-400" : "text-red-400"
-                    }`}
-                  >
-                    {a.outcome === "succeeded" ? "OK" : "Failed"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-white/90">{a.user}</span>
-                  {a.ip && <span className="shrink-0 font-mono text-xs text-white/40">{a.ip}</span>}
-                  <span className="shrink-0 text-xs tabular-nums text-white/30">
-                    {new Date(a.at).toLocaleString(undefined, {
-                      month: "numeric",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       )}
 
       <div className="border-t border-white/10 pt-4">
