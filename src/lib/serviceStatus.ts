@@ -287,6 +287,11 @@ async function qbittorrentStatus(): Promise<ServiceStatus[]> {
  * reset on qBittorrent silently broke every download for both apps while
  * every other check kept reporting green.
  */
+// Radarr/Sonarr report these through the same health endpoint as real
+// faults. They are informational, so they are dropped before the status line
+// is built rather than being shown and then explained away.
+const IGNORED_ARR_HEALTH = /new update is available/i;
+
 async function arrIntegrationStatus(
   name: "Radarr" | "Sonarr",
   configured: boolean,
@@ -303,7 +308,13 @@ async function arrIntegrationStatus(
   if (!configured) {
     return { name: label, group, state: "unconfigured", detail: "Not configured" };
   }
-  const [issues, stuckImports] = await Promise.all([getIssues(), getStuckImports()]);
+  const [rawIssues, stuckImports] = await Promise.all([getIssues(), getStuckImports()]);
+  // "New update is available" is not a problem with the integration, and it
+  // sat in the same sentence as genuinely broken indexers -- so the panel read
+  // as permanently unhappy and the real messages lost their weight. Version
+  // currency belongs in an update workflow, not in a status line whose job is
+  // to answer "is anything wrong right now".
+  const issues = rawIssues.filter((i) => !IGNORED_ARR_HEALTH.test(i.message));
   const stuckDetail =
     stuckImports.length > 0
       ? `${stuckImports.length} title${stuckImports.length > 1 ? "s" : ""} need${

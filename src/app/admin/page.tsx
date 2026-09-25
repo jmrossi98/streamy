@@ -26,7 +26,6 @@ import { SpendPanel } from "@/components/SpendPanel";
 import { computeTotals, daysUntil } from "@/lib/spendRules";
 import { awsSpend, openRouterCredits } from "@/lib/spend";
 import { getAutomaticRenewals } from "@/lib/renewals";
-import { getJellyfinLoginSummary } from "@/lib/jellyfinLogins";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
 import { EpgBackfillButton } from "@/components/EpgBackfillButton";
@@ -50,7 +49,6 @@ import { gameKeyOf } from "@/lib/romNames";
 import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
-import { getRecentBadPasswordAttempts } from "@/lib/loginAttempts";
 import { formatFileSize } from "@/lib/formatBytes";
 
 export default async function AdminFeaturesPage() {
@@ -93,7 +91,6 @@ export default async function AdminFeaturesPage() {
     playbackCheckRuns,
     gamesSize,
     auditLog,
-    recentBadPasswordAttempts,
     gameJobs,
     gameWishlist,
     ownedGames,
@@ -102,7 +99,6 @@ export default async function AdminFeaturesPage() {
     aws,
     openRouter,
     autoRenewals,
-    jellyfinLogins,
   ] = await Promise.all([
     prisma.user.findMany({
       where: { approved: false },
@@ -142,7 +138,6 @@ export default async function AdminFeaturesPage() {
     // rest of this page -- same reasoning the old embedded Games panel used.
     getGamesStorageSize().catch(() => 0),
     getRecentAuditLog().catch(() => []),
-    getRecentBadPasswordAttempts().catch(() => []),
     // Same defensive default as getGamesStorageSize above -- an unreachable
     // gamarr shouldn't hold up the rest of this page.
     getGameDownloads().catch(() => []),
@@ -165,9 +160,6 @@ export default async function AdminFeaturesPage() {
     // Cert, domain and IPTV expiry. Each answers for itself and none of them
     // can fail the page -- see lib/renewals.ts.
     getAutomaticRenewals(),
-    // Read-only view of what mediabox's jellyfin_login_guard.py already did;
-    // never throws, same reasoning as the renewal probes above.
-    getJellyfinLoginSummary(),
   ]);
 
   // AWS and OpenRouter are the only two here that can report themselves.
@@ -378,8 +370,6 @@ export default async function AdminFeaturesPage() {
               findings={security.findings}
               generatedAt={security.generatedAt}
               auditLog={auditLog}
-              recentBadPasswordAttempts={recentBadPasswordAttempts}
-              jellyfinLogins={jellyfinLogins}
             />
           </PanelBoundary>
         </div>
