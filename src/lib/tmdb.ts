@@ -421,7 +421,17 @@ function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
   };
 }
 
-export type ShowDetail = TVShow & { numberOfSeasons: number; credits?: Credits };
+export type ShowDetail = TVShow & {
+  numberOfSeasons: number;
+  /**
+   * Whether this show has a specials season (TMDB season 0) that actually has
+   * episodes in it. Kept separate from numberOfSeasons because TMDB does not
+   * count specials in that number -- a show with 1 season and 22 specials
+   * still reports number_of_seasons: 1, so specials were invisible to the UI.
+   */
+  hasSpecials: boolean;
+  credits?: Credits;
+};
 
 async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
   const data = await fetchTmdb<{
@@ -434,6 +444,7 @@ async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
     vote_average: number;
     genres: { id: number; name: string }[];
     number_of_seasons: number;
+    seasons?: { season_number: number; episode_count: number }[];
     created_by?: { id: number; name: string }[];
     credits?: { cast?: TmdbCastRaw[]; crew?: TmdbCrewRaw[] };
   }>(`tv/${id}`, { append_to_response: "credits" });
@@ -449,6 +460,10 @@ async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
     rating: Math.round((data.vote_average || 0) * 10) / 10,
     genres,
     numberOfSeasons: data.number_of_seasons || 1,
+    // episode_count > 0 matters: TMDB lists an empty season 0 for plenty of
+    // shows, and offering a "Specials" tab that opens on nothing is worse
+    // than not offering it.
+    hasSpecials: (data.seasons || []).some((s) => s.season_number === 0 && s.episode_count > 0),
     credits: extractCredits(data.credits, data.created_by),
   };
 }

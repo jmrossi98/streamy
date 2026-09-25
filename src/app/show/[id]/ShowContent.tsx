@@ -179,6 +179,14 @@ export function ShowContent({
   // what's still missing (it re-checks monitored/hasFile per episode before
   // searching), so re-clicking is exactly "get the rest of the season" with
   // no risk of re-grabbing anything already done.
+  // Specials sit after the numbered seasons rather than before them, and are
+  // labelled "Extras". TMDB calls them season 0, so sorting by that number
+  // would open every show on its bonus content instead of its first episode.
+  const seasonOptions = [
+    ...Array.from({ length: show.numberOfSeasons }, (_, i) => i + 1),
+    ...(show.hasSpecials ? [0] : []),
+  ];
+
   const seasonEpisodeNumbers = season?.episodes.map((e) => e.episodeNumber) ?? [];
   const everyEpisodeQueued =
     seasonEpisodeNumbers.length > 0 &&
@@ -336,9 +344,9 @@ export function ShowContent({
             }}
             className="bg-netflix-black text-white border border-white/20 rounded px-3 py-2 focus:outline-none focus:border-netflix-red appearance-none cursor-pointer [&>option]:bg-netflix-black [&>option]:text-white"
           >
-            {Array.from({ length: show.numberOfSeasons }, (_, i) => i + 1).map((n) => (
+            {seasonOptions.map((n) => (
               <option key={n} value={n} className="bg-netflix-black text-white">
-                Season {n}
+                {n === 0 ? "Extras" : `Season ${n}`}
               </option>
             ))}
           </select>

@@ -18,14 +18,19 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const resolvedSearch = (typeof rawSearch === "object" && rawSearch !== null ? rawSearch : {}) as {
     season?: string;
   };
-  const requestedSeason = Math.max(1, parseInt(resolvedSearch.season ?? "1", 10) || 1);
+  // Parsed without a floor of 1 so ?season=0 (Specials) survives. The clamp
+  // below is what keeps it in range, and it only admits 0 for shows that
+  // actually have specials.
+  const parsedSeason = parseInt(resolvedSearch.season ?? "1", 10);
+  const requestedSeason = Number.isFinite(parsedSeason) ? parsedSeason : 1;
 
   const session = await getSession();
   const show = await getShowById(id);
   if (!show) notFound();
 
   const maxSeason = Math.max(1, show.numberOfSeasons);
-  const initialSeasonNum = Math.min(requestedSeason, maxSeason);
+  const minSeason = show.hasSpecials ? 0 : 1;
+  const initialSeasonNum = Math.min(Math.max(requestedSeason, minSeason), maxSeason);
 
   const [
     season1,
