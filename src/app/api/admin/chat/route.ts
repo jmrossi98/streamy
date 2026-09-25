@@ -24,6 +24,12 @@ import {
   getSharedContext,
   isSharedContextConfigured,
 } from "@/lib/sharedContext";
+import {
+  buildDocsContextBlock,
+  getDocsIndex,
+  isDocsRetrievalConfigured,
+  searchDocs,
+} from "@/lib/docsRetrieval";
 import { getSnapshot } from "@/lib/chatStatus";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
@@ -120,6 +126,22 @@ export async function POST(request: Request) {
       // Answering without live state beats failing the turn -- the model is
       // told in its prompt to say so when no status block is present.
       console.error("[chat] stack status snapshot failed:", err);
+    }
+  }
+
+  // The admin's own documentation, retrieved for this specific question.
+  // Gated on there being a real question -- the same filler check search
+  // uses, since retrieving against "hi" returns whatever chunk happens to
+  // contain a common word and then the model dutifully uses it.
+  const docsQuery = latestUserQuery(messages);
+  if (isDocsRetrievalConfigured() && docsQuery && shouldSearch(docsQuery)) {
+    try {
+      const index = await getDocsIndex();
+      const block = index && buildDocsContextBlock(searchDocs(index, docsQuery));
+      if (block) messages = withContext(messages, { role: "system", content: block });
+    } catch (err) {
+      // Answering without the docs beats failing the turn.
+      console.error("[chat] docs retrieval failed:", err);
     }
   }
 
