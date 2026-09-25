@@ -119,3 +119,32 @@ export const MAX_IMMEDIATE_RESEARCHES_PER_HOUR = 5;
 export function shouldSearchImmediately(rejectionsInLastHour: number): boolean {
   return rejectionsInLastHour <= MAX_IMMEDIATE_RESEARCHES_PER_HOUR;
 }
+
+// Don't re-heal the same title repeatedly -- if a fresh grab also goes bad,
+// wait before trying again so we don't churn through every release on the
+// indexer in a tight loop.
+export const REHEAL_COOLDOWN_MS = 15 * 60 * 1000;
+const MAX_IDLE_BACKOFF_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long to wait before the nth consecutive idle re-search of one title:
+ * 15m, 30m, 1h, 2h ... capped at a day.
+ *
+ * A flat cooldown here meant a title nobody can supply was retried forever.
+ * Gurren Lagann's 20 specials are the case that exposed it: obscure enough
+ * that no indexer carries a usable release, monitored, and therefore "wanted
+ * but nothing in flight" permanently -- 198 episode searches in four hours,
+ * re-grabbing the same two unusable releases each time.
+ *
+ * Those grabs never reach the queue ("Couldn't add release ... to download
+ * queue"), so Sonarr never records a failed download and never blocklists
+ * them. Blocklisting alone would not have stopped this.
+ *
+ * Capped rather than abandoned, because "no release exists" is a statement
+ * about today. Specials get scene releases years late, and a title that gave
+ * up permanently would never notice.
+ */
+export function idleBackoffMs(tries: number): number {
+  if (tries <= 1) return REHEAL_COOLDOWN_MS;
+  return Math.min(REHEAL_COOLDOWN_MS * 2 ** (tries - 1), MAX_IDLE_BACKOFF_MS);
+}
