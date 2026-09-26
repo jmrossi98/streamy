@@ -9,6 +9,7 @@
  * Why the queue exists at all is on the Prisma model.
  */
 import { prisma } from "./db";
+import { chooseNextSearch } from "./searchQueueRules";
 
 export type PendingSearch = {
   episodeId: number;
@@ -46,18 +47,31 @@ export async function enqueueEpisodeSearches(
 }
 
 /**
- * The next episode to search.
+ * The next episode to search, taking series in turn.
  *
- * Ordered by batch first, then position within it, so a season requested while
- * another is still draining is searched after it rather than interleaved --
- * two half-downloaded seasons are worse than one finished one.
+ * This used to drain one whole batch before starting the next, on the reasoning
+ * that two half-downloaded seasons are worse than one finished one. That was
+ * wrong in practice: a 64-episode season takes about an hour, so a show
+ * requested a minute later sat at "starting" for the whole of it, looking
+ * broken. Nobody waits an hour to find out their second request was fine.
+ *
+ * So each series advances one episode at a time, round-robin. Every show still
+ * arrives in episode order -- which is the point of the queue -- and every show
+ * starts within one search of being asked for.
+ *
+ * @param afterSeriesId the series served last, so the next call moves on. Null
+ *                      starts from the series requested earliest.
  */
-export async function nextPendingSearch(): Promise<PendingSearch | null> {
-  const row = await prisma.pendingEpisodeSearch.findFirst({
+export async function nextPendingSearch(
+  afterSeriesId: number | null = null
+): Promise<PendingSearch | null> {
+  // The whole queue, cheap at this size (a few hundred rows at worst) and the
+  // only way to pick fairly across series in one round trip.
+  const rows = await prisma.pendingEpisodeSearch.findMany({
     orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
     select: { episodeId: true, seriesId: true, attempts: true },
   });
-  return row ?? null;
+  return chooseNextSearch(rows, afterSeriesId);
 }
 
 export async function completePendingSearch(episodeId: number): Promise<void> {

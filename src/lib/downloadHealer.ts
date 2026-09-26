@@ -249,9 +249,25 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
     }
   }
 
+  // Episodes already queued for an ordered search are left alone.
+  //
+  // This pass fires one EpisodeSearch for everything due at once, and the
+  // wanted list arrives newest-aired first. For a freshly requested season
+  // that is every episode of it, so the batch grabbed the season from the
+  // finale backwards and buried the ordered queue working forwards from
+  // episode 1 -- the season downloaded in reverse. These episodes are not
+  // idle, they are waiting their turn; the drain owns them, and drops any that
+  // fail three times, at which point this pass sees them again.
+  //
+  // Loaded here rather than imported at the top so this module's unit tests
+  // stay free of the database (see __tests__/pureTestGraph.test.ts).
+  const { pendingSearchIds } = await import("./pendingEpisodeSearch");
+  const queued = new Set(await pendingSearchIds().catch(() => []));
+
   // Batch the episode search: one command for everything due, rather than a
   // request per episode, so a large backlog doesn't hammer Sonarr.
   const dueEpisodes = episodes.filter((e) => {
+    if (queued.has(e.episodeId)) return false;
     const key = `idle:episode:${e.episodeId}`;
     if (onIdleCooldown(key)) return false;
     lastHealedAt.set(key, Date.now());
