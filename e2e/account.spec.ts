@@ -79,12 +79,3 @@ test("a person who does not exist does not error", async ({ page }) => {
   // to exercise.
   expect(res?.status()).toBeLessThan(500);
 });
-
-test("who-is-watching sends an already-signed-in viewer straight in", async ({ page }) => {
-  await page.goto("/who-is-watching");
-
-  // The profile picker is the signed-out entry point. Someone who already has
-  // a session does not need to choose again, and is redirected home -- which
-  // is correct, and not what an earlier draft of this test expected.
-  await expect(page).toHaveURL(/127\.0\.0\.1:3100\/$/, { timeout: 15_000 });
-});

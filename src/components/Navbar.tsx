@@ -95,7 +95,7 @@ export function Navbar() {
           <Link
             href="/login"
             className="flex items-center gap-2 shrink-0"
-            aria-label={isSignInScreen ? "Back to Who is watching" : "Home"}
+            aria-label={isSignInScreen ? "Back to sign in" : "Home"}
           >
             <span className="text-netflix-red text-xl sm:text-2xl md:text-3xl font-bold tracking-tight">
               STREAMY
