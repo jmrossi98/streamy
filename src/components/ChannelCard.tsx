@@ -86,6 +86,11 @@ type Props = {
    * info.stale, which is the provider's own opinion -- this is measured.
    */
   status?: ChannelVerdict;
+  /**
+   * Used only when the channel has no image of its own -- a copy we
+   * cached, or a sibling channel's. Never preferred over the real one.
+   */
+  logoFallback?: string;
 };
 
 export function ChannelCard({
@@ -96,6 +101,7 @@ export function ChannelCard({
   onToggleSelect,
   info,
   status,
+  logoFallback,
 }: Props) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
@@ -138,7 +144,7 @@ export function ChannelCard({
           channel.logoUrl ? "bg-white p-1.5" : "bg-black/40"
         }`}
       >
-        {channel.logoUrl ? (
+        {channel.logoUrl || logoFallback ? (
           // A light backing plate, not the dark one the no-logo fallback
           // uses: a provider's logo is designed to sit on a white page --
           // several came through as a dark wordmark with no background of
@@ -152,7 +158,7 @@ export function ChannelCard({
           // remote pattern for a host that is Tailscale-only anyway.
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={channel.logoUrl}
+            src={channel.logoUrl || logoFallback}
             alt=""
             className="h-full w-full object-contain"
             loading="lazy"

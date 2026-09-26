@@ -497,6 +497,8 @@ export async function findChannelIdByName(name: string): Promise<number | null> 
 export type ChannelInfo = {
   /** Which configured provider ("strong8k", "trex") carries this channel. */
   provider: string | null;
+  /** The provider's upstream logo address, for caching a local copy. */
+  logoUrl?: string | null;
   /**
    * Dispatcharr's own judgement that the stream behind this channel has
    * stopped working.
@@ -513,8 +515,16 @@ export type ChannelInfo = {
 async function getChannelInfoUncached(): Promise<Map<string, ChannelInfo> | null> {
   const [channelsData, accountNameById] = await Promise.all([
     api<
-      | { results?: { name?: string; streams?: { m3u_account?: number; is_stale?: boolean }[] }[] }
-      | { name?: string; streams?: { m3u_account?: number; is_stale?: boolean }[] }[]
+      | {
+          results?: {
+            name?: string;
+            streams?: { m3u_account?: number; is_stale?: boolean; logo_url?: string | null }[];
+          }[];
+        }
+      | {
+          name?: string;
+          streams?: { m3u_account?: number; is_stale?: boolean; logo_url?: string | null }[];
+        }[]
     >(`/api/channels/channels/?page_size=1000&include_streams=true`),
     getAccountNameById(),
   ]);
@@ -531,6 +541,11 @@ async function getChannelInfoUncached(): Promise<Map<string, ChannelInfo> | null
       // working fallback still tunes, and calling that one dead would hide
       // a channel that works.
       stale: streams.length > 0 && streams.every((s) => s.is_stale === true),
+      // The provider's own logo address. Taken from the stream because that
+      // is where it lives -- every sampled stream carries one, while the
+      // published channel often does not, which is the gap that leaves
+      // Jellyfin with no image to cache and the card drawing initials.
+      logoUrl: streams.find((s) => s.logo_url)?.logo_url ?? null,
     });
   }
   return result;
