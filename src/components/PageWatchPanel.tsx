@@ -106,7 +106,7 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
     setTogglingEgress(false);
   }
 
-  const { pages, recentChanges, artists, locations, egressEnabled, egressProxied, egressEnforced } =
+  const { pages, recentChanges, artists, egressEnabled, egressProxied, egressEnforced } =
     summary;
 
   return (
@@ -296,13 +296,10 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
         )}
       </div>
 
-      {/* The overall view: every artist's dates in the watched locations. */}
+      {/* The overall view: every artist's dates. */}
       <div>
         <h3 className="mb-3 flex flex-wrap items-baseline gap-2 text-xs font-medium uppercase tracking-wide text-white/30">
           <span>All dates ({artists.reduce((n, a) => n + a.dates.length, 0)})</span>
-          {locations.length > 0 && (
-            <span className="normal-case text-white/40">in {locations.join(" / ")}</span>
-          )}
         </h3>
         {artists.length === 0 ? (
           <p className="text-sm text-white/50">

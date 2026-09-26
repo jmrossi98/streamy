@@ -350,6 +350,48 @@ model PendingEpisodeSearch {
   @@index([enqueuedAt, position])
 }
 
+/// One open role seen on a company's job board.
+///
+/// Sourced from the applicant-tracking systems companies publish through
+/// (Greenhouse, Ashby) rather than scraped from a careers page -- see
+/// lib/jobBoards.ts for why that is both more reliable and unnecessary to work
+/// around.
+///
+/// The id is the provider's own, namespaced, so re-polling updates a row rather
+/// than duplicating it and `firstSeen` stays the moment we actually first saw
+/// the posting. That is the field notifications key off: "new to us" is the
+/// useful notion, not the provider's own posted-at, which is sometimes backdated
+/// and sometimes missing entirely.
+model JobPosting {
+  /// "<provider>:<slug>:<provider id>".
+  id       String @id
+  company  String
+  title    String
+  location String
+  url      String
+
+  /// Matched metro keys, comma-separated -- a posting is often open in several
+  /// at once ("Seattle, San Francisco, New York"), and filing it under one
+  /// would hide it from the others.
+  metros String
+  /// A US-remote role. Kept separate from the metros because remote is not a
+  /// place that was asked for, just usually still worth seeing.
+  remote Boolean @default(false)
+
+  /// The provider's own date, when it gives one.
+  postedAt   DateTime?
+  firstSeen  DateTime  @default(now())
+  /// Refreshed on every poll, so a posting that disappears can be aged out.
+  lastSeen   DateTime  @default(now())
+  /// Set once this has been announced, so a re-poll or a restart cannot
+  /// announce it twice.
+  notifiedAt DateTime?
+
+  @@index([firstSeen])
+  @@index([lastSeen])
+  @@index([company])
+}
+
 model HealthProbeRun {
   id         String   @id @default(cuid())
   ranAt      DateTime @default(now())
