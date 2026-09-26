@@ -389,7 +389,59 @@ export async function searchSonarrSeries(sonarrId: number): Promise<void> {
 }
 
 const COMMAND_POLL_MS = 2000;
-const COMMAND_TIMEOUT_MS = 90_000;
+/**
+ * How long to wait for one search command to finish.
+ *
+ * Was 90s, which was shorter than a search actually takes once Sonarr has a
+ * backlog -- observed 2026-09-26 with an EpisodeSearch that waited 30 minutes
+ * between being queued and being started. The drain gave up waiting, issued the
+ * next search, and did it again: every timeout added another command to a queue
+ * that was already too long, and RssSync and ImportListSync starved behind
+ * them. Five minutes is well past a healthy search (~20s) without feeding that
+ * loop.
+ */
+const COMMAND_TIMEOUT_MS = 300_000;
+
+/**
+ * Searches Sonarr may have outstanding before this stops adding more.
+ *
+ * One, because Sonarr runs them more or less serially anyway: queueing a second
+ * does not make it faster, it just makes the queue longer and pushes the
+ * housekeeping commands further back.
+ */
+const MAX_OUTSTANDING_SEARCHES = 1;
+
+/** How long to wait before looking at the command queue again. */
+const BACKLOG_POLL_MS = 15_000;
+
+/**
+ * Consecutive backlog waits before the drain gives up this pass.
+ *
+ * Without a bound, a search command that never finishes would hold the drain
+ * in its poll loop forever -- and because only one drain runs at a time, that
+ * would wedge every queued season behind it with no way back. Giving up is
+ * cheap: the queue is persisted, and the next page load starts a fresh drain.
+ */
+const MAX_BACKLOG_WAITS = 20;
+
+/**
+ * EpisodeSearch commands Sonarr has not finished yet.
+ *
+ * Returns null when the queue cannot be read, which the caller treats as "do
+ * not add work" -- an unreadable command queue is exactly when Sonarr is
+ * struggling, and guessing zero is how the backlog got built in the first
+ * place.
+ */
+async function outstandingSearches(): Promise<number | null> {
+  try {
+    const commands = await sonarrFetch<{ name?: string; status?: string }[]>("/api/v3/command");
+    return commands.filter(
+      (c) => c.name === "EpisodeSearch" && (c.status === "queued" || c.status === "started")
+    ).length;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Waits for a Sonarr command to finish.
@@ -793,8 +845,25 @@ async function drainEpisodeSearches(): Promise<void> {
     // Which series the rotation served last, so each show advances one
     // episode at a time instead of one show finishing before the next starts.
     let lastSeriesId: number | null = null;
+    let backlogWaits = 0;
 
     for (;;) {
+      // Do not pile onto a backlog. Checked before taking the next item so a
+      // busy Sonarr simply delays the drain rather than filling its command
+      // queue -- which is what starved RssSync and left a freshly requested
+      // show reporting "no release found" for half an hour.
+      const outstanding = await outstandingSearches();
+      if (outstanding === null || outstanding >= MAX_OUTSTANDING_SEARCHES) {
+        backlogWaits += 1;
+        if (backlogWaits > MAX_BACKLOG_WAITS) {
+          console.warn("[sonarr] search queue still busy; leaving the rest for the next pass");
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, BACKLOG_POLL_MS));
+        continue;
+      }
+      backlogWaits = 0;
+
       const next = await queue.nextPendingSearch(lastSeriesId);
       if (!next) return;
       // Advanced before the search, not after: a throw below must still
