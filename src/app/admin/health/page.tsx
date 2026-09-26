@@ -89,7 +89,7 @@ export default async function AdminHealthPage() {
                 command: job.command,
                 lastRun: job.lastRun,
                 lastOutput: job.lastOutput ?? null,
-                health: jobHealth(job),
+                health: jobHealth(job, new Date(), cronInventory?.generatedAt),
               }))}
             />
           </PanelBoundary>

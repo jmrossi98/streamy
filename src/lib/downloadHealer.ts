@@ -4,6 +4,7 @@ import {
   isUnhealthy,
   REHEAL_COOLDOWN_MS,
   shouldBlocklist,
+  shouldBlocklistStalled,
   shouldSearchImmediately,
   type BadReleaseReason,
 } from "./downloadHealthRules";
@@ -47,6 +48,8 @@ import { countRecentRejections, getPermanentBlocks, recordRejection } from "./re
 // downloadHealthRules.ts so it can be tested without this file's clients.
 const lastHealedAt = new Map<string, number>();
 const idleTries = new Map<string, number>();
+/** Consecutive stall-heals per episode, for the escalation in healOne. */
+const stallTries = new Map<string, number>();
 // Consecutive passes a title has been missing from the idle lists. Prevents
 // one transient empty read from resetting a title's escalation.
 const absentPasses = new Map<string, number>();
@@ -79,12 +82,28 @@ async function healOne(
   mediaType: "movie" | "show",
   entry: QueueHealth
 ): Promise<HealedDownload | null> {
-  // Keyed per queue entry, not per title. A series can have several episodes
-  // in flight, and keying on the series meant healing one of them put the
-  // others on cooldown too.
-  const key = `${mediaType}:${entry.externalId}:${entry.queueId}`;
+  // Keyed per episode (or movie), not per queue entry.
+  //
+  // It used to include entry.queueId, which looks right -- a series can have
+  // several episodes in flight, and keying on the series put its siblings on
+  // cooldown too -- but a re-grab produces a *new* queue id, so the cooldown
+  // never applied to the thing it existed to slow down. A release that stalls
+  // on every attempt was healed in a tight loop: The Wire S01E12 was grabbed
+  // five times and S01E06 four, each within minutes.
+  //
+  // The episode id is stable across re-grabs and still leaves sibling episodes
+  // alone, which is what the original comment was actually asking for.
+  const key = `${mediaType}:${entry.externalId}:${entry.episodeId ?? "series"}`;
   if (onCooldown(key)) return null;
   lastHealedAt.set(key, Date.now());
+
+  // How many times this same episode has been healed for a stall. A single
+  // stall is usually conditions -- a VPN reconnect, a brief peer drought -- and
+  // blocklisting for that poisons good releases. Repeated stalls of the same
+  // thing are the release itself, and cancelling without blocklisting just
+  // hands Sonarr the same dead torrent to pick again.
+  const stalls = (stallTries.get(key) ?? 0) + 1;
+  stallTries.set(key, stalls);
 
   const reason = entry.errorMessage ?? "no progress";
   // Blocklisting is permanent, so reserve it for releases that genuinely
@@ -92,7 +111,7 @@ async function healOne(
   // usually about conditions, not the release: a VPN reconnect or a brief
   // peer drought. Blocklisting those poisoned the best-seeded releases and
   // pushed later searches onto steadily worse ones.
-  const failed = shouldBlocklist(entry.errorMessage);
+  const failed = shouldBlocklistStalled(entry.errorMessage, stalls);
   try {
     // Cancel this entry, never the title's whole queue.
     //
@@ -124,7 +143,10 @@ async function healOne(
       // the only option left, and is correct there.
       await searchSonarrSeries(entry.externalId);
     }
-    console.log(`[healer] re-grabbing "${entry.title}" (${reason})`);
+    console.log(
+      `[healer] re-grabbing "${entry.title}" (${reason})` +
+        (failed ? ` -- blocklisted after ${stalls} stalls` : ` -- stall ${stalls}`)
+    );
     return { title: entry.title, reason };
   } catch (err) {
     console.error(`[healer] failed to heal "${entry.title}":`, err);
@@ -345,6 +367,19 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     ...radarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e)),
     ...sonarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e)),
   ]);
+  // Episodes no longer in either queue have finished or been removed, so their
+  // stall count is history. Without this the map grows for the life of the
+  // process and a release that recovered would still be blocklisted on its
+  // next single stall.
+  const live = new Set(
+    [...radarrQueue, ...sonarrQueue].map(
+      (e) => `${e.episodeId == null ? "movie" : "show"}:${e.externalId}:${e.episodeId ?? "series"}`
+    )
+  );
+  for (const key of [...stallTries.keys()]) {
+    if (!live.has(key)) stallTries.delete(key);
+  }
+
   const idleHealed = await healIdleWantedTitles();
   return [...healed.filter((h): h is HealedDownload => h !== null), ...idleHealed];
 }

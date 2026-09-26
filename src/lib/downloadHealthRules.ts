@@ -142,6 +142,32 @@ export function isPermanentlyBlocked(
   );
 }
 
+/**
+ * Stalls of the same episode before the release itself is blamed.
+ *
+ * Two, so one genuine transient -- a VPN reconnect, a brief peer drought --
+ * costs nothing, while a release that simply cannot be fetched stops being
+ * handed back to Sonarr as its best-scoring choice.
+ */
+export const STALL_BLOCKLIST_AFTER = 2;
+
+/**
+ * Whether cancelling this entry should also blocklist the release.
+ *
+ * Two separate reasons to blocklist. The payload failed outright -- the client
+ * rejected it, so it will fail again. Or the same episode has now stalled
+ * repeatedly, which stops being about conditions and starts being about the
+ * release: cancelling without blocklisting leaves it the top-scoring candidate,
+ * so the next search picks it straight back up. That loop grabbed The Wire
+ * S01E12 five times and S01E06 four times within minutes on 2026-09-26.
+ */
+export function shouldBlocklistStalled(
+  errorMessage: string | null,
+  stallsForThisEpisode: number
+): boolean {
+  return shouldBlocklist(errorMessage) || stallsForThisEpisode >= STALL_BLOCKLIST_AFTER;
+}
+
 // After a rejection the healer searches again straight away, so the next
 // alternative is found in seconds instead of after the next scan. This bounds
 // that chain: a title whose every release is a fake would otherwise download

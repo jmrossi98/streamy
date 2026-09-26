@@ -137,12 +137,29 @@ export type JobHealth = "ok" | "overdue" | "unobservable" | "unknown";
  * "unobservable" now means only that cron's log could not be read at all, which
  * is a gap in what we can see rather than a sign of trouble.
  */
-export function jobHealth(job: CronJob, now = new Date()): JobHealth {
+export function jobHealth(
+  job: CronJob,
+  now = new Date(),
+  /**
+   * When the inventory was taken. Age is measured to this, not to now.
+   *
+   * The inventory is published every 15 minutes, so by the time anyone reads
+   * it a job running every two minutes can look 15 minutes late purely because
+   * the snapshot is old. vpn-failover was reported overdue for exactly that
+   * reason while running perfectly on schedule. Measuring to the snapshot asks
+   * the only answerable question: as of when this was taken, had the job run
+   * recently enough?
+   */
+  generatedAt?: string | null
+): JobHealth {
   if (job.unobservable || !job.lastRun) return "unobservable";
   const interval = intervalMinutes(job.schedule);
   if (interval === null || interval === 0) return "unknown";
   const ranAt = Date.parse(job.lastRun);
   if (!Number.isFinite(ranAt)) return "unknown";
-  const ageMinutes = (now.getTime() - ranAt) / 60_000;
+
+  const takenAt = generatedAt ? Date.parse(generatedAt) : NaN;
+  const reference = Number.isFinite(takenAt) ? takenAt : now.getTime();
+  const ageMinutes = (reference - ranAt) / 60_000;
   return ageMinutes > interval * OVERDUE_FACTOR ? "overdue" : "ok";
 }
