@@ -42,3 +42,62 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  # Separate job, not more steps on `verify`. That one is deliberately a few
+  # seconds -- the header says a slow gate is one people learn to bypass --
+  # and this needs a browser download and a production build, so bolting it
+  # on would cost the fast feedback everything else depends on. Run in
+  # parallel, both required.
+  #
+  # Hermetic on purpose: TMDB_FORCE_MOCK routes lib/tmdb.ts at tmdb-mock.ts
+  # and the database is a throwaway SQLite file global-setup.ts rebuilds per
+  # run, so there is no API key, no live Radarr/Sonarr/Jellyfin, and no
+  # network. That is what makes a failure readable as "a feature broke"
+  # rather than "TMDB re-ranked what is trending" -- and it is why this
+  # belongs on the pipeline rather than a timer. Against unchanged code it
+  # returns the same answer every time, so running it hourly would only
+  # produce the same pass repeatedly.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Not --ignore-scripts, unlike verify: this builds the app, so it needs
+      # the generated Prisma client.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        # Only the browser the suite actually uses -- all projects in
+        # playwright.config.ts are Desktop Chrome.
+        run: npx playwright install --with-deps chromium
+
+      # build:e2e, not build. The webServer runs .next/standalone/server.js,
+      # and only this script copies public/ and .next/static into that output.
+      # With a plain build the pages render but never hydrate, so forms submit
+      # natively and the failures look like broken auth rather than a missing
+      # bundle.
+      - name: Build standalone app
+        run: npm run build:e2e
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      # Traces and the page snapshot Playwright writes on failure. Without
+      # these a red run on someone else's machine is a name and a line number.
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
