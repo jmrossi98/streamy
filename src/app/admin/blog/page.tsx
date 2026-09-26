@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { BlogEditor } from "@/components/BlogEditor";
@@ -13,6 +12,9 @@ import { isBlogPublishingConfigured, listPosts } from "@/lib/githubPublish";
  * that can write to it never leaves this server.
  */
 export default async function AdminBlogPage() {
+  // The admin layout already refused non-admins. Kept anyway: it is one
+  // indexed lookup, and it means this page stays gated if it is ever moved out
+  // from under that layout.
   if (!(await requireAdmin(await getSession()))) {
     redirect("/");
   }
@@ -21,13 +23,10 @@ export default async function AdminBlogPage() {
   const posts = configured ? await listPosts() : [];
 
   return (
-    <div className="min-h-screen max-w-2xl mx-auto px-4 sm:px-6 pt-24 pb-16 space-y-8">
-      <div className="flex items-baseline justify-between gap-3">
-        <h1 className="font-display text-3xl font-bold text-white">Write a post</h1>
-        <Link href="/admin" className="text-sm text-white/50 transition-colors hover:text-white">
-          ← Admin Features
-        </Link>
-      </div>
+    // No page chrome of its own: the admin layout supplies the width, the
+    // padding and the tabs, and a second set of each stacked them.
+    <div className="max-w-2xl space-y-8">
+      <h2 className="text-lg font-semibold text-white">Write a post</h2>
 
       <div className="rounded-lg border border-white/10 bg-netflix-dark/80 px-4 py-5 sm:px-6">
         <BlogEditor configured={configured} existingSlugs={posts.map((p) => p.slug)} />

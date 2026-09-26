@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { OpsChat } from "@/components/OpsChat";
@@ -12,6 +11,8 @@ import { isWebSearchConfigured } from "@/lib/webSearch";
  * 24rem transcript box means scrolling a small window instead of reading.
  */
 export default async function AdminChatPage() {
+  // The admin layout already refused non-admins; kept as defence in depth, the
+  // same as the other admin pages.
   if (!(await requireAdmin(await getSession()))) {
     redirect("/");
   }
@@ -22,17 +23,10 @@ export default async function AdminChatPage() {
     // A normal page in the layout flow. LayoutShell pins <main> to 100dvh for
     // this route, so h-full here fills the screen without fixed positioning --
     // which is what made this read as an overlay rather than a page.
-    <div className="flex h-full flex-col px-4 pb-4 pt-20 sm:px-6">
+    <div className="flex min-h-[70vh] flex-col">
       <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col">
-        <div className="flex items-center justify-between py-3">
-          <h1 className="font-display text-xl font-bold text-white">Assistant</h1>
-          <Link
-            href="/admin"
-            className="text-sm text-white/50 transition-colors hover:text-white"
-          >
-            ← Admin Features
-          </Link>
-        </div>
+        {/* The tabs are the way back now, so no back-link here. */}
+        <h2 className="pb-3 text-lg font-semibold text-white">Assistant</h2>
 
         <div className="min-h-0 flex-1 rounded-lg border border-white/10 bg-netflix-dark/80 p-4">
           <OpsChat
