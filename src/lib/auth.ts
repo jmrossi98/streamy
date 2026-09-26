@@ -61,10 +61,15 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         name: { label: "Name", type: "text" },
         password: { label: "Password", type: "password" },
+        // "signin" | "signup". Absent means the old behaviour, where an
+        // unknown name silently became a new account -- kept as the default
+        // so nothing that posts without it changes.
+        intent: { label: "Intent", type: "text" },
       },
       async authorize(credentials, req) {
         const name = credentials?.name?.trim();
         const password = credentials?.password ?? "";
+        const intent = credentials?.intent === "signin" ? "signin" : "signup";
         if (!name || !password) {
           throw new Error("Name and password are required.");
         }
@@ -101,9 +106,22 @@ export const authOptions: NextAuthOptions = {
         });
 
         if (!existing) {
-          // Signing in with an unused name creates the account. That makes this
-          // an unauthenticated write, so it needs its own ceiling -- otherwise
-          // one script can fill the user table with pending rows.
+          // Someone who meant to sign in gets told the name is unknown, rather
+          // than having an account created for them. One mistyped character
+          // used to mint a second pending account under the typo and report
+          // "pending approval", which reads as though their real account had
+          // been suspended.
+          //
+          // Deliberately the same wording as a wrong password below: telling
+          // an unauthenticated caller which names exist is the account
+          // enumeration this login page was rebuilt to stop handing out.
+          if (intent === "signin") {
+            await recordLoginAttempt({ name, ip, outcome: "unknown_user" });
+            throw new Error("Incorrect password.");
+          }
+          // Creating an account is an unauthenticated write, so it needs its
+          // own ceiling -- otherwise one script can fill the user table with
+          // pending rows.
           const recentSignups = await countRecentSignups(ip);
           if (recentSignups >= MAX_SIGNUPS_PER_IP) {
             await recordLoginAttempt({ name, ip, outcome: "locked_out" });

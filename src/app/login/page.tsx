@@ -9,6 +9,7 @@ export default function LoginPage() {
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
   const prefillName = searchParams.get("name") ?? "";
   const { data: session, status } = useSession();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [name, setName] = useState(prefillName);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -35,6 +36,7 @@ export default function LoginPage() {
     const res = await signIn("credentials", {
       name,
       password,
+      intent: mode,
       redirect: false,
       callbackUrl: callbackUrl.startsWith("/") ? callbackUrl : "/",
     });
@@ -49,7 +51,16 @@ export default function LoginPage() {
             "to the admin -- you can sign in as soon as it is approved. Nothing is " +
             "sent to your email."
         );
-      } else if (res.error === "Incorrect password." || res.error === "Name and password are required.") {
+      } else if (res.error === "Incorrect password.") {
+        // One message covers "no such name" and "wrong password" on purpose --
+        // see the matching note in auth.ts. Worded for the mode the person
+        // chose so it still reads as an answer to what they were doing.
+        setError(
+          mode === "signup"
+            ? "That name is taken, or the password does not match it. Try signing in instead."
+            : "That name and password do not match an account."
+        );
+      } else if (res.error === "Name and password are required.") {
         setError(res.error);
       } else {
         setError("Something went wrong. Try again.");
@@ -76,10 +87,43 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 bg-netflix-black">
       <div className="w-full max-w-md">
         <div className="bg-netflix-dark/80 rounded-lg p-8 border border-white/10">
-          <h1 className="font-display text-3xl font-bold text-white mb-6">Sign in</h1>
+          {/* A real control rather than a line of prose. The form posts to
+              the same place either way -- what the choice changes is the
+              intent sent with it, and therefore whether an unknown name
+              creates an account or is refused. */}
+          <div className="mb-6 flex gap-1 rounded bg-white/5 p-1" role="tablist">
+            {([
+              ["signin", "Sign in"],
+              ["signup", "Sign up"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={mode === value}
+                onClick={() => {
+                  setMode(value);
+                  // A message about the other mode is worse than none.
+                  setError("");
+                  setInfo("");
+                }}
+                className={`flex-1 rounded px-3 py-2 text-sm font-medium transition-colors ${
+                  mode === value
+                    ? "bg-white/15 text-white"
+                    : "text-white/60 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <h1 className="font-display text-3xl font-bold text-white mb-2">
+            {mode === "signin" ? "Welcome back" : "Create an account"}
+          </h1>
           <p className="text-white/70 text-sm mb-6">
-            Enter your name and password. New here? Pick a name and password and
-            we&apos;ll send the admin a request to approve your account.
+            {mode === "signin"
+              ? "Enter your name and password."
+              : "Pick a name and password. An admin approves new accounts before the first sign-in — nothing is emailed to you."}
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
@@ -117,7 +161,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                autoComplete="current-password"
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
                 placeholder="••••••••"
                 className="w-full px-4 py-3 rounded bg-white/10 text-white placeholder-white/40 border border-white/20 focus:border-netflix-red focus:outline-none"
               />
@@ -127,7 +171,13 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full py-3 bg-netflix-red text-white font-semibold rounded hover:bg-netflix-red/90 disabled:opacity-50 transition-opacity"
             >
-              {loading ? "Signing in…" : "Sign in"}
+              {loading
+                ? mode === "signin"
+                  ? "Signing in…"
+                  : "Creating account…"
+                : mode === "signin"
+                  ? "Sign in"
+                  : "Create account"}
             </button>
           </form>
         </div>
