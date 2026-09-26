@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isUnhealthy, shouldBlocklist, type DownloadHealth } from "../downloadHealthRules";
+import { isPermanentlyBlocked, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -56,5 +56,48 @@ describe("shouldBlocklist", () => {
 
   it("blocklists an outright failure", () => {
     expect(shouldBlocklist("Download failed")).toBe(true);
+  });
+});
+
+describe("permanent blocks from an admin cancel", () => {
+  // The real release, verbatim from the queue: brackets, a star, mixed
+  // languages. Sonarr's blocklist reports it as sourceTitle, we record it as
+  // releaseTitle, and the two have to be recognised as the same thing or the
+  // six-hour expiry lets it back in.
+  const gurren =
+    "[Sadame no Fansub] Sfondamento dei cieli Gurren Lagann - Kirameki★Yoko Box - Pieces of Sweet Stars[1080p][OGG][Sub ITA] (Softsub)";
+
+  it("keeps an admin-cancelled release blocked past the TTL", () => {
+    expect(
+      isPermanentlyBlocked(
+        { sourceTitle: gurren, torrentInfoHash: null },
+        [{ releaseTitle: gurren, downloadId: null }]
+      )
+    ).toBe(true);
+  });
+
+  it("matches on the info hash even if the name is reported differently", () => {
+    expect(
+      isPermanentlyBlocked(
+        { sourceTitle: "something else entirely", torrentInfoHash: "ABC123" },
+        [{ releaseTitle: gurren, downloadId: "abc123" }]
+      )
+    ).toBe(true);
+  });
+
+  it("does not block a different release of the same show", () => {
+    expect(
+      isPermanentlyBlocked(
+        { sourceTitle: "Gurren Lagann S01E01 1080p BluRay x265-GRP", torrentInfoHash: null },
+        [{ releaseTitle: gurren, downloadId: null }]
+      )
+    ).toBe(false);
+  });
+
+  it("treats an admin cancel as not-unsafe", () => {
+    // The viewer-facing notice says "rejected as unsafe"; a deliberate cancel
+    // is not that, and must not inflate that count or the re-search cap.
+    expect([...UNSAFE_REASONS]).toEqual(["executable"]);
+    expect([...UNSAFE_REASONS]).not.toContain("cancelledByAdmin");
   });
 });

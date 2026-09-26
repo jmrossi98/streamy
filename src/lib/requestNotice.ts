@@ -19,6 +19,10 @@ export type RejectionSummary = { count: number; reason: BadReleaseReason };
 
 const REASON_TEXT: Record<BadReleaseReason, string> = {
   executable: "it contained an executable file, not a video",
+  // Never actually shown: getRejectionSummary only returns unsafe reasons, and
+  // an admin cancel is not something to explain back to the viewer as a fault
+  // in the release. Present so the record stays total.
+  cancelledByAdmin: "an admin cancelled it",
 };
 
 function releases(count: number): string {
