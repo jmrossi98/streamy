@@ -40,6 +40,13 @@ vi.mock("../sonarr", () => ({
   searchSonarrSeries: m.searchSonarrSeries,
   expireSonarrBlocklist: m.expireSonarrBlocklist,
 }));
+// Mocked for the same reason as the clients above: this file tests heal
+// policy, and the real module reaches the database, which the unit tests do
+// not have (CI installs with --ignore-scripts).
+vi.mock("../pendingEpisodeSearch", () => ({
+  pendingSearchIds: vi.fn(async () => [] as number[]),
+}));
+
 vi.mock("../rejectedReleases", () => ({
   recordRejection: m.recordRejection,
   getPermanentBlocks: m.getPermanentBlocks,

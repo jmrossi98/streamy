@@ -789,9 +789,17 @@ async function drainEpisodeSearches(): Promise<void> {
     const queue = await searchQueue();
     for (const id of await queue.pendingSearchIds()) markEpisodeSearchTriggered(id);
 
+    // Which series the rotation served last, so each show advances one
+    // episode at a time instead of one show finishing before the next starts.
+    let lastSeriesId: number | null = null;
+
     for (;;) {
-      const next = await queue.nextPendingSearch();
+      const next = await queue.nextPendingSearch(lastSeriesId);
       if (!next) return;
+      // Advanced before the search, not after: a throw below must still
+      // move the rotation on, or a failing series would be handed back
+      // every cycle and starve the others.
+      lastSeriesId = next.seriesId;
       try {
         // Re-checked at its turn rather than trusting the queue, which may
         // have been written an hour ago. An explicit EpisodeSearch grabs
