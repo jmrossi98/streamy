@@ -14,6 +14,7 @@ import { describeRequestNotice } from "@/lib/requestNotice";
 import { getRejectionSummary } from "@/lib/rejectedReleases";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { AdminApprovals } from "@/components/AdminApprovals";
+import { AdminAccounts } from "@/components/AdminAccounts";
 import { StorageChart } from "@/components/StorageChart";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
 import { OpsChat } from "@/components/OpsChat";
@@ -67,7 +68,8 @@ export default async function AdminFeaturesPage() {
   // Authorization comes from the database, not the session's isAdmin claim:
   // a demoted, un-approved, or deleted admin must lose this page immediately
   // rather than when their 30-day token happens to expire.
-  if (!(await requireAdmin(await getSession()))) {
+  const admin = await requireAdmin(await getSession());
+  if (!admin) {
     redirect("/");
   }
 
@@ -81,6 +83,7 @@ export default async function AdminFeaturesPage() {
 
   const [
     pendingUsers,
+    accounts,
     diskUsage,
     radarrDownloads,
     sonarrDownloads,
@@ -110,6 +113,13 @@ export default async function AdminFeaturesPage() {
       where: { approved: false },
       orderBy: { createdAt: "asc" },
       select: { id: true, name: true, createdAt: true },
+    }),
+    // Approved accounts only. Pending ones are the list above, where "deny"
+    // already removes them.
+    prisma.user.findMany({
+      where: { approved: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, isAdmin: true, createdAt: true },
     }),
     getDiskUsage(),
     getRadarrActiveDownloads().catch(() => []),
@@ -508,6 +518,19 @@ export default async function AdminFeaturesPage() {
         <h2 className="text-lg font-semibold text-white mb-4">Pending approvals</h2>
         <AdminApprovals
           users={pendingUsers.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }))}
+        />
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Accounts</h2>
+        <AdminAccounts
+          accounts={accounts.map((u) => ({
+            id: u.id,
+            name: u.name,
+            isAdmin: u.isAdmin,
+            createdAt: u.createdAt.toISOString(),
+            isSelf: u.id === admin.id,
+          }))}
         />
       </section>
 
