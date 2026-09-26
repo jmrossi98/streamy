@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPermanentlyBlocked, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isPermanentlyBlocked, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -99,5 +99,32 @@ describe("permanent blocks from an admin cancel", () => {
     // is not that, and must not inflate that count or the re-search cap.
     expect([...UNSAFE_REASONS]).toEqual(["executable"]);
     expect([...UNSAFE_REASONS]).not.toContain("cancelledByAdmin");
+  });
+});
+
+describe("shouldBlocklistStalled", () => {
+  it("does not blame the release for a first stall", () => {
+    // One stall is usually conditions -- a VPN reconnect, a peer drought --
+    // and blocklisting for that poisons well-seeded releases.
+    expect(shouldBlocklistStalled("The download is stalled with no connections", 1)).toBe(false);
+  });
+
+  it("blames the release once the same episode keeps stalling", () => {
+    // The loop this exists for: cancelling without blocklisting leaves the
+    // release top-scoring, so the next search picks it straight back up. The
+    // Wire S01E12 was grabbed five times in minutes.
+    expect(shouldBlocklistStalled("The download is stalled with no connections", 2)).toBe(true);
+    expect(shouldBlocklistStalled("stalled", STALL_BLOCKLIST_AFTER + 3)).toBe(true);
+  });
+
+  it("still blocklists a failed payload on the first go", () => {
+    // Nothing transient about a client refusing the download.
+    expect(shouldBlocklistStalled("The download client failed to import", 1)).toBe(
+      shouldBlocklist("The download client failed to import")
+    );
+  });
+
+  it("treats a missing message the same as shouldBlocklist does", () => {
+    expect(shouldBlocklistStalled(null, 1)).toBe(shouldBlocklist(null));
   });
 });

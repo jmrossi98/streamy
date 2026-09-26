@@ -23,7 +23,10 @@ export default async function AdminChatPage() {
     // A normal page in the layout flow. LayoutShell pins <main> to 100dvh for
     // this route, so h-full here fills the screen without fixed positioning --
     // which is what made this read as an overlay rather than a page.
-    <div className="flex min-h-[70vh] flex-col">
+    // Tall enough to be worth using: the transcript is the point of this page,
+    // and a short box under a full-height container left most of the screen
+    // empty while the conversation scrolled in a sliver.
+    <div className="flex h-[calc(100vh-13rem)] min-h-[32rem] flex-col">
       <div className="flex w-full min-h-0 flex-1 flex-col">
         {/* No heading: the active tab already says Assistant, and repeating
             it just pushed the transcript further down. */}

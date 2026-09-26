@@ -51,6 +51,7 @@ export function JobListingsPanel({
   configured: boolean;
 }) {
   const [metro, setMetro] = useState<string>("all");
+  const [company, setCompany] = useState<string>("all");
 
   if (!configured) {
     return (
@@ -69,19 +70,47 @@ export function JobListingsPanel({
     if (l.remote) present.add("remote");
   }
 
-  const shown =
+  // Only companies that actually have something open, so the list is not a
+  // roster of every board configured -- most of which have nothing matching on
+  // any given day.
+  const companies = [...new Set(listings.map((l) => l.company))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+
+  const byMetro =
     metro === "all"
       ? listings
       : metro === "remote"
         ? listings.filter((l) => l.remote)
         : listings.filter((l) => l.metros.split(",").includes(metro));
+  const shown = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
 
   return (
     <div className="w-full space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-white/40">
-          {listings.length} open role{listings.length === 1 ? "" : "s"}
+          {shown.length === listings.length
+            ? `${listings.length} open role${listings.length === 1 ? "" : "s"}`
+            : `${shown.length} of ${listings.length} open roles`}
         </span>
+        {/* A select rather than pills: there are dozens of boards, and a pill
+            per company would be a wall of buttons above the thing you came to
+            read. */}
+        <label className="flex items-center gap-1.5 text-white/40">
+          <span className="sr-only">Company</span>
+          <select
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+            className="rounded border border-white/15 bg-black/40 px-2 py-0.5 text-xs text-white/80 outline-none focus:border-white/40"
+          >
+            <option value="all">All companies</option>
+            {companies.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="ml-auto flex flex-wrap gap-1">
           {["all", ...Object.keys(METRO_LABELS).filter((k) => present.has(k)), ...(present.has("remote") ? ["remote"] : [])].map(
             (key) => (
@@ -107,7 +136,10 @@ export function JobListingsPanel({
           Nothing yet. Polls every 30 minutes, and emails when something new appears.
         </p>
       ) : shown.length === 0 ? (
-        <p className="text-sm text-white/50">Nothing open there right now.</p>
+        <p className="text-sm text-white/50">
+          Nothing matching{company === "all" ? "" : ` at ${company}`}
+          {metro === "all" ? "" : " there"} right now.
+        </p>
       ) : (
         <ul className="space-y-1.5">
           {shown.map((listing) => (
