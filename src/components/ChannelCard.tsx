@@ -5,6 +5,9 @@ import Link from "next/link";
 import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import type { ChannelInfo } from "@/lib/dispatcharr";
+// Type-only, so the pure rules module is erased at build rather than
+// pulling a server-side fetch into this client component.
+import type { ChannelVerdict } from "@/lib/liveChannelRules";
 
 /**
  * Extracted from LiveTvContent so /watchlist can show the same card for a
@@ -77,9 +80,23 @@ type Props = {
   onToggleSelect?: () => void;
   /** Provider and dead-stream state from Dispatcharr, when the join found it. */
   info?: ChannelInfo;
+  /**
+   * What the channel is actually good for right now: sampled by ffmpeg on
+   * mediabox, cross-referenced against today's fixtures. Distinct from
+   * info.stale, which is the provider's own opinion -- this is measured.
+   */
+  status?: ChannelVerdict;
 };
 
-export function ChannelCard({ channel, inList, selectMode, selected, onToggleSelect, info }: Props) {
+export function ChannelCard({
+  channel,
+  inList,
+  selectMode,
+  selected,
+  onToggleSelect,
+  info,
+  status,
+}: Props) {
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -183,6 +200,26 @@ export function ChannelCard({ channel, inList, selectMode, selected, onToggleSel
             {info.provider}
             {info.provider && info.stale && " · "}
             {info.stale && <span className="text-amber-400/80">provider reports this as dead</span>}
+          </p>
+        )}
+
+        {/* Only the states worth acting on. "live" and "unknown" render
+            nothing: a badge on every healthy card is noise, and "we haven't
+            checked" is not information a viewer can use. */}
+        {status && (status.state === "down" || status.state === "filler" || status.state === "no-event") && (
+          <p
+            className={
+              "truncate text-[11px] " +
+              (status.state === "down" ? "text-red-400/80" : "text-amber-400/80")
+            }
+          >
+            {/* Paired with words, never colour alone -- the same rule the
+                security panel follows for severity. */}
+            {status.state === "down"
+              ? "Not responding"
+              : status.state === "filler"
+                ? "Showing a placeholder"
+                : status.detail}
           </p>
         )}
 

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
+import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { ChannelCard } from "@/components/ChannelCard";
 import { StreamBrowser } from "@/components/StreamBrowser";
 import { SportsSchedule } from "@/components/SportsSchedule";
@@ -27,6 +28,9 @@ type Props = {
   isAdmin: boolean;
   /** Channel name -> provider and dead-stream state, best effort. */
   infoByChannel: Record<string, ChannelInfo>;
+  /** Channel name -> measured verdict. Plain object for the same reason
+   *  infoByChannel is: a Map does not survive the server/client boundary. */
+  statusByChannel: Record<string, ChannelVerdict>;
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
@@ -41,6 +45,7 @@ function numberValue(number: string | null): number {
 
 export function LiveTvContent({
   envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
+  statusByChannel,
 }: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
@@ -373,6 +378,7 @@ export function LiveTvContent({
                     channel={c}
                     inList
                     info={infoByChannel[c.name]}
+                    status={statusByChannel[c.name]}
                   />
                 ))}
               </div>
@@ -403,6 +409,7 @@ export function LiveTvContent({
                 selected={selectedIds.has(c.id)}
                 onToggleSelect={() => toggleSelect(c.id)}
                 info={infoByChannel[c.name]}
+                status={statusByChannel[c.name]}
               />
             ))}
           </div>

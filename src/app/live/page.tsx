@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
+import { channelStatuses } from "@/lib/liveChannelHealth";
+import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
@@ -48,6 +50,18 @@ export default async function LivePage() {
     console.error("[live] getChannelInfo failed:", err);
   }
 
+  // Best effort for the same reason as the Dispatcharr join above: a dead
+  // sampler or an unreachable scoreboard costs the badges, not the grid.
+  // channelStatuses resolves the schedule once for the whole set rather than
+  // per tile.
+  let statusByChannel: Record<string, ChannelVerdict> = {};
+  try {
+    const statuses = await channelStatuses(channels.map((c) => c.name));
+    statusByChannel = Object.fromEntries(statuses);
+  } catch (err) {
+    console.error("[live] channelStatuses failed:", err);
+  }
+
   // Gates the stream browser below. Re-checked against the database rather
   // than read from the session token, like every other admin surface here.
   const isAdmin = !!(await requireAdmin(session));
@@ -77,6 +91,7 @@ export default async function LivePage() {
         hiddenChannels={hidden}
         isAdmin={isAdmin}
         infoByChannel={infoByChannel}
+        statusByChannel={statusByChannel}
       />
     </div>
   );
