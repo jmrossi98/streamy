@@ -856,11 +856,32 @@ export type DownloadRouting = {
   failingIndexerIds: number[];
 };
 
-export async function getDownloadRouting(): Promise<DownloadRouting | null> {
-  if (!isRadarrConfigured()) return null;
+/** Just enough of an *arr client for the routing read. */
+type ArrFetch = <T>(path: string) => Promise<T>;
+
+/**
+ * Reads protocol routing from any *arr app.
+ *
+ * Shared because Radarr and Sonarr expose the same delay-profile, history and
+ * indexer endpoints, and the question -- "why does this protocol keep winning"
+ * -- is identical for films and episodes.
+ */
+export async function readDownloadRouting(
+  fetchJson: ArrFetch,
+  app: string
+): Promise<DownloadRouting | null> {
   try {
-    const [profiles, history, indexers, status] = await Promise.all([
-      radarrFetch<
+    // indexerstatus is fetched separately and allowed to fail. Neither Radarr
+    // nor Sonarr has it on /api/v3 -- both answer 404, measured 2026-09-26 --
+    // and when it sat inside the Promise.all below, that one 404 rejected the
+    // whole read and the panel reported "Radarr isn't reachable" while Radarr
+    // was perfectly reachable and answering every other endpoint in 0.1s.
+    const failingIndexerIds = fetchJson<{ indexerId: number }[]>("/api/v3/indexerstatus")
+      .then((rows) => rows.map((r) => r.indexerId))
+      .catch(() => [] as number[]);
+
+    const [profiles, history, indexers, failing] = await Promise.all([
+      fetchJson<
         {
           preferredProtocol?: number;
           usenetDelay?: number;
@@ -869,19 +890,19 @@ export async function getDownloadRouting(): Promise<DownloadRouting | null> {
           enableTorrent?: boolean;
         }[]
       >("/api/v3/delayprofile"),
-      radarrFetch<{ records: { eventType: string; data?: { protocol?: string } }[] }>(
+      fetchJson<{ records: { eventType: string; data?: { protocol?: string } }[] }>(
         "/api/v3/history?pageSize=50&sortKey=date&sortDirection=descending"
       ),
-      radarrFetch<{ protocol: string; enableAutomaticSearch: boolean }[]>("/api/v3/indexer"),
-      radarrFetch<{ indexerId: number }[]>("/api/v3/indexerstatus"),
+      fetchJson<{ protocol: string; enableAutomaticSearch: boolean }[]>("/api/v3/indexer"),
+      failingIndexerIds,
     ]);
 
-    // The default profile is the one with no tags; Radarr orders it first.
+    // The default profile is the one with no tags; both apps order it first.
     const p = profiles[0];
     const preference: ProtocolPreference | null = p
       ? {
-          // Radarr encodes this as 1=usenet, 2=torrent in the API even though
-          // the UI shows words.
+          // Encoded as 1=usenet, 2=torrent in the API even though the UI
+          // shows words.
           preferred:
             p.preferredProtocol === 1 ? "usenet" : p.preferredProtocol === 2 ? "torrent" : "unknown",
           usenetDelayMinutes: p.usenetDelay ?? 0,
@@ -894,8 +915,8 @@ export async function getDownloadRouting(): Promise<DownloadRouting | null> {
     const recentGrabs: GrabCounts = { usenet: 0, torrent: 0 };
     for (const r of history.records) {
       if (r.eventType !== "grabbed") continue;
-      // Radarr writes this as the string "usenet"/"torrent" in history data,
-      // but has also used the numeric enum; accept both rather than silently
+      // Written as the string "usenet"/"torrent" in history data, but the
+      // numeric enum has also been used; accept both rather than silently
       // counting nothing.
       const proto = String(r.data?.protocol ?? "").toLowerCase();
       if (proto === "usenet" || proto === "1") recentGrabs.usenet += 1;
@@ -909,14 +930,14 @@ export async function getDownloadRouting(): Promise<DownloadRouting | null> {
       else if (i.protocol === "torrent") counts.torrent += 1;
     }
 
-    return {
-      preference,
-      recentGrabs,
-      indexers: counts,
-      failingIndexerIds: status.map((s) => s.indexerId),
-    };
+    return { preference, recentGrabs, indexers: counts, failingIndexerIds: failing };
   } catch (err) {
-    console.error("[radarr] download routing read failed:", err);
+    console.error(`[${app}] download routing read failed:`, err);
     return null;
   }
+}
+
+export async function getDownloadRouting(): Promise<DownloadRouting | null> {
+  if (!isRadarrConfigured()) return null;
+  return readDownloadRouting((path) => radarrFetch(path), "radarr");
 }
