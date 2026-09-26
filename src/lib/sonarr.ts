@@ -230,7 +230,25 @@ export type CompletedEpisode = {
 /** See getRadarrCompletedProtocols for the rationale -- same recovery, keyed
  *  by episode rather than series, since a show's episodes can each have come
  *  from either protocol. */
+/**
+ * Cached, because the downloads panel auto-refreshes every 2.5 seconds and
+ * this is a 1000-record history query that measured 3.1s against the real
+ * instance. Uncached, every render started a query that outlived the
+ * interval that triggered it, so the requests overlapped permanently and
+ * the panel's spinner had no quiet moment to stop in.
+ *
+ * 30s rather than something tighter: this only maps an episode to the
+ * protocol it arrived over, which never changes once the grab happened.
+ * The worst staleness is a just-downloaded episode showing no protocol
+ * badge for a few seconds.
+ */
+const PROTOCOL_CACHE_TTL_MS = 30_000;
+let protocolCache: { at: number; value: Map<number, DownloadProtocol> } | null = null;
+
 export async function getSonarrCompletedProtocols(): Promise<Map<number, DownloadProtocol>> {
+  if (protocolCache && Date.now() - protocolCache.at < PROTOCOL_CACHE_TTL_MS) {
+    return protocolCache.value;
+  }
   const result = new Map<number, DownloadProtocol>();
   if (!isSonarrConfigured()) return result;
   try {
@@ -243,7 +261,11 @@ export async function getSonarrCompletedProtocols(): Promise<Map<number, Downloa
     }
   } catch (err) {
     console.error("[sonarr] getSonarrCompletedProtocols failed:", err);
+    // Not cached on failure: a transient error should not blank the
+    // protocol badges for the next 30 seconds.
+    return result;
   }
+  protocolCache = { at: Date.now(), value: result };
   return result;
 }
 

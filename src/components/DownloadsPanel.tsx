@@ -103,6 +103,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // sitting on stale data for up to the full interval read as "I need to
   // reload the page" even though a refresh was always only moments away.
   const [refreshing, startRefresh] = useTransition();
+  const manualRefreshRef = useRef(false);
   const [managingKey, setManagingKey] = useState<string | null>(null);
   // Rows the viewer just cancelled/deleted, hidden immediately rather than
   // waiting for the server round trip + a fresh page render to catch up.
@@ -174,12 +175,23 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // transition then has nothing to resolve against -- isPending just never
   // flips back. Every REFRESH_INTERVAL_MS (2.5s) was frequent enough that
   // essentially any manual click landed in that window.
+  // The guard reads a ref, not the transition state. startTransition sets
+  // `refreshing` on React's schedule, so between the click and that commit
+  // there was a window where the interval still saw false, fired its own
+  // router.refresh(), and replaced the call the manual transition was
+  // tracking -- leaving isPending stuck on forever. The ref is set
+  // synchronously in the click handler, so that window does not exist.
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!refreshing) router.refresh();
+      if (!manualRefreshRef.current) router.refresh();
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [router, refreshing]);
+  }, [router]);
+
+  // Cleared only once the transition actually finishes.
+  useEffect(() => {
+    if (!refreshing) manualRefreshRef.current = false;
+  }, [refreshing]);
 
   async function handleManage(d: DownloadRow) {
     const key = rowKey(d);
@@ -233,7 +245,10 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
       <div className="mb-3 flex justify-end">
         <button
           type="button"
-          onClick={() => startRefresh(() => router.refresh())}
+          onClick={() => {
+            manualRefreshRef.current = true;
+            startRefresh(() => router.refresh());
+          }}
           disabled={refreshing}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-white/50 hover:text-white disabled:opacity-50"
         >
