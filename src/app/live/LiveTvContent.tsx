@@ -31,6 +31,8 @@ type Props = {
   /** Channel name -> measured verdict. Plain object for the same reason
    *  infoByChannel is: a Map does not survive the server/client boundary. */
   statusByChannel: Record<string, ChannelVerdict>;
+  /** Channel name -> a logo to use when the channel has none of its own. */
+  logoFallbacks: Record<string, string>;
 };
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
@@ -45,7 +47,7 @@ function numberValue(number: string | null): number {
 
 export function LiveTvContent({
   envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
-  statusByChannel,
+  statusByChannel, logoFallbacks,
 }: Props) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
@@ -379,6 +381,7 @@ export function LiveTvContent({
                     inList
                     info={infoByChannel[c.name]}
                     status={statusByChannel[c.name]}
+                    logoFallback={logoFallbacks[c.name]}
                   />
                 ))}
               </div>
@@ -410,6 +413,7 @@ export function LiveTvContent({
                 onToggleSelect={() => toggleSelect(c.id)}
                 info={infoByChannel[c.name]}
                 status={statusByChannel[c.name]}
+                logoFallback={logoFallbacks[c.name]}
               />
             ))}
           </div>

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
 import { channelStatuses } from "@/lib/liveChannelHealth";
+import { resolveLogoFallbacks } from "@/lib/channelLogoResolve";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -50,6 +51,15 @@ export default async function LivePage() {
     console.error("[live] getChannelInfo failed:", err);
   }
 
+  // Logos for the channels Jellyfin has no image for. Best effort: a picon
+  // host that is down costs a tile its artwork, never the grid.
+  let logoFallbacks: Record<string, string> = {};
+  try {
+    logoFallbacks = await resolveLogoFallbacks(channels, infoByChannel);
+  } catch (err) {
+    console.error("[live] resolveLogoFallbacks failed:", err);
+  }
+
   // Best effort for the same reason as the Dispatcharr join above: a dead
   // sampler or an unreachable scoreboard costs the badges, not the grid.
   // channelStatuses resolves the schedule once for the whole set rather than
@@ -92,6 +102,7 @@ export default async function LivePage() {
         isAdmin={isAdmin}
         infoByChannel={infoByChannel}
         statusByChannel={statusByChannel}
+        logoFallbacks={logoFallbacks}
       />
     </div>
   );
