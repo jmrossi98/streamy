@@ -43,6 +43,8 @@ import { PageWatchPanel } from "@/components/PageWatchPanel";
 import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
+import { HealthProbePanel } from "@/components/HealthProbePanel";
+import { getHealthProbeHistory } from "@/lib/healthProbes";
 import { getGamesList, getGamesStorageSize, platformToSlug } from "@/lib/games";
 import { getGameDownloads, getWishlist } from "@/lib/gamarr";
 import { gameKeyOf } from "@/lib/romNames";
@@ -89,6 +91,7 @@ export default async function AdminFeaturesPage() {
     blogPosts,
     pageWatch,
     playbackCheckRuns,
+    healthProbeRuns,
     gamesSize,
     auditLog,
     gameJobs,
@@ -133,6 +136,7 @@ export default async function AdminFeaturesPage() {
     // "we could not read it" is worse than the panel being absent.
     getPageWatchSummary(),
     getPlaybackCheckHistory().catch(() => []),
+    getHealthProbeHistory().catch(() => []),
     // Kept out of the array above and defaulted to 0 on failure (it already
     // swallows its own errors) so an unreachable gamarr can't hold up the
     // rest of this page -- same reasoning the old embedded Games panel used.
@@ -434,6 +438,23 @@ export default async function AdminFeaturesPage() {
                 Download &amp; playback check
               </h3>
               <PlaybackCheckPanel runs={playbackCheckRuns} />
+            </div>
+            {/* Also Services, for the same reason: these probe every
+                dependency the stack has (Sonarr, Radarr, indexers, the
+                published status files), so they answer "is anything broken"
+                one section down from the services list itself. */}
+            <div className="border-t border-white/10 pt-5">
+              <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
+                Dependency probes
+              </h3>
+              <HealthProbePanel
+                runs={healthProbeRuns.map((run) => ({
+                  ...run,
+                  // Date -> string at the server/client boundary, matching the
+                  // playback panel next door.
+                  ranAt: run.ranAt.toISOString(),
+                }))}
+              />
             </div>
           </PanelBoundary>
         </div>
