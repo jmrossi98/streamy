@@ -16,6 +16,7 @@ import { IMPORTING_STATES } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
+import { readDownloadRouting, type DownloadRouting } from "./radarr";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import type {
   MediaRequestStatus,
@@ -1132,4 +1133,17 @@ export async function getSonarrStuckImports(): Promise<string[]> {
     console.error("[sonarr] getSonarrStuckImports failed:", err);
     return [];
   }
+}
+
+/**
+ * Why episode downloads go the way they go.
+ *
+ * The same read as Radarr's, against Sonarr. Worth having separately rather
+ * than assuming they match: the delay profile, the enabled indexers and the
+ * grab history are all per-app, so films and episodes can route differently
+ * and did not necessarily get configured at the same time.
+ */
+export async function getSonarrDownloadRouting(): Promise<DownloadRouting | null> {
+  if (!isSonarrConfigured()) return null;
+  return readDownloadRouting((path) => sonarrFetch(path), "sonarr");
 }

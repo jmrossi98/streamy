@@ -1,4 +1,5 @@
-import { getDownloadRouting } from "@/lib/radarr";
+import { getDownloadRouting, type DownloadRouting } from "@/lib/radarr";
+import { getSonarrDownloadRouting } from "@/lib/sonarr";
 
 /**
  * Why downloads go the way they go.
@@ -14,14 +15,50 @@ import { getDownloadRouting } from "@/lib/radarr";
  * because the preference was wrong, but because no usenet release could be
  * fetched at all. A preference you cannot act on looks exactly like a
  * preference you do not have, and nothing on this page could tell them apart.
+ *
+ * Both apps, not just Radarr. The delay profile, the enabled indexers and the
+ * grab history are all per-app, so films and episodes can route differently --
+ * and reading only one of them means guessing about the other.
  */
 export async function DownloadRoutingPanel() {
-  const routing = await getDownloadRouting();
+  const [movies, shows] = await Promise.all([
+    getDownloadRouting(),
+    getSonarrDownloadRouting(),
+  ]);
 
-  if (!routing) {
-    return <p className="text-sm text-white/40">Radarr isn&apos;t reachable, so routing is unknown.</p>;
+  if (!movies && !shows) {
+    return (
+      <p className="text-sm text-white/40">
+        Neither Radarr nor Sonarr answered, so routing is unknown.
+      </p>
+    );
   }
 
+  return (
+    <div className="space-y-6">
+      {movies ? (
+        <RoutingFor app="Radarr" what="Films" routing={movies} />
+      ) : (
+        <p className="text-sm text-white/40">Radarr didn&apos;t answer, so film routing is unknown.</p>
+      )}
+      {shows ? (
+        <RoutingFor app="Sonarr" what="Episodes" routing={shows} />
+      ) : (
+        <p className="text-sm text-white/40">Sonarr didn&apos;t answer, so episode routing is unknown.</p>
+      )}
+    </div>
+  );
+}
+
+function RoutingFor({
+  app,
+  what,
+  routing,
+}: {
+  app: string;
+  what: string;
+  routing: DownloadRouting;
+}) {
   const { preference, recentGrabs, indexers } = routing;
   const totalGrabs = recentGrabs.usenet + recentGrabs.torrent;
 
@@ -43,7 +80,9 @@ export async function DownloadRoutingPanel() {
   return (
     <div className="space-y-4 text-sm">
       <div>
-        <h3 className="mb-1 font-medium text-white/80">How Radarr chooses</h3>
+        <h3 className="mb-1 font-medium text-white/80">
+          {what}: how {app} chooses
+        </h3>
         {preference ? (
           <p className="text-white/60">
             Prefers <span className="text-white/90">{preference.preferred}</span>. Usenet releases
