@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { ADMIN_TABS, isActiveTab } from "./AdminTabs";
 import { useSession, signOut } from "next-auth/react";
 import { SearchModal } from "./SearchModal";
 import { avatarColorOrFallback } from "@/lib/userAvatarColors";
@@ -200,15 +201,29 @@ export function Navbar() {
                           Account
                         </Link>
                         {session.user?.isAdmin && (
-                          <Link
-                            href="/admin"
-                            onClick={() => setHamburgerOpen(false)}
-                            className={`block px-4 py-3 text-base font-medium transition-colors ${
-                              pathname === "/admin" ? "text-white bg-white/10" : "text-white/90 hover:bg-white/10 hover:text-white"
-                            }`}
-                          >
-                            Admin Features
-                          </Link>
+                          <>
+                            {/* Listed individually rather than behind one
+                                "Admin Features" link: the sections are separate
+                                pages now, and collapsing them to one entry would
+                                mean two taps to reach any of them. */}
+                            <p className="px-4 pb-1 pt-4 text-xs font-medium uppercase tracking-wide text-white/30">
+                              Admin
+                            </p>
+                            {ADMIN_TABS.map((tab) => (
+                              <Link
+                                key={tab.href}
+                                href={tab.href}
+                                onClick={() => setHamburgerOpen(false)}
+                                className={`block px-4 py-3 text-base font-medium transition-colors ${
+                                  isActiveTab(tab.href, pathname)
+                                    ? "text-white bg-white/10"
+                                    : "text-white/90 hover:bg-white/10 hover:text-white"
+                                }`}
+                              >
+                                {tab.label}
+                              </Link>
+                            ))}
+                          </>
                         )}
                       </nav>
                       <div className="p-4 border-t border-white/10 space-y-2">
@@ -271,13 +286,23 @@ export function Navbar() {
                           Account
                         </Link>
                         {session.user?.isAdmin && (
-                          <Link
-                            href="/admin"
-                            className="block px-4 py-2 text-sm text-white/90 hover:bg-white/10"
-                            onClick={() => setMenuOpen(false)}
-                          >
-                            Admin Features
-                          </Link>
+                          <>
+                            <p className="px-4 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wide text-white/30">
+                              Admin
+                            </p>
+                            {ADMIN_TABS.map((tab) => (
+                              <Link
+                                key={tab.href}
+                                href={tab.href}
+                                className={`block px-4 py-2 text-sm hover:bg-white/10 ${
+                                  isActiveTab(tab.href, pathname) ? "text-white" : "text-white/90"
+                                }`}
+                                onClick={() => setMenuOpen(false)}
+                              >
+                                {tab.label}
+                              </Link>
+                            ))}
+                          </>
                         )}
                         <button
                           type="button"
