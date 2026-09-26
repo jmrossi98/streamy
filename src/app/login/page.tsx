@@ -4,6 +4,19 @@ import { useState, useEffect } from "react";
 import { signIn, useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
+/**
+ * Whether an error from NextAuth is safe to show as-is.
+ *
+ * authorize() throws sentences written for the person reading them, so those
+ * should reach the page intact. NextAuth's own internal codes are not:
+ * "CredentialsSignin" is a state, not a sentence, and anything long enough to
+ * be a stack trace is a leak rather than a message.
+ */
+function isPresentableError(error: string): boolean {
+  if (!error || error === "CredentialsSignin") return false;
+  return error.length <= 160 && !error.includes("\n");
+}
+
 export default function LoginPage() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
@@ -61,6 +74,13 @@ export default function LoginPage() {
             : "That name and password do not match an account."
         );
       } else if (res.error === "Name and password are required.") {
+        setError(res.error);
+      } else if (isPresentableError(res.error)) {
+        // The server's own words. Password-policy rejections ("Password must
+        // be at least 8 characters.") arrive here, and the old catch-all
+        // replaced every one of them with "Something went wrong" -- which
+        // told someone whose password was simply too short to try again at
+        // exactly the thing that could not work.
         setError(res.error);
       } else {
         setError("Something went wrong. Try again.");
@@ -123,7 +143,7 @@ export default function LoginPage() {
           <p className="text-white/70 text-sm mb-6">
             {mode === "signin"
               ? "Enter your name and password."
-              : "Pick a name and password. An admin approves new accounts before the first sign-in — nothing is emailed to you."}
+              : "Pick a name and password of at least 8 characters. An admin approves new accounts before the first sign-in — nothing is emailed to you."}
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (

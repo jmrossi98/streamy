@@ -15,7 +15,7 @@ setup("authenticate", async ({ page }) => {
 
   await page.getByLabel(/name/i).fill(E2E_USER.name);
   await page.getByLabel(/password/i).fill(E2E_USER.password);
-  await page.getByRole("button", { name: /continue/i }).click();
+  await page.getByRole("button", { name: /^sign in$/i }).click();
 
   // Landing anywhere that isn't /login means the credentials were accepted.
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 });
