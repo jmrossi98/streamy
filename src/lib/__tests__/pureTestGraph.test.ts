@@ -17,6 +17,12 @@ import { describe, expect, it } from "vitest";
  * ordinary-looking import to a widely-imported module (sonarr.ts, say) breaks
  * a test suite that never mentioned the database, and nothing says so until
  * CI. That cost a merge on 2026-09-26.
+ *
+ * What this does NOT catch: a dynamic `import()` on a path a test actually
+ * executes. The import is invisible here by design, but it throws just the
+ * same when the client is missing -- that cost a second CI run the same day.
+ * The only reliable check for that is running the suite the way CI does, with
+ * the generated client moved aside.
  */
 
 const LIB = "src/lib";

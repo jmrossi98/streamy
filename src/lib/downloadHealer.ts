@@ -261,8 +261,18 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   //
   // Loaded here rather than imported at the top so this module's unit tests
   // stay free of the database (see __tests__/pureTestGraph.test.ts).
-  const { pendingSearchIds } = await import("./pendingEpisodeSearch");
-  const queued = new Set(await pendingSearchIds().catch(() => []));
+  // The import is inside the try, not just the call: when the generated Prisma
+  // client is absent the `import()` itself throws, which took the whole heal
+  // pass down rather than costing it this one refinement.
+  let queued = new Set<number>();
+  try {
+    const { pendingSearchIds } = await import("./pendingEpisodeSearch");
+    queued = new Set(await pendingSearchIds());
+  } catch (err) {
+    // Worst case the ordered queue is re-searched in parallel, which is the
+    // old behaviour -- not a reason to stop healing stalled downloads.
+    console.error("[healer] could not read the ordered search queue:", err);
+  }
 
   // Batch the episode search: one command for everything due, rather than a
   // request per episode, so a large backlog doesn't hammer Sonarr.
