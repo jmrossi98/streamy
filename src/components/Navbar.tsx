@@ -27,7 +27,7 @@ export function Navbar() {
   const [deletingProfile, setDeletingProfile] = useState(false);
 
   const isSignInScreen =
-    pathname === "/login" || pathname === "/who-is-watching";
+    pathname === "/login" || pathname === "/login";
 
   const goHome = () => {
     if (session) {
@@ -67,7 +67,7 @@ export function Navbar() {
       }
       setMenuOpen(false);
       setHamburgerOpen(false);
-      await signOut({ callbackUrl: "/who-is-watching" });
+      await signOut({ callbackUrl: "/login" });
     } finally {
       setDeletingProfile(false);
     }
@@ -93,7 +93,7 @@ export function Navbar() {
           </button>
         ) : (
           <Link
-            href="/who-is-watching"
+            href="/login"
             className="flex items-center gap-2 shrink-0"
             aria-label={isSignInScreen ? "Back to Who is watching" : "Home"}
           >
@@ -222,7 +222,7 @@ export function Navbar() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => { setHamburgerOpen(false); signOut({ callbackUrl: "/who-is-watching" }); }}
+                          onClick={() => { setHamburgerOpen(false); signOut({ callbackUrl: "/login" }); }}
                           className="w-full py-3 rounded bg-white/10 text-white text-sm font-medium hover:bg-white/20 active:bg-white/25 transition-colors touch-manipulation"
                         >
                           Sign out
@@ -282,7 +282,7 @@ export function Navbar() {
                         <button
                           type="button"
                           className="w-full text-left px-4 py-2 text-sm text-white/90 hover:bg-white/10"
-                          onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/who-is-watching" }); }}
+                          onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/login" }); }}
                         >
                           Sign out
                         </button>

@@ -28,7 +28,7 @@ export default async function HomePage() {
   unstable_noStore();
   const session = await getSession();
   if (!session?.user?.id) {
-    redirect("/who-is-watching");
+    redirect("/login");
   }
 
   // Single wave: everything the shell, the hero and every row needs.

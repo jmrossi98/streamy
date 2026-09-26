@@ -6,7 +6,7 @@ import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 export default async function WatchlistPage() {
   const session = await getSession();
-  if (!session?.user?.id) redirect("/who-is-watching?callbackUrl=/watchlist");
+  if (!session?.user?.id) redirect("/login?callbackUrl=/watchlist");
 
   const data = await getWatchlist(session.user.id);
 

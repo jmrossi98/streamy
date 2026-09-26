@@ -41,7 +41,14 @@ export default function LoginPage() {
     setLoading(false);
     if (res?.error) {
       if (res.error === "Your account is pending approval.") {
-        setInfo("Thanks for signing up! Your account needs admin approval before you can log in. Check back soon.");
+        // Deliberately not the language of email verification: nothing is
+        // sent to the new user, and there is no link to click. Someone
+        // waiting on a confirmation email would wait forever.
+        setInfo(
+          "Thanks for signing up. A request to approve your account has been sent " +
+            "to the admin -- you can sign in as soon as it is approved. Nothing is " +
+            "sent to your email."
+        );
       } else if (res.error === "Incorrect password." || res.error === "Name and password are required.") {
         setError(res.error);
       } else {
@@ -69,9 +76,10 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 bg-netflix-black">
       <div className="w-full max-w-md">
         <div className="bg-netflix-dark/80 rounded-lg p-8 border border-white/10">
-          <h1 className="font-display text-3xl font-bold text-white mb-6">Get started</h1>
+          <h1 className="font-display text-3xl font-bold text-white mb-6">Sign in</h1>
           <p className="text-white/70 text-sm mb-6">
-            Enter your name and password. New here? Choose a name and password to get started.
+            Enter your name and password. New here? Pick a name and password and
+            we&apos;ll send the admin a request to approve your account.
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
@@ -119,7 +127,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full py-3 bg-netflix-red text-white font-semibold rounded hover:bg-netflix-red/90 disabled:opacity-50 transition-opacity"
             >
-              {loading ? "Continuing…" : "Continue"}
+              {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
         </div>

@@ -16,7 +16,10 @@ export async function middleware(req: NextRequest) {
   }
 
   const callbackUrl = req.nextUrl.pathname + req.nextUrl.search;
-  const redirectUrl = new URL("/who-is-watching", req.url);
+  // /login, not the profile picker. That page listed every approved
+  // account name to anyone who asked -- a free list of valid usernames
+  // for anyone trying passwords against them.
+  const redirectUrl = new URL("/login", req.url);
   redirectUrl.searchParams.set("callbackUrl", callbackUrl);
   return NextResponse.redirect(redirectUrl);
 }
@@ -27,7 +30,7 @@ export const config = {
   // can drive the harness -- and load its bundled test clip -- without a
   // real session. Public static files are not implicitly exempt from
   // middleware in Next.js; without this, requesting the clip 307-redirected
-  // to /who-is-watching and the <video> element failed to parse the
+  // to the sign-in page and the <video> element failed to parse the
   // redirect target as media. Safe unauthenticated in production too: every
   // page under /dev calls notFound() itself when NODE_ENV === "production"
   // (see src/app/dev/player-harness/page.tsx), and /test-assets holds
@@ -44,6 +47,6 @@ export const config = {
   // /api/flash/[fileName], which checks the session itself and is not
   // exempted here.
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|login|who-is-watching|dev|test-assets|ruffle).*)",
+    "/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|login|dev|test-assets|ruffle).*)",
   ],
 };
