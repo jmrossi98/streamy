@@ -310,6 +310,31 @@ model PlaybackCheckRun {
   @@index([ranAt])
 }
 
+/// One run of the scheduled health probes.
+///
+/// Separate from PlaybackCheckRun rather than a shared "check" table: that
+/// one records a single end-to-end journey with stages, this records a set of
+/// independent assertions, and merging them would mean a nullable column per
+/// difference and a `kind` discriminator on every query.
+model HealthProbeRun {
+  id         String   @id @default(cuid())
+  ranAt      DateTime @default(now())
+  success    Boolean
+  /// One line, e.g. "6/6 probes passed" or "2 of 6 probes failed: ...".
+  summary    String
+  /// Per-probe PASS/FAIL/SKIP detail, newline-separated.
+  detail     String
+  durationMs Int?
+  /// False when the failure alert was skipped or failed to send, so a silent
+  /// alert is visible rather than assumed to have gone out.
+  notified   Boolean  @default(false)
+  /// What the automatic remediation actually did, newline-separated. Null
+  /// when nothing was attempted, which is the common case.
+  remediated String?
+
+  @@index([ranAt])
+}
+
 /// A hand-picked artwork override for one ROM's Steam tile.
 ///
 /// The Deck's steam_sync.py already auto-fetches artwork from SteamGridDB for

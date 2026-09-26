@@ -1,0 +1,73 @@
+# Scheduled health probes.
+#
+# Hits the app's own cron endpoint, which asserts three things the admin
+# panel structurally cannot -- see src/lib/healthProbeRules.ts for the full
+# rationale:
+#
+#   - published artifacts are still being written, not merely served. The
+#     metrics publisher died on 2026-09-25 and every reachability check
+#     stayed green for nine hours while the chart quietly stopped moving.
+#   - nothing is wedged in importPending. Two films sat there indefinitely
+#     because fansub filenames carry no SxxExx for Sonarr to parse.
+#   - search still returns releases. Indexers that answer but produce nothing
+#     look identical to working ones until someone asks for a title.
+#
+# Every six hours rather than nightly: these are cheap reads plus at most one
+# container restart, and what they catch changes without a deploy. The
+# download-and-playback check stays daily because it downloads a real file,
+# and running that four times a day taxes trackers for little extra signal.
+#
+# Never a deploy gate -- this walks the live system, not the code about to
+# ship.
+name: Health Probes
+
+on:
+  schedule:
+    - cron: "20 */6 * * *" # offset from integration-check's :00 so they don't collide
+  workflow_dispatch:
+    inputs:
+      remediate:
+        description: "Attempt automatic fixes (uncheck to only report)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: health-probes
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run the probes
+        env:
+          BASE_URL: ${{ secrets.NEXTAUTH_URL }}
+          CHECK_SECRET: ${{ secrets.HEALTH_PROBE_SECRET }}
+          # Scheduled runs remediate; a manual run can ask for a read-only
+          # report instead.
+          REMEDIATE: ${{ github.event.inputs.remediate == 'false' && '0' || '1' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CHECK_SECRET}" ]; then
+            echo "HEALTH_PROBE_SECRET is not set -- the endpoint fails closed, so this would 401."
+            exit 1
+          fi
+
+          curl --silent --show-error --fail-with-body \
+            --max-time 150 \
+            -X POST \
+            "${BASE_URL%/}/api/cron/health-probes?secret=${CHECK_SECRET}&remediate=${REMEDIATE}" \
+          | tee response.json
+
+          echo
+
+          # The endpoint answers 200 with success:false for a failed probe, so
+          # that an unreachable app and a stale metrics file are distinguishable
+          # rather than both being "curl failed". Turning that into a red run is
+          # this step's job.
+          if ! python3 -c "import json,sys; sys.exit(0 if json.load(open('response.json'))['success'] else 1)"; then
+            echo "::error::Health probes failed -- see the summary above and the admin panel."
+            exit 1
+          fi
