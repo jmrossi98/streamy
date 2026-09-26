@@ -21,15 +21,33 @@
  * the panel then reads as "no jobs" rather than "not wired up".
  */
 
-export type JobProvider = "greenhouse" | "ashby";
+export type JobProvider = "greenhouse" | "ashby" | "workday";
 
 export type JobSource = {
   /** Display name, e.g. "Stripe". */
   company: string;
   provider: JobProvider;
-  /** The company's slug on that provider, e.g. "stripe". */
+  /**
+   * The company's slug on that provider.
+   *
+   * Greenhouse and Ashby take a plain company slug ("stripe"). Workday needs
+   * three parts -- tenant, data-centre number and career-site name -- written
+   * "nvidia/wd5/NVIDIAExternalCareerSite", because a Workday instance is
+   * addressed by all three and there is no way to derive the last two.
+   */
   slug: string;
 };
+
+/** Tenant, wd number and site name, for a Workday source. */
+export type WorkdayTarget = { tenant: string; dc: string; site: string };
+
+export function parseWorkdaySlug(slug: string): WorkdayTarget | null {
+  const parts = slug.split("/");
+  if (parts.length !== 3) return null;
+  const [tenant, dc, site] = parts.map((x) => x.trim());
+  if (!tenant || !/^wd\d+$/.test(dc) || !site) return null;
+  return { tenant, dc, site };
+}
 
 export type JobPosting = {
   /** Stable per provider, so a re-poll updates rather than duplicates. */
@@ -44,6 +62,14 @@ export type JobPosting = {
 
 /** The public endpoint listing a company's open roles. */
 export function boardUrl(source: JobSource): string {
+  if (source.provider === "workday") {
+    const target = parseWorkdaySlug(source.slug);
+    if (!target) return "";
+    const { tenant, dc, site } = target;
+    return `https://${encodeURIComponent(tenant)}.${dc}.myworkdayjobs.com/wday/cxs/${encodeURIComponent(
+      tenant
+    )}/${encodeURIComponent(site)}/jobs`;
+  }
   const slug = encodeURIComponent(source.slug);
   switch (source.provider) {
     case "greenhouse":
@@ -51,6 +77,12 @@ export function boardUrl(source: JobSource): string {
     case "ashby":
       return `https://api.ashbyhq.com/posting-api/job-board/${slug}`;
   }
+}
+
+/** Where a person actually applies, built from the path the API returns. */
+function workdayJobUrl(target: WorkdayTarget, externalPath: string): string {
+  const { tenant, dc, site } = target;
+  return `https://${tenant}.${dc}.myworkdayjobs.com/en-US/${site}${externalPath}`;
 }
 
 /** A public link a person can actually open and apply through. */
@@ -73,7 +105,52 @@ function asString(value: unknown): string {
  * an id is dropped rather than rendered as a blank row -- these feeds are
  * third-party and occasionally carry drafts.
  */
+/**
+ * Workday's payload, which shares nothing with the other two.
+ *
+ * Its quirks, all of which matter:
+ *   - `locationsText` is prose ("US, CA, Santa Clara"), and for a multi-site
+ *     role it is literally "2 Locations" -- the places are simply not in the
+ *     response. Those cannot be filed under a metro without fetching each job
+ *     individually, so they are kept with their text as-is and the metro
+ *     matcher declines them rather than guessing.
+ *   - `postedOn` is relative prose ("Posted Today"), not a date, so postedAt
+ *     stays null. Harmless here: "new" is measured by when we first saw a
+ *     posting, never by the provider's own stamp.
+ *   - the id lives in `bulletFields`, and the apply URL has to be built from
+ *     `externalPath`.
+ */
+function parseWorkday(source: JobSource, payload: unknown): JobPosting[] {
+  const target = parseWorkdaySlug(source.slug);
+  if (!target) return [];
+  const rows = (payload as { jobPostings?: unknown })?.jobPostings;
+  if (!Array.isArray(rows)) return [];
+
+  const out: JobPosting[] = [];
+  for (const entry of rows) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const job = entry as Record<string, unknown>;
+    const title = asString(job.title);
+    const path = asString(job.externalPath);
+    const bullets = Array.isArray(job.bulletFields) ? job.bulletFields : [];
+    const id = asString(bullets[0]) || path;
+    if (!title || !id) continue;
+
+    out.push({
+      id: `workday:${target.tenant}:${id}`,
+      company: source.company,
+      title,
+      location: asString(job.locationsText) || "Unspecified",
+      url: path ? workdayJobUrl(target, path) : boardUrl(source),
+      postedAt: null,
+    });
+  }
+  return out;
+}
+
 export function parseBoard(source: JobSource, payload: unknown): JobPosting[] {
+  if (source.provider === "workday") return parseWorkday(source, payload);
+
   const raw = Array.isArray(payload)
     ? payload
     : Array.isArray((payload as { jobs?: unknown })?.jobs)
@@ -133,7 +210,10 @@ export function parseJobSources(raw: string | null | undefined): JobSource[] {
     const provider = parts[0].trim().toLowerCase();
     const slug = parts[1].trim();
     if (!slug) continue;
-    if (provider !== "greenhouse" && provider !== "ashby") continue;
+    if (provider !== "greenhouse" && provider !== "ashby" && provider !== "workday") continue;
+    // A Workday slug is "tenant/wdN/Site"; reject a malformed one here rather
+    // than letting it through to fetch a URL that cannot exist.
+    if (provider === "workday" && !parseWorkdaySlug(slug)) continue;
     const company = parts.slice(2).join(":").trim() || slug;
     out.push({ provider, slug, company });
   }

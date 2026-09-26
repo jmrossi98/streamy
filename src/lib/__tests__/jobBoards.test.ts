@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { boardUrl, parseBoard, parseJobSources, type JobSource } from "../jobBoards";
+import { matchMetros } from "../jobFilters";
 
 const stripe: JobSource = { company: "Stripe", provider: "greenhouse", slug: "stripe" };
 const ramp: JobSource = { company: "Ramp", provider: "ashby", slug: "ramp" };
@@ -117,5 +118,69 @@ describe("parseJobSources", () => {
     expect(parseJobSources("greenhouse:")).toEqual([]);
     expect(parseJobSources("")).toEqual([]);
     expect(parseJobSources(null)).toEqual([]);
+  });
+});
+
+describe("workday", () => {
+  const nvidia: JobSource = {
+    company: "Nvidia",
+    provider: "workday",
+    slug: "nvidia/wd5/NVIDIAExternalCareerSite",
+  };
+
+  it("builds the tenant/dc/site endpoint", () => {
+    expect(boardUrl(nvidia)).toBe(
+      "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs"
+    );
+  });
+
+  it("parses the live payload shape", () => {
+    // Verbatim from the endpoint on 2026-09-26: no absolute url, id buried in
+    // bulletFields, location as prose.
+    const payload = {
+      total: 2000,
+      jobPostings: [
+        {
+          title: "Software Engineer, OpenShell",
+          externalPath: "/job/US-Remote/Software-Engineer--OpenShell_JR1997726",
+          locationsText: "US, Remote",
+          postedOn: "Posted Today",
+          bulletFields: ["JR1997726"],
+        },
+      ],
+    };
+    expect(parseBoard(nvidia, payload)).toEqual([
+      {
+        id: "workday:nvidia:JR1997726",
+        company: "Nvidia",
+        title: "Software Engineer, OpenShell",
+        location: "US, Remote",
+        url: "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/US-Remote/Software-Engineer--OpenShell_JR1997726",
+        // "Posted Today" is prose, not a date. "New" is measured by when we
+        // first saw it anyway.
+        postedAt: null,
+      },
+    ]);
+  });
+
+  it("keeps a collapsed multi-location string rather than inventing places", () => {
+    // Workday answers "2 Locations" and omits them. The metro matcher then
+    // declines it, which is correct -- guessing would file it anywhere.
+    const [posting] = parseBoard(nvidia, {
+      jobPostings: [
+        { title: "Software Engineer, SONiC", externalPath: "/job/x_JR1", locationsText: "2 Locations", bulletFields: ["JR1"] },
+      ],
+    });
+    expect(posting.location).toBe("2 Locations");
+    expect(matchMetros(posting.location)).toEqual([]);
+  });
+
+  it("rejects a malformed workday slug rather than fetching a URL that cannot exist", () => {
+    expect(parseJobSources("workday:nvidia:Nvidia")).toEqual([]);
+    expect(parseJobSources("workday:nvidia/wd5:Nvidia")).toEqual([]);
+    expect(parseJobSources("workday:nvidia/x5/Site:Nvidia")).toEqual([]);
+    expect(parseJobSources("workday:nvidia/wd5/Site:Nvidia")).toEqual([
+      { provider: "workday", slug: "nvidia/wd5/Site", company: "Nvidia" },
+    ]);
   });
 });
