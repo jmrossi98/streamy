@@ -59,13 +59,68 @@ function includeRemote(): boolean {
   return process.env.JOB_INCLUDE_REMOTE !== "0";
 }
 
+/** Identifying rather than disguised: these endpoints are meant to be read. */
+const UA = "streamy-job-watch/1.0";
+
+/**
+ * Workday returns at most 20 postings per request, so it has to be paged.
+ *
+ * Capped rather than exhaustive. Nvidia alone answers 1,700 for "software
+ * engineer", which at 20 a page is 85 requests to one company every half hour
+ * -- disproportionate for a watcher whose job is to notice new postings.
+ * Workday returns newest first, so the first few pages are exactly the part
+ * that can contain something new.
+ */
+const WORKDAY_PAGE_SIZE = 20;
+const WORKDAY_MAX_PAGES = 5;
+
+/**
+ * Narrows at the server instead of fetching everything and discarding.
+ *
+ * isSoftwareRole still has the final say -- this only avoids transferring
+ * thousands of postings to throw nearly all of them away.
+ */
+const WORKDAY_SEARCH_TEXT = "software engineer";
+
+async function fetchWorkday(source: JobSource): Promise<JobPosting[]> {
+  const url = boardUrl(source);
+  if (!url) throw new Error("malformed workday slug");
+
+  const all: JobPosting[] = [];
+  for (let page = 0; page < WORKDAY_MAX_PAGES; page += 1) {
+    const res = await fetch(url, {
+      method: "POST",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": UA,
+      },
+      body: JSON.stringify({
+        appliedFacets: {},
+        limit: WORKDAY_PAGE_SIZE,
+        offset: page * WORKDAY_PAGE_SIZE,
+        searchText: WORKDAY_SEARCH_TEXT,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const batch = parseBoard(source, await res.json());
+    all.push(...batch);
+    // A short page is the last page; asking for the next one would just be a
+    // wasted round trip against someone else's server.
+    if (batch.length < WORKDAY_PAGE_SIZE) break;
+  }
+  return all;
+}
+
 async function fetchBoard(source: JobSource): Promise<JobPosting[]> {
+  if (source.provider === "workday") return fetchWorkday(source);
+
   const res = await fetch(boardUrl(source), {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     cache: "no-store",
-    // Identifying rather than disguised: these are public endpoints meant to be
-    // read, and a plausible UA is how a polite consumer behaves.
-    headers: { "User-Agent": "streamy-job-watch/1.0" },
+    headers: { "User-Agent": UA },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return parseBoard(source, await res.json());
