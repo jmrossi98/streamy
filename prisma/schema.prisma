@@ -146,14 +146,14 @@ model RejectedRelease {
 // Not linked to User on purpose: the interesting rows are attempts against
 // names that don't exist, and a foreign key would make those unstorable.
 model LoginAttempt {
-  id      String   @id @default(cuid())
+  id                String   @id @default(cuid())
   // As submitted. May not correspond to any User row.
-  name    String
-  ip      String
-  success Boolean
+  name              String
+  ip                String
+  success           Boolean
   // "success" | "bad_password" | "unknown_user" | "not_approved" | "locked_out"
-  outcome String
-  at      DateTime @default(now())
+  outcome           String
+  at                DateTime @default(now())
   // What was actually typed, "bad_password" rows only -- never for a
   // successful sign-in, which would mean storing a real, working password in
   // plaintext. Purged after 48h by purgeOldAttemptedPasswords(), well short
@@ -316,6 +316,40 @@ model PlaybackCheckRun {
 /// one records a single end-to-end journey with stages, this records a set of
 /// independent assertions, and merging them would mean a nullable column per
 /// difference and a `kind` discriminator on every query.
+/// One episode still waiting to be searched as part of an ordered season or
+/// series request.
+///
+/// Sonarr is asked for episodes one at a time, in broadcast order, waiting for
+/// each grab before starting the next, so torrents enter the download client
+/// in episode order and a season becomes watchable from episode 1 (see
+/// lib/sonarr.ts). For a 64-episode season that chain runs for the better part
+/// of an hour.
+///
+/// It used to live only in the Node process that served the request, which
+/// meant a deploy, a restart or a crash part-way through dropped every
+/// remaining episode with no trace: episode 1 downloaded, the rest stayed
+/// monitored and un-searched forever. Sonarr's own RSS sync only catches new
+/// releases, so nothing ever picked them back up.
+///
+/// Persisting the queue makes the chain survive a restart -- it resumes on the
+/// next page load, from wherever it stopped.
+model PendingEpisodeSearch {
+  id         String   @id @default(cuid())
+  /// Sonarr's episode id. Unique so re-requesting a season already queued
+  /// tops it up rather than searching anything twice.
+  episodeId  Int      @unique
+  seriesId   Int
+  /// Index within the batch this was enqueued as, preserving broadcast order
+  /// across a restart -- the ids themselves are not in airing order.
+  position   Int
+  enqueuedAt DateTime @default(now())
+  /// Bumped on each failure so one permanently broken episode gets dropped
+  /// instead of blocking everything queued behind it.
+  attempts   Int      @default(0)
+
+  @@index([enqueuedAt, position])
+}
+
 model HealthProbeRun {
   id         String   @id @default(cuid())
   ranAt      DateTime @default(now())

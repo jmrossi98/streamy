@@ -9,6 +9,7 @@ import { getSonarrActiveDownloads, getSonarrCompletedEpisodes } from "@/lib/sona
 import { getDiskUsage } from "@/lib/diskUsage";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
+import { maybeDrainEpisodeSearches } from "@/lib/sonarr";
 import { describeRequestNotice } from "@/lib/requestNotice";
 import { getRejectionSummary } from "@/lib/rejectedReleases";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
@@ -73,6 +74,8 @@ export default async function AdminFeaturesPage() {
   // The panel auto-refreshes while anything is downloading, so this doubles
   // as a heal loop that doesn't depend on someone sitting on a title page.
   maybeHealStalledDownloads();
+  // Resumes an ordered season search that a restart interrupted.
+  maybeDrainEpisodeSearches();
 
   const blogConfigured = isBlogPublishingConfigured();
 

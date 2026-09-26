@@ -17,6 +17,14 @@ import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./ra
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
+import {
+  clearPendingSearches,
+  completePendingSearch,
+  enqueueEpisodeSearches,
+  failPendingSearch,
+  nextPendingSearch,
+  pendingSearchIds,
+} from "./pendingEpisodeSearch";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -729,11 +737,19 @@ export async function requestEpisode(
 }
 
 /**
- * Searches the given episodes one at a time, in the order supplied, waiting
- * for each grab to finish before starting the next so downloads queue up in
- * episode order. Runs detached from the request that started it.
+ * Queues the given episodes to be searched one at a time, in the order
+ * supplied, waiting for each grab to finish before starting the next so
+ * downloads queue up in episode order.
+ *
+ * The queue is persisted rather than held in this process. A 64-episode
+ * season takes the better part of an hour to work through, and when the chain
+ * lived only in memory a deploy part-way through dropped everything left with
+ * no trace -- episode 1 downloaded, the rest sat monitored and un-searched
+ * forever, because Sonarr's RSS sync only picks up new releases and never
+ * back-searches. Persisting it means the chain resumes on the next page load
+ * instead.
  */
-async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
+async function searchEpisodesInOrder(seriesId: number, episodeIds: number[]): Promise<void> {
   // Marked for the whole batch up front, not just as each one's own turn
   // comes up below: this chain runs sequentially and can take minutes for a
   // full season, so an episode still waiting its turn -- monitored and
@@ -742,32 +758,83 @@ async function searchEpisodesInOrder(episodeIds: number[]): Promise<void> {
   // that had already failed once), i.e. "no releases found" for a season
   // that had, in reality, only just been asked for.
   for (const id of episodeIds) markEpisodeSearchTriggered(id);
-  for (const id of episodeIds) {
-    try {
-      // Re-check before each search rather than trusting the list we started
-      // with. This chain runs for minutes after the request that began it, so
-      // an episode can be cancelled part-way through -- and an explicit
-      // EpisodeSearch grabs regardless of monitoring, so without this the
-      // cancelled episode would simply start downloading again when its turn
-      // came round. Unmonitored means cancelled: skip it.
-      const episode = await sonarrFetch<{ monitored: boolean; hasFile: boolean }>(
-        `/api/v3/episode/${id}`
-      );
-      if (!episode.monitored || episode.hasFile) continue;
+  await enqueueEpisodeSearches(seriesId, episodeIds);
+  void drainEpisodeSearches();
+}
 
-      const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
-        method: "POST",
-        body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [id] }),
-      });
-      markEpisodeSearchTriggered(id);
-      await waitForSonarrCommand(cmd.id);
-    } catch (err) {
-      // One episode failing shouldn't strand the rest of the season.
-      console.error(`[sonarr] ordered search failed for episode ${id}:`, err);
+/**
+ * One drain at a time. The queue is a strict order, so a second worker would
+ * either search out of order or search the same episode twice.
+ *
+ * In-process is enough: Streamy runs as a single Node server. If that ever
+ * stops being true this needs a real claim on the row.
+ */
+let draining = false;
+
+/** Works the persisted queue until it is empty. Never throws. */
+async function drainEpisodeSearches(): Promise<void> {
+  if (draining) return;
+  draining = true;
+  try {
+    // The in-memory search marks do not survive the restart this queue exists
+    // to tolerate, so re-assert them for everything still waiting -- without
+    // this, a resumed season reads as "no releases found" until its turn.
+    for (const id of await pendingSearchIds()) markEpisodeSearchTriggered(id);
+
+    for (;;) {
+      const next = await nextPendingSearch();
+      if (!next) return;
+      try {
+        // Re-checked at its turn rather than trusting the queue, which may
+        // have been written an hour ago. An explicit EpisodeSearch grabs
+        // regardless of monitoring, so without this a cancelled episode would
+        // simply start downloading again. Unmonitored means cancelled.
+        const episode = await sonarrFetch<{ monitored: boolean; hasFile: boolean }>(
+          `/api/v3/episode/${next.episodeId}`
+        );
+        if (!episode.monitored || episode.hasFile) {
+          await completePendingSearch(next.episodeId);
+          continue;
+        }
+
+        const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
+          method: "POST",
+          body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [next.episodeId] }),
+        });
+        markEpisodeSearchTriggered(next.episodeId);
+        await waitForSonarrCommand(cmd.id);
+        await completePendingSearch(next.episodeId);
+      } catch (err) {
+        console.error(`[sonarr] ordered search failed for episode ${next.episodeId}:`, err);
+        await failPendingSearch(next.episodeId);
+        // The usual cause is Sonarr being briefly unreachable, which affects
+        // whatever is at the head of the queue rather than this episode in
+        // particular -- so pause instead of burning its attempts in a
+        // fraction of a second.
+        await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_MS));
+      }
     }
+  } catch (err) {
+    // A database failure, i.e. the queue itself is unreadable. The next
+    // caller retries.
+    console.error("[sonarr] search queue drain failed:", err);
+  } finally {
+    draining = false;
   }
 }
 
+/**
+ * Resumes the search queue if anything is waiting. Safe to call from hot
+ * paths: it returns immediately while a drain is already running, and never
+ * throws.
+ *
+ * This is what makes the queue self-healing after a restart -- the drain that
+ * was interrupted picks up again the next time anyone loads a page.
+ */
+export function maybeDrainEpisodeSearches(): void {
+  if (!isSonarrConfigured()) return;
+  void drainEpisodeSearches();
+}
 /**
  * Searches a whole series in broadcast order -- season 1 episode 1 first,
  * then 2, 3, and on through later seasons -- so the show becomes watchable
@@ -796,7 +863,7 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
     body: JSON.stringify({ episodeIds: wanted.map((e) => e.id), monitored: true }),
   });
 
-  void searchEpisodesInOrder(wanted.map((e) => e.id));
+  void searchEpisodesInOrder(seriesId, wanted.map((e) => e.id));
 }
 
 /** Monitors and searches every episode in one season. */
@@ -847,7 +914,7 @@ export async function requestSeason(
     // Not awaited: a full season is minutes of sequential searching, far
     // longer than a request should block. The chain runs in the background
     // and the UI picks up each episode as it appears via status polling.
-    void searchEpisodesInOrder(ids);
+    void searchEpisodesInOrder(series.sonarrId, ids);
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
@@ -912,6 +979,11 @@ export async function manageSonarrEpisodes(
       method: "PUT",
       body: JSON.stringify({ episodeIds: targets.map((e) => e.id), monitored: false }),
     });
+
+    // Drop anything still queued for an ordered search. The drain would skip
+    // these anyway now they are unmonitored, but leaving them in would hold a
+    // cancelled season ahead of whatever is asked for next.
+    await clearPendingSearches(targets.map((e) => e.id));
 
     // Unmonitor the season too, otherwise Sonarr treats it as still wanted.
     if (episodeNumber == null) {
