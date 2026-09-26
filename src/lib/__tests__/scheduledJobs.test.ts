@@ -88,6 +88,7 @@ function job(over: Partial<CronJob> = {}): CronJob {
     command: "./thing.sh >> /var/log/thing.log 2>&1",
     log: "/var/log/thing.log",
     lastRun: new Date(NOW.getTime() - 5 * 60_000).toISOString(),
+    lastOutput: new Date(NOW.getTime() - 5 * 60_000).toISOString(),
     logBytes: 100,
     unobservable: false,
     ...over,
@@ -110,12 +111,21 @@ describe("jobHealth", () => {
     expect(jobHealth(past, NOW)).toBe("overdue");
   });
 
-  it("calls a job with no log unobservable, not broken", () => {
-    // derp-wan-ip-watch.sh is real and redirects nowhere. Flagging it as a
-    // problem would train people to ignore the column.
-    expect(jobHealth(job({ log: null, lastRun: null, unobservable: true }), NOW)).toBe(
-      "unobservable"
-    );
+  it("is fine for a job that runs but never writes to its log", () => {
+    // The bug this replaced: judging on output mtime called six of nineteen
+    // jobs overdue when all six were running. vpn-failover logs only on an
+    // actual failover, so its output can be days old while it runs every
+    // two minutes.
+    const silent = job({
+      schedule: "*/2 * * * *",
+      lastRun: new Date(NOW.getTime() - 60_000).toISOString(),
+      lastOutput: new Date(NOW.getTime() - 6 * 24 * 60 * 60_000).toISOString(),
+    });
+    expect(jobHealth(silent, NOW)).toBe("ok");
+  });
+
+  it("calls a job unobservable only when cron's own log said nothing", () => {
+    expect(jobHealth(job({ lastRun: null, unobservable: true }), NOW)).toBe("unobservable");
   });
 
   it("does not claim health for a schedule it cannot read", () => {

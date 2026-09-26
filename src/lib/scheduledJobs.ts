@@ -63,8 +63,13 @@ export type CronJob = {
   schedule: string;
   command: string;
   log: string | null;
+  /** When cron actually started it, from cron's own syslog entries. */
   lastRun: string | null;
+  /** When it last wrote to its log. A different question -- a healthy job can
+   *  be silent for weeks. */
+  lastOutput: string | null;
   logBytes: number | null;
+  /** True only when cron's log could not be read, so nothing can be said. */
   unobservable: boolean;
 };
 
@@ -123,10 +128,14 @@ export type JobHealth = "ok" | "overdue" | "unobservable" | "unknown";
 /**
  * Whether a cron job looks like it is still running.
  *
- * "unobservable" is its own answer rather than being folded into unknown: a job
- * with no log was never going to report a run, which is a gap in what we can
- * see, not a sign of trouble. Showing it as a problem would train people to
- * ignore the column.
+ * Judged on lastRun, which comes from cron's own log and is therefore true for
+ * every scheduled job. An earlier version judged on the job's output file
+ * instead and called six of nineteen jobs overdue when every one of them was
+ * running fine -- vpn-failover logs only on a failover, job-watchdog only when
+ * it kills something. A status column that cries wolf is worse than none.
+ *
+ * "unobservable" now means only that cron's log could not be read at all, which
+ * is a gap in what we can see rather than a sign of trouble.
  */
 export function jobHealth(job: CronJob, now = new Date()): JobHealth {
   if (job.unobservable || !job.lastRun) return "unobservable";

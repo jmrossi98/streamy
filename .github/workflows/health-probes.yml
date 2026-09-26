@@ -50,6 +50,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Strip whitespace, including a trailing newline, from anything that
+          # goes into the URL.
+          #
+          # A secret set with `echo` rather than `printf` carries a newline, and
+          # GitHub stores it verbatim. curl then rejects the whole URL with
+          # "(3) Malformed input to a URL function" and names neither the
+          # variable nor the character -- the health probes failed this way for
+          # three scheduled runs, and because the request never arrived, nothing
+          # was recorded and the admin panel showed no runs at all rather than
+          # failing ones.
+          BASE_URL="$(printf %s "${BASE_URL}" | tr -d "[:space:]")"
+          CHECK_SECRET="$(printf %s "${CHECK_SECRET}" | tr -d "[:space:]")"
+
           if [ -z "${CHECK_SECRET}" ]; then
             echo "HEALTH_PROBE_SECRET is not set -- the endpoint fails closed, so this would 401."
             exit 1

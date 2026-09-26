@@ -499,6 +499,7 @@ export default async function AdminFeaturesPage() {
                 schedule: job.schedule,
                 command: job.command,
                 lastRun: job.lastRun,
+                lastOutput: job.lastOutput ?? null,
                 health: jobHealth(job),
               }))}
             />

@@ -9,6 +9,7 @@ export type ScheduledJobRow = {
   schedule: string;
   command: string;
   lastRun: string | null;
+  lastOutput: string | null;
   health: "ok" | "overdue" | "unobservable" | "unknown";
 };
 
@@ -37,7 +38,7 @@ const HEALTH_LABEL: Record<ScheduledJobRow["health"], string> = {
   overdue: "overdue",
   // Not a fault: the job redirects nowhere, so no run was ever going to be
   // recorded. Saying "unknown" would imply something went wrong.
-  unobservable: "no log to check",
+  unobservable: "cron log unreadable",
   unknown: "schedule not read",
 };
 
@@ -83,7 +84,7 @@ export function ScheduledJobsPanel({
   const jobProblems = jobs.filter((j) => j.health === "overdue").length;
 
   return (
-    <div className="w-full max-w-3xl space-y-5">
+    <div className="w-full space-y-5">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/50">
         <span>
           {probes.length} probe{probes.length === 1 ? "" : "s"}
@@ -169,7 +170,18 @@ export function ScheduledJobsPanel({
                     <span className="shrink-0 text-[10px] text-white/30">{job.user}</span>
                   </p>
                   <p className="mt-0.5 text-[11px] text-white/45">
-                    {job.lastRun ? `last output ${timeAgo(job.lastRun)}` : HEALTH_LABEL[job.health]}
+                    {job.lastRun ? `ran ${timeAgo(job.lastRun)}` : HEALTH_LABEL[job.health]}
+                    {/* Output age only when it lags the run: a job that is
+                        running but has written nothing for weeks is worth
+                        noticing, and repeating the same value twice is not. */}
+                    {job.lastRun &&
+                      job.lastOutput &&
+                      Date.parse(job.lastOutput) < Date.parse(job.lastRun) - 3600_000 && (
+                        <span className="text-white/30">
+                          {" "}
+                          · last output {timeAgo(job.lastOutput)}
+                        </span>
+                      )}
                     {job.health === "overdue" && (
                       <span className="text-red-300"> · overdue</span>
                     )}
@@ -177,7 +189,7 @@ export function ScheduledJobsPanel({
                   {showCommands && (
                     // Its own scroll box: these run to 200 characters of shell
                     // and must not set the width of the page.
-                    <pre className="mt-1 max-w-full overflow-x-auto rounded bg-black/40 px-2 py-1 text-[10px] leading-relaxed text-white/50">
+                    <pre className="mt-1 max-w-full whitespace-pre-wrap break-all rounded bg-black/40 px-2 py-1 text-[10px] leading-relaxed text-white/50">
                       {job.command}
                     </pre>
                   )}
