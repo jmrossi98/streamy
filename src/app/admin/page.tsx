@@ -46,6 +46,9 @@ import { getPageWatchSummary } from "@/lib/pageWatch";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
 import { HealthProbePanel } from "@/components/HealthProbePanel";
+import { ScheduledJobsPanel } from "@/components/ScheduledJobsPanel";
+import { fetchCronInventory } from "@/lib/cronInventory";
+import { jobHealth, parseProbeDetail } from "@/lib/scheduledJobs";
 import { getHealthProbeHistory } from "@/lib/healthProbes";
 import { getGamesList, getGamesStorageSize, platformToSlug } from "@/lib/games";
 import { getGameDownloads, getWishlist } from "@/lib/gamarr";
@@ -98,6 +101,7 @@ export default async function AdminFeaturesPage() {
     pageWatch,
     playbackCheckRuns,
     healthProbeRuns,
+    cronInventory,
     gamesSize,
     auditLog,
     gameJobs,
@@ -150,6 +154,9 @@ export default async function AdminFeaturesPage() {
     getPageWatchSummary(),
     getPlaybackCheckHistory().catch(() => []),
     getHealthProbeHistory().catch(() => []),
+    // Null when unreachable, which the panel shows differently from an
+    // empty schedule -- "we could not ask" is not "nothing is scheduled".
+    fetchCronInventory(),
     // Kept out of the array above and defaulted to 0 on failure (it already
     // swallows its own errors) so an unreachable gamarr can't hold up the
     // rest of this page -- same reasoning the old embedded Games panel used.
@@ -469,6 +476,28 @@ export default async function AdminFeaturesPage() {
                 }))}
               />
             </div>
+          </PanelBoundary>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Scheduled</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PanelBoundary name="Scheduled">
+            <ScheduledJobsPanel
+              probes={parseProbeDetail(healthProbeRuns[0]?.detail)}
+              probeRanAt={healthProbeRuns[0]?.ranAt.toISOString() ?? null}
+              cronGeneratedAt={cronInventory?.generatedAt ?? null}
+              cronReachable={cronInventory !== null}
+              jobs={(cronInventory?.jobs ?? []).map((job) => ({
+                name: job.name,
+                user: job.user,
+                schedule: job.schedule,
+                command: job.command,
+                lastRun: job.lastRun,
+                health: jobHealth(job),
+              }))}
+            />
           </PanelBoundary>
         </div>
       </section>
