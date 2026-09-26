@@ -80,6 +80,12 @@ export default defineConfig({
       PORT: "3100",
       PLAYER_HARNESS_ENABLED: "1",
       TMDB_FORCE_MOCK: "1",
+      // Never used -- TMDB_FORCE_MOCK routes every lookup at tmdb-mock.ts.
+      // Present because /api/health treats a missing key as "not ok", and
+      // the container healthcheck calls that endpoint: resilience.spec.ts
+      // asserts it answers, and without a key it answered 503 in CI while
+      // passing locally off a populated .env.
+      TMDB_API_KEY: "e2e-mock-key",
       DATABASE_URL: TEST_DATABASE_URL,
       // Fixed rather than generated: the storage state saved by auth.setup.ts
       // is a JWT signed with this, and a fresh secret per run would invalidate

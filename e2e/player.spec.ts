@@ -64,9 +64,16 @@ test("play then pause actually pauses, and stays paused", async ({ page }) => {
   // deferred event finally resolved -- a one-shot check right after the
   // click wouldn't have caught that. Hold here and confirm it's still
   // paused, not just paused-and-about-to-resume.
+  //
+  // The playhead is compared against where it actually stopped, not against
+  // zero. play() legitimately advances a few milliseconds before the pause
+  // lands -- CI measured 0.002s -- and asserting an exact 0 failed on that
+  // artifact rather than on the regression. "Did not move while paused" is
+  // both the thing this test is for and impossible to flake.
+  const stoppedAt = await video.evaluate((v: HTMLVideoElement) => v.currentTime);
   await page.waitForTimeout(1500);
   await expect(video).toHaveJSProperty("paused", true);
-  await expect(video).toHaveJSProperty("currentTime", 0);
+  expect(await video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBe(stoppedAt);
 });
 
 test("a pause that lands while a resume is still loading is not overridden once loading finishes", async ({
