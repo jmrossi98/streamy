@@ -28,6 +28,26 @@ import {
 const TIMEOUT_MS = 12_000;
 
 /**
+ * Searching gets its own, much longer budget.
+ *
+ * Everything else here reads a small JSON file or a local API and is done in
+ * milliseconds, so 12s is generous. A search is a different kind of operation:
+ * Prowlarr fans the query out to every enabled indexer and waits for the
+ * slowest. Measured 2026-09-26 against the live stack, with eight indexers
+ * enabled: 19s and 22s for two titles, returning 344 and 295 releases.
+ *
+ * So the 12s budget meant this probe could never pass. It failed on every run
+ * with "did not complete" while search was in fact working perfectly -- and
+ * because a failing probe triggers remediation, every run also restarted
+ * FlareSolverr and then Prowlarr. Healthy containers were being restarted four
+ * times a day because the timeout was shorter than the operation.
+ *
+ * 60s is roughly three times the measured worst case and still well inside the
+ * workflow's 150s curl budget.
+ */
+const SEARCH_TIMEOUT_MS = 60_000;
+
+/**
  * Titles every indexer carries, so a zero-result search means search is
  * broken rather than the title being obscure. Picked at random per run: a
  * fixed title would eventually be cached or specially handled somewhere and
@@ -44,11 +64,15 @@ const SEARCH_PROBE_TITLES = [
   "The Simpsons",
 ];
 
-async function getJson<T>(url: string, headers: Record<string, string> = {}): Promise<T | null> {
+async function getJson<T>(
+  url: string,
+  headers: Record<string, string> = {},
+  timeoutMs: number = TIMEOUT_MS
+): Promise<T | null> {
   try {
     const res = await fetch(url, {
       headers,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
     });
     if (!res.ok) return null;
@@ -187,7 +211,8 @@ async function probeSearch(): Promise<ProbeResult> {
   // anything, or grab. It asks the indexers a question and counts answers.
   const results = await getJson<unknown[]>(
     `${base}/api/v1/search?query=${encodeURIComponent(title)}&type=search&limit=50`,
-    { "X-Api-Key": key }
+    { "X-Api-Key": key },
+    SEARCH_TIMEOUT_MS
   );
   return searchVerdict(title, Array.isArray(results) ? results.length : null);
 }
