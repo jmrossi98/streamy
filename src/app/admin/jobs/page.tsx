@@ -3,11 +3,12 @@ import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { getJobPostings, isJobBoardConfigured } from "@/lib/jobPostings";
 
 export default async function AdminJobsPage() {
-  // Higher than the default 100: the first poll matched nearly 700 roles
-  // across fifteen boards, and a list that silently stops at 100 hides most of
-  // what was found. The panel filters client-side, so the cap has to be above
-  // the whole set for the metro filters to mean anything.
-  const jobListings = await getJobPostings(600);
+  // Above the whole matched set, not a round number: filtering happens in the
+  // browser, so anything the cap drops is invisible to the metro and company
+  // filters and they quietly lie about what is open. Fifty-three boards
+  // matched 1,470 roles on 2026-09-26, so 600 would have hidden more than half
+  // of them -- the same way 100 hid nine tenths before that.
+  const jobListings = await getJobPostings(3000);
 
   return (
       <div className="space-y-10">
