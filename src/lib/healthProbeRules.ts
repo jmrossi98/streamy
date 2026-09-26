@@ -51,6 +51,10 @@ export type ProbeResult = {
 export const FRESHNESS_LIMITS_MINUTES: Record<string, number> = {
   "metrics-24h.json": 30,
   "smart.json": 180,
+  // Published by live-channel-check.py every half hour. Generous, because
+  // sampling twenty-five streams sequentially is minutes of work and a
+  // run that overlaps a busy tuner legitimately takes longer.
+  "live-channels.json": 120,
   "disk-usage.json": 120,
   "context.json": 60 * 24 * 14,
   "docs-index.json": 60 * 24 * 14,
