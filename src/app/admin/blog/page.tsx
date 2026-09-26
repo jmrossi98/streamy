@@ -25,7 +25,7 @@ export default async function AdminBlogPage() {
   return (
     // No page chrome of its own: the admin layout supplies the width, the
     // padding and the tabs, and a second set of each stacked them.
-    <div className="max-w-2xl space-y-8">
+    <div className="max-w-3xl space-y-6">
       <h2 className="text-lg font-semibold text-white">Write a post</h2>
 
       <div className="rounded-lg border border-white/10 bg-netflix-dark/80 px-4 py-5 sm:px-6">

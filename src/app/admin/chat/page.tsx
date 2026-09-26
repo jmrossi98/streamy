@@ -24,9 +24,9 @@ export default async function AdminChatPage() {
     // this route, so h-full here fills the screen without fixed positioning --
     // which is what made this read as an overlay rather than a page.
     <div className="flex min-h-[70vh] flex-col">
-      <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col">
-        {/* The tabs are the way back now, so no back-link here. */}
-        <h2 className="pb-3 text-lg font-semibold text-white">Assistant</h2>
+      <div className="flex w-full min-h-0 flex-1 flex-col">
+        {/* No heading: the active tab already says Assistant, and repeating
+            it just pushed the transcript further down. */}
 
         <div className="min-h-0 flex-1 rounded-lg border border-white/10 bg-netflix-dark/80 p-4">
           <OpsChat
