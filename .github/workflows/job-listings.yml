@@ -1,0 +1,65 @@
+# Polls company job boards for new software roles in the watched metros.
+#
+# Reads the applicant-tracking APIs companies publish through (Greenhouse,
+# Ashby) -- the same endpoints their own careers pages call. See
+# src/lib/jobBoards.ts for why that beats scraping the rendered page, and why
+# freshness here is a function of how often this runs rather than of where the
+# data comes from.
+#
+# Every 30 minutes. The whole point is to hear about a posting soon after it
+# appears, and these are small unauthenticated JSON reads -- one per company --
+# so a tighter interval costs little. The endpoint itself is idempotent: a
+# posting already seen is updated, and one already announced is never announced
+# again.
+name: Job Listings
+
+on:
+  schedule:
+    - cron: "5,35 * * * *" # off the hour, so this isn't competing with the :00 jobs
+  workflow_dispatch:
+
+# Never two at once: both would poll the same boards and race on the same rows,
+# and the second would find every posting already "seen" by the first.
+concurrency:
+  group: job-listings
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poll the boards
+        env:
+          BASE_URL: ${{ secrets.NEXTAUTH_URL }}
+          JOB_LISTINGS_SECRET: ${{ secrets.JOB_LISTINGS_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${JOB_LISTINGS_SECRET}" ]; then
+            echo "JOB_LISTINGS_SECRET is not set -- the endpoint fails closed, so this would 503."
+            exit 1
+          fi
+
+          # --fail-with-body so a non-2xx still prints what the server said
+          # rather than just an exit code.
+          curl --silent --show-error --fail-with-body \
+            --max-time 180 \
+            -X POST \
+            "${BASE_URL%/}/api/cron/job-listings?secret=${JOB_LISTINGS_SECRET}" \
+          | tee response.json
+
+          echo
+          # Surface per-source failures in the run summary. They do not fail the
+          # job -- one company's board being down is a partial result, not a
+          # broken poll -- but they should not be invisible either.
+          python3 - <<'PY'
+          import json
+          with open("response.json") as f:
+              d = json.load(f)
+          print(f"sources={d.get('sources')} fetched={d.get('fetched')} "
+                f"matched={d.get('matched')} new={d.get('created')} "
+                f"removed={d.get('removed')} announced={d.get('announced')} "
+                f"notified={d.get('notified')}")
+          for err in d.get("errors") or []:
+              print(f"::warning::job board error: {err}")
+          PY

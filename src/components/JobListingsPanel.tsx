@@ -1,0 +1,160 @@
+"use client";
+
+import { useState } from "react";
+
+export type JobListingRow = {
+  id: string;
+  company: string;
+  title: string;
+  location: string;
+  url: string;
+  /** Metro keys, comma-separated. Empty when the match was remote-only. */
+  metros: string;
+  remote: boolean;
+  firstSeen: string;
+};
+
+const METRO_LABELS: Record<string, string> = {
+  nyc: "New York",
+  chicago: "Chicago",
+  la: "Los Angeles",
+  bay: "SF Bay Area",
+  seattle: "Seattle",
+};
+
+function timeAgo(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+/**
+ * Open software roles in the watched metros.
+ *
+ * Ordered by when we first saw a posting, not by the provider's posted date:
+ * providers backdate, omit that field, and re-stamp it on edits, so "new to us"
+ * is the only ordering that reliably puts a fresh posting at the top -- which is
+ * the whole purpose of the list.
+ *
+ * A posting open in several cities carries several metro badges rather than
+ * being filed under one, because that is what the source actually says.
+ */
+export function JobListingsPanel({
+  listings,
+  configured,
+}: {
+  listings: JobListingRow[];
+  configured: boolean;
+}) {
+  const [metro, setMetro] = useState<string>("all");
+
+  if (!configured) {
+    return (
+      <p className="text-sm text-white/60">
+        No job boards configured. Set <code className="text-white/80">JOB_BOARD_SOURCES</code> to a
+        comma-separated list of <code className="text-white/80">provider:slug</code> entries
+        (providers: greenhouse, ashby), e.g.{" "}
+        <code className="text-white/80">greenhouse:stripe,ashby:ramp:Ramp</code>.
+      </p>
+    );
+  }
+
+  const present = new Set<string>();
+  for (const l of listings) {
+    for (const m of l.metros.split(",").filter(Boolean)) present.add(m);
+    if (l.remote) present.add("remote");
+  }
+
+  const shown =
+    metro === "all"
+      ? listings
+      : metro === "remote"
+        ? listings.filter((l) => l.remote)
+        : listings.filter((l) => l.metros.split(",").includes(metro));
+
+  return (
+    <div className="w-full max-w-3xl space-y-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-white/40">
+          {listings.length} open role{listings.length === 1 ? "" : "s"}
+        </span>
+        <div className="ml-auto flex flex-wrap gap-1">
+          {["all", ...Object.keys(METRO_LABELS).filter((k) => present.has(k)), ...(present.has("remote") ? ["remote"] : [])].map(
+            (key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setMetro(key)}
+                className={`rounded border px-2 py-0.5 transition-colors ${
+                  metro === key
+                    ? "border-white/40 bg-white/15 text-white"
+                    : "border-white/15 text-white/55 hover:bg-white/10"
+                }`}
+              >
+                {key === "all" ? "All" : key === "remote" ? "Remote" : METRO_LABELS[key]}
+              </button>
+            )
+          )}
+        </div>
+      </div>
+
+      {listings.length === 0 ? (
+        <p className="text-sm text-white/50">
+          Nothing yet. Polls every 30 minutes, and emails when something new appears.
+        </p>
+      ) : shown.length === 0 ? (
+        <p className="text-sm text-white/50">Nothing open there right now.</p>
+      ) : (
+        <ul className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+          {shown.map((listing) => (
+            <li
+              key={listing.id}
+              className="rounded border border-white/10 bg-black/20 px-3 py-2"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <a
+                    href={listing.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="block truncate text-xs font-medium text-white hover:underline"
+                  >
+                    {listing.title}
+                  </a>
+                  <p className="mt-0.5 truncate text-[11px] text-white/50">
+                    {listing.company} · {listing.location}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[10px] text-white/35">
+                  {timeAgo(listing.firstSeen)}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {listing.metros
+                  .split(",")
+                  .filter(Boolean)
+                  .map((key) => (
+                    <span
+                      key={key}
+                      className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/55"
+                    >
+                      {METRO_LABELS[key] ?? key}
+                    </span>
+                  ))}
+                {listing.remote && (
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/55">
+                    Remote
+                  </span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

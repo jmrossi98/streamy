@@ -363,14 +363,17 @@ export type ArtistDates = {
  * view quietly incomplete.
  */
 /**
- * Location filter for the overall view. Only dates whose venue text matches one
- * of these show up, so the "all dates" view answers "who is playing near me"
- * rather than listing every city. Defaults to the DC area; override with a
- * comma-separated PAGE_WATCH_LOCATIONS, or set it empty to show everywhere.
+ * Optional location filter for the overall view.
+ *
+ * No default any more. It used to be the DC area, which put a permanent
+ * "in Tysons / Washington" on the panel -- a leftover from when this only
+ * watched tour dates. Job listings carry their own metros (see lib/jobFilters),
+ * so an unset filter now means "show everything this page watcher found",
+ * which is the right default for a general page watcher. Set
+ * PAGE_WATCH_LOCATIONS to narrow it.
  */
 export function watchLocations(): string[] {
-  const raw = process.env.PAGE_WATCH_LOCATIONS ?? "Tysons,Washington";
-  return parseLocations(raw);
+  return parseLocations(process.env.PAGE_WATCH_LOCATIONS);
 }
 
 export async function getArtistDates(): Promise<ArtistDates[]> {

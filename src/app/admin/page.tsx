@@ -47,6 +47,8 @@ import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
 import { HealthProbePanel } from "@/components/HealthProbePanel";
 import { ScheduledJobsPanel } from "@/components/ScheduledJobsPanel";
+import { JobListingsPanel } from "@/components/JobListingsPanel";
+import { getJobPostings, isJobBoardConfigured } from "@/lib/jobPostings";
 import { fetchCronInventory } from "@/lib/cronInventory";
 import { jobHealth, parseProbeDetail } from "@/lib/scheduledJobs";
 import { getHealthProbeHistory } from "@/lib/healthProbes";
@@ -102,6 +104,7 @@ export default async function AdminFeaturesPage() {
     playbackCheckRuns,
     healthProbeRuns,
     cronInventory,
+    jobListings,
     gamesSize,
     auditLog,
     gameJobs,
@@ -157,6 +160,7 @@ export default async function AdminFeaturesPage() {
     // Null when unreachable, which the panel shows differently from an
     // empty schedule -- "we could not ask" is not "nothing is scheduled".
     fetchCronInventory(),
+    getJobPostings(),
     // Kept out of the array above and defaulted to 0 on failure (it already
     // swallows its own errors) so an unreachable gamarr can't hold up the
     // rest of this page -- same reasoning the old embedded Games panel used.
@@ -496,6 +500,27 @@ export default async function AdminFeaturesPage() {
                 command: job.command,
                 lastRun: job.lastRun,
                 health: jobHealth(job),
+              }))}
+            />
+          </PanelBoundary>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Job listings</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PanelBoundary name="Job listings">
+            <JobListingsPanel
+              configured={isJobBoardConfigured()}
+              listings={jobListings.map((job) => ({
+                id: job.id,
+                company: job.company,
+                title: job.title,
+                location: job.location,
+                url: job.url,
+                metros: job.metros,
+                remote: job.remote,
+                firstSeen: job.firstSeen.toISOString(),
               }))}
             />
           </PanelBoundary>
