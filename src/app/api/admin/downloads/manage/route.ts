@@ -38,14 +38,21 @@ export async function POST(request: Request) {
       ? queueId != null
         ? // Target the exact queue entry, so cancelling one episode doesn't
           // take down the rest of the series' downloads with it.
+          //
+          // Blocklisted, because a cancel that does not is a cancel that
+          // undoes itself: the release stays the best-scoring candidate, so
+          // the next search grabs the same one again. Observed with a 0-seed
+          // fansub torrent that returned after every manual cancel.
+          //
+          // Unmonitoring (below) stops the healer re-searching the title;
+          // blocklisting stops Sonarr re-choosing this release. Only the
+          // movie path had the first, and neither path had the second.
           mediaType === "movie"
-          ? await cancelRadarrQueueItem(queueId)
-          : await cancelSonarrQueueItem(queueId)
+          ? await cancelRadarrQueueItem(queueId, { blocklist: true })
+          : await cancelSonarrQueueItem(queueId, { blocklist: true })
         : mediaType === "movie"
-          ? // unmonitor as well, so a cancel from the admin panel sticks
-            // rather than being re-grabbed by the idle-title healer
-            await cancelRadarrDownload(id, { unmonitor: true })
-          : await cancelSonarrDownload(id)
+          ? await cancelRadarrDownload(id, { unmonitor: true, blocklist: true })
+          : await cancelSonarrDownload(id, true)
       : mediaType === "movie"
         ? await deleteRadarrMovie(id)
         : episodeId != null
