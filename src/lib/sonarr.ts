@@ -17,14 +17,6 @@ import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./ra
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
-import {
-  clearPendingSearches,
-  completePendingSearch,
-  enqueueEpisodeSearches,
-  failPendingSearch,
-  nextPendingSearch,
-  pendingSearchIds,
-} from "./pendingEpisodeSearch";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -737,6 +729,21 @@ export async function requestEpisode(
 }
 
 /**
+ * The search queue's storage, loaded on demand rather than imported at the top
+ * of this file.
+ *
+ * sonarr.ts is pulled in by unit tests that are pure by design -- CI installs
+ * with --ignore-scripts, so the generated Prisma client does not exist there at
+ * all. A static import would make the database a load-time dependency of every
+ * one of those tests, which is what broke the build the first time this queue
+ * landed. Deferring it keeps the queue's storage a runtime concern of the two
+ * functions that actually touch it.
+ */
+function searchQueue() {
+  return import("./pendingEpisodeSearch");
+}
+
+/**
  * Queues the given episodes to be searched one at a time, in the order
  * supplied, waiting for each grab to finish before starting the next so
  * downloads queue up in episode order.
@@ -758,7 +765,7 @@ async function searchEpisodesInOrder(seriesId: number, episodeIds: number[]): Pr
   // that had already failed once), i.e. "no releases found" for a season
   // that had, in reality, only just been asked for.
   for (const id of episodeIds) markEpisodeSearchTriggered(id);
-  await enqueueEpisodeSearches(seriesId, episodeIds);
+  await (await searchQueue()).enqueueEpisodeSearches(seriesId, episodeIds);
   void drainEpisodeSearches();
 }
 
@@ -779,10 +786,11 @@ async function drainEpisodeSearches(): Promise<void> {
     // The in-memory search marks do not survive the restart this queue exists
     // to tolerate, so re-assert them for everything still waiting -- without
     // this, a resumed season reads as "no releases found" until its turn.
-    for (const id of await pendingSearchIds()) markEpisodeSearchTriggered(id);
+    const queue = await searchQueue();
+    for (const id of await queue.pendingSearchIds()) markEpisodeSearchTriggered(id);
 
     for (;;) {
-      const next = await nextPendingSearch();
+      const next = await queue.nextPendingSearch();
       if (!next) return;
       try {
         // Re-checked at its turn rather than trusting the queue, which may
@@ -793,7 +801,7 @@ async function drainEpisodeSearches(): Promise<void> {
           `/api/v3/episode/${next.episodeId}`
         );
         if (!episode.monitored || episode.hasFile) {
-          await completePendingSearch(next.episodeId);
+          await queue.completePendingSearch(next.episodeId);
           continue;
         }
 
@@ -803,10 +811,10 @@ async function drainEpisodeSearches(): Promise<void> {
         });
         markEpisodeSearchTriggered(next.episodeId);
         await waitForSonarrCommand(cmd.id);
-        await completePendingSearch(next.episodeId);
+        await queue.completePendingSearch(next.episodeId);
       } catch (err) {
         console.error(`[sonarr] ordered search failed for episode ${next.episodeId}:`, err);
-        await failPendingSearch(next.episodeId);
+        await queue.failPendingSearch(next.episodeId);
         // The usual cause is Sonarr being briefly unreachable, which affects
         // whatever is at the head of the queue rather than this episode in
         // particular -- so pause instead of burning its attempts in a
@@ -983,7 +991,7 @@ export async function manageSonarrEpisodes(
     // Drop anything still queued for an ordered search. The drain would skip
     // these anyway now they are unmonitored, but leaving them in would hold a
     // cancelled season ahead of whatever is asked for next.
-    await clearPendingSearches(targets.map((e) => e.id));
+    await (await searchQueue()).clearPendingSearches(targets.map((e) => e.id));
 
     // Unmonitor the season too, otherwise Sonarr treats it as still wanted.
     if (episodeNumber == null) {
