@@ -2,7 +2,7 @@
 
 import { signOut } from "next-auth/react";
 
-const CALLBACK = "/who-is-watching";
+const CALLBACK = "/login";
 
 /**
  * JWT can reference a User row that no longer exists (DB reset, etc.).

@@ -92,7 +92,7 @@ export function WatchlistButton({
   if (status !== "authenticated") {
     return (
       <Link
-        href={`/who-is-watching?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+        href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
         className={variant === "circle" ? circleClass : "inline-flex items-center justify-center gap-2 min-h-[44px] min-w-[140px] sm:min-w-[160px] px-6 py-3 bg-white/20 text-white font-semibold rounded border border-white/40 hover:bg-white/30 transition-colors"}
       >
         {variant === "circle" ? (

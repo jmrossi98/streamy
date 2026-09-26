@@ -11,7 +11,7 @@ import { prisma } from "@/lib/db";
  * and deleted any account whose display name matched. The 403 guard above it
  * was gated on `session?.user?.id` being truthy, so an anonymous caller skipped
  * it entirely and fell through to the name branch. Display names are public --
- * /who-is-watching lists them and is excluded from middleware, as is /api --
+ * /login lists them and is excluded from middleware, as is /api --
  * so anyone who could reach the site could delete any profile by name.
  *
  * The branch existed for "API clients" that never materialised: the only caller

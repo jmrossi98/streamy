@@ -9,7 +9,7 @@ import { ChangePasswordForm } from "@/components/ChangePasswordForm";
  */
 export default async function AccountPage() {
   const session = await getSession();
-  if (!session?.user?.id) redirect("/who-is-watching");
+  if (!session?.user?.id) redirect("/login");
 
   // Read the row rather than trusting the session claim: the length floor
   // shown to the user should match the one the server will actually enforce.
@@ -17,7 +17,7 @@ export default async function AccountPage() {
     where: { id: session.user.id },
     select: { name: true, approved: true, isAdmin: true },
   });
-  if (!user?.approved) redirect("/who-is-watching");
+  if (!user?.approved) redirect("/login");
 
   return (
     <div className="min-h-screen max-w-lg mx-auto px-4 sm:px-6 pt-24 pb-16 space-y-8">

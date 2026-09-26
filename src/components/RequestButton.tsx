@@ -332,7 +332,7 @@ export function RequestButton({
 
   if (authStatus !== "authenticated") {
     return (
-      <Link href={`/who-is-watching?callbackUrl=${encodeURIComponent(callbackUrl)}`} className={PRIMARY_CLASS}>
+      <Link href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`} className={PRIMARY_CLASS}>
         <DownloadIcon />
         {downloadLabel}
       </Link>
