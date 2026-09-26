@@ -16,6 +16,8 @@ import { isNotifyConfigured, notify } from "./notify";
 import {
   FRESHNESS_LIMITS_MINUTES,
   freshnessVerdict,
+  quarantineVerdict,
+  stuckJobVerdict,
   regrabVerdict,
   searchVerdict,
   stuckImportVerdict,
@@ -84,6 +86,31 @@ async function probeFreshness(): Promise<ProbeResult[]> {
       return freshnessVerdict(artifact, ageMinutes(body?.generatedAt));
     })
   );
+}
+
+/**
+ * Batch jobs the watchdog had to kill, and ROMs it has given up on.
+ *
+ * Both read the snapshots mediabox publishes rather than reaching into the box:
+ * the probe runner has no shell there, and a published file is also what makes
+ * "the job that watches jobs has itself stopped" detectable, via freshness.
+ */
+async function probeBatchJobs(): Promise<ProbeResult[]> {
+  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
+  if (!base) {
+    return [
+      stuckJobVerdict(null),
+      quarantineVerdict(null),
+    ].map((r) => ({ ...r, status: "skip" as const, detail: "FLASH_LIBRARY_URL not set" }));
+  }
+  const [watchdog, rom] = await Promise.all([
+    getJson<{ kills?: unknown[] }>(`${base}/status/job-watchdog.json`),
+    getJson<{ quarantined?: unknown[] }>(`${base}/status/rom-compress.json`),
+  ]);
+  return [
+    stuckJobVerdict((watchdog?.kills as Parameters<typeof stuckJobVerdict>[0]) ?? null),
+    quarantineVerdict((rom?.quarantined as Parameters<typeof quarantineVerdict>[0]) ?? null),
+  ];
 }
 
 type QueueRecord = {
@@ -181,14 +208,15 @@ export async function runHealthProbes(
 
   // In parallel: these touch different systems and one slow indexer should
   // not delay the freshness read that costs 30ms.
-  const [freshness, stuckImports, regrab, search] = await Promise.all([
+  const [freshness, stuckImports, regrab, search, batchJobs] = await Promise.all([
     probeFreshness(),
     probeStuckImports(),
     probeRegrabLoop(),
     probeSearch(),
+    probeBatchJobs(),
   ]);
 
-  const results = [...freshness, stuckImports, regrab, search];
+  const results = [...freshness, stuckImports, regrab, search, ...batchJobs];
   const { success, summary } = summarise(results);
   const detail = results
     .map((r) => `${r.status.toUpperCase().padEnd(4)}  ${r.name}: ${r.detail}`)
