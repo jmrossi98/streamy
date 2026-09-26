@@ -7,7 +7,10 @@ import {
   cancelSonarrQueueItem,
   deleteSonarrSeries,
   deleteSonarrEpisode,
+  getSonarrQueueHealth,
 } from "@/lib/sonarr";
+import { getRadarrQueueHealth } from "@/lib/radarr";
+import { recordRejection } from "@/lib/rejectedReleases";
 import { logAudit } from "@/lib/auditLog";
 
 export async function POST(request: Request) {
@@ -33,6 +36,36 @@ export async function POST(request: Request) {
   }
 
   const id = externalId;
+
+  // Captured before the cancel, because afterwards the queue entry is gone and
+  // with it the release's name -- and the name is what has to be remembered.
+  //
+  // Without this the cancel undoes itself on a six-hour timer. Cancelling
+  // blocklists the release in Sonarr, but the healer expires blocklist entries
+  // after BLOCKLIST_TTL_HOURS so a release blocked by a transient stall gets
+  // another chance, keeping only those in the rejected table. A hand cancel
+  // was never written there, so six hours later the same release became the
+  // best-scoring candidate again and was re-grabbed -- observed repeatedly with
+  // one Italian-subtitled Gurren Lagann fansub that came back after every
+  // cancel. Recording it makes the expiry skip it for good.
+  let cancelled: { releaseTitle: string; downloadId: string | null } | null = null;
+  if (action === "cancel") {
+    try {
+      const queue = mediaType === "movie"
+        ? await getRadarrQueueHealth()
+        : await getSonarrQueueHealth();
+      const entry = queue.find((q) =>
+        queueId != null ? q.queueId === queueId : q.externalId === id
+      );
+      if (entry) {
+        cancelled = { releaseTitle: entry.title, downloadId: entry.downloadId };
+      }
+    } catch (err) {
+      // A cancel that works but isn't remembered beats refusing to cancel.
+      console.error("[downloads] could not read the release being cancelled:", err);
+    }
+  }
+
   const ok =
     action === "cancel"
       ? queueId != null
@@ -63,6 +96,22 @@ export async function POST(request: Request) {
 
   if (!ok) {
     return NextResponse.json({ error: `Couldn't ${action}` }, { status: 404 });
+  }
+
+  // Only once the cancel actually took: recording a release nobody managed to
+  // remove would block a release that is still downloading.
+  if (cancelled) {
+    try {
+      await recordRejection({
+        mediaType,
+        externalId: id,
+        releaseTitle: cancelled.releaseTitle,
+        downloadId: cancelled.downloadId,
+        reason: "cancelledByAdmin",
+      });
+    } catch (err) {
+      console.error("[downloads] could not record the cancelled release:", err);
+    }
   }
 
   // Clear Streamy's own row as well, keyed by the Radarr/Sonarr id this

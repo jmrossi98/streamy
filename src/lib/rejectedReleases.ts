@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import {
   sameRelease,
+  UNSAFE_REASONS,
   type BadReleaseReason,
   type RejectedReleaseKey,
 } from "./downloadHealthRules";
@@ -38,15 +39,33 @@ export async function recordRejection(input: {
   await prisma.rejectedRelease.create({ data: input });
 }
 
-/** Every release we have ever rejected, for the blocklist expiry to skip. */
+/**
+ * Every release we have ever rejected, for the blocklist expiry to skip.
+ *
+ * Deliberately every reason, admin cancels included: this is the list of
+ * releases that must not come back, and a hand cancel is the most deliberate
+ * entry on it.
+ */
 export async function getPermanentBlocks(): Promise<RejectedReleaseKey[]> {
   return prisma.rejectedRelease.findMany({ select: { releaseTitle: true, downloadId: true } });
 }
 
-/** How many releases were rejected for this title in the last hour. */
+/**
+ * How many releases were rejected for this title in the last hour.
+ *
+ * Unsafe reasons only. This bounds the healer's back-to-back re-searching, and
+ * an admin cancelling something by hand is not a sign that the title keeps
+ * producing fakes -- counting it would throttle the search for the good
+ * release the admin is waiting for.
+ */
 export async function countRecentRejections(mediaType: MediaType, externalId: number): Promise<number> {
   return prisma.rejectedRelease.count({
-    where: { mediaType, externalId, createdAt: { gte: new Date(Date.now() - 3600_000) } },
+    where: {
+      mediaType,
+      externalId,
+      reason: { in: [...UNSAFE_REASONS] },
+      createdAt: { gte: new Date(Date.now() - 3600_000) },
+    },
   });
 }
 
@@ -55,8 +74,15 @@ export async function getRejectionSummary(
   mediaType: MediaType,
   externalId: number
 ): Promise<RejectionSummary | null> {
+  // Unsafe reasons only: the notice reads "rejected as unsafe", which an
+  // admin's own deliberate cancel is not.
   const rows = await prisma.rejectedRelease.findMany({
-    where: { mediaType, externalId, createdAt: { gte: new Date(Date.now() - NOTICE_WINDOW_MS) } },
+    where: {
+      mediaType,
+      externalId,
+      reason: { in: [...UNSAFE_REASONS] },
+      createdAt: { gte: new Date(Date.now() - NOTICE_WINDOW_MS) },
+    },
     orderBy: { createdAt: "desc" },
     select: { reason: true },
   });

@@ -64,9 +64,20 @@ export function shouldBlocklist(errorMessage: string | null): boolean {
   return /error|failed|corrupt/i.test(errorMessage ?? "");
 }
 
-/** Why a finished download was thrown away as unusable. Only "executable" for
- *  now; a union so a new reason is a type error everywhere it needs a label. */
-export type BadReleaseReason = "executable";
+/**
+ * Why a release must never be taken again.
+ *
+ * "executable" is detected: a finished download whose payload is a program
+ * rather than a video. "cancelledByAdmin" is chosen: an admin cancelled it by
+ * hand, which is the strongest signal there is and outranks any scoring
+ * Sonarr would do. Both are recorded in the same table because both answer the
+ * same question at blocklist-expiry time -- is this one allowed back? -- but
+ * only the detected kind is ever described to a viewer as unsafe.
+ */
+export type BadReleaseReason = "executable" | "cancelledByAdmin";
+
+/** The reasons that mean the payload itself was bad, as opposed to unwanted. */
+export const UNSAFE_REASONS = ["executable"] as const satisfies readonly BadReleaseReason[];
 
 export type QueueItemMessages = { statusMessages?: { messages?: string[] }[] };
 
