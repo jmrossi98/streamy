@@ -56,6 +56,13 @@ export const FRESHNESS_LIMITS_MINUTES: Record<string, number> = {
   // run that overlaps a busy tuner legitimately takes longer.
   "live-channels.json": 120,
   "disk-usage.json": 120,
+  // job-watchdog runs every 5 minutes and publishes on every run, including
+  // runs that found nothing -- so a stale file means the watchdog itself has
+  // stopped, which is the one failure it cannot report on its own.
+  "job-watchdog.json": 30,
+  // rom-compress runs hourly and publishes even when a pass does nothing.
+  // Generous: one pass can legitimately take the better part of an hour.
+  "rom-compress.json": 150,
   "context.json": 60 * 24 * 14,
   "docs-index.json": 60 * 24 * 14,
 };
@@ -200,5 +207,91 @@ export function summarise(results: ProbeResult[]): { success: boolean; summary: 
       .map((f) => f.name)
       .slice(0, 3)
       .join(", ")}`,
+  };
+}
+
+// ------------------------------------------------------------- stuck jobs
+
+/** How recently a watchdog kill still counts as something to be told about. */
+export const KILL_NOTICE_WINDOW_HOURS = 24;
+
+export type WatchdogKill = {
+  name?: string;
+  reason?: string;
+  at?: string;
+  outcome?: string;
+};
+
+/**
+ * Whether a batch job had to be killed for making no progress.
+ *
+ * Fails on kills inside the notice window rather than on any kill ever
+ * recorded: the published file keeps a week of them so a job being killed
+ * every single run is visible, but a single kill a fortnight ago is history,
+ * not an open problem. The window means this clears itself once the box is
+ * quiet again, instead of needing someone to acknowledge it.
+ */
+export function stuckJobVerdict(
+  kills: WatchdogKill[] | null,
+  now = new Date()
+): ProbeResult {
+  const id = "jobs.no_recent_kills";
+  const name = "no batch job killed for stalling";
+  if (kills === null) {
+    return { id, name, status: "skip", detail: "job-watchdog.json unreadable" };
+  }
+
+  const cutoff = now.getTime() - KILL_NOTICE_WINDOW_HOURS * 3600_000;
+  const recent = kills.filter((k) => {
+    const at = k.at ? Date.parse(k.at) : NaN;
+    return Number.isFinite(at) && at >= cutoff;
+  });
+
+  if (recent.length === 0) {
+    return { id, name, status: "pass", detail: "none in the last 24h" };
+  }
+  const worst = recent
+    .slice(-3)
+    .map((k) => `${k.name ?? "job"} (${k.reason ?? "no reason recorded"})`)
+    .join("; ");
+  return {
+    id,
+    name,
+    status: "fail",
+    detail: `${recent.length} killed in the last 24h: ${worst}`,
+  };
+}
+
+export type QuarantinedFile = { path?: string; failures?: number };
+
+/**
+ * Whether any source file has been given up on.
+ *
+ * This fails for as long as a file stays quarantined, which is deliberate:
+ * quarantine means the box has stopped wasting a core on it, but the file is
+ * still sitting there unconverted and no automatic process will ever pick it
+ * up again. Only a person can decide whether to re-dump it, delete it, or
+ * accept it as-is, so the signal stays up until they do.
+ */
+export function quarantineVerdict(files: QuarantinedFile[] | null): ProbeResult {
+  const id = "jobs.nothing_quarantined";
+  const name = "no ROM quarantined after repeated failures";
+  if (files === null) {
+    return { id, name, status: "skip", detail: "rom-compress.json unreadable" };
+  }
+  if (files.length === 0) {
+    return { id, name, status: "pass", detail: "none" };
+  }
+  const names = files
+    .slice(0, 5)
+    .map((f) => `${(f.path ?? "?").split("/").pop()} (${f.failures ?? "?"} failures)`)
+    .join("; ");
+  return {
+    id,
+    name,
+    status: "fail",
+    detail:
+      `${files.length} given up on: ${names}. ` +
+      "Re-dump, delete, or leave uncompressed -- nothing will retry them.",
   };
 }
