@@ -3,7 +3,11 @@ import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { getJobPostings, isJobBoardConfigured } from "@/lib/jobPostings";
 
 export default async function AdminJobsPage() {
-  const jobListings = await getJobPostings();
+  // Higher than the default 100: the first poll matched nearly 700 roles
+  // across fifteen boards, and a list that silently stops at 100 hides most of
+  // what was found. The panel filters client-side, so the cap has to be above
+  // the whole set for the metro filters to mean anything.
+  const jobListings = await getJobPostings(600);
 
   return (
       <div className="space-y-10">

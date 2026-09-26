@@ -15,8 +15,12 @@ import { usePathname } from "next/navigation";
  * everything else rather than reporting its own thing.
  */
 export const ADMIN_TABS = [
-  { href: "/admin", label: "Dashboard" },
+  { href: "/admin/security", label: "Security" },
+  { href: "/admin/health", label: "Health" },
+  { href: "/admin/metrics", label: "Metrics" },
   { href: "/admin/downloads", label: "Downloads" },
+  { href: "/admin/storage", label: "Storage" },
+  { href: "/admin/spend", label: "Spend" },
   { href: "/admin/approvals", label: "Approvals" },
   { href: "/admin/jobs", label: "Job search" },
   { href: "/admin/tour-watch", label: "Tour watch" },
@@ -24,9 +28,12 @@ export const ADMIN_TABS = [
   { href: "/admin/chat", label: "Assistant" },
 ] as const;
 
-/** Exact for the dashboard, prefix for the rest, so /admin isn't always active. */
+/**
+ * Prefix match. /admin itself only redirects, so there is no bare-/admin tab to
+ * keep from matching everything.
+ */
 export function isActiveTab(href: string, pathname: string): boolean {
-  return href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function AdminTabs() {

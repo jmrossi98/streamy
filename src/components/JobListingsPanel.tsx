@@ -77,7 +77,7 @@ export function JobListingsPanel({
         : listings.filter((l) => l.metros.split(",").includes(metro));
 
   return (
-    <div className="w-full max-w-3xl space-y-3">
+    <div className="w-full space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-white/40">
           {listings.length} open role{listings.length === 1 ? "" : "s"}
@@ -109,7 +109,7 @@ export function JobListingsPanel({
       ) : shown.length === 0 ? (
         <p className="text-sm text-white/50">Nothing open there right now.</p>
       ) : (
-        <ul className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+        <ul className="space-y-1.5">
           {shown.map((listing) => (
             <li
               key={listing.id}

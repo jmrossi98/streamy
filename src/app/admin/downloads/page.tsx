@@ -12,7 +12,9 @@ import { describeRequestNotice } from "@/lib/requestNotice";
 import { getRejectionSummary } from "@/lib/rejectedReleases";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { DownloadsPanel, type DownloadRow } from "@/components/DownloadsPanel";
+import { Suspense } from "react";
 import { PanelBoundary } from "@/components/PanelBoundary";
+import { DownloadRoutingPanel } from "@/components/DownloadRoutingPanel";
 import { getGamesList, platformToSlug } from "@/lib/games";
 import { getGameDownloads, getWishlist } from "@/lib/gamarr";
 import { gameKeyOf } from "@/lib/romNames";
@@ -208,6 +210,17 @@ export default async function AdminDownloadsPage() {
 
   return (
       <div className="space-y-10">
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Download routing</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PanelBoundary name="Download routing">
+            <Suspense fallback={<p className="py-4 text-sm text-white/30">Reading routing…</p>}>
+              <DownloadRoutingPanel />
+            </Suspense>
+          </PanelBoundary>
+        </div>
+      </section>
+
       <section>
         <h2 className="text-lg font-semibold text-white mb-4">Downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
