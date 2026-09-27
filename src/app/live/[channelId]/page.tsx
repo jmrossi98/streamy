@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
-import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { DemoteChannelButton } from "@/components/DemoteChannelButton";
@@ -41,12 +41,12 @@ export default async function LiveChannelPage({
       }))
     : false;
 
-  // Only for an admin, and only the one extra lookup demoting actually needs
-  // (see findChannelIdByName): Jellyfin's channel id, what this page is keyed
-  // by, isn't Dispatcharr's -- the two are correlated by name alone.
-  const admin = await requireAdmin(session);
+  // Every signed-in viewer can remove a channel now, so this lookup is no
+  // longer admin-gated. It is still the one extra lookup demoting needs (see
+  // findChannelIdByName): Jellyfin's channel id, what this page is keyed by,
+  // isn't Dispatcharr's -- the two are correlated by name alone.
   const dispatcharrChannelId =
-    admin && isDispatcharrConfigured() ? await findChannelIdByName(channel.name) : null;
+    session && isDispatcharrConfigured() ? await findChannelIdByName(channel.name) : null;
 
   // Every viewer, not just admins -- which provider a channel is actually
   // on is informational, the same as its logo or its guide data, not an

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
@@ -55,7 +56,10 @@ export function LiveTvContent({
   const [category, setCategory] = useState<string>("all");
 
   const [hidden, setHidden] = useState<HiddenEntry[]>(hiddenChannels);
+  const router = useRouter();
   const [hiddenPanelOpen, setHiddenPanelOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteNote, setDeleteNote] = useState<string | null>(null);
   const [unhiding, setUnhiding] = useState<string | null>(null);
 
   const [selectMode, setSelectMode] = useState(false);
@@ -151,6 +155,62 @@ export function LiveTvContent({
   function exitSelectMode() {
     setSelectMode(false);
     setSelectedIds(new Set());
+  }
+
+  /**
+   * Removes the selected channels from the lineup, for everybody.
+   *
+   * Deliberately distinct from Hide, which is per-viewer and reversible from
+   * the Hidden channels panel. This one is shared and interrupts anyone
+   * watching, so it confirms first and names what it is about to do -- and the
+   * server records who did it.
+   *
+   * Sequential rather than parallel: each removal makes Dispatcharr rebuild
+   * the guide, and firing a dozen at once has had it return partial lineups.
+   */
+  async function deleteSelected() {
+    const targets = [...selectedIds]
+      .map((id) => channelById.get(id))
+      .filter((c): c is LiveChannel => !!c);
+    if (targets.length === 0) return;
+
+    const names = targets.map((c) => c.name).join(", ");
+    if (
+      !window.confirm(
+        `Remove ${targets.length === 1 ? "this channel" : `these ${targets.length} channels`} ` +
+          `from Live TV for everyone?\n\n${names}\n\n` +
+          "The stream stays in the catalogue and can be added back. " +
+          "To remove it only for yourself, use Hide instead."
+      )
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteNote(null);
+    const failed: string[] = [];
+    try {
+      for (const channel of targets) {
+        const res = await fetch("/api/live/streams/demote", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channelId: Number(channel.id) }),
+        });
+        if (!res.ok) failed.push(channel.name);
+      }
+      if (failed.length > 0) {
+        setDeleteNote(`Couldn't remove: ${failed.join(", ")}`);
+      } else {
+        setDeleteNote(
+          `Removed ${targets.length} channel${targets.length === 1 ? "" : "s"}. ` +
+            "Jellyfin caches its channel list, so it may take a few minutes to disappear."
+        );
+        exitSelectMode();
+        router.refresh();
+      }
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function hideSelected() {
@@ -334,12 +394,27 @@ export function LiveTvContent({
           <button
             type="button"
             onClick={hideSelected}
-            disabled={selectedIds.size === 0 || hiding}
+            disabled={selectedIds.size === 0 || hiding || deleting}
             className="ml-auto rounded bg-netflix-red px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-netflix-red/80 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {hiding ? "Hiding…" : `Hide selected`}
           </button>
+          {/* Outlined rather than filled, and second: hiding is the one most
+              people want, and this one changes the lineup for everybody. */}
+          <button
+            type="button"
+            onClick={deleteSelected}
+            disabled={selectedIds.size === 0 || hiding || deleting}
+            title="Remove from Live TV for everyone -- the stream stays in the catalogue"
+            className="rounded border border-white/25 px-3 py-1.5 text-sm font-semibold text-white/70 transition-colors hover:border-red-400/60 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {deleting ? "Deleting…" : "Delete selected"}
+          </button>
         </div>
+      )}
+
+      {deleteNote && (
+        <p className="mb-4 text-sm text-white/60">{deleteNote}</p>
       )}
 
       {hiddenPanelOpen && hidden.length > 0 && (
@@ -470,7 +545,7 @@ export function LiveTvContent({
         itself: taking a channel away can interrupt someone else's game
         mid-watch, which is a different, higher-stakes action than adding.
       */}
-      <StreamBrowser isAdmin={isAdmin} />
+      <StreamBrowser />
     </div>
   );
 }
