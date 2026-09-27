@@ -153,7 +153,7 @@ export const CATEGORY_LABELS: Record<JobCategory, string> = {
   ai: "AI / ML",
   fde: "Forward deployed",
   quant: "Quant",
-  lowlevel: "Firmware / low-level",
+  lowlevel: "Embedded",
   security: "Security",
   data: "Data",
   infra: "Infra / SRE",

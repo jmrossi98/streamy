@@ -47,6 +47,7 @@ export default async function AdminJobsPage() {
                 level: job.level,
                 opened: job.openedAt !== null,
                 tag: tagByCompany.get(job.company) ?? null,
+                postedAt: job.postedAt?.toISOString() ?? null,
                 firstSeen: job.firstSeen.toISOString(),
               }))}
             />
