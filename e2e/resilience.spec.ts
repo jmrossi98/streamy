@@ -50,25 +50,42 @@ test("the health endpoint answers for anonymous callers", async ({ request }) =>
   expect(res.ok()).toBe(true);
 });
 
-test("publishing changes that interrupt other viewers stay admin-only", async ({
+test("removing a channel is open to viewers but closed to strangers", async ({
   request,
 }) => {
-  // The suite runs as an approved but NON-admin account (see fixtures.ts), so
-  // this asserts the gate rather than the happy path.
+  // The suite runs as an approved but NON-admin account (see fixtures.ts).
   //
-  // Reading the catalogue and promoting a channel are deliberately open to
-  // any signed-in viewer -- see the docstring on the streams route. An
-  // earlier version of this test asserted 403 on both, which stopped being
-  // true when they were opened, and it went unnoticed because nothing ran
-  // this suite. It was failing with 503 for an unrelated reason (Dispatcharr
-  // is not configured in the e2e environment), which hid that its premise
-  // was gone.
+  // This test used to assert 403 here, because removing a published channel
+  // was admin-only -- it interrupts whoever is watching. That policy changed
+  // deliberately on 2026-09-27: any signed-in viewer can remove one now, it
+  // confirms first, and the server records who did it. The stream itself is
+  // untouched and can be promoted again, which is what makes it recoverable
+  // enough to open up.
   //
-  // Demote is the one that stays admin-only, because removing a published
-  // channel can interrupt someone else mid-watch. That is the boundary worth
-  // a test, and it had none.
+  // So the assertion is inverted rather than deleted. What must stay true is
+  // that it is not *anonymous*: a signed-in viewer gets past the gate, and
+  // 503 here is the e2e environment having no Dispatcharr to talk to, which
+  // is itself proof the request got through authorization.
   const demote = await request.post("/api/live/streams/demote", {
     data: { channelId: 1 },
   });
-  expect(demote.status()).toBe(403);
+  expect(demote.status()).not.toBe(403);
+});
+
+test("removing a channel refuses an anonymous caller", async ({ playwright }) => {
+  // A separate context with no storage state, so this really is signed out --
+  // the shared fixture carries a session and would quietly pass this.
+  const anon = await playwright.request.newContext({
+    // Same port playwright.config.ts serves on; a fresh context does not
+    // inherit the project baseURL.
+    baseURL: "http://127.0.0.1:3100",
+  });
+  try {
+    const demote = await anon.post("/api/live/streams/demote", {
+      data: { channelId: 1 },
+    });
+    expect(demote.status()).toBe(403);
+  } finally {
+    await anon.dispose();
+  }
 });
