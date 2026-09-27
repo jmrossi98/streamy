@@ -21,7 +21,27 @@
  * the panel then reads as "no jobs" rather than "not wired up".
  */
 
-export type JobProvider = "greenhouse" | "ashby" | "workday" | "eightfold";
+/**
+ * spotify and github are single-company APIs, not multi-tenant platforms.
+ *
+ * They sit here rather than in the scraper because that is what they are:
+ * plain public JSON, no browser, no markup parsing. Both were found by
+ * watching what their careers page fetches (scripts/job-endpoint-discover.mjs
+ * in mediabox-infra) rather than by guessing at URLs -- which is why the
+ * earlier guesses all 404'd.
+ *
+ * A provider per company does not scale, and is not meant to: it is the honest
+ * shape for two companies that each built their own thing. If a third appears,
+ * the answer is a generic "custom endpoint + JSONPath" provider, not a third
+ * entry here.
+ */
+export type JobProvider =
+  | "greenhouse"
+  | "ashby"
+  | "workday"
+  | "eightfold"
+  | "spotify"
+  | "github";
 
 export type JobSource = {
   /** Display name, e.g. "Stripe". */
@@ -76,6 +96,18 @@ export type JobPosting = {
 
 /** The public endpoint listing a company's open roles. */
 export function boardUrl(source: JobSource): string {
+  if (source.provider === "spotify") {
+    // The slug is the category to search, e.g. "engineering".
+    return `https://api.lifeatspotify.com/wp-json/animal/v1/job/search?c=${encodeURIComponent(
+      source.slug
+    )}`;
+  }
+  if (source.provider === "github") {
+    // The slug is the keyword to search. Paged by the fetcher.
+    return `https://www.github.careers/api/jobs?keywords=${encodeURIComponent(
+      source.slug
+    )}&page=1&sortBy=relevance&descending=false&internal=false`;
+  }
   if (source.provider === "eightfold") {
     const target = parseEightfoldSlug(source.slug);
     if (!target) return "";
@@ -211,7 +243,82 @@ function parseEightfold(source: JobSource, payload: unknown): JobPosting[] {
   return out;
 }
 
+/**
+ * Spotify: {result: [{id, text, locations: [{location}], ...}]}.
+ *
+ * `text` is the title and `id` is a slug, which doubles as the apply URL path.
+ * Locations are objects, and a role open in several lists all of them.
+ */
+function parseSpotify(source: JobSource, payload: unknown): JobPosting[] {
+  const rows = (payload as { result?: unknown })?.result;
+  if (!Array.isArray(rows)) return [];
+
+  const out: JobPosting[] = [];
+  for (const entry of rows) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const job = entry as Record<string, unknown>;
+    const id = asString(job.id);
+    const title = asString(job.text);
+    if (!id || !title) continue;
+
+    const places = Array.isArray(job.locations)
+      ? (job.locations as Record<string, unknown>[])
+          .map((l) => asString(l?.location) || asString(l?.name))
+          .filter(Boolean)
+      : [];
+
+    out.push({
+      id: `spotify:${id}`,
+      company: source.company,
+      title,
+      location: places.join("; ") || "Unspecified",
+      url: `https://www.lifeatspotify.com/jobs/${encodeURIComponent(id)}`,
+      postedAt: null,
+    });
+  }
+  return out;
+}
+
+/**
+ * GitHub: {jobs: [{data: {slug, title, location_name, req_id, ...}}]}.
+ *
+ * Everything useful is nested one level down under `data`, and the apply URL is
+ * built from the slug.
+ */
+function parseGithub(source: JobSource, payload: unknown): JobPosting[] {
+  const rows = (payload as { jobs?: unknown })?.jobs;
+  if (!Array.isArray(rows)) return [];
+
+  const out: JobPosting[] = [];
+  for (const entry of rows) {
+    const data = (entry as { data?: unknown })?.data;
+    if (typeof data !== "object" || data === null) continue;
+    const job = data as Record<string, unknown>;
+    const id = asString(job.req_id) || asString(job.slug);
+    const title = asString(job.title);
+    if (!id || !title) continue;
+
+    const place = [asString(job.location_name), asString(job.country)]
+      .filter(Boolean)
+      .join(", ");
+
+    out.push({
+      id: `github:${id}`,
+      company: source.company,
+      title,
+      location: place || "Unspecified",
+      url: `https://www.github.careers/careers-home/jobs/${encodeURIComponent(
+        asString(job.slug) || id
+      )}`,
+      postedAt: null,
+    });
+  }
+  return out;
+}
+
 export function parseBoard(source: JobSource, payload: unknown): JobPosting[] {
+  if (source.provider === "spotify") return parseSpotify(source, payload);
+  if (source.provider === "github") return parseGithub(source, payload);
   if (source.provider === "eightfold") return parseEightfold(source, payload);
   if (source.provider === "workday") return parseWorkday(source, payload);
 
@@ -274,20 +381,24 @@ export function parseJobSources(raw: string | null | undefined): JobSource[] {
     const provider = parts[0].trim().toLowerCase();
     const slug = parts[1].trim();
     if (!slug) continue;
-    if (
-      provider !== "greenhouse" &&
-      provider !== "ashby" &&
-      provider !== "workday" &&
-      provider !== "eightfold"
-    ) {
-      continue;
-    }
+    // Typed as the union rather than string[], so adding a provider to
+    // JobProvider without adding it here is a compile error instead of a
+    // silently-ignored line of configuration.
+    const known: JobProvider[] = [
+      "greenhouse",
+      "ashby",
+      "workday",
+      "eightfold",
+      "spotify",
+      "github",
+    ];
+    if (!known.includes(provider as JobProvider)) continue;
     if (provider === "eightfold" && !parseEightfoldSlug(slug)) continue;
     // A Workday slug is "tenant/wdN/Site"; reject a malformed one here rather
     // than letting it through to fetch a URL that cannot exist.
     if (provider === "workday" && !parseWorkdaySlug(slug)) continue;
     const company = parts.slice(2).join(":").trim() || slug;
-    out.push({ provider, slug, company });
+    out.push({ provider: provider as JobProvider, slug, company });
   }
   return out;
 }

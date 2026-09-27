@@ -244,3 +244,61 @@ describe("eightfold", () => {
     ]);
   });
 });
+
+describe("single-company APIs", () => {
+  const spotify: JobSource = { company: "Spotify", provider: "spotify", slug: "engineering" };
+  const github: JobSource = { company: "GitHub", provider: "github", slug: "engineer" };
+
+  it("builds each company's own endpoint", () => {
+    expect(boardUrl(spotify)).toBe(
+      "https://api.lifeatspotify.com/wp-json/animal/v1/job/search?c=engineering"
+    );
+    expect(boardUrl(github)).toContain("https://www.github.careers/api/jobs?keywords=engineer");
+  });
+
+  it("parses Spotify's shape, keeping every location", () => {
+    // Verbatim from the endpoint on 2026-09-27: the title is `text`, and a
+    // role open in several places lists them all.
+    const payload = {
+      result: [
+        {
+          id: "senior-backend-data-engineer-content-intelligence",
+          text: "Senior Backend Data Engineer, Content Intelligence",
+          locations: [{ location: "New York, NY" }, { location: "Stockholm" }],
+        },
+      ],
+    };
+    const [posting] = parseBoard(spotify, payload);
+    expect(posting.id).toBe("spotify:senior-backend-data-engineer-content-intelligence");
+    expect(posting.title).toBe("Senior Backend Data Engineer, Content Intelligence");
+    expect(posting.location).toBe("New York, NY; Stockholm");
+    expect(matchMetros(posting.location).map((m) => m.key)).toContain("nyc");
+  });
+
+  it("parses GitHub's nested shape", () => {
+    // Everything useful is one level down under `data`.
+    const payload = {
+      totalCount: 68,
+      jobs: [
+        {
+          data: {
+            slug: "software-engineer-copilot",
+            req_id: "R12345",
+            title: "Software Engineer, Copilot",
+            location_name: "San Francisco",
+            country: "United States",
+          },
+        },
+      ],
+    };
+    const [posting] = parseBoard(github, payload);
+    expect(posting.id).toBe("github:R12345");
+    expect(posting.location).toBe("San Francisco, United States");
+    expect(posting.url).toContain("software-engineer-copilot");
+  });
+
+  it("ignores a payload that is not the expected shape", () => {
+    expect(parseBoard(spotify, { error: "nope" })).toEqual([]);
+    expect(parseBoard(github, { jobs: [{ notData: 1 }] })).toEqual([]);
+  });
+});
