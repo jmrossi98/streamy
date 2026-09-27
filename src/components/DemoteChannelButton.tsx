@@ -4,12 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * Admin-only "remove this channel from Live TV", from the channel's own page.
+ * "Remove this channel from Live TV", from the channel's own page.
  *
- * Same action and same endpoint as Browse all streams' "Remove channel"
- * button -- this is just a second entry point to it, for an admin who has
- * already navigated to the channel rather than gone looking for it in the
- * stream catalogue. The underlying stream is untouched either way.
+ * Open to any signed-in viewer, like the bulk Delete on the Live TV page and
+ * Browse all streams' own Remove -- three entry points to one endpoint, for
+ * someone who is already looking at the channel rather than hunting for it in
+ * a list. The underlying stream is untouched either way, and the server
+ * records who did it.
+ *
+ * Confirms first, because unlike Hide this changes the lineup for everyone and
+ * interrupts anyone watching.
  */
 export function DemoteChannelButton({
   channelId,
@@ -25,6 +29,20 @@ export function DemoteChannelButton({
 
   async function demote() {
     if (busy) return;
+    // Confirms because this is shared and one-way: it takes the channel out of
+    // everyone's lineup and cuts off anyone watching it. Hiding, which is the
+    // per-viewer version, needs no confirmation for exactly that reason.
+    if (
+      !window.confirm(
+        `Remove “${channelName}” from Live TV for everyone?
+
+` +
+          "The stream stays in the catalogue and can be added back. " +
+          "To remove it only for yourself, hide it from the Live TV page instead."
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

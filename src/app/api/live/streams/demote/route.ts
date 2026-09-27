@@ -1,18 +1,25 @@
 import { NextResponse } from "next/server";
-import { getSession, requireAdmin } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { logAudit } from "@/lib/auditLog";
 import { refreshGuide } from "@/lib/liveTv";
 import { demoteChannel, isDispatcharrConfigured } from "@/lib/dispatcharr";
 
 /**
  * Removes a channel from the published lineup.
  *
- * Admin only -- unlike search and promote (both open to any signed-in
- * viewer now), removing is a one-way interruption for whoever else is
- * watching that channel right now, not just a lineup change someone can
- * shrug off. The underlying stream is untouched -- this demotes a channel
- * back to an ordinary catalogue entry, it does not delete anything the
- * provider owns, and the stream is promotable again later from Browse all
- * streams.
+ * Open to any signed-in viewer, matching search and promote.
+ *
+ * It was admin-only, on the reasoning that removing a channel interrupts
+ * whoever is watching it rather than being a lineup change someone can shrug
+ * off. That is still true, and it is why the audit entry below exists: the
+ * action is shared and one-way, so it should at least say who did it.
+ *
+ * What makes it defensible to open up is that it is recoverable. The
+ * underlying stream is untouched -- this demotes a channel back to an ordinary
+ * catalogue entry, deletes nothing the provider owns, and the stream can be
+ * promoted again from Browse all streams. A viewer who wants a channel gone
+ * only from their own lineup wants Hide, which is per-viewer and sits beside
+ * this in the UI.
  *
  * The removal does NOT disappear from Streamy immediately for the same
  * reason an addition doesn't appear immediately: Jellyfin caches its channel
@@ -22,7 +29,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!(await requireAdmin(await getSession()))) {
+  const session = await getSession();
+  if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
   if (!isDispatcharrConfigured()) {
@@ -45,6 +53,11 @@ export async function POST(request: Request) {
       { status: 502 }
     );
   }
+
+  // After the fact, and only on success: an attempt that failed changed
+  // nothing, and this is now the only record of who removed a channel
+  // everybody shares.
+  logAudit(session.user.name ?? "unknown", "liveTv.removeChannel", String(channelId));
 
   // Awaited, not fired and forgotten, so the response can say which of the
   // two things actually happened -- same reasoning as promote.
