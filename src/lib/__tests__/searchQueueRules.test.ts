@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
+import { isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
 
 /** Position-ordered, as the queue hands them over. */
 function row(seriesId: number, episodeId: number): QueuedSearch {
@@ -64,5 +64,38 @@ describe("chooseNextSearch", () => {
     expect(chooseNextSearch(three, 1)?.seriesId).toBe(2);
     expect(chooseNextSearch(three, 2)?.seriesId).toBe(3);
     expect(chooseNextSearch(three, 3)?.seriesId).toBe(1);
+  });
+});
+
+describe("isQueueStuck", () => {
+  const q = (total: number, oldestWaitMinutes: number) => ({ total, oldestWaitMinutes });
+
+  it("is not stuck when the queue is empty", () => {
+    expect(isQueueStuck(q(5, 500), q(0, 0))).toBe(false);
+  });
+
+  it("is not stuck when the pass shifted something, however old the head is", () => {
+    // A season legitimately takes the better part of an hour. A backlog being
+    // worked through is the system behaving, and alerting on it would train
+    // the alert to be ignored.
+    expect(isQueueStuck(q(45, 300), q(44, 300))).toBe(false);
+  });
+
+  it("is not stuck when nothing moved but the head is still young", () => {
+    expect(isQueueStuck(q(45, 10), q(45, 10))).toBe(false);
+  });
+
+  it("is stuck when nothing moved and the head is old", () => {
+    // The real case: forty-five queued, oldest two hours, attempts still zero.
+    expect(isQueueStuck(q(45, 132), q(45, 132))).toBe(true);
+  });
+
+  it("counts a growing queue as not moving", () => {
+    expect(isQueueStuck(q(10, 200), q(12, 200))).toBe(true);
+  });
+
+  it("takes the threshold as an argument", () => {
+    expect(isQueueStuck(q(1, 30), q(1, 30), 20)).toBe(true);
+    expect(isQueueStuck(q(1, 30), q(1, 30), 40)).toBe(false);
   });
 });

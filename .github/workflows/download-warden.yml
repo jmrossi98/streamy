@@ -1,0 +1,62 @@
+name: download warden
+
+# Recovery for stuck downloads, on a schedule.
+#
+# Streamy already knew how to rescue a stalled transfer and how to resume an
+# ordered season search. What it lacked was anything that ran them when nobody
+# was looking: both were kicked only by a page render, and both are allowed to
+# stop part-way and wait for "the next pass". This is the next pass.
+#
+# Every 10 minutes. Downloads move on the order of tens of minutes, so this is
+# frequent enough that a stall is measured in minutes rather than hours, and
+# infrequent enough to be nowhere near the indexer rate limits.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# A slow pass should never stack up behind itself.
+concurrency:
+  group: download-warden
+  cancel-in-progress: false
+
+jobs:
+  warden:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run a recovery pass
+        id: run
+        env:
+          SECRET: ${{ secrets.DOWNLOAD_WARDEN_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SECRET}" ]; then
+            echo "DOWNLOAD_WARDEN_SECRET is not set"; exit 1
+          fi
+          code=$(curl -sS -o report.json -w '%{http_code}' -m 290 -X POST \
+            -H "Authorization: Bearer ${SECRET}" \
+            https://streamy-app.com/api/cron/download-warden)
+          echo "HTTP ${code}"
+          cat report.json
+          echo
+          [ "${code}" = "200" ]
+
+      - name: Fail if the queue has stopped moving
+        run: |
+          set -euo pipefail
+          # The pass succeeding and the queue being healthy are different
+          # facts. This step is the alert: a red run here means something has
+          # been waiting long enough that the automatic recovery did not work,
+          # which is exactly the case that used to go unnoticed for hours.
+          stuck=$(python3 -c "import json;print(json.load(open('report.json'))['stuck'])")
+          python3 -c "
+import json
+r = json.load(open('report.json'))
+q = r['queueAfter']
+print(f\"queue={q['total']} oldest={q['oldestWaitMinutes']}m series={q['series']} retrying={q['retrying']}\")
+print(f\"healed={len(r['healed'])} errors={r['errors']}\")
+"
+          if [ "${stuck}" = "True" ]; then
+            echo "::error::Episode search queue has stopped moving; see report above"
+            exit 1
+          fi

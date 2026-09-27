@@ -921,6 +921,24 @@ export function maybeDrainEpisodeSearches(): void {
   if (!isSonarrConfigured()) return;
   void drainEpisodeSearches();
 }
+
+/**
+ * Drains the queue and waits for the pass to finish.
+ *
+ * The fire-and-forget version above is right for a page render, which must not
+ * block on a season's worth of searching. It is not enough on its own: when
+ * Sonarr is busy the drain gives up with "leaving the rest for the next pass",
+ * and for a long time there was no next pass unless somebody happened to load
+ * the admin downloads page. That is how a queued season sat untouched for
+ * hours with attempts still at zero.
+ *
+ * This is what the warden calls, on a schedule, so the next pass always comes.
+ */
+export async function drainEpisodeSearchesNow(): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  await drainEpisodeSearches();
+  return true;
+}
 /**
  * Searches a whole series in broadcast order -- season 1 episode 1 first,
  * then 2, 3, and on through later seasons -- so the show becomes watchable

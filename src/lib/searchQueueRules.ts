@@ -50,3 +50,34 @@ export function chooseNextSearch(
   }
   return null;
 }
+
+/** Just the counts the stuck rule needs, so it does not depend on the row type. */
+export type QueueSize = { total: number; oldestWaitMinutes: number };
+
+/**
+ * A queue older than this has stopped moving rather than merely being long.
+ *
+ * A full season legitimately takes the better part of an hour, and the warden
+ * runs every ten minutes, so this is not "the queue should be empty by now" --
+ * it is "nothing has completed in long enough that a human should be told".
+ */
+export const STUCK_AFTER_MINUTES = 90;
+
+/**
+ * Whether a recovery pass should be reported as stuck.
+ *
+ * Age alone is not the signal. A long queue that is working through a backlog
+ * is the system behaving correctly, and alerting on it would train the alert
+ * to be ignored -- which is how the real stall went unnoticed for hours. So a
+ * pass counts as stuck only when the head of the queue is old *and* this pass
+ * failed to shift anything.
+ */
+export function isQueueStuck(
+  before: QueueSize,
+  after: QueueSize,
+  thresholdMinutes: number = STUCK_AFTER_MINUTES
+): boolean {
+  if (after.total === 0) return false;
+  const moved = after.total < before.total;
+  return after.oldestWaitMinutes >= thresholdMinutes && !moved;
+}
