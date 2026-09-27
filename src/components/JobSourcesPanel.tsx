@@ -152,7 +152,7 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
 
       {error && <p className="text-xs text-red-300">{error}</p>}
 
-      <ul className="max-h-96 space-y-1 overflow-y-auto pr-1">
+      <ul className="max-h-[36rem] space-y-1 overflow-y-auto pr-1">
         {rows.map((row) => (
           <li
             key={row.id}

@@ -18,6 +18,8 @@ export type JobListingRow = {
   opened: boolean;
   /** The company's grouping, e.g. "startup". */
   tag: string | null;
+  /** When the provider says it was posted, when it says at all. */
+  postedAt: string | null;
   firstSeen: string;
 };
 
@@ -51,36 +53,52 @@ function timeAgo(iso: string): string {
  * being filed under one, because that is what the source actually says.
  */
 /**
- * One labelled row of pills.
+ * One labelled row of pills, any number of which can be on at once.
  *
- * Extracted because location, role and level were three hand-rolled rows that
- * had drifted: location sat inline with the header and pushed right, the other
- * two sat below it with no label. Reading which filters were even available
- * meant scanning three different shapes.
+ * Multi-select rather than exclusive: "New York or Seattle" and "AI or
+ * embedded" are the questions actually being asked, and with exclusive pills
+ * the only way to ask them was to look twice and hold the first answer in your
+ * head. An empty selection means no filter, which is why the row still carries
+ * an explicit "any" pill -- it is how you get back, and it reads as a state
+ * rather than as the absence of one.
  */
 function FilterRow({
   label,
   options,
-  value,
-  onChange,
+  selected,
+  onToggle,
+  onClear,
 }: {
   label: string;
   options: { key: string; label: string }[];
-  value: string;
-  onChange: (key: string) => void;
+  selected: Set<string>;
+  onToggle: (key: string) => void;
+  onClear: () => void;
 }) {
-  if (options.length <= 2) return null;
+  if (options.length < 2) return null;
   return (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <span className="w-14 shrink-0 text-white/30">{label}</span>
       <div className="flex flex-wrap gap-1">
+        <button
+          type="button"
+          onClick={onClear}
+          className={`rounded border px-2 py-0.5 transition-colors ${
+            selected.size === 0
+              ? "border-white/40 bg-white/15 text-white"
+              : "border-white/15 text-white/55 hover:bg-white/10"
+          }`}
+        >
+          Any
+        </button>
         {options.map((option) => (
           <button
             key={option.key}
             type="button"
-            onClick={() => onChange(option.key)}
+            onClick={() => onToggle(option.key)}
+            aria-pressed={selected.has(option.key)}
             className={`rounded border px-2 py-0.5 transition-colors ${
-              value === option.key
+              selected.has(option.key)
                 ? "border-white/40 bg-white/15 text-white"
                 : "border-white/15 text-white/55 hover:bg-white/10"
             }`}
@@ -93,6 +111,14 @@ function FilterRow({
   );
 }
 
+/** Adds or removes one key, for a filter that holds several at once. */
+function toggleIn(set: Set<string>, key: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
 export function JobListingsPanel({
   listings,
   configured,
@@ -100,11 +126,15 @@ export function JobListingsPanel({
   listings: JobListingRow[];
   configured: boolean;
 }) {
-  const [metro, setMetro] = useState<string>("all");
+  // Sets rather than single values: each filter holds any number of choices at
+  // once, and an empty set means that filter is off.
+  const [metros, setMetros] = useState<Set<string>>(new Set());
   const [company, setCompany] = useState<string>("all");
-  const [category, setCategory] = useState<string>("all");
-  const [level, setLevel] = useState<string>("all");
-  const [tag, setTag] = useState<string>("all");
+  const [categories, setCategories] = useState<Set<string>>(new Set());
+  const [levels, setLevels] = useState<Set<string>>(new Set());
+  const [tags, setTags] = useState<Set<string>>(new Set());
+  /** Newest first by default: this is a list you check for what changed. */
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "company">("newest");
   const [hideOpened, setHideOpened] = useState(false);
   /**
    * Opened in this session, on top of what the server already knew.
@@ -156,30 +186,45 @@ export function JobListingsPanel({
   }
   const companies = [...companyCounts.keys()].sort((a, b) => a.localeCompare(b));
 
+  const isOpened = (l: JobListingRow) => l.opened || openedNow.has(l.id);
+
+  // Each filter is OR within itself and AND across filters: "New York or
+  // Seattle" AND "AI or embedded". An empty set means that filter is off.
   const byMetro =
-    metro === "all"
+    metros.size === 0
       ? listings
-      : metro === "remote"
-        ? listings.filter((l) => l.remote)
-        : listings.filter((l) => l.metros.split(",").includes(metro));
+      : listings.filter(
+          (l) =>
+            (metros.has("remote") && l.remote) ||
+            l.metros.split(",").some((m) => metros.has(m))
+        );
   const byCompany = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
   const byCategory =
-    category === "all" ? byCompany : byCompany.filter((l) => l.category === category);
-  const byTag = tag === "all" ? byCategory : byCategory.filter((l) => l.tag === tag);
-  const byLevel = level === "all" ? byTag : byTag.filter((l) => l.level === level);
-  const isOpened = (l: JobListingRow) => l.opened || openedNow.has(l.id);
-  const shown = hideOpened ? byLevel.filter((l) => !isOpened(l)) : byLevel;
+    categories.size === 0 ? byCompany : byCompany.filter((l) => categories.has(l.category));
+  const byTag =
+    tags.size === 0 ? byCategory : byCategory.filter((l) => l.tag && tags.has(l.tag));
+  const byLevel = levels.size === 0 ? byTag : byTag.filter((l) => levels.has(l.level));
+  const visible = hideOpened ? byLevel.filter((l) => !isOpened(l)) : byLevel;
+
+  // When a posting was advertised, falling back to when we first saw it. Some
+  // providers give no date at all, and for those "new to us" is the only
+  // honest answer -- it is also what notifications key off.
+  const dateOf = (l: JobListingRow) => Date.parse(l.postedAt ?? l.firstSeen) || 0;
+  const shown = [...visible].sort((a, b) => {
+    if (sortBy === "company") return a.company.localeCompare(b.company) || a.title.localeCompare(b.title);
+    return sortBy === "oldest" ? dateOf(a) - dateOf(b) : dateOf(b) - dateOf(a);
+  });
   const openedCount = listings.filter(isOpened).length;
 
   // Only categories actually present, so the row is not a list of buckets that
   // happen to exist in the code.
-  const categories = [...new Set(listings.map((l) => l.category))].filter(
+  const presentCategories = [...new Set(listings.map((l) => l.category))].filter(
     (c): c is JobCategory => c in CATEGORY_LABELS
   );
 
   // Only groups actually in use, so the row does not offer a filter that
   // matches nothing.
-  const tags = [...new Set(listings.map((l) => l.tag).filter((t): t is string => !!t))].sort();
+  const presentTags = [...new Set(listings.map((l) => l.tag).filter((t): t is string => !!t))].sort();
 
   return (
     <div className="w-full space-y-3">
@@ -208,6 +253,19 @@ export function JobListingsPanel({
           </select>
         </label>
 
+        <label className="flex items-center gap-1.5">
+          <span className="text-white/30">Sort</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            className="streamy-select rounded border border-white/15 bg-black/40 py-1.5 pl-3 text-xs text-white focus:border-white/40 focus:outline-none"
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="company">By company</option>
+          </select>
+        </label>
+
         {openedCount > 0 && (
           <label className="flex items-center gap-1.5 text-white/40">
             <input
@@ -232,10 +290,10 @@ export function JobListingsPanel({
 
       <FilterRow
         label="Location"
-        value={metro}
-        onChange={setMetro}
+        selected={metros}
+        onToggle={(k) => setMetros((prev) => toggleIn(prev, k))}
+        onClear={() => setMetros(new Set())}
         options={[
-          { key: "all", label: "Anywhere" },
           ...Object.keys(METRO_LABELS)
             .filter((k) => present.has(k))
             .map((k) => ({ key: k, label: METRO_LABELS[k] })),
@@ -245,35 +303,32 @@ export function JobListingsPanel({
 
       <FilterRow
         label="Role"
-        value={category}
-        onChange={setCategory}
-        options={[
-          { key: "all", label: "Any role" },
-          ...categories.map((c) => ({ key: c, label: CATEGORY_LABELS[c] })),
-        ]}
+        selected={categories}
+        onToggle={(k) => setCategories((prev) => toggleIn(prev, k))}
+        onClear={() => setCategories(new Set())}
+        options={presentCategories.map((c) => ({ key: c, label: CATEGORY_LABELS[c] }))}
       />
 
       <FilterRow
         label="Company"
-        value={tag}
-        onChange={setTag}
-        options={[
-          { key: "all", label: "Any size" },
-          ...tags.map((t) => ({ key: t, label: t.charAt(0).toUpperCase() + t.slice(1) })),
-        ]}
+        selected={tags}
+        onToggle={(k) => setTags((prev) => toggleIn(prev, k))}
+        onClear={() => setTags(new Set())}
+        options={presentTags.map((t) => ({
+          key: t,
+          label: t.charAt(0).toUpperCase() + t.slice(1),
+        }))}
       />
 
       <FilterRow
         label="Level"
-        value={level}
-        onChange={setLevel}
-        options={[
-          { key: "all", label: "Any level" },
-          ...(["entry", "midsenior", "staff"] as JobLevel[]).map((l) => ({
-            key: l,
-            label: LEVEL_LABELS[l],
-          })),
-        ]}
+        selected={levels}
+        onToggle={(k) => setLevels((prev) => toggleIn(prev, k))}
+        onClear={() => setLevels(new Set())}
+        options={(["entry", "midsenior", "staff"] as JobLevel[]).map((l) => ({
+          key: l,
+          label: LEVEL_LABELS[l],
+        }))}
       />
 
       {listings.length === 0 ? (
@@ -282,25 +337,29 @@ export function JobListingsPanel({
         </p>
       ) : shown.length === 0 ? (
         <p className="text-sm text-white/50">
-          {/* Assembled from the filters actually set, so it reads as a sentence
-              rather than stitching fragments that each assume the others. */}
-          No open roles
+          {/* Named from the filters actually set, so it says why the list is
+              empty rather than implying nothing is open anywhere. */}
+          No open roles match
           {[
-            company === "all" ? null : ` at ${company}`,
-            category === "all" ? null : ` in ${CATEGORY_LABELS[category as JobCategory]}`,
-            level === "all" ? null : ` at ${LEVEL_LABELS[level as JobLevel].toLowerCase()}`,
-            metro === "all"
+            company === "all" ? null : ` ${company}`,
+            categories.size === 0
               ? null
-              : metro === "remote"
-                ? " that are remote"
-                : ` in ${METRO_LABELS[metro]}`,
+              : ` ${[...categories].map((c) => CATEGORY_LABELS[c as JobCategory]).join(" or ")}`,
+            levels.size === 0
+              ? null
+              : ` at ${[...levels].map((l) => LEVEL_LABELS[l as JobLevel].toLowerCase()).join(" or ")}`,
+            metros.size === 0
+              ? null
+              : ` in ${[...metros]
+                  .map((m) => (m === "remote" ? "remote" : METRO_LABELS[m]))
+                  .join(" or ")}`,
           ]
             .filter(Boolean)
             .join("")}
-          {hideOpened ? " left to explore." : "."}
+          {hideOpened ? ", unexplored." : "."}
         </p>
       ) : (
-        <ul className="max-h-[32rem] space-y-1.5 overflow-y-auto pr-1">
+        <ul className="max-h-[48rem] space-y-1.5 overflow-y-auto pr-1">
           {shown.map((listing) => (
             <li
               key={listing.id}
@@ -332,9 +391,21 @@ export function JobListingsPanel({
                     {listing.company} · {listing.location}
                   </p>
                 </div>
-                <span className="flex shrink-0 items-center gap-1.5 text-[10px] text-white/35">
+                <span
+                  className="flex shrink-0 items-center gap-1.5 text-[10px] text-white/35"
+                  title={
+                    listing.postedAt
+                      ? `Posted ${new Date(listing.postedAt).toLocaleDateString()}`
+                      : `First seen ${new Date(listing.firstSeen).toLocaleDateString()}`
+                  }
+                >
                   {isOpened(listing) && <span className="text-white/25">explored</span>}
-                  {timeAgo(listing.firstSeen)}
+                  {/* The provider's own date when there is one, ours when
+                      there is not -- and said out loud, because "posted 3d
+                      ago" and "we noticed it 3d ago" are different claims. */}
+                  {listing.postedAt
+                    ? `posted ${timeAgo(listing.postedAt)}`
+                    : `seen ${timeAgo(listing.firstSeen)}`}
                 </span>
               </div>
               <div className="mt-1 flex flex-wrap gap-1">
