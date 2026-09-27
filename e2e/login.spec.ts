@@ -38,3 +38,17 @@ test("a signed-out visitor cannot reach the app", async ({ page }) => {
   await page.goto("/watchlist");
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
 });
+
+test("removing a Live TV channel refuses an anonymous caller", async ({ request }) => {
+  // Lives here rather than in resilience.spec.ts because this is the only
+  // project that runs signed out -- that spec carries a session, so the
+  // assertion would have passed without ever being anonymous.
+  //
+  // Removing a channel is open to any signed-in viewer as of 2026-09-27, which
+  // makes the remaining boundary worth guarding exactly this one: a stranger
+  // must not be able to take a channel out of everyone's lineup.
+  const res = await request.post("/api/live/streams/demote", {
+    data: { channelId: 1 },
+  });
+  expect(res.status()).toBe(403);
+});

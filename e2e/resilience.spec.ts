@@ -71,21 +71,3 @@ test("removing a channel is open to viewers but closed to strangers", async ({
   });
   expect(demote.status()).not.toBe(403);
 });
-
-test("removing a channel refuses an anonymous caller", async ({ playwright }) => {
-  // A separate context with no storage state, so this really is signed out --
-  // the shared fixture carries a session and would quietly pass this.
-  const anon = await playwright.request.newContext({
-    // Same port playwright.config.ts serves on; a fresh context does not
-    // inherit the project baseURL.
-    baseURL: "http://127.0.0.1:3100",
-  });
-  try {
-    const demote = await anon.post("/api/live/streams/demote", {
-      data: { channelId: 1 },
-    });
-    expect(demote.status()).toBe(403);
-  } finally {
-    await anon.dispose();
-  }
-});
