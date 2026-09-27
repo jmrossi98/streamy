@@ -158,3 +158,12 @@ export async function pendingSearchStats(): Promise<QueueStats> {
     retrying: rows.filter((r) => r.attempts > 0).length,
   };
 }
+
+/** The queue in display order, for the downloads panel. */
+export async function pendingSearchesForDisplay(): Promise<PendingSearch[]> {
+  const rows = await prisma.pendingEpisodeSearch.findMany({
+    orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
+    select: { episodeId: true, seriesId: true, attempts: true },
+  });
+  return rows;
+}

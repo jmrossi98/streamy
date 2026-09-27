@@ -564,14 +564,153 @@ export async function cancelSonarrQueueItem(
 ): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
+    // Which episode this entry belongs to, read before the delete because
+    // afterwards there is nothing left to ask. Cancelling has to stop the
+    // episode being wanted, not just stop this one transfer -- see below.
+    let episodeId: number | null = null;
+    try {
+      const queue = await sonarrFetch<{
+        records: { id: number; episodeId?: number }[];
+      }>(`/api/v3/queue?pageSize=250`);
+      episodeId = queue.records.find((r) => r.id === queueId)?.episodeId ?? null;
+    } catch (err) {
+      console.error(`[sonarr] could not resolve the episode for queue ${queueId}:`, err);
+    }
+
     await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=${blocklist}`, {
       method: "DELETE",
     });
+
+    // A cancel that only removes the queue entry is not a cancel.
+    //
+    // The episode stays monitored and stays in the ordered search queue, so
+    // the next drain searches it again and it downloads again -- reported as
+    // cancelled titles "popping back up". Worse, each cancel blocklists the
+    // release it removed, so every round burns another candidate until the
+    // season reports "no releases found" for titles that had plenty.
+    //
+    // The episode-level path (manageSonarrEpisodes) always did both of these;
+    // this one, which is what the admin downloads panel calls, did neither.
+    if (episodeId != null) {
+      try {
+        await sonarrFetch(`/api/v3/episode/monitor`, {
+          method: "PUT",
+          body: JSON.stringify({ episodeIds: [episodeId], monitored: false }),
+        });
+      } catch (err) {
+        console.error(`[sonarr] could not unmonitor episode ${episodeId}:`, err);
+      }
+      try {
+        await (await searchQueue()).clearPendingSearches([episodeId]);
+      } catch (err) {
+        console.error(`[sonarr] could not clear the pending search for ${episodeId}:`, err);
+      }
+    }
     return true;
   } catch (err) {
     console.error(`[sonarr] cancelSonarrQueueItem failed for ${queueId}:`, err);
     return false;
   }
+}
+
+export type QueuedEpisodeSearch = {
+  episodeId: number;
+  seriesId: number;
+  /** "The Sopranos - S2 E3 - Title", ready to show. */
+  title: string;
+  attempts: number;
+};
+
+/**
+ * Everything waiting in the ordered search queue, labelled for display.
+ *
+ * The downloads panel used to show only what Radarr/Sonarr had already
+ * queued plus the handful of MediaRequest rows still searching. A season
+ * request is a *single* MediaRequest, so asking for five seasons put one row
+ * on screen while sixty episodes sat here invisibly -- which reads as "I
+ * asked for far more than this" and gives no way to see that the rest are
+ * fine, just waiting their turn.
+ *
+ * Titles come from the series and episode lists rather than being synthesised
+ * from ids, so a queued row says the same thing the show page does.
+ */
+export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const { pendingSearchesForDisplay } = await import("./pendingEpisodeSearch");
+    const pending = await pendingSearchesForDisplay();
+    if (pending.length === 0) return [];
+
+    const seriesIds = [...new Set(pending.map((p) => p.seriesId))];
+    const named = new Map<number, string>();
+    const episodes = new Map<number, { seasonNumber: number; episodeNumber: number; title: string }>();
+
+    await Promise.all(
+      seriesIds.map(async (seriesId) => {
+        try {
+          const [series, eps] = await Promise.all([
+            sonarrFetch<{ title: string }>(`/api/v3/series/${seriesId}`),
+            sonarrFetch<
+              { id: number; seasonNumber: number; episodeNumber: number; title: string }[]
+            >(`/api/v3/episode?seriesId=${seriesId}`),
+          ]);
+          named.set(seriesId, series.title);
+          for (const e of eps) episodes.set(e.id, e);
+        } catch (err) {
+          console.error(`[sonarr] could not label queued searches for series ${seriesId}:`, err);
+        }
+      })
+    );
+
+    return pending.map((p) => {
+      const show = named.get(p.seriesId);
+      const ep = episodes.get(p.episodeId);
+      // Falls back rather than dropping the row: a queued episode Sonarr
+      // could not describe is still queued, and hiding it would recreate the
+      // exact blind spot this exists to remove.
+      const label =
+        show && ep
+          ? `${show} - S${ep.seasonNumber} E${ep.episodeNumber}${ep.title ? ` - ${ep.title}` : ""}`
+          : show
+            ? `${show} - episode ${p.episodeId}`
+            : `Episode ${p.episodeId}`;
+      return { episodeId: p.episodeId, seriesId: p.seriesId, title: label, attempts: p.attempts };
+    });
+  } catch (err) {
+    console.error("[sonarr] getQueuedEpisodeSearches failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Cancels an episode that is queued for search but not yet searched.
+ *
+ * Final, by design. Removing the queue row alone would leave the episode
+ * monitored, and the healer re-searches anything monitored with no file --
+ * so it would come back on its own within the hour without anyone asking.
+ * Unmonitoring is what makes a cancel stay cancelled; requesting the episode
+ * again re-monitors it, which is the only way it should return.
+ */
+export async function dropQueuedEpisodeSearch(episodeId: number): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  try {
+    await (await searchQueue()).clearPendingSearches([episodeId]);
+  } catch (err) {
+    console.error(`[sonarr] could not clear the pending search for ${episodeId}:`, err);
+    return false;
+  }
+  try {
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: [episodeId], monitored: false }),
+    });
+  } catch (err) {
+    // The row is gone, which is most of the job; report the failure rather
+    // than claiming a clean cancel that the healer may undo.
+    console.error(`[sonarr] could not unmonitor episode ${episodeId}:`, err);
+    return false;
+  }
+  return true;
 }
 
 /** Kicks off a search for specific episodes. */

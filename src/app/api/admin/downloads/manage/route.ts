@@ -5,6 +5,7 @@ import { cancelRadarrDownload, cancelRadarrQueueItem, deleteRadarrMovie } from "
 import {
   cancelSonarrDownload,
   cancelSonarrQueueItem,
+  dropQueuedEpisodeSearch,
   deleteSonarrSeries,
   deleteSonarrEpisode,
   getSonarrQueueHealth,
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
   const queueId = typeof body?.queueId === "number" ? body.queueId : null;
   const episodeId = typeof body?.episodeId === "number" ? body.episodeId : null;
   const mediaType = body?.mediaType === "movie" || body?.mediaType === "show" ? body.mediaType : null;
+  const queued = body?.queued === true;
   const action = body?.action === "cancel" || body?.action === "delete" ? body.action : null;
   // Audit-log display only -- never used for the action itself.
   const title = typeof body?.title === "string" && body.title ? body.title : `${mediaType ?? "?"} ${externalId ?? "?"}`;
@@ -64,6 +66,19 @@ export async function POST(request: Request) {
       // A cancel that works but isn't remembered beats refusing to cancel.
       console.error("[downloads] could not read the release being cancelled:", err);
     }
+  }
+
+  // A queued episode has been asked for but never searched, so there is no
+  // queue entry to remove and nothing to blocklist -- the whole job is to stop
+  // wanting it. Taking the branch below instead would cancel the entire
+  // series, because a null queueId there means "the series".
+  if (action === "cancel" && queued && mediaType === "show" && episodeId != null) {
+    const dropped = await dropQueuedEpisodeSearch(episodeId);
+    if (!dropped) {
+      return NextResponse.json({ error: "Couldn't cancel" }, { status: 404 });
+    }
+    logAudit(admin.name, `${mediaType}.admin.cancel`, title, "queued for search");
+    return NextResponse.json({ ok: true });
   }
 
   const ok =
