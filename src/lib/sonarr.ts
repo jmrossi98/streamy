@@ -638,18 +638,44 @@ export type QueuedEpisodeSearch = {
  * Titles come from the series and episode lists rather than being synthesised
  * from ids, so a queued row says the same thing the show page does.
  */
+/**
+ * Labels already resolved, kept for the life of the process.
+ *
+ * The rows come from Streamy's own database and are always available; the
+ * names come from Sonarr and are not. When Sonarr is busy searching -- which
+ * is exactly when someone opens this panel -- the lookup fails and every row
+ * used to fall back to "Episode 1533", which is unreadable and looks broken.
+ *
+ * A name does not change, so one successful lookup is enough forever. This
+ * turns a Sonarr hiccup into "the newest few rows are unnamed" instead of
+ * "every row is a number".
+ */
+const episodeLabels = new Map<number, string>();
+
+/** How long labelling may take before the rows are returned unlabelled. */
+const LABEL_DEADLINE_MS = 4000;
+
 export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]> {
   if (!isSonarrConfigured()) return [];
+  let pending: { episodeId: number; seriesId: number; attempts: number; enqueuedAt?: Date }[] = [];
   try {
     const { pendingSearchesForDisplay } = await import("./pendingEpisodeSearch");
-    const pending = await pendingSearchesForDisplay();
-    if (pending.length === 0) return [];
+    pending = await pendingSearchesForDisplay();
+  } catch (err) {
+    console.error("[sonarr] could not read the pending search queue:", err);
+    return [];
+  }
+  if (pending.length === 0) return [];
 
-    const seriesIds = [...new Set(pending.map((p) => p.seriesId))];
-    const named = new Map<number, string>();
-    const episodes = new Map<number, { seasonNumber: number; episodeNumber: number; title: string }>();
+  // Only the series whose labels are not already known.
+  const unknown = pending.filter((p) => !episodeLabels.has(p.episodeId));
+  const seriesIds = [...new Set(unknown.map((p) => p.seriesId))];
 
-    await Promise.all(
+  if (seriesIds.length > 0) {
+    // Bounded, and separately from the rows themselves. Naming is the
+    // optional half: a row with no name is still a row the viewer needs to
+    // see, whereas waiting for Sonarr to name it can cost the whole panel.
+    const labelling = Promise.all(
       seriesIds.map(async (seriesId) => {
         try {
           const [series, eps] = await Promise.all([
@@ -658,38 +684,30 @@ export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]>
               { id: number; seasonNumber: number; episodeNumber: number; title: string }[]
             >(`/api/v3/episode?seriesId=${seriesId}`),
           ]);
-          named.set(seriesId, series.title);
-          for (const e of eps) episodes.set(e.id, e);
+          for (const e of eps) {
+            episodeLabels.set(
+              e.id,
+              `${series.title} - S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` - ${e.title}` : ""}`
+            );
+          }
         } catch (err) {
           console.error(`[sonarr] could not label queued searches for series ${seriesId}:`, err);
         }
       })
     );
-
-    return pending.map((p) => {
-      const show = named.get(p.seriesId);
-      const ep = episodes.get(p.episodeId);
-      // Falls back rather than dropping the row: a queued episode Sonarr
-      // could not describe is still queued, and hiding it would recreate the
-      // exact blind spot this exists to remove.
-      const label =
-        show && ep
-          ? `${show} - S${ep.seasonNumber} E${ep.episodeNumber}${ep.title ? ` - ${ep.title}` : ""}`
-          : show
-            ? `${show} - episode ${p.episodeId}`
-            : `Episode ${p.episodeId}`;
-      return {
-        episodeId: p.episodeId,
-        seriesId: p.seriesId,
-        enqueuedAt: p.enqueuedAt ? new Date(p.enqueuedAt).toISOString() : null,
-        title: label,
-        attempts: p.attempts,
-      };
-    });
-  } catch (err) {
-    console.error("[sonarr] getQueuedEpisodeSearches failed:", err);
-    return [];
+    await Promise.race([
+      labelling,
+      new Promise((resolve) => setTimeout(resolve, LABEL_DEADLINE_MS)),
+    ]);
   }
+
+  return pending.map((p) => ({
+    episodeId: p.episodeId,
+    seriesId: p.seriesId,
+    enqueuedAt: p.enqueuedAt ? new Date(p.enqueuedAt).toISOString() : null,
+    title: episodeLabels.get(p.episodeId) ?? `Episode ${p.episodeId}`,
+    attempts: p.attempts,
+  }));
 }
 
 /**
