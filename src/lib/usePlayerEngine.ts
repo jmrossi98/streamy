@@ -233,6 +233,38 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // before the reload effect below so its teardown/recreate happens first on
   // a shared dependency change -- that effect's canplay listener needs the
   // *new* instance already attached, not the old one mid-teardown.
+  // Stop the media on the way out, whichever path was playing it.
+  //
+  // Reported as audio continuing after leaving the player. Unmounting a
+  // <video> is not documented to stop playback, and only the hls.js path had
+  // any teardown at all -- direct play had none, and nothing anywhere called
+  // pause(). A detached element that is still decoding keeps its audio going,
+  // with no UI left to stop it.
+  //
+  // The element is captured on every render rather than read from the ref
+  // inside the cleanup: React may null a ref before an effect cleanup runs,
+  // and a teardown that finds null does nothing, which is the bug.
+  const mediaRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    mediaRef.current = videoRef.current;
+  });
+  useEffect(() => {
+    return () => {
+      const v = mediaRef.current;
+      if (!v) return;
+      try {
+        v.pause();
+        // removeAttribute + load() is what actually releases the source. Pause
+        // alone leaves it buffered and resumable, and a src="" would make the
+        // browser try to load the page URL as media.
+        v.removeAttribute("src");
+        v.load();
+      } catch {
+        // Already torn down by the browser. Nothing left to do.
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!needsHlsJs || !videoSrc) return;
     const v = videoRef.current;
