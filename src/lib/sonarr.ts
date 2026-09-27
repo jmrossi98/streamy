@@ -420,6 +420,15 @@ const COMMAND_TIMEOUT_MS = 300_000;
  * housekeeping commands further back.
  */
 /**
+ * How many episodes are searched individually before the rest is batched.
+ *
+ * Two: enough that something is playable as soon as possible and the next one
+ * is ready behind it, few enough that the expensive per-episode search is
+ * paid twice rather than thirteen times.
+ */
+const LEAD_EPISODES = 2;
+
+/**
  * Searches allowed in flight at once.
  *
  * Was 1, which made a season strictly serial: every episode waited for a real
@@ -1265,7 +1274,24 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
     body: JSON.stringify({ episodeIds: wanted.map((e) => e.id), monitored: true }),
   });
 
-  await searchEpisodesInOrder(seriesId, wanted.map((e) => e.id));
+  // Same split as a season request: the opening episodes individually, so
+  // the show becomes watchable as fast as possible, then one SeriesSearch for
+  // the rest. Searching a whole series an episode at a time is the same
+  // fifteen-fold waste -- 147s per EpisodeSearch against ~10s per episode
+  // when they are batched -- and a long-running show is hundreds of them.
+  const ids = wanted.map((e) => e.id);
+  await searchEpisodesInOrder(seriesId, ids.slice(0, LEAD_EPISODES));
+
+  if (ids.length > LEAD_EPISODES) {
+    sonarrFetch(`/api/v3/command`, {
+      method: "POST",
+      body: JSON.stringify({ name: "SeriesSearch", seriesId }),
+    }).catch((err) => {
+      // The lead episodes are queued and the healer re-searches whatever is
+      // still wanted, so a failed batch loses speed, not the request.
+      console.error(`[sonarr] SeriesSearch failed for ${seriesId}:`, err);
+    });
+  }
 }
 
 /** Monitors and searches every episode in one season. */
@@ -1313,17 +1339,46 @@ export async function requestSeason(
       body: JSON.stringify({ episodeIds: ids, monitored: true }),
     });
 
-    // Deliberately not SeasonSearch: that grabs the whole season at once and
-    // the download client starts them in whatever order the grabs land, so
-    // episode 1 can finish last. Instead each episode is searched in
-    // ascending order and we wait for each grab before starting the next, so
-    // torrents enter the download client in episode order and the season
-    // becomes watchable from episode 1 onward.
+    // The opening episodes go through the ordered queue; everything else goes
+    // out as one SeasonSearch.
     //
-    // Not awaited: a full season is minutes of sequential searching, far
-    // longer than a request should block. The chain runs in the background
-    // and the UI picks up each episode as it appears via status polling.
-    await searchEpisodesInOrder(series.sonarrId, ids);
+    // Measured on this setup: a single EpisodeSearch takes 147s, while one
+    // SeasonSearch covering 21 episodes takes 208s. Per episode that is 147s
+    // against 10s, because the cost is Sonarr's per-search overhead -- eight
+    // indexers queried and ~300 releases scored, once per search, regardless
+    // of how many episodes the search is for.
+    //
+    // Searching a season an episode at a time therefore cost roughly fifteen
+    // times what it needed to. A 13-episode season was half an hour of
+    // searching before the last episode was even looked for.
+    //
+    // The ordered queue is still what makes a show watchable from the start,
+    // so the opening episodes keep it: they are searched individually and
+    // first, which gets episode 1 grabbed in ~147s rather than waiting on a
+    // 208s batch. The batch then fetches the rest in one go, and the drain
+    // skips anything the batch already has in flight.
+    const lead = ids.slice(0, LEAD_EPISODES);
+    const rest = ids.slice(LEAD_EPISODES);
+    await searchEpisodesInOrder(series.sonarrId, lead);
+
+    if (rest.length > 0) {
+      // Fire-and-forget, and deliberately not part of the ordered queue: this
+      // is one command for the whole season, and waiting on it would make the
+      // request block for the length of a full search.
+      sonarrFetch(`/api/v3/command`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: "SeasonSearch",
+          seriesId: series.sonarrId,
+          seasonNumber,
+        }),
+      }).catch((err) => {
+        // The lead episodes are already queued, and the healer re-searches
+        // anything still wanted, so a failed batch degrades to the old
+        // behaviour rather than losing the season.
+        console.error(`[sonarr] SeasonSearch failed for ${seasonNumber}:`, err);
+      });
+    }
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
