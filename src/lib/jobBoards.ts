@@ -30,11 +30,16 @@
  * in mediabox-infra) rather than by guessing at URLs -- which is why the
  * earlier guesses all 404'd.
  *
- * A provider per company does not scale. Three of them is still readable at a
- * glance and each is about twenty lines, so the bespoke version is honest for
- * now -- but the threshold is real: once the endpoint, the array path and the
- * field names are all that differ, the right answer is one configurable
- * provider rather than a fourth near-copy. Treat a fourth as the trigger.
+ * Four of them now, which is the threshold the previous version of this comment
+ * named: once the endpoint, the array path and the field names are all that
+ * differ between them, four near-identical parsers are four places to fix the
+ * same bug. They are one parser driven by CUSTOM_BOARDS below.
+ *
+ * The provider names stay in the union rather than collapsing to a single
+ * "custom" with the shape encoded in configuration. That keeps a board row
+ * readable -- "microsoft:software engineer" says what it is -- and keeps the
+ * shapes in code where they can be typed, instead of in a slug string that
+ * nothing validates.
  */
 export type JobProvider =
   | "greenhouse"
@@ -43,7 +48,8 @@ export type JobProvider =
   | "eightfold"
   | "spotify"
   | "github"
-  | "atlassian";
+  | "atlassian"
+  | "microsoft";
 
 export type JobSource = {
   /** Display name, e.g. "Stripe". */
@@ -98,21 +104,9 @@ export type JobPosting = {
 
 /** The public endpoint listing a company's open roles. */
 export function boardUrl(source: JobSource): string {
-  if (source.provider === "spotify") {
-    // The slug is the category to search, e.g. "engineering".
-    return `https://api.lifeatspotify.com/wp-json/animal/v1/job/search?c=${encodeURIComponent(
-      source.slug
-    )}`;
-  }
-  if (source.provider === "atlassian") {
-    // One flat list of every posting; the slug is unused but kept for shape.
-    return "https://www.atlassian.com/endpoint/careers/listings";
-  }
-  if (source.provider === "github") {
-    // The slug is the keyword to search. Paged by the fetcher.
-    return `https://www.github.careers/api/jobs?keywords=${encodeURIComponent(
-      source.slug
-    )}&page=1&sortBy=relevance&descending=false&internal=false`;
+  const custom = CUSTOM_BOARDS[source.provider];
+  if (custom) {
+    return custom.endpoint.replace("{q}", encodeURIComponent(source.slug));
   }
   if (source.provider === "eightfold") {
     const target = parseEightfoldSlug(source.slug);
@@ -135,6 +129,8 @@ export function boardUrl(source: JobSource): string {
       return `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs`;
     case "ashby":
       return `https://api.ashbyhq.com/posting-api/job-board/${slug}`;
+    default:
+      return "";
   }
 }
 
@@ -250,115 +246,173 @@ function parseEightfold(source: JobSource, payload: unknown): JobPosting[] {
 }
 
 /**
- * Spotify: {result: [{id, text, locations: [{location}], ...}]}.
+ * How to read one company's own JSON. Everything these four differ by, as data.
  *
- * `text` is the title and `id` is a slug, which doubles as the apply URL path.
- * Locations are objects, and a role open in several lists all of them.
+ * `list` is a dotted path to the array of postings ("" when the payload *is*
+ * the array). `row` is a path within each entry, for APIs that wrap each
+ * posting in another object. The rest are field names.
  */
-function parseSpotify(source: JobSource, payload: unknown): JobPosting[] {
-  const rows = (payload as { result?: unknown })?.result;
-  if (!Array.isArray(rows)) return [];
+type CustomBoard = {
+  /** `{q}` is replaced by the source's slug. */
+  endpoint: string;
+  list: string;
+  row?: string;
+  id: string;
+  title: string;
+  /**
+   * Where the role is. One field, or several joined with ", " when the API
+   * splits city from country the way GitHub does.
+   */
+  location: string | string[];
+  /**
+   * The key to read inside each element, when the location field is an array
+   * of objects rather than of strings -- Spotify returns [{location: "..."}].
+   */
+  locationKey?: string;
+  /** A field holding an absolute apply URL. */
+  linkField?: string;
+  /** Or a template, with `{id}` and `{slug}` filled from the posting. */
+  linkTemplate?: string;
+  slugField?: string;
+  /** A unix-seconds field, where the API gives a real posted date. */
+  postedSeconds?: string;
+  /** Pages of this size, when the API pages at all. */
+  pageSize?: number;
+  /** The query parameter that carries the offset, for a paged endpoint. */
+  offsetParam?: string;
+};
 
-  const out: JobPosting[] = [];
-  for (const entry of rows) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const job = entry as Record<string, unknown>;
-    const id = asString(job.id);
-    const title = asString(job.text);
-    if (!id || !title) continue;
+export const CUSTOM_BOARDS: Record<string, CustomBoard> = {
+  spotify: {
+    endpoint: "https://api.lifeatspotify.com/wp-json/animal/v1/job/search?c={q}",
+    list: "result",
+    id: "id",
+    title: "text",
+    location: "locations",
+    locationKey: "location",
+    linkTemplate: "https://www.lifeatspotify.com/jobs/{id}",
+  },
+  github: {
+    endpoint:
+      "https://www.github.careers/api/jobs?keywords={q}&page=1&sortBy=relevance&descending=false&internal=false",
+    list: "jobs",
+    row: "data",
+    id: "req_id",
+    title: "title",
+    location: ["location_name", "country"],
+    slugField: "slug",
+    linkTemplate: "https://www.github.careers/careers-home/jobs/{slug}",
+    pageSize: 10,
+    offsetParam: "page",
+  },
+  atlassian: {
+    endpoint: "https://www.atlassian.com/endpoint/careers/listings",
+    list: "",
+    id: "id",
+    title: "title",
+    location: "locations",
+    linkField: "applyUrl",
+  },
+  microsoft: {
+    // Found by watching the careers page rather than guessed: the host is
+    // apply.careers.microsoft.com, not the gcsservices one every guide names.
+    endpoint:
+      "https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com&query={q}&location=United%20States&start=0&num=20",
+    list: "data.positions",
+    id: "displayJobId",
+    title: "name",
+    // Already normalised to "Redmond, WA, US", which is exactly what the metro
+    // matcher wants -- the raw `locations` field is prose.
+    location: "standardizedLocations",
+    linkTemplate: "https://jobs.careers.microsoft.com/global/en/job/{id}",
+    postedSeconds: "postedTs",
+    pageSize: 20,
+    offsetParam: "start",
+  },
+};
 
-    const places = Array.isArray(job.locations)
-      ? (job.locations as Record<string, unknown>[])
-          .map((l) => asString(l?.location) || asString(l?.name))
-          .filter(Boolean)
-      : [];
-
-    out.push({
-      id: `spotify:${id}`,
-      company: source.company,
-      title,
-      location: places.join("; ") || "Unspecified",
-      url: `https://www.lifeatspotify.com/jobs/${encodeURIComponent(id)}`,
-      postedAt: null,
-    });
-  }
-  return out;
+/** Walks a dotted path, returning undefined rather than throwing. */
+function at(value: unknown, path: string): unknown {
+  if (!path) return value;
+  return path.split(".").reduce<unknown>((acc, key) => {
+    if (acc && typeof acc === "object") return (acc as Record<string, unknown>)[key];
+    return undefined;
+  }, value);
 }
 
 /**
- * GitHub: {jobs: [{data: {slug, title, location_name, req_id, ...}}]}.
+ * A location field, in any of the shapes these APIs use.
  *
- * Everything useful is nested one level down under `data`, and the apply URL is
- * built from the slug.
+ * A plain string, an array of strings, or an array of objects with the place
+ * under a named key. Arrays are joined rather than reduced to one, because a
+ * role open in several cities belongs to all of them and the metro matcher
+ * reads the whole string.
  */
-function parseGithub(source: JobSource, payload: unknown): JobPosting[] {
-  const rows = (payload as { jobs?: unknown })?.jobs;
-  if (!Array.isArray(rows)) return [];
-
-  const out: JobPosting[] = [];
-  for (const entry of rows) {
-    const data = (entry as { data?: unknown })?.data;
-    if (typeof data !== "object" || data === null) continue;
-    const job = data as Record<string, unknown>;
-    const id = asString(job.req_id) || asString(job.slug);
-    const title = asString(job.title);
-    if (!id || !title) continue;
-
-    const place = [asString(job.location_name), asString(job.country)]
+function asPlaces(value: unknown, key?: string): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) =>
+        key && v && typeof v === "object"
+          ? asString((v as Record<string, unknown>)[key])
+          : asString(v)
+      )
       .filter(Boolean)
-      .join(", ");
-
-    out.push({
-      id: `github:${id}`,
-      company: source.company,
-      title,
-      location: place || "Unspecified",
-      url: `https://www.github.careers/careers-home/jobs/${encodeURIComponent(
-        asString(job.slug) || id
-      )}`,
-      postedAt: null,
-    });
+      .join("; ");
   }
-  return out;
+  return asString(value);
 }
 
-/**
- * Atlassian: a bare array of postings, each with `locations` and `applyUrl`.
- *
- * The plainest of the three -- no wrapper object, no nesting, and it hands
- * back the apply URL rather than making one up from a slug.
- */
-function parseAtlassian(source: JobSource, payload: unknown): JobPosting[] {
-  if (!Array.isArray(payload)) return [];
+/** One parser for every single-company API, driven by the table above. */
+function parseCustom(source: JobSource, payload: unknown): JobPosting[] {
+  const board = CUSTOM_BOARDS[source.provider];
+  if (!board) return [];
+
+  const rows = at(payload, board.list);
+  if (!Array.isArray(rows)) return [];
 
   const out: JobPosting[] = [];
-  for (const entry of payload) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const job = entry as Record<string, unknown>;
-    const id = asString(job.id) || String(job.id ?? "");
-    const title = asString(job.title);
+  for (const entry of rows) {
+    const row = board.row ? at(entry, board.row) : entry;
+    if (typeof row !== "object" || row === null) continue;
+    const job = row as Record<string, unknown>;
+
+    const id = asString(job[board.id]) || String(job[board.id] ?? "");
+    const title = asString(job[board.title]);
     if (!id || id === "undefined" || !title) continue;
 
-    const places = Array.isArray(job.locations)
-      ? (job.locations as unknown[]).map((l) => asString(l)).filter(Boolean)
-      : [asString(job.locations)].filter(Boolean);
+    const slug = board.slugField ? asString(job[board.slugField]) : "";
+    const url = board.linkField
+      ? asString(job[board.linkField])
+      : (board.linkTemplate ?? "")
+          .replace("{id}", encodeURIComponent(id))
+          .replace("{slug}", encodeURIComponent(slug || id));
+
+    const seconds = board.postedSeconds ? job[board.postedSeconds] : null;
+    const postedAt =
+      typeof seconds === "number" && seconds > 0
+        ? new Date(seconds * 1000).toISOString()
+        : null;
 
     out.push({
-      id: `atlassian:${id}`,
+      id: `${source.provider}:${id}`,
       company: source.company,
       title,
-      location: places.join("; ") || "Unspecified",
-      url: asString(job.applyUrl) || "https://www.atlassian.com/company/careers/all-jobs",
-      postedAt: null,
+      location:
+        (Array.isArray(board.location)
+          ? board.location
+              .map((f) => asPlaces(job[f], board.locationKey))
+              .filter(Boolean)
+              .join(", ")
+          : asPlaces(job[board.location], board.locationKey)) || "Unspecified",
+      url: url || boardUrl(source),
+      postedAt,
     });
   }
   return out;
 }
 
 export function parseBoard(source: JobSource, payload: unknown): JobPosting[] {
-  if (source.provider === "atlassian") return parseAtlassian(source, payload);
-  if (source.provider === "spotify") return parseSpotify(source, payload);
-  if (source.provider === "github") return parseGithub(source, payload);
+  if (source.provider in CUSTOM_BOARDS) return parseCustom(source, payload);
   if (source.provider === "eightfold") return parseEightfold(source, payload);
   if (source.provider === "workday") return parseWorkday(source, payload);
 
@@ -432,6 +486,7 @@ export function parseJobSources(raw: string | null | undefined): JobSource[] {
       "spotify",
       "github",
       "atlassian",
+      "microsoft",
     ];
     if (!known.includes(provider as JobProvider)) continue;
     if (provider === "eightfold" && !parseEightfoldSlug(slug)) continue;

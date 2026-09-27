@@ -335,3 +335,52 @@ describe("atlassian", () => {
     expect(parseBoard(atlassian, { jobs: [{ id: 1, title: "x" }] })).toEqual([]);
   });
 });
+
+describe("microsoft, via the shared custom parser", () => {
+  const microsoft: JobSource = {
+    company: "Microsoft",
+    provider: "microsoft",
+    slug: "software engineer",
+  };
+
+  it("reads the endpoint that actually serves the careers page", () => {
+    // apply.careers.microsoft.com, not the gcsservices host every guide names
+    // -- found by watching the page, not by guessing.
+    expect(boardUrl(microsoft)).toContain("apply.careers.microsoft.com/api/pcsx/search");
+    expect(boardUrl(microsoft)).toContain("query=software%20engineer");
+  });
+
+  it("digs the postings out of data.positions and keeps the real posted date", () => {
+    // Verbatim shape from the endpoint on 2026-09-27. Microsoft is the only
+    // one of these that gives a usable timestamp.
+    const payload = {
+      status: 200,
+      data: {
+        count: 900,
+        positions: [
+          {
+            id: 1970393556992027,
+            displayJobId: "200054590",
+            name: "Software Engineer II/Sr. Software Engineer",
+            locations: ["United States, Washington, Redmond"],
+            standardizedLocations: ["Redmond, WA, US"],
+            postedTs: 1790282962,
+          },
+        ],
+      },
+    };
+    const [posting] = parseBoard(microsoft, payload);
+    expect(posting.id).toBe("microsoft:200054590");
+    expect(posting.title).toBe("Software Engineer II/Sr. Software Engineer");
+    // The standardized field, not the prose one -- it is what the metro
+    // matcher can actually read.
+    expect(posting.location).toBe("Redmond, WA, US");
+    expect(matchMetros(posting.location).map((m) => m.key)).toContain("seattle");
+    expect(posting.postedAt).toBe(new Date(1790282962 * 1000).toISOString());
+  });
+
+  it("returns nothing when the nested path is absent", () => {
+    expect(parseBoard(microsoft, { status: 200, data: {} })).toEqual([]);
+    expect(parseBoard(microsoft, { error: "nope" })).toEqual([]);
+  });
+});
