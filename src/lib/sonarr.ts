@@ -713,6 +713,28 @@ export async function dropQueuedEpisodeSearch(episodeId: number): Promise<boolea
   return true;
 }
 
+/**
+ * Episode ids Sonarr is already downloading.
+ *
+ * Used by the drain to skip work that is in flight. Returns an empty set on
+ * failure rather than throwing: not knowing means searching an episode a
+ * second time, which is wasteful, while treating the whole pass as failed
+ * would stop the queue moving at all.
+ */
+async function episodesInQueue(): Promise<Set<number>> {
+  try {
+    const queue = await sonarrFetch<{ records: { episodeId?: number }[] }>(
+      `/api/v3/queue?pageSize=250`
+    );
+    return new Set(
+      queue.records.map((r) => r.episodeId).filter((id): id is number => typeof id === "number")
+    );
+  } catch (err) {
+    console.error("[sonarr] could not read the queue to skip in-flight episodes:", err);
+    return new Set();
+  }
+}
+
 /** Kicks off a search for specific episodes. */
 export async function searchSonarrEpisodes(episodeIds: number[]): Promise<void> {
   if (!isSonarrConfigured() || episodeIds.length === 0) return;
@@ -1080,6 +1102,11 @@ async function drainEpisodeSearches(deadline: number | null = null): Promise<voi
       }
       backlogWaits = 0;
 
+      // Re-read each time round rather than once before the loop: a pass can
+      // run for minutes, and episodes grabbed during it should stop being
+      // searched as soon as that is true.
+      const downloading = await episodesInQueue();
+
       const next = await queue.nextPendingSearch(lastSeriesId);
       if (!next) return;
       // Advanced before the search, not after: a throw below must still
@@ -1095,6 +1122,19 @@ async function drainEpisodeSearches(deadline: number | null = null): Promise<voi
           `/api/v3/episode/${next.episodeId}`
         );
         if (!episode.monitored || episode.hasFile) {
+          await queue.completePendingSearch(next.episodeId);
+          continue;
+        }
+
+        // Already downloading counts as done here.
+        //
+        // The healer grabs wanted-but-idle episodes in bulk, so by the time an
+        // episode's turn comes round it is often already in Sonarr's queue.
+        // Searching it again grabs a second copy of something in flight, and
+        // -- because the row stayed in the queue -- the queue never got
+        // shorter, which the warden then reported as the queue being stuck
+        // while fifteen episodes were visibly downloading.
+        if (downloading.has(next.episodeId)) {
           await queue.completePendingSearch(next.episodeId);
           continue;
         }
