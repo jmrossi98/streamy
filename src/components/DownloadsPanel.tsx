@@ -47,6 +47,9 @@ export type DownloadRow = {
   /** One line explaining a rejected release: what was removed and what is
    *  happening next, or why nothing was found. */
   notice?: string | null;
+  /** Waiting its turn in the ordered episode-search queue: asked for, not yet
+   *  searched. Distinct from `searching`, which means a search is underway. */
+  queued?: boolean;
   /** When this landed in the library. Only completed rows have one -- nothing
    *  has been added yet for a row that is still searching or downloading. */
   addedAt?: string | null;
@@ -225,6 +228,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           queueId: d.queueId,
           episodeId: d.episodeId,
           mediaType: d.mediaType,
+          // A row that has not been searched yet has no Radarr/Sonarr queue
+          // entry to remove, so the route has to be told that rather than
+          // inferring it from a null queueId -- which also means "whole
+          // series" for a row that really is downloading.
+          queued: d.queued === true,
           action,
           // For the audit log only -- the route already has everything it
           // needs to actually perform the action without this, but has no
@@ -351,7 +359,9 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                           ? "No release found"
                           : d.unsafe
                             ? "Unsafe release"
-                            : d.searching
+                            : d.queued
+                              ? "Queued"
+                              : d.searching
                               ? "Searching…"
                               : d.importing
                                 ? "Importing…"

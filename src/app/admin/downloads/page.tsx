@@ -2,6 +2,7 @@ import { unstable_noStore } from "next/cache";
 import { prisma } from "@/lib/db";
 import { getRadarrActiveDownloads, getRadarrCompletedMovies } from "@/lib/radarr";
 import {
+  getQueuedEpisodeSearches,
   getSonarrActiveDownloads,
   getSonarrCompletedEpisodes,
   maybeDrainEpisodeSearches,
@@ -36,6 +37,7 @@ export default async function AdminDownloadsPage() {
     sonarrDownloads,
     radarrCompleted,
     sonarrCompleted,
+    queuedSearches,
     pendingRequests,
     gameJobs,
     gameWishlist,
@@ -46,6 +48,9 @@ export default async function AdminDownloadsPage() {
     getSonarrActiveDownloads().catch(() => []),
     getRadarrCompletedMovies().catch(() => []),
     getSonarrCompletedEpisodes().catch(() => []),
+    // In the same wave: these rows sit at the top of the panel, so resolving
+    // them after the rest would leave the newest requests blank the longest.
+    getQueuedEpisodeSearches().catch(() => []),
     // Requested but not yet picked up by Radarr/Sonarr's own queue -- still
     // searching for a release, and otherwise invisible until it is grabbed.
     prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } }),
@@ -209,6 +214,28 @@ export default async function AdminDownloadsPage() {
     )
   ).filter((r): r is DownloadRow => r != null);
   downloads.unshift(...searchingRows);
+
+  // Everything still waiting its turn in the ordered search queue.
+  //
+  // Shown above the active transfers, not below them: these are the rows a
+  // viewer has just asked for and cannot otherwise see at all. A season
+  // request is one MediaRequest, so without this, asking for five seasons put
+  // a single "Searching..." row on screen while sixty episodes waited
+  // invisibly -- which looks exactly like the request was dropped.
+  const queuedRows: DownloadRow[] = queuedSearches.map((q) => ({
+    queueId: null,
+    externalId: q.seriesId,
+    episodeId: q.episodeId,
+    title: q.title,
+    progress: null,
+    mediaType: "show" as const,
+    completed: false,
+    queued: true,
+    // Only once it has actually failed a round, so a queue that is simply
+    // long does not read as a queue that is going wrong.
+    notice: q.attempts > 0 ? `Retrying (attempt ${q.attempts + 1})` : null,
+  }));
+  downloads.unshift(...queuedRows);
 
   return (
       <div className="space-y-10">
