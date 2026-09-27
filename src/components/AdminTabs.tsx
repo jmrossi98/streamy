@@ -18,7 +18,9 @@ export const ADMIN_TABS = [
   { href: "/admin/security", label: "Security" },
   { href: "/admin/health", label: "Health" },
   { href: "/admin/metrics", label: "Metrics" },
-  { href: "/admin/downloads", label: "Downloads" },
+  // Downloads live under Storage: what is arriving and what it is filling up
+  // are the same question from two sides, and separate tabs meant opening one
+  // to make sense of the other.
   { href: "/admin/storage", label: "Storage" },
   { href: "/admin/spend", label: "Spend" },
   { href: "/admin/approvals", label: "Accounts" },

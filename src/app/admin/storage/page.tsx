@@ -2,8 +2,13 @@ import { getDiskUsage } from "@/lib/diskUsage";
 import { StorageChart } from "@/components/StorageChart";
 import { PanelBoundary } from "@/components/PanelBoundary";
 import { getGamesStorageSize } from "@/lib/games";
+import { AdminDownloadsSections } from "@/components/AdminDownloadsSections";
+import { unstable_noStore } from "next/cache";
 
 export default async function AdminStoragePage() {
+  // The downloads panels below poll live state, so this page must not be
+  // served from a cache the way a storage chart alone could be.
+  unstable_noStore();
   const [diskUsage, gamesSize] = await Promise.all([
     getDiskUsage(),
     // Swallows its own errors and answers 0, so an unreachable gamarr costs
@@ -33,6 +38,10 @@ export default async function AdminStoragePage() {
           </PanelBoundary>
         </div>
       </section>
+
+      {/* Below the chart on purpose: the chart is the one thing worth seeing
+          at a glance, and downloads are what explain it. */}
+      <AdminDownloadsSections />
       </div>
   );
 }
