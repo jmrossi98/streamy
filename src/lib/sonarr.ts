@@ -417,7 +417,23 @@ const COMMAND_TIMEOUT_MS = 300_000;
  * does not make it faster, it just makes the queue longer and pushes the
  * housekeeping commands further back.
  */
-const MAX_OUTSTANDING_SEARCHES = 1;
+/**
+ * Searches allowed in flight at once.
+ *
+ * Was 1, which made a season strictly serial: every episode waited for a real
+ * indexer search (~20s against Prowlarr) before the next one was even issued,
+ * so a 55-episode backlog was about twenty minutes of "Searching..." no matter
+ * how healthy everything was.
+ *
+ * Three keeps the ordering that matters -- searches are still *issued* in
+ * episode order, so the early episodes are always the ones grabbed first and a
+ * show still becomes watchable from the beginning -- while cutting the wall
+ * time by roughly the same factor. It stays small on purpose: the reason this
+ * limit exists at all is that filling Sonarr's command queue starves RssSync,
+ * which is what left a freshly requested show reporting "no release found" for
+ * half an hour.
+ */
+const MAX_OUTSTANDING_SEARCHES = 3;
 
 /** How long to wait before looking at the command queue again. */
 const BACKLOG_POLL_MS = 15_000;
@@ -883,7 +899,7 @@ async function searchEpisodesInOrder(seriesId: number, episodeIds: number[]): Pr
 let draining = false;
 
 /** Works the persisted queue until it is empty. Never throws. */
-async function drainEpisodeSearches(): Promise<void> {
+async function drainEpisodeSearches(deadline: number | null = null): Promise<void> {
   if (draining) return;
   draining = true;
   try {
@@ -899,6 +915,16 @@ async function drainEpisodeSearches(): Promise<void> {
     let backlogWaits = 0;
 
     for (;;) {
+      // A pass is bounded, not exhaustive. A long season legitimately takes
+      // longer than any single HTTP request should, and before the warden
+      // there was no reliable next pass, so the drain ran until the queue was
+      // empty -- which now means the caller times out mid-drain. Stopping on
+      // a budget is safe precisely because the next pass is guaranteed.
+      if (deadline != null && Date.now() >= deadline) {
+        console.warn("[sonarr] search queue drain hit its time budget; resuming next pass");
+        return;
+      }
+
       // Do not pile onto a backlog. Checked before taking the next item so a
       // busy Sonarr simply delays the drain rather than filling its command
       // queue -- which is what starved RssSync and left a freshly requested
@@ -985,9 +1011,9 @@ export function maybeDrainEpisodeSearches(): void {
  *
  * This is what the warden calls, on a schedule, so the next pass always comes.
  */
-export async function drainEpisodeSearchesNow(): Promise<boolean> {
+export async function drainEpisodeSearchesNow(budgetMs: number): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
-  await drainEpisodeSearches();
+  await drainEpisodeSearches(Date.now() + budgetMs);
   return true;
 }
 /**

@@ -44,6 +44,19 @@ export type WardenReport = {
   errors: { step: string; error: string }[];
 };
 
+/**
+ * How long a drain may run before leaving the rest to the next pass.
+ *
+ * The route allows 300s and the caller gives up at 290s, so the whole pass has
+ * to finish inside that with room for the heal afterwards. An unbounded drain
+ * overran it: a queue of 55 episodes is about twenty minutes of real indexer
+ * searching, and the request timed out mid-pass every time.
+ *
+ * Stopping early costs nothing now. The queue is persisted and the next pass
+ * is ten minutes away, which is the guarantee this whole file exists to make.
+ */
+const DRAIN_BUDGET_MS = 180_000;
+
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -74,7 +87,7 @@ export async function runDownloadWarden(): Promise<WardenReport> {
   // Awaited on purpose. The page-load caller cannot wait for a season and so
   // fires this off unobserved; here the whole point is to know whether the
   // pass actually moved anything.
-  await drainEpisodeSearchesNow().catch((err) => {
+  await drainEpisodeSearchesNow(DRAIN_BUDGET_MS).catch((err) => {
     errors.push({ step: "drain", error: message(err) });
     return false;
   });
