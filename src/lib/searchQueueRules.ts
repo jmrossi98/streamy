@@ -50,3 +50,84 @@ export function chooseNextSearch(
   }
   return null;
 }
+
+/** Just the counts the stuck rule needs, so it does not depend on the row type. */
+export type QueueSize = { total: number; oldestWaitMinutes: number };
+
+/**
+ * A queue older than this has stopped moving rather than merely being long.
+ *
+ * A full season legitimately takes the better part of an hour, and the warden
+ * runs every ten minutes, so this is not "the queue should be empty by now" --
+ * it is "nothing has completed in long enough that a human should be told".
+ */
+export const STUCK_AFTER_MINUTES = 90;
+
+/**
+ * Whether a recovery pass should be reported as stuck.
+ *
+ * Age alone is not the signal. A long queue that is working through a backlog
+ * is the system behaving correctly, and alerting on it would train the alert
+ * to be ignored -- which is how the real stall went unnoticed for hours. So a
+ * pass counts as stuck only when the head of the queue is old *and* this pass
+ * failed to shift anything.
+ */
+export function isQueueStuck(
+  before: QueueSize,
+  after: QueueSize,
+  thresholdMinutes: number = STUCK_AFTER_MINUTES
+): boolean {
+  if (after.total === 0) return false;
+  const moved = after.total < before.total;
+  return after.oldestWaitMinutes >= thresholdMinutes && !moved;
+}
+
+/** Just the fields the backlog rule reads off a Sonarr command. */
+export type SonarrCommand = {
+  name?: string;
+  status?: string;
+  started?: string | null;
+  queued?: string | null;
+};
+
+/**
+ * How long a search command may run before it stops counting as "busy".
+ *
+ * Sonarr searches finish in seconds to a couple of minutes. One that has been
+ * started for longer than this is wedged rather than working, and treating it
+ * as backlog is what let a single stuck command hold the whole ordered queue.
+ */
+export const STALE_COMMAND_MINUTES = 10;
+
+/**
+ * Outstanding searches that should actually hold the drain back.
+ *
+ * The backlog guard exists so the drain does not fill Sonarr's command queue
+ * and starve RssSync. It is not meant to be a lock that any long-running
+ * command can take forever: the healer fires one bulk EpisodeSearch for every
+ * wanted-but-idle episode, and with a limit of one outstanding search that
+ * single command blocked every queued season for as long as it ran -- while
+ * the healer re-fired it on each page load. Forty-five episodes waited two
+ * hours behind exactly that, never attempted once.
+ *
+ * So a command that has been started longer than the stale window is not
+ * counted. Sonarr will finish or drop it on its own; blocking the user's
+ * explicitly requested season on it in the meantime is the worse failure.
+ */
+export function countBlockingSearches(
+  commands: SonarrCommand[],
+  now: number = Date.now(),
+  staleAfterMinutes: number = STALE_COMMAND_MINUTES
+): number {
+  return commands.filter((c) => {
+    if (c.name !== "EpisodeSearch") return false;
+    if (c.status !== "queued" && c.status !== "started") return false;
+    const since = c.started ?? c.queued;
+    if (!since) return true;
+    const age = now - new Date(since).getTime();
+    // An unparseable timestamp counts as busy: the guard should fail towards
+    // holding back rather than towards piling on.
+    if (!Number.isFinite(age)) return true;
+    return age < staleAfterMinutes * 60_000;
+  }).length;
+}

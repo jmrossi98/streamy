@@ -124,3 +124,37 @@ export async function pendingSearchIds(): Promise<number[]> {
     return [];
   }
 }
+
+export type QueueStats = {
+  total: number;
+  /** How long the oldest item has been waiting, in minutes. */
+  oldestWaitMinutes: number;
+  /** Distinct series with something queued. */
+  series: number;
+  /** Items that have failed at least once and are still here. */
+  retrying: number;
+};
+
+/**
+ * A summary of what is waiting, for the warden and the admin panel.
+ *
+ * The oldest wait is the number that matters. A queue of forty is healthy
+ * while it is moving; a queue of one that has sat for three hours is not, and
+ * only the age tells those apart.
+ */
+export async function pendingSearchStats(): Promise<QueueStats> {
+  const rows = await prisma.pendingEpisodeSearch.findMany({
+    select: { seriesId: true, attempts: true, enqueuedAt: true },
+    orderBy: { enqueuedAt: "asc" },
+  });
+  if (rows.length === 0) {
+    return { total: 0, oldestWaitMinutes: 0, series: 0, retrying: 0 };
+  }
+  const oldest = rows[0].enqueuedAt.getTime();
+  return {
+    total: rows.length,
+    oldestWaitMinutes: Math.max(0, Math.round((Date.now() - oldest) / 60_000)),
+    series: new Set(rows.map((r) => r.seriesId)).size,
+    retrying: rows.filter((r) => r.attempts > 0).length,
+  };
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
+import { countBlockingSearches, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
 
 /** Position-ordered, as the queue hands them over. */
 function row(seriesId: number, episodeId: number): QueuedSearch {
@@ -64,5 +64,87 @@ describe("chooseNextSearch", () => {
     expect(chooseNextSearch(three, 1)?.seriesId).toBe(2);
     expect(chooseNextSearch(three, 2)?.seriesId).toBe(3);
     expect(chooseNextSearch(three, 3)?.seriesId).toBe(1);
+  });
+});
+
+describe("isQueueStuck", () => {
+  const q = (total: number, oldestWaitMinutes: number) => ({ total, oldestWaitMinutes });
+
+  it("is not stuck when the queue is empty", () => {
+    expect(isQueueStuck(q(5, 500), q(0, 0))).toBe(false);
+  });
+
+  it("is not stuck when the pass shifted something, however old the head is", () => {
+    // A season legitimately takes the better part of an hour. A backlog being
+    // worked through is the system behaving, and alerting on it would train
+    // the alert to be ignored.
+    expect(isQueueStuck(q(45, 300), q(44, 300))).toBe(false);
+  });
+
+  it("is not stuck when nothing moved but the head is still young", () => {
+    expect(isQueueStuck(q(45, 10), q(45, 10))).toBe(false);
+  });
+
+  it("is stuck when nothing moved and the head is old", () => {
+    // The real case: forty-five queued, oldest two hours, attempts still zero.
+    expect(isQueueStuck(q(45, 132), q(45, 132))).toBe(true);
+  });
+
+  it("counts a growing queue as not moving", () => {
+    expect(isQueueStuck(q(10, 200), q(12, 200))).toBe(true);
+  });
+
+  it("takes the threshold as an argument", () => {
+    expect(isQueueStuck(q(1, 30), q(1, 30), 20)).toBe(true);
+    expect(isQueueStuck(q(1, 30), q(1, 30), 40)).toBe(false);
+  });
+});
+
+describe("countBlockingSearches", () => {
+  const minsAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+
+  it("counts a search that just started", () => {
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "started", started: minsAgo(1) }])
+    ).toBe(1);
+  });
+
+  it("ignores a search wedged past the stale window", () => {
+    // The live case: one EpisodeSearch started 15 minutes earlier held the
+    // whole ordered queue, because the guard read it as a busy Sonarr.
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "started", started: minsAgo(15) }])
+    ).toBe(0);
+  });
+
+  it("ignores commands that are not episode searches", () => {
+    expect(
+      countBlockingSearches([{ name: "RssSync", status: "started", started: minsAgo(1) }])
+    ).toBe(0);
+  });
+
+  it("ignores finished searches", () => {
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "completed", started: minsAgo(1) }])
+    ).toBe(0);
+  });
+
+  it("falls back to the queued time when nothing has started", () => {
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "queued", queued: minsAgo(2) }])
+    ).toBe(1);
+  });
+
+  it("counts a search with no usable timestamp, failing towards holding back", () => {
+    expect(countBlockingSearches([{ name: "EpisodeSearch", status: "started" }])).toBe(1);
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "started", started: "not a date" }])
+    ).toBe(1);
+  });
+
+  it("takes the stale window as an argument", () => {
+    const cmds = [{ name: "EpisodeSearch", status: "started", started: minsAgo(15) }];
+    expect(countBlockingSearches(cmds, Date.now(), 20)).toBe(1);
+    expect(countBlockingSearches(cmds, Date.now(), 5)).toBe(0);
   });
 });

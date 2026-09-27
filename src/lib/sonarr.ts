@@ -6,6 +6,10 @@
  * ID matching, never fuzzy title search.
  */
 
+import {
+  countBlockingSearches,
+  type SonarrCommand,
+} from "./searchQueueRules";
 import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
@@ -434,10 +438,11 @@ const MAX_BACKLOG_WAITS = 20;
  */
 async function outstandingSearches(): Promise<number | null> {
   try {
-    const commands = await sonarrFetch<{ name?: string; status?: string }[]>("/api/v3/command");
-    return commands.filter(
-      (c) => c.name === "EpisodeSearch" && (c.status === "queued" || c.status === "started")
-    ).length;
+    const commands = await sonarrFetch<SonarrCommand[]>("/api/v3/command");
+    // A command that has been running too long is wedged, not busy, and is
+    // not counted -- see countBlockingSearches for why that distinction is
+    // what unblocked the ordered queue.
+    return countBlockingSearches(commands);
   } catch {
     return null;
   }
@@ -920,6 +925,24 @@ async function drainEpisodeSearches(): Promise<void> {
 export function maybeDrainEpisodeSearches(): void {
   if (!isSonarrConfigured()) return;
   void drainEpisodeSearches();
+}
+
+/**
+ * Drains the queue and waits for the pass to finish.
+ *
+ * The fire-and-forget version above is right for a page render, which must not
+ * block on a season's worth of searching. It is not enough on its own: when
+ * Sonarr is busy the drain gives up with "leaving the rest for the next pass",
+ * and for a long time there was no next pass unless somebody happened to load
+ * the admin downloads page. That is how a queued season sat untouched for
+ * hours with attempts still at zero.
+ *
+ * This is what the warden calls, on a schedule, so the next pass always comes.
+ */
+export async function drainEpisodeSearchesNow(): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  await drainEpisodeSearches();
+  return true;
 }
 /**
  * Searches a whole series in broadcast order -- season 1 episode 1 first,
