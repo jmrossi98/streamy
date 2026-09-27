@@ -25,13 +25,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run a recovery pass
-        id: run
         env:
           SECRET: ${{ secrets.DOWNLOAD_WARDEN_SECRET }}
         run: |
           set -euo pipefail
           if [ -z "${SECRET}" ]; then
-            echo "DOWNLOAD_WARDEN_SECRET is not set"; exit 1
+            echo "::error::DOWNLOAD_WARDEN_SECRET is not set"
+            exit 1
           fi
           code=$(curl -sS -o report.json -w '%{http_code}' -m 290 -X POST \
             -H "Authorization: Bearer ${SECRET}" \
@@ -39,24 +39,26 @@ jobs:
           echo "HTTP ${code}"
           cat report.json
           echo
-          [ "${code}" = "200" ]
+          test "${code}" = "200"
 
       - name: Fail if the queue has stopped moving
         run: |
           set -euo pipefail
+          # jq rather than an inline python heredoc: a multi-line script inside
+          # a YAML block scalar has to stay indented, and the first version put
+          # its code at column 0, which ended the scalar and made the whole
+          # workflow file unparseable. GitHub reported that as a failed run with
+          # no logs, on every push.
+          jq -r '"queue=\(.queueAfter.total) oldest=\(.queueAfter.oldestWaitMinutes)m series=\(.queueAfter.series) retrying=\(.queueAfter.retrying) healed=\(.healed | length) errors=\(.errors | length)"' report.json
+          jq -e '.errors | length == 0' report.json > /dev/null || {
+            echo "::warning::The pass reported step errors:"
+            jq -r '.errors[] | "  \(.step): \(.error)"' report.json
+          }
           # The pass succeeding and the queue being healthy are different
-          # facts. This step is the alert: a red run here means something has
-          # been waiting long enough that the automatic recovery did not work,
+          # facts. This is the alert: a red run means something has been
+          # waiting long enough that the automatic recovery did not work,
           # which is exactly the case that used to go unnoticed for hours.
-          stuck=$(python3 -c "import json;print(json.load(open('report.json'))['stuck'])")
-          python3 -c "
-import json
-r = json.load(open('report.json'))
-q = r['queueAfter']
-print(f\"queue={q['total']} oldest={q['oldestWaitMinutes']}m series={q['series']} retrying={q['retrying']}\")
-print(f\"healed={len(r['healed'])} errors={r['errors']}\")
-"
-          if [ "${stuck}" = "True" ]; then
-            echo "::error::Episode search queue has stopped moving; see report above"
+          if [ "$(jq -r '.stuck' report.json)" = "true" ]; then
+            echo "::error::Episode search queue has stopped moving; see the report above"
             exit 1
           fi
