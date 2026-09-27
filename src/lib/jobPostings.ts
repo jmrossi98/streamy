@@ -240,6 +240,53 @@ function keep(
   return { metros, remote, category, level: classifyLevel(posting.title) };
 }
 
+/**
+ * Roles scraped from career sites that publish no readable API.
+ *
+ * mediabox renders those pages and publishes the result; this reads the file
+ * rather than doing any scraping itself. Kept separate from the configured
+ * boards because these are not boards -- there is no slug to add or remove,
+ * and turning one off means editing the scraper.
+ *
+ * Returns an empty list on any failure. A scrape that is stale or broken
+ * shows up in the health probe on that file, not as an exception here that
+ * would take the whole poll down with it.
+ */
+async function fetchScrapedPostings(): Promise<{ postings: JobPosting[]; error: string | null }> {
+  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
+  if (!base) return { postings: [], error: null };
+  try {
+    const res = await fetch(`${base}/status/scraped-jobs.json`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+    });
+    if (!res.ok) return { postings: [], error: `scraped jobs: HTTP ${res.status}` };
+    const body = (await res.json()) as {
+      postings?: { id?: string; company?: string; title?: string; location?: string; url?: string }[];
+    };
+    const rows = Array.isArray(body?.postings) ? body.postings : [];
+    return {
+      postings: rows
+        .filter((r) => r.id && r.title && r.company)
+        .map((r) => ({
+          // Namespaced like the API providers, so a scraped role and an API
+          // role can never collide on id.
+          id: `scraped:${r.company}:${r.id}`,
+          company: String(r.company),
+          title: String(r.title),
+          location: r.location || "Unspecified",
+          url: r.url || "",
+          // The scrapers read a listing page, which shows a posted date in
+          // prose if at all. firstSeen is what "new" means here anyway.
+          postedAt: null,
+        })),
+      error: null,
+    };
+  } catch (err) {
+    return { postings: [], error: `scraped jobs: ${err instanceof Error ? err.message : "unreadable"}` };
+  }
+}
+
 export async function refreshJobPostings(): Promise<RefreshOutcome> {
   await seedJobSourcesIfEmpty();
   const all = await jobSources();
@@ -280,6 +327,11 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     })
   );
 
+  // Merged in alongside the boards, so everything downstream -- classifying,
+  // metro matching, notifying -- treats them identically.
+  const scraped = await fetchScrapedPostings();
+  if (scraped.error) outcome.errors.push(scraped.error);
+
   const fresh: {
     posting: JobPosting;
     metros: string[];
@@ -287,6 +339,12 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     category: JobCategory;
     level: JobLevel;
   }[] = [];
+  outcome.fetched += scraped.postings.length;
+  for (const posting of scraped.postings) {
+    const verdict = keep(posting);
+    if (verdict) fresh.push({ posting, ...verdict });
+  }
+
   for (const result of results) {
     if ("error" in result && result.error) {
       outcome.errors.push(`${result.source.company}: ${result.error}`);

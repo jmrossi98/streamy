@@ -63,6 +63,10 @@ export const FRESHNESS_LIMITS_MINUTES: Record<string, number> = {
   // rom-compress runs hourly and publishes even when a pass does nothing.
   // Generous: one pass can legitimately take the better part of an hour.
   "rom-compress.json": 150,
+  // job-scrape runs every six hours. Generous, because a run is nine page
+  // renders through a browser shared with Prowlarr and can queue behind an
+  // indexer search.
+  "scraped-jobs.json": 60 * 9,
   "context.json": 60 * 24 * 14,
   "docs-index.json": 60 * 24 * 14,
 };
