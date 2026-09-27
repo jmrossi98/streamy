@@ -17,7 +17,14 @@
 import { prisma } from "./db";
 import { notify } from "./notify";
 import { boardUrl, parseBoard, parseJobSources, type JobPosting, type JobSource } from "./jobBoards";
-import { classifyRole, isUsRemote, matchMetros, type JobCategory } from "./jobFilters";
+import {
+  classifyLevel,
+  classifyRole,
+  isUsRemote,
+  matchMetros,
+  type JobCategory,
+  type JobLevel,
+} from "./jobFilters";
 
 const FETCH_TIMEOUT_MS = 20_000;
 
@@ -191,13 +198,13 @@ async function fetchBoard(source: JobSource): Promise<JobPosting[]> {
 /** A posting worth storing: a role we watch for, in a place we watch. */
 function keep(
   posting: JobPosting
-): { metros: string[]; remote: boolean; category: JobCategory } | null {
+): { metros: string[]; remote: boolean; category: JobCategory; level: JobLevel } | null {
   const category = classifyRole(posting.title);
   if (!category) return null;
   const metros = matchMetros(posting.location).map((m) => m.key);
   const remote = includeRemote() && isUsRemote(posting.location);
   if (metros.length === 0 && !remote) return null;
-  return { metros, remote, category };
+  return { metros, remote, category, level: classifyLevel(posting.title) };
 }
 
 export async function refreshJobPostings(): Promise<RefreshOutcome> {
@@ -245,6 +252,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     metros: string[];
     remote: boolean;
     category: JobCategory;
+    level: JobLevel;
   }[] = [];
   for (const result of results) {
     if ("error" in result && result.error) {
@@ -270,7 +278,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     ).map((r) => r.id)
   );
 
-  for (const { posting, metros, remote, category } of fresh) {
+  for (const { posting, metros, remote, category, level } of fresh) {
     const data = {
       company: posting.company,
       title: posting.title,
@@ -279,6 +287,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
       metros: metros.join(","),
       remote,
       category,
+      level,
       postedAt: posting.postedAt ? new Date(posting.postedAt) : null,
       lastSeen: now,
     };
@@ -368,6 +377,7 @@ export type JobPostingRow = {
   metros: string;
   remote: boolean;
   category: string;
+  level: string;
   postedAt: Date | null;
   firstSeen: Date;
 };
@@ -386,6 +396,7 @@ export async function getJobPostings(limit = 100): Promise<JobPostingRow[]> {
         metros: true,
         remote: true,
         category: true,
+        level: true,
         postedAt: true,
         firstSeen: true,
       },

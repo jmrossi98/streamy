@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyRole, isSoftwareRole, isUsRemote, matchMetro, matchMetros } from "../jobFilters";
+import { classifyLevel, classifyRole, isSoftwareRole, isUsRemote, matchMetro, matchMetros } from "../jobFilters";
 
 describe("matchMetro", () => {
   it("matches the headline cities", () => {
@@ -253,5 +253,30 @@ describe("classifyRole: data", () => {
     // stay in AI rather than being caught by the scientist patterns.
     expect(classifyRole("Applied Scientist, Generative AI")).toBe("ai");
     expect(classifyRole("Machine Learning Engineer")).toBe("ai");
+  });
+});
+
+describe("classifyLevel", () => {
+  it("reads the entry-level markers", () => {
+    expect(classifyLevel("Software Engineer Intern, Mobile (Winter 2027)")).toBe("entry");
+    expect(classifyLevel("Software Engineer, New Grad (Dec 2026)")).toBe("entry");
+    expect(classifyLevel("Junior Developer")).toBe("entry");
+    expect(classifyLevel("Early Career Software Engineer")).toBe("entry");
+  });
+
+  it("puts staff above senior when a title claims both", () => {
+    // "Senior Staff Engineer" is staff, not senior. Order is the tie-break.
+    expect(classifyLevel("Senior Staff Software Engineer")).toBe("staff");
+    expect(classifyLevel("Principal Engineer")).toBe("staff");
+    expect(classifyLevel("Tech Lead, Payments")).toBe("staff");
+    expect(classifyLevel("Distinguished Engineer")).toBe("staff");
+  });
+
+  it("treats an unmarked title as mid/senior", () => {
+    // A convention, not a fact: a plain "Software Engineer" is an ordinary IC
+    // posting nearly everywhere, and a fourth bucket would hold most rows.
+    expect(classifyLevel("Software Engineer")).toBe("midsenior");
+    expect(classifyLevel("Senior Software Engineer")).toBe("midsenior");
+    expect(classifyLevel("Backend Engineer II")).toBe("midsenior");
   });
 });

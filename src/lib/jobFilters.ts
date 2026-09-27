@@ -411,3 +411,85 @@ export function classifyRole(title: string): JobCategory | null {
 export function isSoftwareRole(title: string): boolean {
   return classifyRole(title) !== null;
 }
+
+// ------------------------------------------------------------------- level
+
+/**
+ * Seniority, as coarsely as a job title can honestly support.
+ *
+ * Three buckets because that is the real decision: is this below me, at me, or
+ * above me. Finer grades (L4 vs L5, II vs III) are not comparable between
+ * companies and are mostly absent from titles anyway.
+ */
+export type JobLevel = "entry" | "midsenior" | "staff";
+
+export const LEVEL_LABELS: Record<JobLevel, string> = {
+  entry: "Entry / new grad",
+  midsenior: "Mid / senior",
+  staff: "Lead / staff+",
+};
+
+/**
+ * Checked before everything else, and worth stating why.
+ *
+ * "Senior Staff Engineer" is staff, not senior; "Staff Software Engineer,
+ * New Grad Program" does not exist. So staff wins over senior, and entry wins
+ * over nothing -- the order below is the tie-break, same as the categories.
+ */
+const LEVEL_PATTERNS: [JobLevel, string[]][] = [
+  [
+    "staff",
+    [
+      "staff",
+      "principal",
+      "distinguished",
+      "fellow",
+      "tech lead",
+      "technical lead",
+      "lead engineer",
+      "lead software",
+      "architect",
+    ],
+  ],
+  [
+    "entry",
+    [
+      "intern",
+      "internship",
+      "new grad",
+      "new graduate",
+      "university grad",
+      "early career",
+      "early-career",
+      "entry level",
+      "entry-level",
+      "junior",
+      "apprentice",
+      "co-op",
+      "campus",
+      "graduate program",
+    ],
+  ],
+  [
+    // Explicit senior markers. Anything unmarked also lands here -- see below.
+    "midsenior",
+    ["senior", "sr.", "sr ", "mid-level", "mid level", "ii", "iii"],
+  ],
+];
+
+/**
+ * The level a title implies.
+ *
+ * An unmarked title returns midsenior rather than null. That is a convention
+ * rather than a fact: a plain "Software Engineer" is an ordinary individual
+ * contributor posting at almost every company here, and the alternative --
+ * a fourth "unspecified" bucket -- would hold the majority of postings and
+ * make the filter useless.
+ */
+export function classifyLevel(title: string): JobLevel {
+  const hay = title.toLowerCase();
+  for (const [level, patterns] of LEVEL_PATTERNS) {
+    if (patterns.some((p) => titleHas(hay, p))) return level;
+  }
+  return "midsenior";
+}
