@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSoftwareRole, isUsRemote, matchMetro, matchMetros } from "../jobFilters";
+import { classifyRole, isSoftwareRole, isUsRemote, matchMetro, matchMetros } from "../jobFilters";
 
 describe("matchMetro", () => {
   it("matches the headline cities", () => {
@@ -130,5 +130,126 @@ describe("matchMetros", () => {
 
   it("returns nothing for somewhere unwatched", () => {
     expect(matchMetros("Dublin")).toEqual([]);
+  });
+});
+
+describe("classifyRole", () => {
+  it("recognises the categories that are not called software engineering", () => {
+    // The whole reason categories exist: none of these say "software
+    // engineer", and all of them are the job.
+    expect(classifyRole("Quantitative Researcher")).toBe("quant");
+    expect(classifyRole("Quantitative Developer, Systematic Trading")).toBe("quant");
+    expect(classifyRole("Firmware Engineer, Storage")).toBe("lowlevel");
+    expect(classifyRole("Embedded Software Engineer")).toBe("lowlevel");
+    expect(classifyRole("Linux Kernel Engineer")).toBe("lowlevel");
+    expect(classifyRole("Compiler Engineer")).toBe("lowlevel");
+    expect(classifyRole("Application Security Engineer")).toBe("security");
+    expect(classifyRole("Detection Engineering Lead")).toBe("security");
+  });
+
+  it("prefers the specific bucket over the generic one", () => {
+    // "Security Software Engineer" is honestly both. The specific one wins, or
+    // the security filter would be missing most of what belongs in it.
+    expect(classifyRole("Security Software Engineer")).toBe("security");
+    expect(classifyRole("Embedded Software Engineer, Firmware")).toBe("lowlevel");
+    expect(classifyRole("Machine Learning Engineer")).toBe("ai");
+    expect(classifyRole("Site Reliability Engineer")).toBe("infra");
+    expect(classifyRole("iOS Engineer")).toBe("mobile");
+    expect(classifyRole("Graphics Engineer")).toBe("graphics");
+  });
+
+  it("falls back to software for an ordinary engineering title", () => {
+    expect(classifyRole("Software Engineer, Backend")).toBe("swe");
+    expect(classifyRole("Senior Full Stack Developer")).toBe("swe");
+    expect(classifyRole("Member of Technical Staff")).toBe("swe");
+  });
+
+  it("still vetoes the jobs that merely borrow the words", () => {
+    expect(classifyRole("Sales Engineer")).toBeNull();
+    expect(classifyRole("Mechanical Engineer")).toBeNull();
+    expect(classifyRole("Technical Recruiter, Engineering")).toBeNull();
+    expect(classifyRole("Engineering Manager, Payments")).toBeNull();
+    // "security" and "quant" have their own impostors.
+    expect(classifyRole("Security Guard")).toBeNull();
+    expect(classifyRole("Quantitative UX Researcher")).toBeNull();
+  });
+
+  it("agrees with isSoftwareRole, which is now just the yes/no", () => {
+    for (const title of ["Firmware Engineer", "Sales Engineer", "Quantitative Researcher"]) {
+      expect(isSoftwareRole(title)).toBe(classifyRole(title) !== null);
+    }
+  });
+});
+
+describe("classifyRole: the shapes Jake asked to be sure of", () => {
+  it("catches the ordinary web-stack titles", () => {
+    for (const title of [
+      "Full Stack Engineer",
+      "Backend Engineer, Payments",
+      "Frontend Engineer",
+      "Front-End Developer",
+      "Application Engineer",
+      "Applications Developer",
+      "Product Engineer",
+      "Web Engineer",
+    ]) {
+      expect(classifyRole(title)).toBe("swe");
+    }
+  });
+
+  it("gives AI its own bucket, separate from data plumbing", () => {
+    // Building models and building the pipelines that feed them are different
+    // jobs; one filter for both was useless for either.
+    expect(classifyRole("AI Engineer")).toBe("ai");
+    expect(classifyRole("Research Engineer, LLM Inference")).toBe("ai");
+    expect(classifyRole("Applied Scientist, Generative AI")).toBe("ai");
+    expect(classifyRole("Computer Vision Engineer")).toBe("ai");
+    expect(classifyRole("Data Engineer")).toBe("data");
+    expect(classifyRole("Analytics Engineer")).toBe("data");
+  });
+
+  it("catches graphics work", () => {
+    expect(classifyRole("Graphics Engineer")).toBe("graphics");
+    expect(classifyRole("Rendering Engineer, Engine")).toBe("graphics");
+    expect(classifyRole("Gameplay Engineer")).toBe("graphics");
+    expect(classifyRole("GPU Engineer")).toBe("graphics");
+  });
+});
+
+describe("classifyRole: short tokens and forward-deployed", () => {
+  it("matches ML as a word, not inside another one", () => {
+    expect(classifyRole("ML Engineer, Ranking")).toBe("ai");
+    expect(classifyRole("AI/ML Engineer")).toBe("ai");
+    // The reason boundaries are needed at all.
+    expect(classifyRole("HTML Email Designer")).toBeNull();
+  });
+
+  it("gives forward-deployed work its own bucket", () => {
+    // Real Stripe title. Above swe in the order, or it just reads as software.
+    expect(classifyRole("Forward Deployed Engineer, Privy")).toBe("fde");
+    expect(classifyRole("Forward-Deployed Software Engineer")).toBe("fde");
+  });
+
+  it("still matches the long SDE/SWE abbreviations as words", () => {
+    expect(classifyRole("SDE II, Storage")).toBe("swe");
+    expect(classifyRole("SWE, Core")).toBe("swe");
+    expect(classifyRole("Site Reliability Engineer (SRE)")).toBe("infra");
+  });
+});
+
+describe("classifyRole: data science", () => {
+  it("separates answering questions from moving the data", () => {
+    expect(classifyRole("Data Scientist, Growth")).toBe("datasci");
+    expect(classifyRole("Research Scientist, Ranking")).toBe("datasci");
+    expect(classifyRole("Decision Scientist")).toBe("datasci");
+    expect(classifyRole("Data Engineer")).toBe("data");
+    expect(classifyRole("Analytics Engineer")).toBe("data");
+  });
+
+  it("does not swallow the AI bucket", () => {
+    // "Applied Scientist" is an ML title at most big tech firms, so it has to
+    // stay in AI rather than being caught by the scientist patterns.
+    expect(classifyRole("Applied Scientist, Generative AI")).toBe("ai");
+    expect(classifyRole("Machine Learning Engineer")).toBe("ai");
   });
 });

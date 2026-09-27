@@ -17,8 +17,7 @@
 import { prisma } from "./db";
 import { notify } from "./notify";
 import { boardUrl, parseBoard, parseJobSources, type JobPosting, type JobSource } from "./jobBoards";
-import { isUsRemote, matchMetros } from "./jobFilters";
-import { isSoftwareRole } from "./jobFilters";
+import { classifyRole, isUsRemote, matchMetros, type JobCategory } from "./jobFilters";
 
 const FETCH_TIMEOUT_MS = 20_000;
 
@@ -46,12 +45,75 @@ export type RefreshOutcome = {
   errors: string[];
 };
 
-export function jobSources(): JobSource[] {
+/** The env var, which now only seeds a fresh install. */
+export function seedJobSources(): JobSource[] {
   return parseJobSources(process.env.JOB_BOARD_SOURCES);
 }
 
-export function isJobBoardConfigured(): boolean {
-  return jobSources().length > 0;
+export type ManagedSource = JobSource & {
+  id: string;
+  enabled: boolean;
+  notify: boolean;
+};
+
+/**
+ * The boards to poll.
+ *
+ * Database first, env var only when the table is empty. That ordering is what
+ * makes the panel authoritative: once a row exists, editing the secret has no
+ * effect, so there is exactly one place a company can be added or removed and
+ * no way for the two to disagree silently.
+ */
+export async function jobSources(): Promise<ManagedSource[]> {
+  let rows: ManagedSource[] = [];
+  try {
+    rows = (
+      await prisma.jobBoardSource.findMany({ orderBy: { company: "asc" } })
+    ).map((r) => ({
+      id: r.id,
+      provider: r.provider as JobSource["provider"],
+      slug: r.slug,
+      company: r.company,
+      enabled: r.enabled,
+      notify: r.notify,
+    }));
+  } catch {
+    rows = [];
+  }
+  if (rows.length > 0) return rows;
+
+  return seedJobSources().map((src) => ({
+    ...src,
+    id: `${src.provider}:${src.slug}`,
+    enabled: true,
+    notify: true,
+  }));
+}
+
+/**
+ * Copies the env var into the table, once.
+ *
+ * Only when the table is empty, so this cannot undo a deliberate removal: a
+ * company deleted in the panel would otherwise come back on the next poll,
+ * which is the most annoying possible behaviour.
+ */
+export async function seedJobSourcesIfEmpty(): Promise<number> {
+  try {
+    if ((await prisma.jobBoardSource.count()) > 0) return 0;
+    const seeds = seedJobSources();
+    for (const src of seeds) {
+      await prisma.jobBoardSource
+        .create({ data: { provider: src.provider, slug: src.slug, company: src.company } })
+        .catch(() => undefined);
+    }
+    return seeds.length;
+  } catch {
+    return 0;
+  }
+}
+
+export async function isJobBoardConfigured(): Promise<boolean> {
+  return (await jobSources()).length > 0;
 }
 
 /** Whether US-remote roles count as a match, alongside the watched metros. */
@@ -126,17 +188,23 @@ async function fetchBoard(source: JobSource): Promise<JobPosting[]> {
   return parseBoard(source, await res.json());
 }
 
-/** A posting worth storing: a software role in a watched place. */
-function keep(posting: JobPosting): { metros: string[]; remote: boolean } | null {
-  if (!isSoftwareRole(posting.title)) return null;
+/** A posting worth storing: a role we watch for, in a place we watch. */
+function keep(
+  posting: JobPosting
+): { metros: string[]; remote: boolean; category: JobCategory } | null {
+  const category = classifyRole(posting.title);
+  if (!category) return null;
   const metros = matchMetros(posting.location).map((m) => m.key);
   const remote = includeRemote() && isUsRemote(posting.location);
   if (metros.length === 0 && !remote) return null;
-  return { metros, remote };
+  return { metros, remote, category };
 }
 
 export async function refreshJobPostings(): Promise<RefreshOutcome> {
-  const sources = jobSources();
+  await seedJobSourcesIfEmpty();
+  const all = await jobSources();
+  // Disabled rows stay configured but are not polled.
+  const sources = all.filter((src) => src.enabled);
   const outcome: RefreshOutcome = {
     sources: sources.length,
     fetched: 0,
@@ -148,7 +216,9 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     errors: [],
   };
   if (sources.length === 0) {
-    outcome.errors.push("JOB_BOARD_SOURCES is not set");
+    outcome.errors.push(
+      all.length === 0 ? "no job boards configured" : "every configured board is disabled"
+    );
     return outcome;
   }
 
@@ -170,7 +240,12 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     })
   );
 
-  const fresh: { posting: JobPosting; metros: string[]; remote: boolean }[] = [];
+  const fresh: {
+    posting: JobPosting;
+    metros: string[];
+    remote: boolean;
+    category: JobCategory;
+  }[] = [];
   for (const result of results) {
     if ("error" in result && result.error) {
       outcome.errors.push(`${result.source.company}: ${result.error}`);
@@ -195,7 +270,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     ).map((r) => r.id)
   );
 
-  for (const { posting, metros, remote } of fresh) {
+  for (const { posting, metros, remote, category } of fresh) {
     const data = {
       company: posting.company,
       title: posting.title,
@@ -203,6 +278,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
       url: posting.url,
       metros: metros.join(","),
       remote,
+      category,
       postedAt: posting.postedAt ? new Date(posting.postedAt) : null,
       lastSeen: now,
     };
@@ -226,19 +302,32 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     outcome.removed = count;
   }
 
-  const announced = await announceNew();
+  const quiet = new Set(all.filter((src) => !src.notify).map((src) => src.company));
+  const announced = await announceNew(quiet);
   outcome.announced = announced.count;
   outcome.notified = announced.notified;
   return outcome;
 }
 
 /** Sends one message for everything not yet announced, and stamps them. */
-async function announceNew(): Promise<{ count: number; notified: boolean }> {
-  const pending = await prisma.jobPosting.findMany({
+async function announceNew(quiet: Set<string>): Promise<{ count: number; notified: boolean }> {
+  const all = await prisma.jobPosting.findMany({
     where: { notifiedAt: null },
     orderBy: [{ company: "asc" }, { title: "asc" }],
   });
-  if (pending.length === 0) return { count: 0, notified: false };
+  if (all.length === 0) return { count: 0, notified: false };
+
+  // A company can be worth watching without being worth an email. Its postings
+  // are still stamped below, so turning notifications back on does not then
+  // announce everything it has ever had.
+  const pending = all.filter((p) => !quiet.has(p.company));
+  if (pending.length === 0) {
+    await prisma.jobPosting.updateMany({
+      where: { id: { in: all.map((p) => p.id) } },
+      data: { notifiedAt: new Date() },
+    });
+    return { count: 0, notified: false };
+  }
 
   const lines = pending
     .slice(0, MAX_ANNOUNCED)
@@ -263,7 +352,7 @@ async function announceNew(): Promise<{ count: number; notified: boolean }> {
   // notification, not a message that repeats every poll forever -- and the
   // postings are in the panel regardless.
   await prisma.jobPosting.updateMany({
-    where: { id: { in: pending.map((p) => p.id) } },
+    where: { id: { in: all.map((p) => p.id) } },
     data: { notifiedAt: new Date() },
   });
 
@@ -278,6 +367,7 @@ export type JobPostingRow = {
   url: string;
   metros: string;
   remote: boolean;
+  category: string;
   postedAt: Date | null;
   firstSeen: Date;
 };
@@ -295,6 +385,7 @@ export async function getJobPostings(limit = 100): Promise<JobPostingRow[]> {
         url: true,
         metros: true,
         remote: true,
+        category: true,
         postedAt: true,
         firstSeen: true,
       },
