@@ -237,11 +237,13 @@ describe("classifyRole: short tokens and forward-deployed", () => {
   });
 });
 
-describe("classifyRole: data science", () => {
-  it("separates answering questions from moving the data", () => {
-    expect(classifyRole("Data Scientist, Growth")).toBe("datasci");
-    expect(classifyRole("Research Scientist, Ranking")).toBe("datasci");
-    expect(classifyRole("Decision Scientist")).toBe("datasci");
+describe("classifyRole: data", () => {
+  it("keeps science and engineering in one bucket", () => {
+    // Different jobs, but not different enough to be worth two filters: both
+    // are what someone scanning for data work wants to see.
+    expect(classifyRole("Data Scientist, Growth")).toBe("data");
+    expect(classifyRole("Research Scientist, Ranking")).toBe("data");
+    expect(classifyRole("Decision Scientist")).toBe("data");
     expect(classifyRole("Data Engineer")).toBe("data");
     expect(classifyRole("Analytics Engineer")).toBe("data");
   });

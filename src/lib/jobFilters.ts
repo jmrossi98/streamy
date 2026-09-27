@@ -144,7 +144,6 @@ export type JobCategory =
   | "lowlevel"
   | "security"
   | "data"
-  | "datasci"
   | "infra"
   | "mobile"
   | "graphics";
@@ -156,8 +155,7 @@ export const CATEGORY_LABELS: Record<JobCategory, string> = {
   quant: "Quant",
   lowlevel: "Firmware / low-level",
   security: "Security",
-  data: "Data eng",
-  datasci: "Data science",
+  data: "Data",
   infra: "Infra / SRE",
   mobile: "Mobile",
   graphics: "Graphics / games",
@@ -270,9 +268,11 @@ const CATEGORY_PATTERNS: [JobCategory, string[]][] = [
     ],
   ],
   [
-    // Above data engineering, which is the adjacent-but-different job: a data
-    // scientist answers questions with the data, a data engineer moves it.
-    "datasci",
+    // Science and engineering in one bucket, on request. They are different
+    // jobs, but not different enough to be worth two filters here -- someone
+    // scanning for data work wants to see both and can tell them apart from
+    // the title.
+    "data",
     [
       "data scientist",
       "data science",
@@ -283,11 +283,14 @@ const CATEGORY_PATTERNS: [JobCategory, string[]][] = [
       "statistician",
       "biostatistician",
       "econometric",
+      "data engineer",
+      "data platform engineer",
+      "data infrastructure",
+      "analytics engineer",
+      "data analyst",
+      "business intelligence",
+      "mlops",
     ],
-  ],
-  [
-    "data",
-    ["data engineer", "data platform engineer", "data infrastructure", "analytics engineer", "mlops", "data analyst", "business intelligence"],
   ],
   [
     "infra",
