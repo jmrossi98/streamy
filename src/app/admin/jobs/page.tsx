@@ -39,6 +39,7 @@ export default async function AdminJobsPage() {
                 metros: job.metros,
                 remote: job.remote,
                 category: job.category,
+                level: job.level,
                 firstSeen: job.firstSeen.toISOString(),
               }))}
             />

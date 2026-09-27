@@ -414,6 +414,11 @@ model JobPosting {
   /// shows up as postings are re-polled instead of silently rewriting history.
   category String @default("swe")
 
+  /// Seniority as the title implies it: entry, midsenior or staff. Unmarked
+  /// titles are midsenior by convention -- see lib/jobFilters.ts for why that
+  /// beats a fourth bucket holding most of the rows.
+  level String @default("midsenior")
+
   /// The provider's own date, when it gives one.
   postedAt   DateTime?
   firstSeen  DateTime  @default(now())
@@ -427,6 +432,7 @@ model JobPosting {
   @@index([lastSeen])
   @@index([company])
   @@index([category])
+  @@index([level])
 }
 
 model HealthProbeRun {

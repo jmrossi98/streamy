@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CATEGORY_LABELS, type JobCategory } from "@/lib/jobFilters";
+import { CATEGORY_LABELS, LEVEL_LABELS, type JobCategory, type JobLevel } from "@/lib/jobFilters";
 
 export type JobListingRow = {
   id: string;
@@ -13,6 +13,7 @@ export type JobListingRow = {
   metros: string;
   remote: boolean;
   category: string;
+  level: string;
   firstSeen: string;
 };
 
@@ -55,6 +56,7 @@ export function JobListingsPanel({
   const [metro, setMetro] = useState<string>("all");
   const [company, setCompany] = useState<string>("all");
   const [category, setCategory] = useState<string>("all");
+  const [level, setLevel] = useState<string>("all");
 
   if (!configured) {
     return (
@@ -87,8 +89,9 @@ export function JobListingsPanel({
         ? listings.filter((l) => l.remote)
         : listings.filter((l) => l.metros.split(",").includes(metro));
   const byCompany = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
-  const shown =
+  const byCategory =
     category === "all" ? byCompany : byCompany.filter((l) => l.category === category);
+  const shown = level === "all" ? byCategory : byCategory.filter((l) => l.level === level);
 
   // Only categories actually present, so the row is not a list of buckets that
   // happen to exist in the code.
@@ -161,6 +164,23 @@ export function JobListingsPanel({
         </div>
       )}
 
+      <div className="flex flex-wrap gap-1 text-xs">
+        {["all", "entry", "midsenior", "staff"].map((key) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setLevel(key)}
+            className={`rounded border px-2 py-0.5 transition-colors ${
+              level === key
+                ? "border-white/40 bg-white/15 text-white"
+                : "border-white/15 text-white/55 hover:bg-white/10"
+            }`}
+          >
+            {key === "all" ? "Any level" : LEVEL_LABELS[key as JobLevel]}
+          </button>
+        ))}
+      </div>
+
       {listings.length === 0 ? (
         <p className="text-sm text-white/50">
           Nothing yet. Polls every 30 minutes, and emails when something new appears.
@@ -210,6 +230,11 @@ export function JobListingsPanel({
                 {listing.remote && (
                   <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/55">
                     Remote
+                  </span>
+                )}
+                {listing.level !== "midsenior" && listing.level in LEVEL_LABELS && (
+                  <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-white/40">
+                    {LEVEL_LABELS[listing.level as JobLevel]}
                   </span>
                 )}
                 {listing.category in CATEGORY_LABELS && listing.category !== "swe" && (
