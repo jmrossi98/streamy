@@ -40,6 +40,7 @@ export default async function AdminJobsPage() {
                 remote: job.remote,
                 category: job.category,
                 level: job.level,
+                opened: job.openedAt !== null,
                 firstSeen: job.firstSeen.toISOString(),
               }))}
             />

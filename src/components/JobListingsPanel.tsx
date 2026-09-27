@@ -14,6 +14,8 @@ export type JobListingRow = {
   remote: boolean;
   category: string;
   level: string;
+  /** Already opened from here at least once. */
+  opened: boolean;
   firstSeen: string;
 };
 
@@ -46,6 +48,49 @@ function timeAgo(iso: string): string {
  * A posting open in several cities carries several metro badges rather than
  * being filed under one, because that is what the source actually says.
  */
+/**
+ * One labelled row of pills.
+ *
+ * Extracted because location, role and level were three hand-rolled rows that
+ * had drifted: location sat inline with the header and pushed right, the other
+ * two sat below it with no label. Reading which filters were even available
+ * meant scanning three different shapes.
+ */
+function FilterRow({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { key: string; label: string }[];
+  value: string;
+  onChange: (key: string) => void;
+}) {
+  if (options.length <= 2) return null;
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+      <span className="w-14 shrink-0 text-white/30">{label}</span>
+      <div className="flex flex-wrap gap-1">
+        {options.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => onChange(option.key)}
+            className={`rounded border px-2 py-0.5 transition-colors ${
+              value === option.key
+                ? "border-white/40 bg-white/15 text-white"
+                : "border-white/15 text-white/55 hover:bg-white/10"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function JobListingsPanel({
   listings,
   configured,
@@ -57,6 +102,27 @@ export function JobListingsPanel({
   const [company, setCompany] = useState<string>("all");
   const [category, setCategory] = useState<string>("all");
   const [level, setLevel] = useState<string>("all");
+  const [hideOpened, setHideOpened] = useState(false);
+  /**
+   * Opened in this session, on top of what the server already knew.
+   *
+   * Kept locally as well so a row greys out the instant it is clicked, rather
+   * than on the next page load -- the click opens a new tab, so without this
+   * the list you come back to looks untouched.
+   */
+  const [openedNow, setOpenedNow] = useState<Set<string>>(new Set());
+
+  function markOpened(id: string) {
+    setOpenedNow((prev) => new Set(prev).add(id));
+    // Fire and forget: the link opens regardless, and a failed mark is worth
+    // one un-greyed row, never a delayed or blocked navigation.
+    void fetch("/api/admin/jobs/opened", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+      keepalive: true,
+    }).catch(() => undefined);
+  }
 
   if (!configured) {
     return (
@@ -78,9 +144,14 @@ export function JobListingsPanel({
   // Only companies that actually have something open, so the list is not a
   // roster of every board configured -- most of which have nothing matching on
   // any given day.
-  const companies = [...new Set(listings.map((l) => l.company))].sort((a, b) =>
-    a.localeCompare(b)
-  );
+  // Counted, and alphabetical rather than ranked: with sixty-odd boards the
+  // dropdown is something you look a company up in, not something you browse,
+  // and the count answers "is it worth picking" without selecting it first.
+  const companyCounts = new Map<string, number>();
+  for (const l of listings) {
+    companyCounts.set(l.company, (companyCounts.get(l.company) ?? 0) + 1);
+  }
+  const companies = [...companyCounts.keys()].sort((a, b) => a.localeCompare(b));
 
   const byMetro =
     metro === "all"
@@ -91,7 +162,10 @@ export function JobListingsPanel({
   const byCompany = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
   const byCategory =
     category === "all" ? byCompany : byCompany.filter((l) => l.category === category);
-  const shown = level === "all" ? byCategory : byCategory.filter((l) => l.level === level);
+  const byLevel = level === "all" ? byCategory : byCategory.filter((l) => l.level === level);
+  const isOpened = (l: JobListingRow) => l.opened || openedNow.has(l.id);
+  const shown = hideOpened ? byLevel.filter((l) => !isOpened(l)) : byLevel;
+  const openedCount = listings.filter(isOpened).length;
 
   // Only categories actually present, so the row is not a list of buckets that
   // happen to exist in the code.
@@ -101,85 +175,88 @@ export function JobListingsPanel({
 
   return (
     <div className="w-full space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
         <span className="text-white/40">
           {shown.length === listings.length
             ? `${listings.length} open role${listings.length === 1 ? "" : "s"}`
             : `${shown.length} of ${listings.length} open roles`}
         </span>
-        {/* A select rather than pills: there are dozens of boards, and a pill
-            per company would be a wall of buttons above the thing you came to
-            read. */}
-        <label className="flex items-center gap-1.5 text-white/40">
-          <span className="sr-only">Company</span>
+
+        {/* A select rather than pills: sixty-odd companies would be a wall of
+            buttons above the thing you came to read. */}
+        <label className="flex items-center gap-1.5">
+          <span className="text-white/30">Company</span>
           <select
             value={company}
             onChange={(e) => setCompany(e.target.value)}
-            className="rounded border border-white/15 bg-black/40 px-2 py-0.5 text-xs text-white/80 outline-none focus:border-white/40"
+            className="max-w-[16rem] rounded border border-white/15 bg-[#141414] px-2 py-1 text-xs text-white/85 outline-none transition-colors hover:border-white/30 focus:border-white/45 [color-scheme:dark]"
           >
-            <option value="all">All companies</option>
+            <option value="all">All companies ({listings.length})</option>
             {companies.map((name) => (
               <option key={name} value={name}>
-                {name}
+                {name} ({companyCounts.get(name)})
               </option>
             ))}
           </select>
         </label>
-        <div className="ml-auto flex flex-wrap gap-1">
-          {["all", ...Object.keys(METRO_LABELS).filter((k) => present.has(k)), ...(present.has("remote") ? ["remote"] : [])].map(
-            (key) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setMetro(key)}
-                className={`rounded border px-2 py-0.5 transition-colors ${
-                  metro === key
-                    ? "border-white/40 bg-white/15 text-white"
-                    : "border-white/15 text-white/55 hover:bg-white/10"
-                }`}
-              >
-                {key === "all" ? "All" : key === "remote" ? "Remote" : METRO_LABELS[key]}
-              </button>
-            )
-          )}
-        </div>
-      </div>
 
-      {categories.length > 1 && (
-        <div className="flex flex-wrap gap-1 text-xs">
-          {["all", ...categories].map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setCategory(key)}
-              className={`rounded border px-2 py-0.5 transition-colors ${
-                category === key
-                  ? "border-white/40 bg-white/15 text-white"
-                  : "border-white/15 text-white/55 hover:bg-white/10"
-              }`}
-            >
-              {key === "all" ? "All roles" : CATEGORY_LABELS[key as JobCategory]}
-            </button>
-          ))}
-        </div>
-      )}
+        {openedCount > 0 && (
+          <label className="flex items-center gap-1.5 text-white/40">
+            <input
+              type="checkbox"
+              checked={hideOpened}
+              onChange={(e) => setHideOpened(e.target.checked)}
+            />
+            Hide explored ({openedCount})
+          </label>
+        )}
 
-      <div className="flex flex-wrap gap-1 text-xs">
-        {["all", "entry", "midsenior", "staff"].map((key) => (
+        {company !== "all" && (
           <button
-            key={key}
             type="button"
-            onClick={() => setLevel(key)}
-            className={`rounded border px-2 py-0.5 transition-colors ${
-              level === key
-                ? "border-white/40 bg-white/15 text-white"
-                : "border-white/15 text-white/55 hover:bg-white/10"
-            }`}
+            onClick={() => setCompany("all")}
+            className="text-white/40 underline-offset-2 transition-colors hover:text-white/70 hover:underline"
           >
-            {key === "all" ? "Any level" : LEVEL_LABELS[key as JobLevel]}
+            clear
           </button>
-        ))}
+        )}
       </div>
+
+      <FilterRow
+        label="Location"
+        value={metro}
+        onChange={setMetro}
+        options={[
+          { key: "all", label: "Anywhere" },
+          ...Object.keys(METRO_LABELS)
+            .filter((k) => present.has(k))
+            .map((k) => ({ key: k, label: METRO_LABELS[k] })),
+          ...(present.has("remote") ? [{ key: "remote", label: "Remote" }] : []),
+        ]}
+      />
+
+      <FilterRow
+        label="Role"
+        value={category}
+        onChange={setCategory}
+        options={[
+          { key: "all", label: "Any role" },
+          ...categories.map((c) => ({ key: c, label: CATEGORY_LABELS[c] })),
+        ]}
+      />
+
+      <FilterRow
+        label="Level"
+        value={level}
+        onChange={setLevel}
+        options={[
+          { key: "all", label: "Any level" },
+          ...(["entry", "midsenior", "staff"] as JobLevel[]).map((l) => ({
+            key: l,
+            label: LEVEL_LABELS[l],
+          })),
+        ]}
+      />
 
       {listings.length === 0 ? (
         <p className="text-sm text-white/50">
@@ -187,15 +264,33 @@ export function JobListingsPanel({
         </p>
       ) : shown.length === 0 ? (
         <p className="text-sm text-white/50">
-          Nothing matching{company === "all" ? "" : ` at ${company}`}
-          {metro === "all" ? "" : " there"} right now.
+          {/* Assembled from the filters actually set, so it reads as a sentence
+              rather than stitching fragments that each assume the others. */}
+          No open roles
+          {[
+            company === "all" ? null : ` at ${company}`,
+            category === "all" ? null : ` in ${CATEGORY_LABELS[category as JobCategory]}`,
+            level === "all" ? null : ` at ${LEVEL_LABELS[level as JobLevel].toLowerCase()}`,
+            metro === "all"
+              ? null
+              : metro === "remote"
+                ? " that are remote"
+                : ` in ${METRO_LABELS[metro]}`,
+          ]
+            .filter(Boolean)
+            .join("")}
+          {hideOpened ? " left to explore." : "."}
         </p>
       ) : (
         <ul className="space-y-1.5">
           {shown.map((listing) => (
             <li
               key={listing.id}
-              className="rounded border border-white/10 bg-black/20 px-3 py-2"
+              className={`rounded border px-3 py-2 ${
+                isOpened(listing)
+                  ? "border-white/5 bg-black/10"
+                  : "border-white/10 bg-black/20"
+              }`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -203,7 +298,15 @@ export function JobListingsPanel({
                     href={listing.url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="block truncate text-xs font-medium text-white hover:underline"
+                    onClick={() => markOpened(listing.id)}
+                    onAuxClick={(e) => {
+                      // Middle-click opens a tab too, and is how most links
+                      // here actually get used.
+                      if (e.button === 1) markOpened(listing.id);
+                    }}
+                    className={`block truncate text-xs font-medium hover:underline ${
+                      isOpened(listing) ? "text-white/45" : "text-white"
+                    }`}
                   >
                     {listing.title}
                   </a>
@@ -211,7 +314,8 @@ export function JobListingsPanel({
                     {listing.company} · {listing.location}
                   </p>
                 </div>
-                <span className="shrink-0 text-[10px] text-white/35">
+                <span className="flex shrink-0 items-center gap-1.5 text-[10px] text-white/35">
+                  {isOpened(listing) && <span className="text-white/25">explored</span>}
                   {timeAgo(listing.firstSeen)}
                 </span>
               </div>
