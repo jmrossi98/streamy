@@ -419,6 +419,13 @@ model JobPosting {
   /// beats a fourth bucket holding most of the rows.
   level String @default("midsenior")
 
+  /// When this listing was last opened from the panel.
+  ///
+  /// Server-side rather than browser history so "already looked at" survives a
+  /// different device and a cleared cache -- the point is to know what has been
+  /// explored, which is a fact about the search rather than about one browser.
+  openedAt DateTime?
+
   /// The provider's own date, when it gives one.
   postedAt   DateTime?
   firstSeen  DateTime  @default(now())
@@ -433,6 +440,7 @@ model JobPosting {
   @@index([company])
   @@index([category])
   @@index([level])
+  @@index([openedAt])
 }
 
 model HealthProbeRun {

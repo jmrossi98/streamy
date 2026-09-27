@@ -378,6 +378,7 @@ export type JobPostingRow = {
   remote: boolean;
   category: string;
   level: string;
+  openedAt: Date | null;
   postedAt: Date | null;
   firstSeen: Date;
 };
@@ -397,6 +398,7 @@ export async function getJobPostings(limit = 100): Promise<JobPostingRow[]> {
         remote: true,
         category: true,
         level: true,
+        openedAt: true,
         postedAt: true,
         firstSeen: true,
       },

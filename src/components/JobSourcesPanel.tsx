@@ -95,7 +95,7 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
           <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
-            className="rounded border border-white/15 bg-black/40 px-2 py-1.5 text-white/80 outline-none focus:border-white/40"
+            className="rounded border border-white/15 bg-[#141414] px-2 py-1 text-xs text-white/85 outline-none transition-colors hover:border-white/30 focus:border-white/45 [color-scheme:dark] py-1.5"
           >
             <option value="greenhouse">Greenhouse</option>
             <option value="ashby">Ashby</option>
