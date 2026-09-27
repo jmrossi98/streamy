@@ -10,6 +10,7 @@ export type JobSourceRow = {
   company: string;
   enabled: boolean;
   notify: boolean;
+  tag: string | null;
   /** How many open roles this board is currently contributing. */
   openRoles: number;
 };
@@ -30,6 +31,7 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
   const [provider, setProvider] = useState("greenhouse");
   const [slug, setSlug] = useState("");
   const [company, setCompany] = useState("");
+  const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,7 +58,15 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
       // The server checks the board actually answers before storing it, so a
       // mistyped slug is rejected here rather than sitting in the list
       // contributing nothing.
-      if (await send({ action: "add", provider, slug: slug.trim(), company: company.trim() })) {
+      if (
+        await send({
+          action: "add",
+          provider,
+          slug: slug.trim(),
+          company: company.trim(),
+          tag: tag.trim(),
+        })
+      ) {
         setSlug("");
         setCompany("");
         router.refresh();
@@ -95,7 +105,7 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
           <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
-            className="rounded border border-white/15 bg-[#141414] px-2 py-1 text-xs text-white/85 outline-none transition-colors hover:border-white/30 focus:border-white/45 [color-scheme:dark] py-1.5"
+            className="streamy-select rounded border border-white/15 bg-black/40 py-1.5 pl-3 text-xs text-white focus:border-white/40 focus:outline-none"
           >
             <option value="greenhouse">Greenhouse</option>
             <option value="ashby">Ashby</option>
@@ -122,6 +132,15 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
             className="rounded border border-white/15 bg-black/40 px-2 py-1.5 text-white outline-none focus:border-white/40"
           />
         </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-white/40">Group (optional)</span>
+          <input
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder="startup"
+            className="w-24 rounded border border-white/15 bg-black/40 px-2 py-1.5 text-white outline-none focus:border-white/40"
+          />
+        </label>
         <button
           type="submit"
           disabled={busy || !slug.trim()}
@@ -145,9 +164,12 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
             <span className="text-white/30">
               {row.provider}:{row.slug}
             </span>
-            <span className="text-white/35">
-              {row.openRoles} open
-            </span>
+            <span className="text-white/35">{row.openRoles} open</span>
+            {row.tag && (
+              <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/50">
+                {row.tag}
+              </span>
+            )}
             <label className="ml-auto flex items-center gap-1 text-white/50">
               <input
                 type="checkbox"

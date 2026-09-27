@@ -74,18 +74,18 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
       {/* Not "Today": the slate reaches past midnight UTC and regularly
           shows tomorrow's fixtures alongside tonight's, so the heading was
           claiming a narrower window than the list actually covers. */}
-      <h2 className="streamy-page-title-x mb-1 font-display text-2xl font-bold text-white">
+      <h2 className="mb-1 font-display text-2xl font-bold text-white">
         Game Schedule
       </h2>
-      <p className="streamy-page-title-x mb-4 text-sm text-white/50">
+      <p className="mb-4 text-sm text-white/50">
         What&rsquo;s being played and where to watch it - only games with a
         channel to try.
       </p>
 
       {watchable === null ? (
-        <p className="streamy-page-title-x text-sm text-white/40">Loading…</p>
+        <p className="text-sm text-white/40">Loading…</p>
       ) : (
-        <ul className="streamy-page-title-x space-y-1">
+        <ul className="space-y-1">
           {watchable.map((f) => (
             <li key={f.id}>
               <Link

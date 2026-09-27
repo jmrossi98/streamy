@@ -21,7 +21,7 @@
  * the panel then reads as "no jobs" rather than "not wired up".
  */
 
-export type JobProvider = "greenhouse" | "ashby" | "workday";
+export type JobProvider = "greenhouse" | "ashby" | "workday" | "eightfold";
 
 export type JobSource = {
   /** Display name, e.g. "Stripe". */
@@ -34,12 +34,26 @@ export type JobSource = {
    * three parts -- tenant, data-centre number and career-site name -- written
    * "nvidia/wd5/NVIDIAExternalCareerSite", because a Workday instance is
    * addressed by all three and there is no way to derive the last two.
+   * Eightfold needs the careers host and the domain it filters by, written
+   * "explore.jobs.netflix.net/netflix.com".
    */
   slug: string;
 };
 
 /** Tenant, wd number and site name, for a Workday source. */
 export type WorkdayTarget = { tenant: string; dc: string; site: string };
+
+/** Careers host and domain, for an Eightfold source. */
+export type EightfoldTarget = { host: string; domain: string };
+
+export function parseEightfoldSlug(slug: string): EightfoldTarget | null {
+  const parts = slug.split("/");
+  if (parts.length !== 2) return null;
+  const [host, domain] = parts.map((x) => x.trim());
+  // Both are hostnames; anything without a dot is a typo, not a host.
+  if (!host.includes(".") || !domain.includes(".")) return null;
+  return { host, domain };
+}
 
 export function parseWorkdaySlug(slug: string): WorkdayTarget | null {
   const parts = slug.split("/");
@@ -62,6 +76,13 @@ export type JobPosting = {
 
 /** The public endpoint listing a company's open roles. */
 export function boardUrl(source: JobSource): string {
+  if (source.provider === "eightfold") {
+    const target = parseEightfoldSlug(source.slug);
+    if (!target) return "";
+    return `https://${target.host}/api/apply/v2/jobs?domain=${encodeURIComponent(
+      target.domain
+    )}&start=0&num=50`;
+  }
   if (source.provider === "workday") {
     const target = parseWorkdaySlug(source.slug);
     if (!target) return "";
@@ -148,7 +169,50 @@ function parseWorkday(source: JobSource, payload: unknown): JobPosting[] {
   return out;
 }
 
+/**
+ * Eightfold's payload.
+ *
+ * Better shaped than Workday's in the one way that matters here: a multi-site
+ * role lists its places in `locations` rather than collapsing them to
+ * "2 Locations", so those postings can still be filed under every metro they
+ * are actually open in. The array is joined rather than picked from, because
+ * the metro matcher reads all of them.
+ */
+function parseEightfold(source: JobSource, payload: unknown): JobPosting[] {
+  const rows = (payload as { positions?: unknown })?.positions;
+  if (!Array.isArray(rows)) return [];
+
+  const out: JobPosting[] = [];
+  for (const entry of rows) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const job = entry as Record<string, unknown>;
+    const id = asString(job.id) || String(job.id ?? "");
+    const title = asString(job.name);
+    if (!id || id === "undefined" || !title) continue;
+
+    const places = Array.isArray(job.locations)
+      ? (job.locations as unknown[]).map((l) => asString(l)).filter(Boolean)
+      : [];
+    const location = places.length > 0 ? places.join("; ") : asString(job.location);
+
+    // t_update is unix seconds; the other providers give ISO strings or
+    // nothing, and the row stores whatever it is given.
+    const updated = typeof job.t_update === "number" ? job.t_update : null;
+
+    out.push({
+      id: `eightfold:${source.slug.split("/")[1] ?? source.slug}:${id}`,
+      company: source.company,
+      title,
+      location: location || "Unspecified",
+      url: asString(job.canonicalPositionUrl) || boardUrl(source),
+      postedAt: updated ? new Date(updated * 1000).toISOString() : null,
+    });
+  }
+  return out;
+}
+
 export function parseBoard(source: JobSource, payload: unknown): JobPosting[] {
+  if (source.provider === "eightfold") return parseEightfold(source, payload);
   if (source.provider === "workday") return parseWorkday(source, payload);
 
   const raw = Array.isArray(payload)
@@ -210,7 +274,15 @@ export function parseJobSources(raw: string | null | undefined): JobSource[] {
     const provider = parts[0].trim().toLowerCase();
     const slug = parts[1].trim();
     if (!slug) continue;
-    if (provider !== "greenhouse" && provider !== "ashby" && provider !== "workday") continue;
+    if (
+      provider !== "greenhouse" &&
+      provider !== "ashby" &&
+      provider !== "workday" &&
+      provider !== "eightfold"
+    ) {
+      continue;
+    }
+    if (provider === "eightfold" && !parseEightfoldSlug(slug)) continue;
     // A Workday slug is "tenant/wdN/Site"; reject a malformed one here rather
     // than letting it through to fetch a URL that cannot exist.
     if (provider === "workday" && !parseWorkdaySlug(slug)) continue;

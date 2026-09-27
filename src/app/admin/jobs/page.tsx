@@ -17,6 +17,11 @@ export default async function AdminJobsPage() {
   // Counted from the postings rather than stored on the board, so the number
   // is always what the list actually holds -- a board can be configured and
   // contributing nothing, which is worth seeing.
+  const tagByCompany = new Map<string, string>();
+  for (const src of sources) {
+    if (src.tag) tagByCompany.set(src.company, src.tag);
+  }
+
   const openByCompany = new Map<string, number>();
   for (const job of jobListings) {
     openByCompany.set(job.company, (openByCompany.get(job.company) ?? 0) + 1);
@@ -41,6 +46,7 @@ export default async function AdminJobsPage() {
                 category: job.category,
                 level: job.level,
                 opened: job.openedAt !== null,
+                tag: tagByCompany.get(job.company) ?? null,
                 firstSeen: job.firstSeen.toISOString(),
               }))}
             />
@@ -60,6 +66,7 @@ export default async function AdminJobsPage() {
                 company: src.company,
                 enabled: src.enabled,
                 notify: src.notify,
+                tag: src.tag,
                 openRoles: openByCompany.get(src.company) ?? 0,
               }))}
             />

@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     const provider = String(body?.provider ?? "").trim().toLowerCase();
     const slug = String(body?.slug ?? "").trim();
     const company = String(body?.company ?? "").trim() || slug;
+    const tag = String(body?.tag ?? "").trim().toLowerCase() || null;
     if (!parseJobSources(`${provider}:${slug}`).length) {
       return NextResponse.json(
         {
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
     }
     try {
       const created = await prisma.jobBoardSource.create({
-        data: { provider, slug, company },
+        data: { provider, slug, company, tag },
       });
       logAudit(admin.name, "jobSource.add", `${provider}:${slug}`);
       return NextResponse.json({ ok: true, id: created.id });
@@ -89,6 +90,14 @@ export async function POST(request: Request) {
     // being polled, and deleting them would also wipe the firstSeen history
     // that makes "new" mean anything.
     logAudit(admin.name, "jobSource.remove", `${row.provider}:${row.slug}`);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "tag") {
+    const tag = String(body?.tag ?? "").trim().toLowerCase() || null;
+    const row = await prisma.jobBoardSource.update({ where: { id }, data: { tag } }).catch(() => null);
+    if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    logAudit(admin.name, "jobSource.tag", `${row.company} -> ${tag ?? "none"}`);
     return NextResponse.json({ ok: true });
   }
 

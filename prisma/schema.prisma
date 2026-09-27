@@ -386,6 +386,11 @@ model JobBoardSource {
   /// listing without being worth interrupting someone for.
   notify   Boolean @default(true)
 
+  /// Optional grouping, e.g. "startup". A company can be worth watching for a
+  /// different reason than the rest -- a six-person startup and Nvidia are not
+  /// the same kind of listing -- and the panel filters by it.
+  tag String?
+
   addedAt DateTime @default(now())
 
   @@unique([provider, slug])
