@@ -634,13 +634,13 @@ async function ensureSeriesInSonarr(
   tmdbId: string,
   tier: QualityTier = "hd"
 ): Promise<
-  { ok: true; sonarrId: number } | { ok: false; error: string }
+  { ok: true; sonarrId: number; created: boolean } | { ok: false; error: string }
 > {
   const { tvdbId } = await getTvExternalIds(tmdbId);
   if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
 
   const existing = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
-  if (existing[0]) return { ok: true, sonarrId: existing[0].id };
+  if (existing[0]) return { ok: true, sonarrId: existing[0].id, created: false };
 
   const lookup = await sonarrFetch<Record<string, unknown>[]>(
     `/api/v3/series/lookup?term=tvdb:${tvdbId}`
@@ -671,7 +671,47 @@ async function ensureSeriesInSonarr(
       seasons,
     }),
   });
-  return { ok: true, sonarrId: created.id };
+  return { ok: true, sonarrId: created.id, created: true };
+}
+
+/**
+ * How long to wait for a freshly added series to have episodes.
+ *
+ * Adding a series returns as soon as the row exists. Sonarr then fetches the
+ * episode list from its metadata provider in the background, so a read issued
+ * immediately after the add comes back empty -- which does not mean "this
+ * season has no episodes", it means "ask again in a moment".
+ *
+ * Reading it as the former is what produced the report of a download button
+ * that says Retry the instant it is pressed and then works when pressed
+ * again: the first click raced the metadata fetch and got an empty list, and
+ * by the time the second arrived the episodes were there.
+ */
+const EPISODE_POPULATE_TIMEOUT_MS = 20_000;
+const EPISODE_POPULATE_POLL_MS = 400;
+
+/**
+ * A season's episodes, waiting for Sonarr to populate them if it is still
+ * fetching metadata for a series that was just added.
+ *
+ * Only waits when the series is new. An established series with no episodes
+ * in a season genuinely has none -- an unaired season, or specials -- and
+ * polling for twenty seconds before saying so would turn a fast, correct
+ * answer into a slow one.
+ */
+async function episodesWhenReady(
+  seriesId: number,
+  seasonNumber: number,
+  justCreated: boolean
+): Promise<SonarrEpisode[]> {
+  const deadline = Date.now() + EPISODE_POPULATE_TIMEOUT_MS;
+  for (;;) {
+    const episodes = await sonarrFetch<SonarrEpisode[]>(
+      `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
+    );
+    if (episodes.length > 0 || !justCreated || Date.now() >= deadline) return episodes;
+    await new Promise((resolve) => setTimeout(resolve, EPISODE_POPULATE_POLL_MS));
+  }
 }
 
 /** Every episode Sonarr knows about for one season. */
@@ -768,8 +808,10 @@ export async function requestEpisode(
     const series = await ensureSeriesInSonarr(tmdbId, tier);
     if (!series.ok) return series;
 
-    const episodes = await sonarrFetch<SonarrEpisode[]>(
-      `/api/v3/episode?seriesId=${series.sonarrId}&seasonNumber=${seasonNumber}`
+    const episodes = await episodesWhenReady(
+      series.sonarrId,
+      seasonNumber,
+      series.created
     );
     const episode = episodes.find((e) => e.episodeNumber === episodeNumber);
     if (!episode) return { ok: false, error: "Episode not found in Sonarr" };
@@ -1005,12 +1047,19 @@ export async function requestSeason(
       body: JSON.stringify(updated),
     });
 
-    const episodes = await sonarrFetch<SonarrEpisode[]>(
-      `/api/v3/episode?seriesId=${series.sonarrId}&seasonNumber=${seasonNumber}`
+    const episodes = await episodesWhenReady(
+      series.sonarrId,
+      seasonNumber,
+      series.created
     );
     const inOrder = [...episodes].sort((a, b) => a.episodeNumber - b.episodeNumber);
     const ids = inOrder.map((e) => e.id);
-    if (ids.length === 0) return { ok: true };
+    // An error, not a silent ok. Reporting success for a request that queued
+    // nothing left the row showing "Starting..." for a season that was never
+    // going to start, which is harder to diagnose than a plain failure.
+    if (ids.length === 0) {
+      return { ok: false, error: "Sonarr has no episodes for this season yet" };
+    }
 
     await sonarrFetch(`/api/v3/episode/monitor`, {
       method: "PUT",
