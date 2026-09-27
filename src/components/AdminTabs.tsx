@@ -21,7 +21,7 @@ export const ADMIN_TABS = [
   { href: "/admin/downloads", label: "Downloads" },
   { href: "/admin/storage", label: "Storage" },
   { href: "/admin/spend", label: "Spend" },
-  { href: "/admin/approvals", label: "Approvals" },
+  { href: "/admin/approvals", label: "Accounts" },
   { href: "/admin/jobs", label: "Job search" },
   { href: "/admin/tour-watch", label: "Tour watch" },
   { href: "/admin/blog", label: "Blog writer" },
