@@ -24,6 +24,20 @@ services:
       - AUTH_TRUST_HOST=true
     volumes:
       - streamy-data:/app/data
+      # Next's data cache, kept across deploys.
+      #
+      # It lives inside the image, so every recreate threw the whole thing
+      # away and the first visitor to each route afterwards paid for the full
+      # TMDB fan-out again -- trending, genres, five discover rows and a
+      # detail lookup per downloaded title, all uncached. On a day with a few
+      # deploys that is most page loads, which is exactly what "slow across
+      # the board" felt like.
+      #
+      # Safe to keep across builds: every browse page is force-dynamic, so
+      # there is no rendered-route cache here to go stale -- only fetch and
+      # unstable_cache entries, which are keyed by URL and cache key and carry
+      # their own revalidate times.
+      - streamy-next-cache:/app/.next/cache
     # `restart: always` only covers a process that *exits*. It does nothing for
     # the failure that actually happened on 2026-09-13: the container still
     # running but no longer answering, which reaches a visitor as a bare 502
@@ -189,5 +203,6 @@ services:
 
 volumes:
   streamy-data:
+  streamy-next-cache:
   caddy-data:
   caddy-config:
