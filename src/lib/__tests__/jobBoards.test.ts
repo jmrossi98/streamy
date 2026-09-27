@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { boardUrl, parseBoard, parseJobSources, type JobSource } from "../jobBoards";
+import {
+  boardUrl,
+  customPageUrl,
+  parseBoard,
+  parseJobSources,
+  CUSTOM_BOARDS,
+  type JobSource,
+} from "../jobBoards";
 import { matchMetros } from "../jobFilters";
 
 const stripe: JobSource = { company: "Stripe", provider: "greenhouse", slug: "stripe" };
@@ -382,5 +389,61 @@ describe("microsoft, via the shared custom parser", () => {
   it("returns nothing when the nested path is absent", () => {
     expect(parseBoard(microsoft, { status: 200, data: {} })).toEqual([]);
     expect(parseBoard(microsoft, { error: "nope" })).toEqual([]);
+  });
+});
+
+describe("customPageUrl", () => {
+  it("counts records from zero when the URL starts at zero", () => {
+    const board = CUSTOM_BOARDS.microsoft;
+    const base = boardUrl({
+      company: "Microsoft",
+      provider: "microsoft",
+      slug: "software engineer",
+    });
+    // The bug this exists for: every page came back identical to page one.
+    const urls = [0, 1, 2].map((p) => customPageUrl(base, board, p));
+    expect(new Set(urls).size).toBe(3);
+    expect(urls[0]).toContain("start=0");
+    expect(urls[1]).toContain("start=10");
+    expect(urls[2]).toContain("start=20");
+  });
+
+  it("counts pages from one when the URL starts at one", () => {
+    const board = CUSTOM_BOARDS.github;
+    const base = boardUrl({
+      company: "GitHub",
+      provider: "github",
+      slug: "engineer",
+    });
+    const urls = [0, 1, 2].map((p) => customPageUrl(base, board, p));
+    expect(new Set(urls).size).toBe(3);
+    expect(urls[0]).toContain("page=1");
+    expect(urls[1]).toContain("page=2");
+    expect(urls[2]).toContain("page=3");
+  });
+
+  it("rewrites only the offset, leaving the rest of the query alone", () => {
+    const board = CUSTOM_BOARDS.microsoft;
+    const url = customPageUrl(
+      "https://x/api?domain=microsoft.com&start=0&num=10",
+      board,
+      3
+    );
+    expect(url).toBe("https://x/api?domain=microsoft.com&start=30&num=10");
+  });
+
+  it("leaves a board that does not page untouched", () => {
+    const board = CUSTOM_BOARDS.atlassian;
+    const base = "https://www.atlassian.com/endpoint/careers/listings";
+    expect(customPageUrl(base, board, 4)).toBe(base);
+  });
+
+  it("matches the page size the API actually returns", () => {
+    // Microsoft caps a page at ten and ignores a larger num without saying so.
+    // A pageSize above the real one reads the short page as the end of the list.
+    expect(CUSTOM_BOARDS.microsoft.pageSize).toBe(10);
+    expect(
+      boardUrl({ company: "Microsoft", provider: "microsoft", slug: "x" })
+    ).toContain("num=10");
   });
 });

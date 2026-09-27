@@ -252,7 +252,7 @@ function parseEightfold(source: JobSource, payload: unknown): JobPosting[] {
  * the array). `row` is a path within each entry, for APIs that wrap each
  * posting in another object. The rest are field names.
  */
-type CustomBoard = {
+export type CustomBoard = {
   /** `{q}` is replaced by the source's slug. */
   endpoint: string;
   list: string;
@@ -317,7 +317,7 @@ export const CUSTOM_BOARDS: Record<string, CustomBoard> = {
     // Found by watching the careers page rather than guessed: the host is
     // apply.careers.microsoft.com, not the gcsservices one every guide names.
     endpoint:
-      "https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com&query={q}&location=United%20States&start=0&num=20",
+      "https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com&query={q}&location=United%20States&start=0&num=10",
     list: "data.positions",
     id: "displayJobId",
     title: "name",
@@ -326,7 +326,10 @@ export const CUSTOM_BOARDS: Record<string, CustomBoard> = {
     location: "standardizedLocations",
     linkTemplate: "https://jobs.careers.microsoft.com/global/en/job/{id}",
     postedSeconds: "postedTs",
-    pageSize: 20,
+    // Ten, not the twenty `num` asks for: the API caps a page at ten and
+    // ignores a larger `num` without saying so. A pageSize larger than the
+    // real one reads the short page as the end of the list and stops early.
+    pageSize: 10,
     offsetParam: "start",
   },
 };
@@ -409,6 +412,39 @@ function parseCustom(source: JobSource, payload: unknown): JobPosting[] {
     });
   }
   return out;
+}
+
+/**
+ * The URL for one page of a paged custom board, zero-indexed.
+ *
+ * Two APIs count differently -- GitHub numbers pages from one, Microsoft counts
+ * records from zero -- and which one this is shows in the offset already in the
+ * URL the registry carries: a 0 there counts records, a 1 counts pages.
+ *
+ * Done by scanning for the digits rather than with a regex on purpose. The
+ * first version built its patterns from template strings, where a lone
+ * backslash-b is a backspace and backslash-d is a bare "d", so neither pattern
+ * ever matched: every request refetched page one and each paged board quietly
+ * returned a single page. Nothing threw, so nothing showed it. There is no way
+ * to make that mistake without a regex to escape.
+ */
+export function customPageUrl(
+  base: string,
+  board: CustomBoard,
+  page: number
+): string {
+  if (!board.offsetParam || !board.pageSize) return base;
+  const key = board.offsetParam + "=";
+  const at = base.indexOf(key);
+  if (at < 0) return base;
+
+  const from = at + key.length;
+  let to = from;
+  while (to < base.length && base[to] >= "0" && base[to] <= "9") to += 1;
+
+  const countsRecords = base.slice(from, to) === "0";
+  const offset = countsRecords ? page * board.pageSize : page + 1;
+  return base.slice(0, from) + String(offset) + base.slice(to);
 }
 
 export function parseBoard(source: JobSource, payload: unknown): JobPosting[] {
