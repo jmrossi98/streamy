@@ -1,6 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import {
+  DOWNLOAD_SORTS,
+  sortDownloads,
+  type DownloadSort,
+} from "@/lib/downloadSortRules";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { DownloadProtocol } from "@/lib/radarr";
 import { formatFileSize } from "@/lib/formatBytes";
@@ -42,6 +47,9 @@ export type DownloadRow = {
   /** One line explaining a rejected release: what was removed and what is
    *  happening next, or why nothing was found. */
   notice?: string | null;
+  /** When this landed in the library. Only completed rows have one -- nothing
+   *  has been added yet for a row that is still searching or downloading. */
+  addedAt?: string | null;
 };
 
 /**
@@ -105,6 +113,9 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const [refreshing, startRefresh] = useTransition();
   const manualRefreshRef = useRef(false);
   const [managingKey, setManagingKey] = useState<string | null>(null);
+  // Status by default: what is in flight is the usual reason to open this
+  // panel. Recently added is for finding what just landed in the library.
+  const [sort, setSort] = useState<DownloadSort>("status");
   // Rows the viewer just cancelled/deleted, hidden immediately rather than
   // waiting for the server round trip + a fresh page render to catch up.
   // Radarr/Sonarr/qBittorrent all take a moment to actually process a
@@ -145,7 +156,10 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     // changes.
   }, [downloads, removedKeys]);
 
-  const visibleDownloads = [...downloads, ...bridged].filter((d) => !removedKeys.has(rowKey(d)));
+  const visibleDownloads = sortDownloads(
+    [...downloads, ...bridged].filter((d) => !removedKeys.has(rowKey(d))),
+    sort
+  );
 
   // Once the server's own list no longer contains a key, there's nothing
   // left to hide -- prune it so the set doesn't grow across a long session.
@@ -242,7 +256,24 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
 
   return (
     <div>
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
+        <label className="flex items-center gap-1.5 text-xs text-white/50">
+          <span>Sort</span>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as DownloadSort)}
+            // color-scheme dark is the only thing that styles the native
+            // option popup on Windows; appearance-none only reaches the
+            // closed control.
+            className="rounded border border-white/15 bg-black/40 px-2 py-1 text-xs text-white [color-scheme:dark] focus:border-white/40 focus:outline-none"
+          >
+            {DOWNLOAD_SORTS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           onClick={() => {
@@ -281,9 +312,16 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
             const isManaging = managingKey === key;
             return (
               <li key={key} className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-4 text-sm">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="text-white/90 truncate">{d.title}</span>
+                {/* Stacked on a phone, one line from sm up.
+                    Side by side, the status and the action need about half a
+                    small screen between them, and the badge and size take a
+                    fixed slice of what is left -- so the title, the only part
+                    that is actually variable, absorbed the whole shortfall and
+                    rendered as "Videodr...". Giving it its own row costs a line
+                    of height and makes the row readable. */}
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="min-w-0 truncate text-white/90">{d.title}</span>
                     {d.protocol && d.protocol !== "unknown" && (
                       <span
                         className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
@@ -301,7 +339,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                       </span>
                     )}
                   </span>
-                  <div className="flex shrink-0 items-center gap-3">
+                  <div className="flex shrink-0 items-center justify-end gap-3">
                     <span
                       className={`tabular-nums ${
                         d.noRelease || d.unsafe ? "font-medium text-netflix-red" : "text-white/50"

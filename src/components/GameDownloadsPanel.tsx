@@ -125,9 +125,13 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
         const isManaging = managingKey === d.key;
         return (
           <li key={d.key} className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-white/90">{d.title}</span>
+            {/* Stacked on a phone, one line from sm up -- the same reason as
+                the media downloads panel, and worse here: a platform badge
+                reads "GAME BOY ADVANCE", so the title was left with a single
+                character ("C..." for Castlevania). */}
+            <div className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="min-w-0 truncate text-white/90">{d.title}</span>
                 <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
                   {d.platform}
                 </span>
@@ -135,7 +139,7 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
                   <span className="shrink-0 text-xs tabular-nums text-white/40">{d.sizeText}</span>
                 )}
               </span>
-              <div className="flex shrink-0 items-center gap-3">
+              <div className="flex shrink-0 items-center justify-end gap-3">
                 <span className="tabular-nums text-white/50">
                   {d.status === "owned"
                     ? "In library"

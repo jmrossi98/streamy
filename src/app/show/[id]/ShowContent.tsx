@@ -407,7 +407,12 @@ export function ShowContent({
               return (
                 <li
                   key={ep.id}
-                  className="flex gap-4 p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                  // Wraps on a phone. A 160px still plus the download control
+                  // is most of a small screen on its own, which left the title
+                  // about ten characters wide -- "BoJack Horseman: The BoJack
+                  // Horseman Story, Chapter One" rendered as a tall ribbon.
+                  // The still shrinks and the control drops to its own line.
+                  className="flex flex-wrap gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors sm:flex-nowrap sm:gap-4"
                 >
                   <button
                     type="button"
@@ -422,7 +427,7 @@ export function ShowContent({
                       playable ? "" : "cursor-default"
                     }`}
                   >
-                    <div className="relative w-40 h-24 shrink-0 rounded overflow-hidden bg-white/10">
+                    <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded bg-white/10 sm:h-24 sm:w-40">
                       <Image
                         src={ep.still}
                         alt=""
@@ -464,7 +469,7 @@ export function ShowContent({
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-white font-medium">
+                      <p className="font-medium text-white">
                         {ep.episodeNumber}. {ep.name}
                       </p>
                       <p className="text-white/60 text-sm mt-0.5 line-clamp-2">{ep.overview}</p>
@@ -477,7 +482,9 @@ export function ShowContent({
                     </div>
                   </button>
                   {requestConfigured && (
-                    <div className="flex shrink-0 items-center">
+                    // Full width under the row on a phone, beside it from sm
+                    // up: sharing the line is what squeezed the title.
+                    <div className="flex w-full shrink-0 items-center justify-end sm:w-auto">
                       <EpisodeDownloadButton
                         showId={show.id}
                         seasonNumber={ep.seasonNumber}

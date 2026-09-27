@@ -158,10 +158,11 @@ export function channelVerdict(
   if (playing.length > 0) {
     return { state: "live", detail: "Game in progress" };
   }
-  return {
-    state: "no-event",
-    detail: `No ${teams.map((t) => t.aliases[0]).join("/")} game in progress -- expect filler`,
-  };
+  // The team names are dropped on purpose. The card the viewer is reading
+  // already says which channel this is, so naming the teams again only made
+  // the line long enough to truncate -- and a truncated warning is a worse
+  // warning than a short one.
+  return { state: "no-event", detail: "No game in progress - expect filler" };
 }
 
 /** Sort order for a channel list: what someone can actually watch, first. */

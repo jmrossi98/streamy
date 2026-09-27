@@ -230,6 +230,8 @@ export type CompletedEpisode = {
   title: string;
   protocol?: DownloadProtocol;
   sizeBytes: number | null;
+  /** When the file landed in the library, for "recently added" ordering. */
+  addedAt: string | null;
 };
 
 /** See getRadarrCompletedProtocols for the rationale -- same recovery, keyed
@@ -303,12 +305,13 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
           // this is what the movie side gets straight from movieFile. Same
           // fix as there: show the actual file name, not a synthesised
           // "show · SxxEyy · title" label that isn't what's really on disk.
-          sonarrFetch<{ id: number; relativePath: string; size?: number }[]>(
-            `/api/v3/episodefile?seriesId=${s.id}`
-          ),
+          sonarrFetch<
+            { id: number; relativePath: string; size?: number; dateAdded?: string }[]
+          >(`/api/v3/episodefile?seriesId=${s.id}`),
         ]);
         const pathById = new Map(files.map((f) => [f.id, f.relativePath]));
         const sizeById = new Map(files.map((f) => [f.id, f.size ?? null]));
+        const addedById = new Map(files.map((f) => [f.id, f.dateAdded ?? null]));
         return episodes
           .filter((e) => e.hasFile)
           .map((e) => {
@@ -321,6 +324,7 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
                 : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
               protocol: protocols.get(e.id),
               sizeBytes: sizeById.get(e.episodeFileId) ?? null,
+              addedAt: addedById.get(e.episodeFileId) ?? null,
             };
           });
       })

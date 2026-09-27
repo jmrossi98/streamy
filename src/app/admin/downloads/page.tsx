@@ -140,6 +140,7 @@ export default async function AdminDownloadsPage() {
       completed: true,
       protocol: d.protocol,
       sizeBytes: d.sizeBytes,
+      addedAt: d.addedAt,
     })),
     ...sonarrCompleted.map((d) => ({
       queueId: null,
@@ -151,6 +152,7 @@ export default async function AdminDownloadsPage() {
       protocol: d.protocol,
       completed: true,
       sizeBytes: d.sizeBytes,
+      addedAt: d.addedAt,
     }))
   );
 

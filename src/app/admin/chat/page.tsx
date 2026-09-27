@@ -20,18 +20,21 @@ export default async function AdminChatPage() {
   const status = isOllamaConfigured() ? await getOllamaStatus() : null;
 
   return (
-    // A normal page in the layout flow. LayoutShell pins <main> to 100dvh for
-    // this route, so h-full here fills the screen without fixed positioning --
-    // which is what made this read as an overlay rather than a page.
-    // Tall enough to be worth using: the transcript is the point of this page,
-    // and a short box under a full-height container left most of the screen
-    // empty while the conversation scrolled in a sliver.
-    <div className="flex h-[calc(100vh-13rem)] min-h-[32rem] flex-col">
+    // h-full, not a viewport calculation. LayoutShell gives this route a main
+    // that is exactly the screen minus the navbar, so filling it is the whole
+    // job -- and any calc here is a second guess at a height the shell already
+    // knows. The previous one guessed with 100vh, which on mobile is taller
+    // than the visible area, so the bottom of this box (the input) sat under
+    // the browser toolbar.
+    //
+    // No min-height either: a 32rem floor is taller than a small phone's
+    // remaining space, and the overflow went straight to the input again.
+    <div className="flex h-full min-h-0 flex-col p-4 sm:p-6">
       <div className="flex w-full min-h-0 flex-1 flex-col">
         {/* No heading: the active tab already says Assistant, and repeating
             it just pushed the transcript further down. */}
 
-        <div className="min-h-0 flex-1 rounded-lg border border-white/10 bg-netflix-dark/80 p-4">
+        <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-netflix-dark/80 p-3 sm:p-4">
           <OpsChat
             localAvailable={isOllamaConfigured()}
             remoteAvailable={isOpenRouterConfigured()}

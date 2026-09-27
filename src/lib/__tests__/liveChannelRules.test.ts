@@ -116,7 +116,9 @@ describe("channelVerdict", () => {
 
     const notLive = channelVerdict("NHL BUFFALO SABRES", healthy, new Set());
     expect(notLive.state).toBe("no-event");
-    expect(notLive.detail).toContain("sabres");
+    // The team is deliberately not named: the card already says which channel
+    // this is, and repeating it only made the line truncate.
+    expect(notLive.detail).toBe("No game in progress - expect filler");
   });
 
   it("is satisfied when any one team on a regional slot is playing", () => {

@@ -3,6 +3,15 @@ import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
 import { maybeDrainEpisodeSearches } from "@/lib/sonarr";
 
+/**
+ * Never cached. This is live state that changes the moment a download starts,
+ * and a cached copy of it is the bug: a browser re-serving this response after
+ * a back-navigation showed a title as not-yet-requested while it was already
+ * downloading. The client sends no-store too; both ends matter, because only
+ * this one governs a shared or intermediate cache.
+ */
+export const dynamic = "force-dynamic";
+
 // Status is shared/public library state (same as the rest of the movie/show
 // detail page), so this doesn't require a session -- anyone can see whether a
 // title is already downloading.
