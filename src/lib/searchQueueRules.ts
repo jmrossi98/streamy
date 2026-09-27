@@ -81,3 +81,53 @@ export function isQueueStuck(
   const moved = after.total < before.total;
   return after.oldestWaitMinutes >= thresholdMinutes && !moved;
 }
+
+/** Just the fields the backlog rule reads off a Sonarr command. */
+export type SonarrCommand = {
+  name?: string;
+  status?: string;
+  started?: string | null;
+  queued?: string | null;
+};
+
+/**
+ * How long a search command may run before it stops counting as "busy".
+ *
+ * Sonarr searches finish in seconds to a couple of minutes. One that has been
+ * started for longer than this is wedged rather than working, and treating it
+ * as backlog is what let a single stuck command hold the whole ordered queue.
+ */
+export const STALE_COMMAND_MINUTES = 10;
+
+/**
+ * Outstanding searches that should actually hold the drain back.
+ *
+ * The backlog guard exists so the drain does not fill Sonarr's command queue
+ * and starve RssSync. It is not meant to be a lock that any long-running
+ * command can take forever: the healer fires one bulk EpisodeSearch for every
+ * wanted-but-idle episode, and with a limit of one outstanding search that
+ * single command blocked every queued season for as long as it ran -- while
+ * the healer re-fired it on each page load. Forty-five episodes waited two
+ * hours behind exactly that, never attempted once.
+ *
+ * So a command that has been started longer than the stale window is not
+ * counted. Sonarr will finish or drop it on its own; blocking the user's
+ * explicitly requested season on it in the meantime is the worse failure.
+ */
+export function countBlockingSearches(
+  commands: SonarrCommand[],
+  now: number = Date.now(),
+  staleAfterMinutes: number = STALE_COMMAND_MINUTES
+): number {
+  return commands.filter((c) => {
+    if (c.name !== "EpisodeSearch") return false;
+    if (c.status !== "queued" && c.status !== "started") return false;
+    const since = c.started ?? c.queued;
+    if (!since) return true;
+    const age = now - new Date(since).getTime();
+    // An unparseable timestamp counts as busy: the guard should fail towards
+    // holding back rather than towards piling on.
+    if (!Number.isFinite(age)) return true;
+    return age < staleAfterMinutes * 60_000;
+  }).length;
+}

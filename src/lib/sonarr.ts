@@ -6,6 +6,10 @@
  * ID matching, never fuzzy title search.
  */
 
+import {
+  countBlockingSearches,
+  type SonarrCommand,
+} from "./searchQueueRules";
 import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
@@ -434,10 +438,11 @@ const MAX_BACKLOG_WAITS = 20;
  */
 async function outstandingSearches(): Promise<number | null> {
   try {
-    const commands = await sonarrFetch<{ name?: string; status?: string }[]>("/api/v3/command");
-    return commands.filter(
-      (c) => c.name === "EpisodeSearch" && (c.status === "queued" || c.status === "started")
-    ).length;
+    const commands = await sonarrFetch<SonarrCommand[]>("/api/v3/command");
+    // A command that has been running too long is wedged, not busy, and is
+    // not counted -- see countBlockingSearches for why that distinction is
+    // what unblocked the ordered queue.
+    return countBlockingSearches(commands);
   } catch {
     return null;
   }

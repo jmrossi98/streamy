@@ -61,20 +61,27 @@ export async function runDownloadWarden(): Promise<WardenReport> {
     return { total: 0, oldestWaitMinutes: 0, series: 0, retrying: 0 };
   });
 
-  // Healing first. It re-grabs stalled transfers and re-searches wanted-but-
-  // idle titles, which is what frees up the Sonarr command queue that the
-  // drain below backs off from.
-  const healed = await healStalledDownloads().catch((err) => {
-    errors.push({ step: "heal", error: message(err) });
-    return [];
-  });
-
+  // Drain first, heal second, and the order is load-bearing.
+  //
+  // The healer fires one bulk EpisodeSearch covering every wanted-but-idle
+  // episode, and the drain refuses to add work while a search is outstanding.
+  // Healing first would therefore guarantee the drain is blocked by the
+  // command the heal just issued -- the exact starvation this change exists
+  // to end. The ordered queue is the more urgent of the two anyway: it is a
+  // season somebody explicitly asked for, where the healer's idle re-search
+  // is background repair.
+  //
   // Awaited on purpose. The page-load caller cannot wait for a season and so
   // fires this off unobserved; here the whole point is to know whether the
   // pass actually moved anything.
   await drainEpisodeSearchesNow().catch((err) => {
     errors.push({ step: "drain", error: message(err) });
     return false;
+  });
+
+  const healed = await healStalledDownloads().catch((err) => {
+    errors.push({ step: "heal", error: message(err) });
+    return [];
   });
 
   const queueAfter = await pendingSearchStats().catch((err) => {
