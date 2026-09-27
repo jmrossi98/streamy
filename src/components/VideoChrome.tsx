@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
 import { liveTrackPercent } from "@/lib/liveTimeline";
@@ -38,6 +38,14 @@ export type LiveState = {
 // A single unified control overlay for the movie, episode and live players.
 // Replaces the native <video controls> (whose scrubber resizes during a
 // transcode) plus the old scattered title/quality/maximize overlays.
+/**
+ * Must match the `duration-300` on the controls root below. Kept as a named
+ * constant because the two have to agree: if the class is longer than this,
+ * the controls go inert while still visible -- which is the bug this exists
+ * to prevent.
+ */
+const CONTROLS_FADE_MS = 300;
+
 export function VideoChrome({
   title,
   subtitle,
@@ -98,7 +106,27 @@ export function VideoChrome({
   const show = controlsVisible || !isPlaying;
   // The root never captures pointer events -- only the bars/buttons do -- so
   // clicks on the empty middle fall through to the <video> (tap to toggle/reveal).
-  const interactive = show ? "pointer-events-auto" : "pointer-events-none";
+  //
+  // Interactivity lags the hide by the length of the fade. `show` flips false
+  // the moment the auto-hide timer fires, but the controls stay on screen for
+  // the full 300ms transition, and dropping pointer-events immediately left a
+  // window where a plainly visible button did nothing when pressed. That is
+  // the "sometimes the exit button won't close" report, and on a phone -- where
+  // a tap takes longer to arrive than a click -- it is easy to land in.
+  //
+  // Only the hide is delayed. Showing is instant, and once the fade has
+  // finished the bars really are gone, so taps fall through to the video
+  // again as they should.
+  const [interactable, setInteractable] = useState(show);
+  useEffect(() => {
+    if (show) {
+      setInteractable(true);
+      return;
+    }
+    const t = setTimeout(() => setInteractable(false), CONTROLS_FADE_MS);
+    return () => clearTimeout(t);
+  }, [show]);
+  const interactive = interactable ? "pointer-events-auto" : "pointer-events-none";
 
   return (
     <div
