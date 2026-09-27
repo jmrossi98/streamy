@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { StreamySelect } from "@/components/StreamySelect";
 import {
   DOWNLOAD_SORTS,
   sortDownloads,
@@ -50,6 +51,9 @@ export type DownloadRow = {
   /** Waiting its turn in the ordered episode-search queue: asked for, not yet
    *  searched. Distinct from `searching`, which means a search is underway. */
   queued?: boolean;
+  /** When this row started: queued, requested, grabbed, or landed -- whichever
+   *  applies. One field so a single sort covers every kind of row. */
+  startedAt?: string | null;
   /** When this landed in the library. Only completed rows have one -- nothing
    *  has been added yet for a row that is still searching or downloading. */
   addedAt?: string | null;
@@ -73,6 +77,25 @@ export type DownloadRow = {
  * queueId remains a fallback for the rare case it genuinely isn't (multiple
  * simultaneous episodes of the same show, before episodeId was available).
  */
+/**
+ * When a row started, short enough to sit inline beside the title.
+ *
+ * Relative under a day ("14m", "3h") because that is the window in which the
+ * answer matters -- did this start just now, or has it been sitting there.
+ * Past that a date is more use than "31h".
+ */
+function formatStarted(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.floor((Date.now() - t) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 export function rowKey(d: DownloadRow): string {
   if (d.mediaType === "movie") return `movie-${d.externalId}`;
   if (d.episodeId != null) return `ep-${d.episodeId}`;
@@ -118,7 +141,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const [managingKey, setManagingKey] = useState<string | null>(null);
   // Status by default: what is in flight is the usual reason to open this
   // panel. Recently added is for finding what just landed in the library.
-  const [sort, setSort] = useState<DownloadSort>("status");
+  // Recently added by default: the reason to open this panel is almost always
+  // "did the thing I just asked for start", and status order buried a fresh
+  // request under whatever was already in flight.
+  const [sort, setSort] = useState<DownloadSort>("recent");
+  const [query, setQuery] = useState("");
   // Rows the viewer just cancelled/deleted, hidden immediately rather than
   // waiting for the server round trip + a fresh page render to catch up.
   // Radarr/Sonarr/qBittorrent all take a moment to actually process a
@@ -159,8 +186,14 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     // changes.
   }, [downloads, removedKeys]);
 
+  const needle = query.trim().toLowerCase();
   const visibleDownloads = sortDownloads(
-    [...downloads, ...bridged].filter((d) => !removedKeys.has(rowKey(d))),
+    [...downloads, ...bridged]
+      .filter((d) => !removedKeys.has(rowKey(d)))
+      // Title only: it is the one field a viewer can see and type. Matching
+      // the status text as well would make "downloaded" select most of the
+      // list, which is not a filter.
+      .filter((d) => !needle || d.title.toLowerCase().includes(needle)),
     sort
   );
 
@@ -264,23 +297,29 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter by title…"
+          aria-label="Filter downloads by title"
+          // text-base on mobile: iOS zooms the viewport for a focused input
+          // under 16px and there is no way back out without pinching.
+          className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-1.5 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:max-w-xs sm:text-xs"
+        />
         <label className="flex items-center gap-1.5 text-xs text-white/50">
           <span>Sort</span>
-          <select
+          <StreamySelect
             value={sort}
             onChange={(e) => setSort(e.target.value as DownloadSort)}
-            // color-scheme dark is the only thing that styles the native
-            // option popup on Windows; appearance-none only reaches the
-            // closed control.
-            className="rounded border border-white/15 bg-black/40 px-2 py-1 text-xs text-white [color-scheme:dark] focus:border-white/40 focus:outline-none"
           >
             {DOWNLOAD_SORTS.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </StreamySelect>
         </label>
         <button
           type="button"
@@ -344,6 +383,14 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                     {formatFileSize(d.sizeBytes) && (
                       <span className="shrink-0 text-xs tabular-nums text-white/40">
                         {formatFileSize(d.sizeBytes)}
+                      </span>
+                    )}
+                    {formatStarted(d.startedAt) && (
+                      <span
+                        className="shrink-0 text-xs tabular-nums text-white/30"
+                        title={new Date(d.startedAt as string).toLocaleString()}
+                      >
+                        {formatStarted(d.startedAt)}
                       </span>
                     )}
                   </span>

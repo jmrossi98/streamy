@@ -198,6 +198,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
         title: string;
         size: number;
         sizeleft: number;
+        added?: string;
         protocol?: string;
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
@@ -207,6 +208,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
       const unsafe = classifyBadRelease(r);
       return {
         queueId: r.id,
+        startedAt: r.added ?? null,
         externalId: r.seriesId,
         episodeId: r.episodeId,
         title: r.title,
@@ -616,6 +618,8 @@ export async function cancelSonarrQueueItem(
 export type QueuedEpisodeSearch = {
   episodeId: number;
   seriesId: number;
+  /** When it was asked for, so the newest request sorts to the top. */
+  enqueuedAt: string | null;
   /** "The Sopranos - S2 E3 - Title", ready to show. */
   title: string;
   attempts: number;
@@ -674,7 +678,13 @@ export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]>
           : show
             ? `${show} - episode ${p.episodeId}`
             : `Episode ${p.episodeId}`;
-      return { episodeId: p.episodeId, seriesId: p.seriesId, title: label, attempts: p.attempts };
+      return {
+        episodeId: p.episodeId,
+        seriesId: p.seriesId,
+        enqueuedAt: p.enqueuedAt ? new Date(p.enqueuedAt).toISOString() : null,
+        title: label,
+        attempts: p.attempts,
+      };
     });
   } catch (err) {
     console.error("[sonarr] getQueuedEpisodeSearches failed:", err);

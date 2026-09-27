@@ -273,6 +273,8 @@ export function normalizeProtocol(raw: string | undefined): DownloadProtocol {
 
 export type ActiveDownload = {
   queueId: number;
+  /** When the grab entered the download client's queue. */
+  startedAt?: string | null;
   externalId: number;
   title: string;
   progress: number | null;
