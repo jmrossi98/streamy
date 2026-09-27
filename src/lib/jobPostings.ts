@@ -16,7 +16,14 @@
  */
 import { prisma } from "./db";
 import { notify } from "./notify";
-import { boardUrl, parseBoard, parseJobSources, type JobPosting, type JobSource } from "./jobBoards";
+import {
+  boardUrl,
+  CUSTOM_BOARDS,
+  parseBoard,
+  parseJobSources,
+  type JobPosting,
+  type JobSource,
+} from "./jobBoards";
 import {
   classifyLevel,
   classifyRole,
@@ -216,17 +223,42 @@ async function fetchEightfold(source: JobSource): Promise<JobPosting[]> {
 }
 
 /**
- * GitHub returns ten a page and a totalCount, so it has to be paged. Capped
- * for the same reason as the others: this watches for new postings, and the
- * whole board is a few hundred.
+ * Pages a single-company API, using whatever that API calls its offset.
+ *
+ * GitHub counts pages from one; Microsoft counts records from zero. Both are
+ * in CUSTOM_BOARDS rather than in branches here, so a fifth API is a config
+ * entry and not another loop.
+ *
+ * Capped like every other paged source: this watches for new postings, and
+ * the point is the front of the list, not an exhaustive crawl of someone
+ * else's board every half hour.
  */
-const GITHUB_MAX_PAGES = 8;
+const CUSTOM_MAX_PAGES = 8;
 
-async function fetchGithub(source: JobSource): Promise<JobPosting[]> {
+async function fetchCustomPaged(source: JobSource): Promise<JobPosting[]> {
+  const board = CUSTOM_BOARDS[source.provider];
   const base = boardUrl(source);
+  if (!board?.offsetParam || !board.pageSize) {
+    const res = await fetch(base, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+      headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return parseBoard(source, await res.json());
+  }
+
+  // Page one is offset 0 for a record-counting API and 1 for a page-counting
+  // one; which it is shows in the URL the registry already carries.
+  const countsRecords = new RegExp(`${board.offsetParam}=0\b`).test(base);
   const all: JobPosting[] = [];
-  for (let page = 1; page <= GITHUB_MAX_PAGES; page += 1) {
-    const res = await fetch(base.replace(/page=\d+/, `page=${page}`), {
+  for (let page = 0; page < CUSTOM_MAX_PAGES; page += 1) {
+    const offset = countsRecords ? page * board.pageSize : page + 1;
+    const url = base.replace(
+      new RegExp(`${board.offsetParam}=\d+`),
+      `${board.offsetParam}=${offset}`
+    );
+    const res = await fetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       cache: "no-store",
       headers: { "User-Agent": UA, Accept: "application/json" },
@@ -234,13 +266,13 @@ async function fetchGithub(source: JobSource): Promise<JobPosting[]> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const batch = parseBoard(source, await res.json());
     all.push(...batch);
-    if (batch.length === 0) break;
+    if (batch.length < board.pageSize) break;
   }
   return all;
 }
 
 async function fetchBoard(source: JobSource): Promise<JobPosting[]> {
-  if (source.provider === "github") return fetchGithub(source);
+  if (source.provider in CUSTOM_BOARDS) return fetchCustomPaged(source);
   if (source.provider === "eightfold") return fetchEightfold(source);
   if (source.provider === "workday") return fetchWorkday(source);
 
