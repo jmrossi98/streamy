@@ -358,6 +358,10 @@ select option {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  /* The popup is painted by the platform, not the page, so appearance:none and
+     a drawn arrow only ever fixed the closed control. Without this the option
+     list renders in the OS light theme on Windows. */
+  color-scheme: dark;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.55)' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.6em center;

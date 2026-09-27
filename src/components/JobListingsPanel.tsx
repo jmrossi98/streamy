@@ -16,6 +16,8 @@ export type JobListingRow = {
   level: string;
   /** Already opened from here at least once. */
   opened: boolean;
+  /** The company's grouping, e.g. "startup". */
+  tag: string | null;
   firstSeen: string;
 };
 
@@ -102,6 +104,7 @@ export function JobListingsPanel({
   const [company, setCompany] = useState<string>("all");
   const [category, setCategory] = useState<string>("all");
   const [level, setLevel] = useState<string>("all");
+  const [tag, setTag] = useState<string>("all");
   const [hideOpened, setHideOpened] = useState(false);
   /**
    * Opened in this session, on top of what the server already knew.
@@ -162,7 +165,8 @@ export function JobListingsPanel({
   const byCompany = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
   const byCategory =
     category === "all" ? byCompany : byCompany.filter((l) => l.category === category);
-  const byLevel = level === "all" ? byCategory : byCategory.filter((l) => l.level === level);
+  const byTag = tag === "all" ? byCategory : byCategory.filter((l) => l.tag === tag);
+  const byLevel = level === "all" ? byTag : byTag.filter((l) => l.level === level);
   const isOpened = (l: JobListingRow) => l.opened || openedNow.has(l.id);
   const shown = hideOpened ? byLevel.filter((l) => !isOpened(l)) : byLevel;
   const openedCount = listings.filter(isOpened).length;
@@ -172,6 +176,10 @@ export function JobListingsPanel({
   const categories = [...new Set(listings.map((l) => l.category))].filter(
     (c): c is JobCategory => c in CATEGORY_LABELS
   );
+
+  // Only groups actually in use, so the row does not offer a filter that
+  // matches nothing.
+  const tags = [...new Set(listings.map((l) => l.tag).filter((t): t is string => !!t))].sort();
 
   return (
     <div className="w-full space-y-3">
@@ -189,7 +197,7 @@ export function JobListingsPanel({
           <select
             value={company}
             onChange={(e) => setCompany(e.target.value)}
-            className="max-w-[16rem] rounded border border-white/15 bg-[#141414] px-2 py-1 text-xs text-white/85 outline-none transition-colors hover:border-white/30 focus:border-white/45 [color-scheme:dark]"
+            className="max-w-[16rem] streamy-select rounded border border-white/15 bg-black/40 py-1.5 pl-3 text-xs text-white focus:border-white/40 focus:outline-none"
           >
             <option value="all">All companies ({listings.length})</option>
             {companies.map((name) => (
@@ -246,6 +254,16 @@ export function JobListingsPanel({
       />
 
       <FilterRow
+        label="Company"
+        value={tag}
+        onChange={setTag}
+        options={[
+          { key: "all", label: "Any size" },
+          ...tags.map((t) => ({ key: t, label: t.charAt(0).toUpperCase() + t.slice(1) })),
+        ]}
+      />
+
+      <FilterRow
         label="Level"
         value={level}
         onChange={setLevel}
@@ -282,7 +300,7 @@ export function JobListingsPanel({
           {hideOpened ? " left to explore." : "."}
         </p>
       ) : (
-        <ul className="space-y-1.5">
+        <ul className="max-h-[32rem] space-y-1.5 overflow-y-auto pr-1">
           {shown.map((listing) => (
             <li
               key={listing.id}

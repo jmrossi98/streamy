@@ -202,15 +202,15 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <section className="mt-10">
-      <h2 className="streamy-page-title-x mb-1 font-display text-2xl font-bold text-white">
+      <h2 className="mb-1 font-display text-2xl font-bold text-white">
         Browse all streams
       </h2>
-      <p className="streamy-page-title-x mb-4 text-sm text-white/50">
+      <p className="mb-4 text-sm text-white/50">
         Everything your providers carry. Adding one publishes it to Live TV for
         everyone.
       </p>
 
-      <div className="streamy-page-title-x mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <input
           type="search"
           value={query}
@@ -225,7 +225,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
         )}
       </div>
 
-      <div className="streamy-page-title-x mb-3 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => {
@@ -249,7 +249,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
           to be counted from the fifty rows in hand, so "Sports (3)" could sit
           above four hundred sports streams. */}
       {categories.length > 0 && (
-        <div className="streamy-page-title-x mb-2 flex flex-wrap gap-2">
+        <div className="mb-2 flex flex-wrap gap-2">
           <CategoryChip
             label="All"
             active={category === "all"}
@@ -269,7 +269,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
       {/* Only worth showing with more than one provider: with a single one
           every row carries the same label and the chip decides nothing. */}
       {providers.length > 1 && (
-        <div className="streamy-page-title-x mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap gap-2">
           <CategoryChip
             label="Any provider"
             active={provider === "all"}
@@ -288,20 +288,20 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
 
       {note && (
         <p
-          className="streamy-page-title-x mb-3 rounded bg-white/10 px-3 py-2 text-sm text-white/80"
+          className="mb-3 rounded bg-white/10 px-3 py-2 text-sm text-white/80"
           role="status"
         >
           {note}
         </p>
       )}
       {error && (
-        <p className="streamy-page-title-x mb-3 text-sm text-red-400">{error}</p>
+        <p className="mb-3 text-sm text-red-400">{error}</p>
       )}
 
       {loading && streams.length === 0 ? (
-        <p className="streamy-page-title-x text-sm text-white/40">Loading…</p>
+        <p className="text-sm text-white/40">Loading…</p>
       ) : visible.length === 0 ? (
-        <p className="streamy-page-title-x text-sm text-white/40">
+        <p className="text-sm text-white/40">
           {category !== "all" || provider !== "all"
             ? "Nothing matches those filters. Clear one to widen the search."
             : networksOnly
@@ -309,7 +309,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
               : "No streams match that search."}
         </p>
       ) : (
-        <ul className="streamy-page-title-x space-y-1">
+        <ul className="space-y-1">
           {visible.map((s) => {
             const channelId = promoted.get(s.id);
             return (
@@ -378,7 +378,7 @@ export function StreamBrowser({ isAdmin }: { isAdmin: boolean }) {
       )}
 
       {totalPages > 1 && (
-        <div className="streamy-page-title-x mt-4 flex items-center gap-3">
+        <div className="mt-4 flex items-center gap-3">
           <button
             type="button"
             disabled={page <= 1 || loading}

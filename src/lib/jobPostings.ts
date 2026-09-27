@@ -61,6 +61,8 @@ export type ManagedSource = JobSource & {
   id: string;
   enabled: boolean;
   notify: boolean;
+  /** Optional grouping, e.g. "startup". */
+  tag: string | null;
 };
 
 /**
@@ -83,6 +85,7 @@ export async function jobSources(): Promise<ManagedSource[]> {
       company: r.company,
       enabled: r.enabled,
       notify: r.notify,
+      tag: r.tag,
     }));
   } catch {
     rows = [];
@@ -94,6 +97,7 @@ export async function jobSources(): Promise<ManagedSource[]> {
     id: `${src.provider}:${src.slug}`,
     enabled: true,
     notify: true,
+    tag: null,
   }));
 }
 
@@ -183,7 +187,36 @@ async function fetchWorkday(source: JobSource): Promise<JobPosting[]> {
   return all;
 }
 
+/**
+ * Eightfold pages with start/num and reports a total; 50 a page is its cap.
+ * Capped for the same reason as Workday -- this watches for new postings, and
+ * Netflix alone lists several hundred.
+ */
+const EIGHTFOLD_PAGE_SIZE = 50;
+const EIGHTFOLD_MAX_PAGES = 4;
+
+async function fetchEightfold(source: JobSource): Promise<JobPosting[]> {
+  const base = boardUrl(source);
+  if (!base) throw new Error("malformed eightfold slug");
+
+  const all: JobPosting[] = [];
+  for (let page = 0; page < EIGHTFOLD_MAX_PAGES; page += 1) {
+    const url = base.replace(/start=\d+/, `start=${page * EIGHTFOLD_PAGE_SIZE}`);
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+      headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const batch = parseBoard(source, await res.json());
+    all.push(...batch);
+    if (batch.length < EIGHTFOLD_PAGE_SIZE) break;
+  }
+  return all;
+}
+
 async function fetchBoard(source: JobSource): Promise<JobPosting[]> {
+  if (source.provider === "eightfold") return fetchEightfold(source);
   if (source.provider === "workday") return fetchWorkday(source);
 
   const res = await fetch(boardUrl(source), {

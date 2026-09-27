@@ -184,3 +184,63 @@ describe("workday", () => {
     ]);
   });
 });
+
+describe("eightfold", () => {
+  const netflix: JobSource = {
+    company: "Netflix",
+    provider: "eightfold",
+    slug: "explore.jobs.netflix.net/netflix.com",
+  };
+
+  it("builds the host/domain endpoint", () => {
+    expect(boardUrl(netflix)).toBe(
+      "https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com&start=0&num=50"
+    );
+  });
+
+  it("parses the live payload, keeping every location", () => {
+    // Verbatim shape from the endpoint on 2026-09-27. Unlike Workday, a
+    // multi-site role lists its places, so all of them survive into the
+    // metro matcher rather than collapsing to "2 Locations".
+    const payload = {
+      count: 484,
+      positions: [
+        {
+          id: 790298014263,
+          name: "AI Engineer 6 - AI Foundation & Tooling",
+          location: "Remote, United States",
+          locations: ["New York, New York", "Los Gatos, California"],
+          t_update: 1779148800,
+          canonicalPositionUrl: "https://explore.jobs.netflix.net/careers/job/790298014263",
+        },
+      ],
+    };
+    const [posting] = parseBoard(netflix, payload);
+    expect(posting.id).toBe("eightfold:netflix.com:790298014263");
+    expect(posting.location).toBe("New York, New York; Los Gatos, California");
+    expect(posting.url).toBe("https://explore.jobs.netflix.net/careers/job/790298014263");
+    expect(posting.postedAt).toBe(new Date(1779148800 * 1000).toISOString());
+    // Both places are visible to the metro matcher, which is the point.
+    expect(matchMetros(posting.location).map((m) => m.key)).toContain("nyc");
+  });
+
+  it("falls back to the single location string when there is no array", () => {
+    const [posting] = parseBoard(netflix, {
+      positions: [{ id: 1, name: "Software Engineer", location: "Remote, United States" }],
+    });
+    expect(posting.location).toBe("Remote, United States");
+    expect(posting.postedAt).toBeNull();
+  });
+
+  it("rejects a slug that is not host/domain", () => {
+    expect(parseJobSources("eightfold:netflix:Netflix")).toEqual([]);
+    expect(parseJobSources("eightfold:explore.jobs.netflix.net:Netflix")).toEqual([]);
+    expect(parseJobSources("eightfold:explore.jobs.netflix.net/netflix.com:Netflix")).toEqual([
+      {
+        provider: "eightfold",
+        slug: "explore.jobs.netflix.net/netflix.com",
+        company: "Netflix",
+      },
+    ]);
+  });
+});
