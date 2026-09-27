@@ -1025,11 +1025,13 @@ export async function requestEpisode(
       method: "PUT",
       body: JSON.stringify({ episodeIds: [episode.id], monitored: true }),
     });
-    await sonarrFetch(`/api/v3/command`, {
-      method: "POST",
-      body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [episode.id] }),
-    });
-    markEpisodeSearchTriggered(episode.id);
+    // Through the same queue a season uses, rather than firing a search
+    // straight at Sonarr. Searching directly left nothing anywhere to say the
+    // episode had been asked for, so the admin panel stayed empty until
+    // Sonarr happened to grab something -- and if the search found nothing,
+    // forever. Queuing it records the request first, and the drain this kicks
+    // off searches it immediately anyway, so nothing gets slower.
+    await searchEpisodesInOrder(series.sonarrId, [episode.id]);
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestEpisode failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err);
@@ -1064,6 +1066,18 @@ function searchQueue() {
  * forever, because Sonarr's RSS sync only picks up new releases and never
  * back-searches. Persisting it means the chain resumes on the next page load
  * instead.
+ */
+/**
+ * Records the request, then starts working on it.
+ *
+ * The await matters and is the whole point: the caller's HTTP response is
+ * what the admin panel refreshes on, so an enqueue that is still in flight
+ * when the response returns means the panel renders before the rows exist and
+ * shows nothing. Reported as downloads not appearing until much later.
+ *
+ * The drain is deliberately not awaited -- a season takes minutes, and the
+ * request should return as soon as the work is *recorded*, not once it is
+ * done.
  */
 async function searchEpisodesInOrder(seriesId: number, episodeIds: number[]): Promise<void> {
   // Marked for the whole batch up front, not just as each one's own turn
@@ -1251,7 +1265,7 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
     body: JSON.stringify({ episodeIds: wanted.map((e) => e.id), monitored: true }),
   });
 
-  void searchEpisodesInOrder(seriesId, wanted.map((e) => e.id));
+  await searchEpisodesInOrder(seriesId, wanted.map((e) => e.id));
 }
 
 /** Monitors and searches every episode in one season. */
@@ -1309,7 +1323,7 @@ export async function requestSeason(
     // Not awaited: a full season is minutes of sequential searching, far
     // longer than a request should block. The chain runs in the background
     // and the UI picks up each episode as it appears via status polling.
-    void searchEpisodesInOrder(series.sonarrId, ids);
+    await searchEpisodesInOrder(series.sonarrId, ids);
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
