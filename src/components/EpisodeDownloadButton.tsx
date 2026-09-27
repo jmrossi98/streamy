@@ -68,8 +68,15 @@ export function useSeasonStatuses(
   const refresh = useCallback(async () => {
     if (!enabled) return;
     try {
+      // no-store, and it is not optional. A GET to an unchanging URL is
+      // exactly what the browser's HTTP cache is for, so navigating away and
+      // coming back re-served the response from before the download started
+      // -- the button read "Start download" for something already in flight,
+      // and stayed wrong until a hard refresh, because every later poll hit
+      // the same cache entry.
       const res = await fetch(
-        `/api/requests/tv?tmdbId=${encodeURIComponent(showId)}&season=${seasonNumber}`
+        `/api/requests/tv?tmdbId=${encodeURIComponent(showId)}&season=${seasonNumber}`,
+        { cache: "no-store" }
       );
       if (!res.ok) return;
       const data = await res.json();

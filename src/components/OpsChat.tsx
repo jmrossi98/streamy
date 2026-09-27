@@ -276,7 +276,9 @@ export function OpsChat({
           // transcript, so the panel jumped in size as soon as you asked
           // anything. 34rem lands the whole section at roughly the height of
           // the Blog editor below it, whose 14-row textarea sets that mark.
-          fullHeight ? "min-h-0 flex-1" : "h-[34rem]"
+          // Shorter on a phone: 34rem is most of a small screen on its own,
+          // which left the composer below the fold on the compact panel too.
+          fullHeight ? "min-h-0 flex-1" : "h-[22rem] sm:h-[34rem]"
         }`}
         aria-live="polite"
       >
@@ -318,7 +320,10 @@ export function OpsChat({
         </p>
       )}
 
-      <form onSubmit={send} className="flex gap-2">
+      {/* shrink-0 so the composer is never what gets compressed when the
+          column runs short -- an input squeezed to nothing is the same bug as
+          an input pushed off the screen. */}
+      <form onSubmit={send} className="flex shrink-0 gap-2">
         <input
           type="text"
           value={input}

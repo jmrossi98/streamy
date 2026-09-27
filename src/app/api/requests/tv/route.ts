@@ -9,6 +9,15 @@ import {
   manageSonarrEpisodes,
 } from "@/lib/sonarr";
 
+/**
+ * Never cached. This is live state that changes the moment a download starts,
+ * and a cached copy of it is the bug: a browser re-serving this response after
+ * a back-navigation showed a title as not-yet-requested while it was already
+ * downloading. The client sends no-store too; both ends matter, because only
+ * this one governs a shared or intermediate cache.
+ */
+export const dynamic = "force-dynamic";
+
 /** Per-episode status for one season. Shared library state, so no session needed. */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

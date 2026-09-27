@@ -156,7 +156,11 @@ export function RequestButton({
           ? POLL_INTERVAL_NO_RELEASE_MS
           : POLL_INTERVAL_QUEUED_MS;
     const interval = setInterval(() => {
-      fetch(`/api/requests/check?tmdbId=${encodeURIComponent(id)}&mediaType=${mediaType}`)
+      fetch(`/api/requests/check?tmdbId=${encodeURIComponent(id)}&mediaType=${mediaType}`, {
+        // See EpisodeDownloadButton: without this, going back to a title
+        // showed its pre-request state from the browser cache.
+        cache: "no-store",
+      })
         .then((r) => r.json())
         .then((data) => {
           // A cleared row (cancelled, or auto-healed and re-searching) comes

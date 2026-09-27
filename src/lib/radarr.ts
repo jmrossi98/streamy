@@ -366,6 +366,8 @@ export type CompletedDownload = {
   title: string;
   protocol?: DownloadProtocol;
   sizeBytes: number | null;
+  /** When the file landed in the library, for "recently added" ordering. */
+  addedAt: string | null;
 };
 
 /**
@@ -418,7 +420,12 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   try {
     const [movies, protocols] = await Promise.all([
       radarrFetch<
-        { id: number; title: string; hasFile: boolean; movieFile?: { relativePath?: string; size?: number } }[]
+        {
+          id: number;
+          title: string;
+          hasFile: boolean;
+          movieFile?: { relativePath?: string; size?: number; dateAdded?: string };
+        }[]
       >("/api/v3/movie"),
       getRadarrCompletedProtocols(),
     ]);
@@ -429,6 +436,7 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
         title: m.movieFile?.relativePath ? fileBaseName(m.movieFile.relativePath) : m.title,
         protocol: protocols.get(m.id),
         sizeBytes: m.movieFile?.size ?? null,
+        addedAt: m.movieFile?.dateAdded ?? null,
       }));
   } catch (err) {
     console.error("[radarr] getRadarrCompletedMovies failed:", err);

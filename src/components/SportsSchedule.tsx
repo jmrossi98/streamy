@@ -90,7 +90,12 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
             <li key={f.id}>
               <Link
                 href={`/live/game/${encodeURIComponent(f.id)}`}
-                className="flex items-center gap-3 rounded bg-white/5 px-3 py-2 transition-colors hover:bg-white/10"
+                // Wraps on a phone: the league tag and the kickoff time are
+                // both fixed-width, so the fixture name -- the only part worth
+                // reading -- took the whole shortfall and cut off mid-team
+                // ("Los Angeles Charger..."). On a narrow screen it gets its
+                // own full-width line under the tag and the time.
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded bg-white/5 px-3 py-2 transition-colors hover:bg-white/10"
               >
                 <span
                   className={`w-14 shrink-0 text-center text-[10px] font-bold uppercase tracking-wide ${
@@ -99,9 +104,11 @@ export function SportsSchedule({ channels }: { channels: ScheduleChannel[] }) {
                 >
                   {f.league}
                 </span>
-                <p className="min-w-0 flex-1 truncate text-sm text-white/90">{f.name}</p>
+                <p className="order-last w-full min-w-0 flex-1 truncate text-sm text-white/90 sm:order-none sm:w-auto">
+                  {f.name}
+                </p>
                 <span
-                  className={`shrink-0 text-xs ${
+                  className={`ml-auto shrink-0 text-xs sm:ml-0 ${
                     f.state === "in" ? "font-semibold text-netflix-red" : "text-white/50"
                   }`}
                 >
