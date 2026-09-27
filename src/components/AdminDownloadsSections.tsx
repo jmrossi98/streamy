@@ -22,6 +22,7 @@ import { gameKeyOf } from "@/lib/romNames";
 import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownloadsPanel";
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { formatFileSize } from "@/lib/formatBytes";
+import { withDeadline } from "@/lib/withDeadline";
 
 /**
  * Every downloads panel, as one block.
@@ -40,6 +41,15 @@ export async function AdminDownloadsSections() {
   // Resumes an ordered season search that a restart interrupted.
   maybeDrainEpisodeSearches();
 
+  // What the panel may spend gathering before it gives up and renders what it
+  // has. The active and queued rows come back in milliseconds; the completed
+  // library costs a 2 MB Sonarr history plus two calls per series, and a
+  // search-loaded Sonarr can take longer than the browser is willing to wait.
+  // Rendering late is indistinguishable from not rendering at all -- the
+  // request gets aborted and the page shows nothing, which is what "the
+  // refresh button just hangs" was.
+  const PANEL_DEADLINE_MS = 6000;
+
   const [
     radarrDownloads,
     sonarrDownloads,
@@ -52,19 +62,19 @@ export async function AdminDownloadsSections() {
     ownedGames,
     flashDownloads,
   ] = await Promise.all([
-    getRadarrActiveDownloads().catch(() => []),
-    getSonarrActiveDownloads().catch(() => []),
-    getRadarrCompletedMovies().catch(() => []),
-    getSonarrCompletedEpisodes().catch(() => []),
+    withDeadline(getRadarrActiveDownloads(), [], PANEL_DEADLINE_MS),
+    withDeadline(getSonarrActiveDownloads(), [], PANEL_DEADLINE_MS),
+    withDeadline(getRadarrCompletedMovies(), [], PANEL_DEADLINE_MS),
+    withDeadline(getSonarrCompletedEpisodes(), [], PANEL_DEADLINE_MS),
     // In the same wave: these rows sit at the top of the panel, so resolving
     // them after the rest would leave the newest requests blank the longest.
-    getQueuedEpisodeSearches().catch(() => []),
+    withDeadline(getQueuedEpisodeSearches(), [], PANEL_DEADLINE_MS),
     // Requested but not yet picked up by Radarr/Sonarr's own queue -- still
     // searching for a release, and otherwise invisible until it is grabbed.
     prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } }),
-    getGameDownloads().catch(() => []),
-    getWishlist().catch(() => []),
-    getGamesList().catch(() => []),
+    withDeadline(getGameDownloads(), [], PANEL_DEADLINE_MS),
+    withDeadline(getWishlist(), [], PANEL_DEADLINE_MS),
+    withDeadline(getGamesList(), [], PANEL_DEADLINE_MS),
     prisma.flashGame.findMany({
       where: { fileName: { not: null } },
       select: { slug: true, title: true, fileSize: true, storage: true },
@@ -154,6 +164,7 @@ export async function AdminDownloadsSections() {
       protocol: d.protocol,
       sizeBytes: d.sizeBytes,
       addedAt: d.addedAt,
+      startedAt: d.addedAt,
     })),
     ...sonarrCompleted.map((d) => ({
       queueId: null,
@@ -166,6 +177,7 @@ export async function AdminDownloadsSections() {
       completed: true,
       sizeBytes: d.sizeBytes,
       addedAt: d.addedAt,
+      startedAt: d.addedAt,
     }))
   );
 
@@ -184,8 +196,8 @@ export async function AdminDownloadsSections() {
     r.externalId != null &&
     (r.mediaType === "movie" ? !representedMovieIds.has(r.externalId) : !representedShowIds.has(r.externalId))
   );
-  const searchingRows = (
-    await Promise.all(
+  const searchingRows = await withDeadline(
+    Promise.all(
       stillSearching.map(async (r): Promise<DownloadRow | null> => {
         if (r.externalId == null) return null;
         const mediaType = r.mediaType as "movie" | "show";
@@ -215,12 +227,19 @@ export async function AdminDownloadsSections() {
           mediaType,
           completed: false,
           searching: !noRelease,
+          startedAt: r.requestedAt ? new Date(r.requestedAt).toISOString() : null,
           noRelease,
           notice: resolved?.detail.notice ?? null,
         };
       })
-    )
-  ).filter((r): r is DownloadRow => r != null);
+    ).then((rows) => rows.filter((r): r is DownloadRow => r != null)),
+    // Each of these costs a rejection lookup, a status resolve and a TMDB
+    // title, so a handful of pending requests can outlast everything else on
+    // the page. They are the least important rows here -- the queued ones
+    // above already say the same request was received.
+    [],
+    PANEL_DEADLINE_MS
+  );
   downloads.unshift(...searchingRows);
 
   // Everything still waiting its turn in the ordered search queue.
@@ -239,6 +258,7 @@ export async function AdminDownloadsSections() {
     mediaType: "show" as const,
     completed: false,
     queued: true,
+    startedAt: q.enqueuedAt,
     // Only once it has actually failed a round, so a queue that is simply
     // long does not read as a queue that is going wrong.
     notice: q.attempts > 0 ? `Retrying (attempt ${q.attempts + 1})` : null,

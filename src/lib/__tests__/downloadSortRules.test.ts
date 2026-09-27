@@ -4,6 +4,10 @@ import { sortDownloads, type SortableDownload } from "../downloadSortRules";
 const row = (title: string, completed: boolean, addedAt?: string | null) =>
   ({ title, completed, addedAt }) as SortableDownload & { title: string };
 
+/** A row carrying the unified startedAt the panel now sorts on. */
+const started = (title: string, completed: boolean, startedAt?: string | null) =>
+  ({ title, completed, startedAt }) as SortableDownload & { title: string };
+
 describe("sortDownloads", () => {
   it("leaves the order untouched for the status sort", () => {
     const rows = [row("a", true, "2026-01-01"), row("b", true, "2026-09-01")];
@@ -23,17 +27,39 @@ describe("sortDownloads", () => {
     ]);
   });
 
-  it("keeps in-flight rows above finished ones", () => {
-    // A searching or transferring row has no added date -- nothing has been
-    // added yet -- so ordering it by one would bury the row the viewer is
-    // most likely watching under a library's worth of history.
+  it("puts a just-requested row above an older finished one", () => {
+    // The reason to open this panel is almost always "did the thing I just
+    // asked for start". A queued row carries the moment it was asked for, so
+    // newest-first puts it on top without needing a special case.
     const rows = [
-      row("done", true, "2026-09-01T00:00:00Z"),
-      row("downloading", false, null),
+      started("done", true, "2026-09-01T00:00:00Z"),
+      started("just queued", false, "2026-09-27T12:00:00Z"),
     ];
     expect(sortDownloads(rows, "recent").map((r) => r.title)).toEqual([
-      "downloading",
+      "just queued",
       "done",
+    ]);
+  });
+
+  it("sorts a row with no timestamp last rather than dropping it", () => {
+    const rows = [
+      started("undated", false, null),
+      started("dated", true, "2026-09-01T00:00:00Z"),
+    ];
+    expect(sortDownloads(rows, "recent").map((r) => r.title)).toEqual([
+      "dated",
+      "undated",
+    ]);
+  });
+
+  it("prefers startedAt over addedAt when both are present", () => {
+    const rows = [
+      { title: "older start", completed: true, startedAt: "2026-01-01T00:00:00Z", addedAt: "2026-12-01T00:00:00Z" },
+      { title: "newer start", completed: true, startedAt: "2026-06-01T00:00:00Z", addedAt: "2026-02-01T00:00:00Z" },
+    ] as (SortableDownload & { title: string })[];
+    expect(sortDownloads(rows, "recent").map((r) => r.title)).toEqual([
+      "newer start",
+      "older start",
     ]);
   });
 

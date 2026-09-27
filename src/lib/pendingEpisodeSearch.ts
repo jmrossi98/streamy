@@ -15,6 +15,7 @@ export type PendingSearch = {
   episodeId: number;
   seriesId: number;
   attempts: number;
+  enqueuedAt?: Date;
 };
 
 /** Dropped after this many failures, so one bad episode can't block a season. */
@@ -163,7 +164,7 @@ export async function pendingSearchStats(): Promise<QueueStats> {
 export async function pendingSearchesForDisplay(): Promise<PendingSearch[]> {
   const rows = await prisma.pendingEpisodeSearch.findMany({
     orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
-    select: { episodeId: true, seriesId: true, attempts: true },
+    select: { episodeId: true, seriesId: true, attempts: true, enqueuedAt: true },
   });
   return rows;
 }
