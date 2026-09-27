@@ -362,6 +362,36 @@ model PendingEpisodeSearch {
 /// the posting. That is the field notifications key off: "new to us" is the
 /// useful notion, not the provider's own posted-at, which is sometimes backdated
 /// and sometimes missing entirely.
+/// A company board the job watcher polls.
+///
+/// Configuration used to be one JOB_BOARD_SOURCES env var, which meant editing
+/// a secret and waiting for a deploy to add a company -- so in practice the
+/// list was whatever it was when it was first set. Held here, it is editable
+/// from the admin panel and takes effect on the next poll.
+///
+/// The env var is still read as a seed for a fresh install; rows here win once
+/// any exist.
+model JobBoardSource {
+  id       String  @id @default(cuid())
+  /// "greenhouse" | "ashby" | "workday".
+  provider String
+  /// The company's slug on that provider. Workday needs "tenant/wdN/Site".
+  slug     String
+  /// Display name, which is what the panel filters by.
+  company  String
+  /// Off means "keep the row but stop polling it" -- useful for a board that
+  /// has started failing, without losing how it was configured.
+  enabled  Boolean @default(true)
+  /// Whether a new posting here is worth an email. A company can be worth
+  /// listing without being worth interrupting someone for.
+  notify   Boolean @default(true)
+
+  addedAt DateTime @default(now())
+
+  @@unique([provider, slug])
+  @@index([enabled])
+}
+
 model JobPosting {
   /// "<provider>:<slug>:<provider id>".
   id       String @id
@@ -378,6 +408,12 @@ model JobPosting {
   /// place that was asked for, just usually still worth seeing.
   remote Boolean @default(false)
 
+  /// Which kind of role this is -- software, quant, firmware, security and so
+  /// on. Stored rather than derived on read, so the filter need not
+  /// re-classify every row on every page load, and so a change to the rules
+  /// shows up as postings are re-polled instead of silently rewriting history.
+  category String @default("swe")
+
   /// The provider's own date, when it gives one.
   postedAt   DateTime?
   firstSeen  DateTime  @default(now())
@@ -390,6 +426,7 @@ model JobPosting {
   @@index([firstSeen])
   @@index([lastSeen])
   @@index([company])
+  @@index([category])
 }
 
 model HealthProbeRun {

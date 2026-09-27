@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CATEGORY_LABELS, type JobCategory } from "@/lib/jobFilters";
 
 export type JobListingRow = {
   id: string;
@@ -11,6 +12,7 @@ export type JobListingRow = {
   /** Metro keys, comma-separated. Empty when the match was remote-only. */
   metros: string;
   remote: boolean;
+  category: string;
   firstSeen: string;
 };
 
@@ -52,6 +54,7 @@ export function JobListingsPanel({
 }) {
   const [metro, setMetro] = useState<string>("all");
   const [company, setCompany] = useState<string>("all");
+  const [category, setCategory] = useState<string>("all");
 
   if (!configured) {
     return (
@@ -83,7 +86,15 @@ export function JobListingsPanel({
       : metro === "remote"
         ? listings.filter((l) => l.remote)
         : listings.filter((l) => l.metros.split(",").includes(metro));
-  const shown = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
+  const byCompany = company === "all" ? byMetro : byMetro.filter((l) => l.company === company);
+  const shown =
+    category === "all" ? byCompany : byCompany.filter((l) => l.category === category);
+
+  // Only categories actually present, so the row is not a list of buckets that
+  // happen to exist in the code.
+  const categories = [...new Set(listings.map((l) => l.category))].filter(
+    (c): c is JobCategory => c in CATEGORY_LABELS
+  );
 
   return (
     <div className="w-full space-y-3">
@@ -130,6 +141,25 @@ export function JobListingsPanel({
           )}
         </div>
       </div>
+
+      {categories.length > 1 && (
+        <div className="flex flex-wrap gap-1 text-xs">
+          {["all", ...categories].map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setCategory(key)}
+              className={`rounded border px-2 py-0.5 transition-colors ${
+                category === key
+                  ? "border-white/40 bg-white/15 text-white"
+                  : "border-white/15 text-white/55 hover:bg-white/10"
+              }`}
+            >
+              {key === "all" ? "All roles" : CATEGORY_LABELS[key as JobCategory]}
+            </button>
+          ))}
+        </div>
+      )}
 
       {listings.length === 0 ? (
         <p className="text-sm text-white/50">
@@ -180,6 +210,11 @@ export function JobListingsPanel({
                 {listing.remote && (
                   <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/55">
                     Remote
+                  </span>
+                )}
+                {listing.category in CATEGORY_LABELS && listing.category !== "swe" && (
+                  <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-white/40">
+                    {CATEGORY_LABELS[listing.category as JobCategory]}
                   </span>
                 )}
               </div>

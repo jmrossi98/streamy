@@ -128,37 +128,227 @@ export function isUsRemote(location: string): boolean {
 }
 
 /**
- * Titles that are software engineering.
+ * The kinds of role worth surfacing.
  *
- * Positive match on the usual spellings, then a veto list -- "engineer" alone
- * is far too broad. A sales engineer, a recruiter for engineers and a
- * mechanical engineer all carry the word, and letting them through would bury
- * the roles actually being looked for.
+ * More than "software engineer" because that phrase misses most of what is
+ * actually wanted here: a quant role is rarely titled engineer at all, firmware
+ * and kernel work is usually named after the layer rather than the craft, and
+ * security engineering is its own ladder. Each is a bucket a person would
+ * recognise on a filter, not a taxonomy for its own sake.
  */
-const ROLE_PATTERNS = [
-  "software engineer",
-  "software developer",
-  "backend engineer",
-  "back-end engineer",
-  "frontend engineer",
-  "front-end engineer",
-  "full stack",
-  "full-stack",
-  "fullstack",
-  "infrastructure engineer",
-  "platform engineer",
-  "systems engineer",
-  "distributed systems",
-  "site reliability",
-  "sre",
-  "machine learning engineer",
-  "ml engineer",
-  "developer, ",
-  "engineer, ",
-  "sde",
-  "swe",
+export type JobCategory =
+  | "swe"
+  | "ai"
+  | "fde"
+  | "quant"
+  | "lowlevel"
+  | "security"
+  | "data"
+  | "datasci"
+  | "infra"
+  | "mobile"
+  | "graphics";
+
+export const CATEGORY_LABELS: Record<JobCategory, string> = {
+  swe: "Software",
+  ai: "AI / ML",
+  fde: "Forward deployed",
+  quant: "Quant",
+  lowlevel: "Firmware / low-level",
+  security: "Security",
+  data: "Data eng",
+  datasci: "Data science",
+  infra: "Infra / SRE",
+  mobile: "Mobile",
+  graphics: "Graphics / games",
+};
+
+/**
+ * Ordered, and the order is the tie-break.
+ *
+ * A title can honestly match two buckets -- "Security Software Engineer" is
+ * both -- so the more specific one is listed first and wins. Putting swe last
+ * makes it the fallback it should be, rather than swallowing everything that
+ * happens to contain the word engineer.
+ */
+const CATEGORY_PATTERNS: [JobCategory, string[]][] = [
+  [
+    "fde",
+    ["forward deployed", "forward-deployed", "field engineer, solutions", "deployment engineer"],
+  ],
+  [
+    "quant",
+    [
+      "quantitative research",
+      "quantitative develop",
+      "quantitative analyst",
+      "quantitative trader",
+      "quant research",
+      "quant develop",
+      "quant trader",
+      "quantitative strateg",
+      "algorithmic trading",
+      "systematic trading",
+    ],
+  ],
+  [
+    "lowlevel",
+    [
+      "firmware",
+      "embedded",
+      "kernel",
+      "device driver",
+      "driver develop",
+      "bios",
+      "rtos",
+      "bare metal",
+      "compiler",
+      "toolchain",
+      "operating system",
+      "systems software",
+      "low level",
+      "low-level",
+      "fpga",
+      "asic",
+      "verification engineer",
+      "silicon",
+      "soc ",
+    ],
+  ],
+  [
+    "security",
+    [
+      "security engineer",
+      // "Security Software Engineer" contains neither "security engineer" nor
+      // anything else below -- the words are split by "software" -- so it fell
+      // through to the generic bucket until this was added.
+      "security software",
+      "software security",
+      "security architect",
+      "security analyst",
+      "security research",
+      "application security",
+      "product security",
+      "offensive security",
+      "penetration test",
+      "red team",
+      "blue team",
+      "threat detection",
+      "detection engineer",
+      "incident response",
+      "cryptograph",
+      "appsec",
+      "infosec",
+      "cyber",
+    ],
+  ],
+  [
+    // Split out from data on request. The two overlap in job ads but not in
+    // what someone is looking for: building models is a different job from
+    // building the pipelines that feed them, and lumping them together made
+    // the filter useless for either.
+    "ai",
+    [
+      "ai engineer",
+      "ai/ml",
+      "ml/ai",
+      "machine learning engineer",
+      "ml engineer",
+      "ml",
+      "applied ai",
+      "applied scientist",
+      "research engineer",
+      "deep learning",
+      "generative ai",
+      "genai",
+      "llm",
+      "large language model",
+      "foundation model",
+      "nlp engineer",
+      "computer vision",
+      "artificial intelligence",
+    ],
+  ],
+  [
+    // Above data engineering, which is the adjacent-but-different job: a data
+    // scientist answers questions with the data, a data engineer moves it.
+    "datasci",
+    [
+      "data scientist",
+      "data science",
+      "decision scientist",
+      "research scientist",
+      "quantitative scientist",
+      "experimentation",
+      "statistician",
+      "biostatistician",
+      "econometric",
+    ],
+  ],
+  [
+    "data",
+    ["data engineer", "data platform engineer", "data infrastructure", "analytics engineer", "mlops", "data analyst", "business intelligence"],
+  ],
+  [
+    "infra",
+    [
+      "site reliability",
+      "sre",
+      "infrastructure engineer",
+      "platform engineer",
+      "devops",
+      "cloud engineer",
+      "distributed systems",
+      "network engineer",
+      "database engineer",
+      "observability",
+    ],
+  ],
+  ["mobile", ["ios engineer", "android engineer", "mobile engineer", "ios develop", "android develop", "react native"]],
+  [
+    "graphics",
+    ["graphics engineer", "rendering engineer", "game engine", "gameplay engineer", "shader", "engine programmer", "gpu engineer"],
+  ],
+  [
+    "swe",
+    [
+      "software engineer",
+      "software developer",
+      "backend engineer",
+      "back-end engineer",
+      "frontend engineer",
+      "front-end engineer",
+      "frontend developer",
+      "front-end developer",
+      "backend developer",
+      "back-end developer",
+      "full stack",
+      "full-stack",
+      "fullstack",
+      "application engineer",
+      "applications engineer",
+      "application developer",
+      "applications developer",
+      "product engineer",
+      "api engineer",
+      "web engineer",
+      "developer, ",
+      "engineer, ",
+      "sde",
+      "swe",
+      "member of technical staff",
+    ],
+  ],
 ];
 
+/**
+ * Titles that are not the job even though they carry the words.
+ *
+ * "engineer" alone catches sales engineers, recruiters for engineers and
+ * mechanical engineers; "security" catches physical security guards; "quant"
+ * catches quantitative UX researchers. Vetoing before matching is what keeps
+ * the filters worth using.
+ */
 const ROLE_VETOES = [
   "sales engineer",
   "solutions engineer",
@@ -167,7 +357,7 @@ const ROLE_VETOES = [
   "support engineer",
   "field engineer",
   "mechanical engineer",
-  "hardware engineer",
+  "hardware engineer, manufacturing",
   "electrical engineer",
   "manufacturing engineer",
   "chemical engineer",
@@ -176,6 +366,10 @@ const ROLE_VETOES = [
   "process engineer",
   "quality engineer",
   "test engineer",
+  "facilities",
+  "security guard",
+  "security officer",
+  "physical security",
   "recruiter",
   "recruiting",
   "sourcer",
@@ -183,10 +377,34 @@ const ROLE_VETOES = [
   "director",
   "vp,",
   "vice president",
+  "ux research",
+  "user research",
 ];
 
-export function isSoftwareRole(title: string): boolean {
+/**
+ * Whether a pattern appears in a title.
+ *
+ * Short patterns are matched on word boundaries, long ones as plain substrings.
+ * "ml" has to be a word -- as a substring it is inside "html" -- and the same
+ * goes for "sde", "swe", "sre" and "soc". Anything longer is distinctive enough
+ * that a substring match is both correct and cheaper.
+ */
+function titleHas(hay: string, pattern: string): boolean {
+  if (pattern.trim().length > 4) return hay.includes(pattern);
+  return hasWord(hay, pattern.trim());
+}
+
+/** The category a title belongs to, or null when it is not a role we want. */
+export function classifyRole(title: string): JobCategory | null {
   const hay = title.toLowerCase();
-  if (ROLE_VETOES.some((v) => hay.includes(v))) return false;
-  return ROLE_PATTERNS.some((p) => hay.includes(p));
+  if (ROLE_VETOES.some((v) => hay.includes(v))) return null;
+  for (const [category, patterns] of CATEGORY_PATTERNS) {
+    if (patterns.some((p) => titleHas(hay, p))) return category;
+  }
+  return null;
+}
+
+/** Kept for callers that only need the yes/no. */
+export function isSoftwareRole(title: string): boolean {
+  return classifyRole(title) !== null;
 }
