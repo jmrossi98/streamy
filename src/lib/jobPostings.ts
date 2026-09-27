@@ -18,6 +18,7 @@ import { prisma } from "./db";
 import { notify } from "./notify";
 import {
   boardUrl,
+  customPageUrl,
   CUSTOM_BOARDS,
   parseBoard,
   parseJobSources,
@@ -248,16 +249,9 @@ async function fetchCustomPaged(source: JobSource): Promise<JobPosting[]> {
     return parseBoard(source, await res.json());
   }
 
-  // Page one is offset 0 for a record-counting API and 1 for a page-counting
-  // one; which it is shows in the URL the registry already carries.
-  const countsRecords = new RegExp(`${board.offsetParam}=0\b`).test(base);
   const all: JobPosting[] = [];
   for (let page = 0; page < CUSTOM_MAX_PAGES; page += 1) {
-    const offset = countsRecords ? page * board.pageSize : page + 1;
-    const url = base.replace(
-      new RegExp(`${board.offsetParam}=\d+`),
-      `${board.offsetParam}=${offset}`
-    );
+    const url = customPageUrl(base, board, page);
     const res = await fetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       cache: "no-store",
