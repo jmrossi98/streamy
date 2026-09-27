@@ -27,7 +27,8 @@
  * legitimate state for an optional integration. What it catches is the
  * mechanical mistake.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 const workflow = readFileSync(".github/workflows/deploy.yml", "utf8");
 
@@ -80,6 +81,94 @@ for (const v of envsVars) {
   if (!usedByScript) {
     problems.push(`${v}: forwarded by envs: but never used — the forward does nothing`);
   }
+}
+
+
+/**
+ * The other half of the same failure: a variable wired into NONE of the three
+ * places.
+ *
+ * The check above compares the three lists against each other, so a variable
+ * missing from all of them is perfectly consistent and invisible to it. That
+ * is not hypothetical either: SONARR_QUALITY_PROFILE_ID_4K was read by
+ * src/lib/sonarr.ts and appeared nowhere in this workflow, so every 4K TV
+ * request silently fell back to the HD profile -- resolveQualityProfileId
+ * treats an unset id as "not configured" and returns the HD one, which is the
+ * right behaviour and says nothing. Movies had the variable; TV never did.
+ *
+ * So: every process.env.X the application reads must be provided somewhere.
+ * "Somewhere" includes docker-compose.prod.yml, which sets a handful directly
+ * (NODE_ENV, DATABASE_URL and friends) rather than through .env.
+ */
+const compose = readFileSync("docker-compose.prod.yml", "utf8");
+const provided = new Set([
+  ...printfSources.values(),
+  ...[...compose.matchAll(/^\s*-\s*(\w+)[=:]/gm)].map((m) => m[1]),
+  ...[...compose.matchAll(/^\s*(\w+):\s/gm)].map((m) => m[1]),
+]);
+
+/**
+ * Read by the app but deliberately not deployed.
+ *
+ * NODE_ENV and CI are set by the runtime and the test harness; NEXT_PUBLIC_*
+ * is baked at build time rather than read from .env on the server.
+ */
+const notDeployed = new Set([
+  // Set by the runtime or the test harness, never by the deploy.
+  "NODE_ENV",
+  "CI",
+  "VITEST",
+  "npm_package_version",
+  // Optional, but with the default in the callee rather than at the read:
+  // parseLocations takes `string | null | undefined` and returns [] for a
+  // falsy value, which the regex above cannot see. An empty list means "no
+  // location filter", which is a working configuration.
+  "PAGE_WATCH_LOCATIONS",
+]);
+
+function sourceFiles(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry === ".next") continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
+    else if (/\.(ts|tsx|mjs|js)$/.test(entry) && !/__tests__/.test(full)) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * Every process.env read, and whether that read supplies its own fallback.
+ *
+ * This is the line between "optional" and "broken", and it lives in the code
+ * rather than in a list somebody has to remember to update. A read like
+ * `process.env.GEOIP_DIR || "/app/data/geoip"` states its own default and is
+ * fine undeployed. A bare `process.env.SONARR_QUALITY_PROFILE_ID_4K` has no
+ * answer when the variable is missing -- it is simply undefined, and the
+ * caller reads that as "not configured" without logging anything. That one
+ * shipped unwired, so every 4K TV request quietly used the HD profile.
+ *
+ * A name is cleared if ANY of its reads supplies a fallback: one defaulted
+ * read means the code is written to cope with absence.
+ */
+const readByApp = new Map();
+const hasFallback = new Set();
+for (const file of sourceFiles("src")) {
+  const text = readFileSync(file, "utf8");
+  for (const m of text.matchAll(/process\.env\.(\w+)\s*(\?\?|\|\||\?\.|===|!==)?/g)) {
+    const [, name, operator] = m;
+    if (!readByApp.has(name)) readByApp.set(name, file);
+    if (operator) hasFallback.add(name);
+  }
+}
+
+for (const [name, file] of readByApp) {
+  if (provided.has(name) || notDeployed.has(name) || name.startsWith("NEXT_PUBLIC_")) continue;
+  if (hasFallback.has(name)) continue;
+  problems.push(
+    `${name}: read by ${file} with no fallback, but never written to .env by the` +
+      ` deploy — it is undefined on the server and reads as "not configured"`
+  );
 }
 
 if (problems.length > 0) {
