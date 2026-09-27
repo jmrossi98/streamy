@@ -215,7 +215,32 @@ async function fetchEightfold(source: JobSource): Promise<JobPosting[]> {
   return all;
 }
 
+/**
+ * GitHub returns ten a page and a totalCount, so it has to be paged. Capped
+ * for the same reason as the others: this watches for new postings, and the
+ * whole board is a few hundred.
+ */
+const GITHUB_MAX_PAGES = 8;
+
+async function fetchGithub(source: JobSource): Promise<JobPosting[]> {
+  const base = boardUrl(source);
+  const all: JobPosting[] = [];
+  for (let page = 1; page <= GITHUB_MAX_PAGES; page += 1) {
+    const res = await fetch(base.replace(/page=\d+/, `page=${page}`), {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+      headers: { "User-Agent": UA, Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const batch = parseBoard(source, await res.json());
+    all.push(...batch);
+    if (batch.length === 0) break;
+  }
+  return all;
+}
+
 async function fetchBoard(source: JobSource): Promise<JobPosting[]> {
+  if (source.provider === "github") return fetchGithub(source);
   if (source.provider === "eightfold") return fetchEightfold(source);
   if (source.provider === "workday") return fetchWorkday(source);
 
