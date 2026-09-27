@@ -302,3 +302,36 @@ describe("single-company APIs", () => {
     expect(parseBoard(github, { jobs: [{ notData: 1 }] })).toEqual([]);
   });
 });
+
+describe("atlassian", () => {
+  const atlassian: JobSource = { company: "Atlassian", provider: "atlassian", slug: "all" };
+
+  it("parses the bare array it returns", () => {
+    // The plainest of the three single-company APIs: no wrapper, no nesting,
+    // and it hands back a real apply URL rather than a slug to rebuild from.
+    const payload = [
+      {
+        id: 12345,
+        title: "Senior Software Engineer, Jira",
+        locations: ["San Francisco, California", "Remote, United States"],
+        applyUrl: "https://www.atlassian.com/company/careers/details/12345",
+      },
+    ];
+    const [posting] = parseBoard(atlassian, payload);
+    expect(posting.id).toBe("atlassian:12345");
+    expect(posting.location).toBe("San Francisco, California; Remote, United States");
+    expect(posting.url).toBe("https://www.atlassian.com/company/careers/details/12345");
+    expect(matchMetros(posting.location).map((m) => m.key)).toContain("bay");
+  });
+
+  it("copes with a single location that is not an array", () => {
+    const [posting] = parseBoard(atlassian, [
+      { id: 1, title: "Engineer", locations: "Austin, Texas" },
+    ]);
+    expect(posting.location).toBe("Austin, Texas");
+  });
+
+  it("ignores a wrapped payload, since this endpoint returns a bare list", () => {
+    expect(parseBoard(atlassian, { jobs: [{ id: 1, title: "x" }] })).toEqual([]);
+  });
+});
