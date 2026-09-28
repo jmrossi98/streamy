@@ -19,6 +19,52 @@ const FORWARDED_RESPONSE_HEADERS = [
   "etag",
 ];
 
+// How long Jellyfin gets to start answering. Generous: a transcode's first
+// response waits on ffmpeg spinning up. Only the wait for headers is bounded
+// -- a two-hour movie body must never be cut off by it.
+const UPSTREAM_HEADERS_TIMEOUT_MS = 30_000;
+
+/**
+ * The abort signal for one upstream fetch. It fires when:
+ *
+ *   - the viewer goes away (request.signal, which Next aborts when the
+ *     browser's connection closes). Without this, closing the player left
+ *     the upstream fetch -- and the Jellyfin transcode feeding it -- running
+ *     with nobody on the other end until Jellyfin noticed on its own; or
+ *   - Jellyfin has not produced response headers within the timeout, so a
+ *     hung Jellyfin turns into a prompt 504 instead of a request that holds a
+ *     socket open forever.
+ *
+ * Call headersArrived() once headers are in, to disarm the timeout; the
+ * disconnect half stays live for the whole body.
+ */
+export function upstreamAbort(request: Request | null, headersMs = UPSTREAM_HEADERS_TIMEOUT_MS) {
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(new Error("upstream timed out")), headersMs);
+  const signal = request ? AbortSignal.any([request.signal, timeout.signal]) : timeout.signal;
+  return { signal, headersArrived: () => clearTimeout(timer), timedOut: () => timeout.signal.aborted };
+}
+
+/** fetch() under upstreamAbort, mapping a failure to the right status. */
+async function fetchUpstream(
+  url: string,
+  request: Request | null,
+  init: RequestInit = {}
+): Promise<{ upstream: Response; done: () => void } | { error: Response }> {
+  const abort = upstreamAbort(request);
+  try {
+    const upstream = await fetch(url, { ...init, cache: "no-store", signal: abort.signal });
+    return { upstream, done: abort.headersArrived };
+  } catch {
+    abort.headersArrived();
+    return {
+      error: abort.timedOut()
+        ? new Response("Upstream timed out", { status: 504 })
+        : new Response("Upstream stream unavailable", { status: 502 }),
+    };
+  }
+}
+
 /**
  * Pipes an item's bytes from Jellyfin back through Streamy's own origin,
  * forwarding the browser's Range request so seeking and partial loads work
@@ -39,10 +85,10 @@ export async function proxyJellyfinStream(
   const upstreamUrl = opts.transcode
     ? jellyfinTranscodeStreamUrl(itemId, opts.startSeconds, opts.playSessionId)
     : jellyfinUpstreamStreamUrl(itemId);
-  const upstream = await fetch(upstreamUrl, {
-    headers: range ? { Range: range } : {},
-    cache: "no-store",
-  });
+  const got = await fetchUpstream(upstreamUrl, request, { headers: range ? { Range: range } : {} });
+  if ("error" in got) return got.error;
+  const { upstream } = got;
+  got.done();
 
   if (!upstream.ok && upstream.status !== 206) {
     return new Response("Upstream stream unavailable", { status: 502 });
@@ -122,12 +168,12 @@ export async function proxyJellyfinHlsResource(
         )
       : jellyfinHlsResourceUrl(itemId, jellyfinPath, forwardedParams);
   const range = request.headers.get("range");
-  const upstream = await fetch(upstreamUrl, {
-    headers: range ? { Range: range } : {},
-    cache: "no-store",
-  });
+  const got = await fetchUpstream(upstreamUrl, request, { headers: range ? { Range: range } : {} });
+  if ("error" in got) return got.error;
+  const { upstream } = got;
 
   if (!upstream.ok && upstream.status !== 206) {
+    got.done();
     return new Response("Upstream stream unavailable", { status: 502 });
   }
 
@@ -143,10 +189,19 @@ export async function proxyJellyfinHlsResource(
   if (!headers.has("accept-ranges")) headers.set("accept-ranges", "bytes");
 
   if (!isPlaylist) {
+    got.done();
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
-  const text = await upstream.text();
+  // A playlist is small: keep the timeout armed until its body is in too.
+  let text: string;
+  try {
+    text = await upstream.text();
+  } catch {
+    return new Response("Upstream timed out", { status: 504 });
+  } finally {
+    got.done();
+  }
   const rewritten = text
     .split("\n")
     .map((line) => {
@@ -167,11 +222,18 @@ export async function proxyJellyfinSubtitle(
   mediaSourceId: string,
   index: number
 ): Promise<Response> {
-  const upstream = await fetch(jellyfinSubtitleStreamUrl(itemId, mediaSourceId, index), { cache: "no-store" });
-  if (!upstream.ok) {
+  const got = await fetchUpstream(jellyfinSubtitleStreamUrl(itemId, mediaSourceId, index), null);
+  if ("error" in got) return got.error;
+  const { upstream } = got;
+  let body: string;
+  try {
+    if (!upstream.ok) return new Response("Subtitle unavailable", { status: 502 });
+    body = await upstream.text();
+  } catch {
     return new Response("Subtitle unavailable", { status: 502 });
+  } finally {
+    got.done();
   }
-  const body = await upstream.text();
   return new Response(body, {
     status: 200,
     headers: { "content-type": "text/vtt; charset=utf-8", "cache-control": "no-store" },

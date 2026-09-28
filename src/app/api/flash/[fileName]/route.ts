@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { flashFileUpstreamUrl, isFlashLibraryConfigured } from "@/lib/flashLibrary";
 import { readLocalFile } from "@/lib/flashStorage";
+import { upstreamAbort } from "@/lib/streamProxy";
 
 /**
  * Serves one SWF to Ruffle.
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ fileName: string }> }
 ) {
   if (!(await getSession())) {
@@ -50,7 +51,10 @@ export async function GET(
   }
 
   try {
-    const res = await fetch(upstream, { cache: "no-store" });
+    // Viewer disconnect aborts the upstream read; the timeout bounds headers only.
+    const abort = upstreamAbort(request);
+    const res = await fetch(upstream, { cache: "no-store", signal: abort.signal });
+    abort.headersArrived();
     if (!res.ok || !res.body) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }

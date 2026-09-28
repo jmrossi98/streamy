@@ -81,7 +81,7 @@ async function fetchJellyfinResource(masterUrl: string, itemId: string, relative
   const url = new URL(`${base.origin}/Videos/${itemId}/${path}`);
   new URLSearchParams(query).forEach((v, k) => url.searchParams.set(k, v));
   if (!url.searchParams.has("api_key")) url.searchParams.set("api_key", apiKey);
-  return fetch(url.toString(), { cache: "no-store" });
+  return fetch(url.toString(), { cache: "no-store", signal: AbortSignal.timeout(30_000) });
 }
 
 async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }> {
@@ -125,7 +125,7 @@ async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }
   let variantRef: string | undefined;
   try {
     masterUrl = jellyfinHlsMasterUrl(itemId, crypto.randomUUID());
-    const res = await fetch(masterUrl, { cache: "no-store" });
+    const res = await fetch(masterUrl, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.text();
     if (!body.startsWith("#EXTM3U")) throw new Error("not an HLS playlist");

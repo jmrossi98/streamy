@@ -33,6 +33,7 @@ async function login(): Promise<string | null> {
         password: QBITTORRENT_PASSWORD!,
       }).toString(),
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     // The session cookie name is port-suffixed (QBT_SID_8080), so match loosely.
@@ -72,6 +73,7 @@ export async function deleteTorrents(hashes: string[]): Promise<boolean> {
         deleteFiles: "true",
       }).toString(),
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     return res.ok;
   } catch (err) {
@@ -106,6 +108,7 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
     const res = await fetch(`${QBITTORRENT_URL}/api/v2/torrents/info`, {
       headers: { ...baseHeaders(), Cookie: cookie },
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as {

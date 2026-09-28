@@ -79,6 +79,7 @@ EXPOSE 3000
 # link. The direct path has no such fallback: it either exists or the container
 # tells us immediately.
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY --from=builder /app/scripts/pending-migrations.cjs /app/pending-migrations.cjs
 RUN chmod +x /app/docker-entrypoint.sh
 
 CMD ["/app/docker-entrypoint.sh"]
