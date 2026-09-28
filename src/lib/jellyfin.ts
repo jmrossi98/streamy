@@ -375,6 +375,7 @@ export async function getJellyfinSubtitleTracks(
           Language?: string;
           IsExternal?: boolean;
           Codec?: string;
+          IsTextSubtitleStream?: boolean;
         }[];
       }[];
     }>(`/Items?Ids=${itemId}&Fields=MediaStreams,MediaSources`);
@@ -382,7 +383,12 @@ export async function getJellyfinSubtitleTracks(
     if (!item) return null;
     const mediaSourceId = item.MediaSources?.[0]?.Id ?? itemId;
     const tracks = (item.MediaStreams ?? [])
-      .filter((s) => s.Type === "Subtitle")
+      // Text subtitles only. Image-based ones (PGS/VobSub, from Blu-ray and
+      // DVD rips) cannot become WebVTT -- Jellyfin answers 400 -- so offering
+      // them meant a menu item, or a default, that showed nothing: JoJo
+      // "had English subtitles" that never appeared. The subtitle-ocr job on
+      // mediabox turns those into .srt sidecars, which show up here as text.
+      .filter((s) => s.Type === "Subtitle" && s.IsTextSubtitleStream !== false)
       .map((s) => ({
         index: s.Index,
         label: s.DisplayTitle || s.Language || `Track ${s.Index}`,

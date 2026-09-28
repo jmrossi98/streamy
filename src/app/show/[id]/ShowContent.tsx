@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import type { ShowDetail, TVSeason, TVEpisode, TVShow } from "@/lib/tmdb";
 import { Credits } from "@/components/Credits";
 import { WatchlistButton } from "@/components/WatchlistButton";
@@ -87,7 +87,13 @@ export function ShowContent({
   similar = [],
 }: ShowContentProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  // The show page's own path, fixed -- deliberately not usePathname(). Opening
+  // the player pushes the episode URL into history, and Next keeps
+  // usePathname() in sync with native pushState, so while the overlay was open
+  // `pathname` was the *episode* URL. Closing navigated to
+  // `${pathname}?season=N` -- the standalone episode page, i.e. a second
+  // player -- which is why the X always took two clicks.
+  const pathname = `/show/${show.id}`;
 
   const [seasonNum, setSeasonNum] = useState(initialSeasonNum);
   const [season, setSeason] = useState<TVSeason | null>(
@@ -129,23 +135,48 @@ export function ShowContent({
     setSeasonNum(initialSeasonNum);
   }, [initialSeasonNum]);
 
-  const closeOverlay = useCallback(() => {
-    setOverlayEpisode((prev) => {
-      if (prev) {
-        router.replace(`${pathname}?season=${prev.seasonNumber}`, { scroll: false });
-      }
-      return null;
-    });
-  }, [pathname, router]);
+  // Whether the overlay has added its one history entry (the episode URL).
+  // One entry for the whole viewing: moving to the next episode replaces it
+  // rather than stacking another, so closing -- or pressing Back -- always
+  // lands on the show page in a single step instead of on a stale episode
+  // URL, which Next would render as the standalone player.
+  const overlayEntryRef = useRef(false);
 
+  const closeOverlay = useCallback(() => {
+    setOverlayEpisode(null);
+    if (overlayEntryRef.current) {
+      overlayEntryRef.current = false;
+      // Pops the overlay's entry, returning to the show URL (with ?season=,
+      // set when the episode was opened) that is already underneath it.
+      window.history.back();
+    }
+  }, []);
+
+  const overlayOpen = overlayEpisode != null;
+  const overlaySeason = overlayEpisode?.seasonNumber;
+  const overlayEpisodeNumber = overlayEpisode?.episodeNumber;
   useEffect(() => {
-    if (!overlayEpisode) return;
-    const handlePopState = () => setOverlayEpisode(null);
-    const episodePath = `/show/${show.id}/episode/${overlayEpisode.seasonNumber}/${overlayEpisode.episodeNumber}`;
-    window.history.pushState({ overlay: true }, "", episodePath);
+    if (overlaySeason == null || overlayEpisodeNumber == null) return;
+    const episodePath = `/show/${show.id}/episode/${overlaySeason}/${overlayEpisodeNumber}`;
+    if (overlayEntryRef.current) {
+      window.history.replaceState({ overlay: true }, "", episodePath);
+    } else {
+      window.history.pushState({ overlay: true }, "", episodePath);
+      overlayEntryRef.current = true;
+    }
+  }, [overlaySeason, overlayEpisodeNumber, show.id]);
+
+  // Browser Back while the overlay is open: the entry is already gone, so
+  // only the overlay needs closing.
+  useEffect(() => {
+    if (!overlayOpen) return;
+    const handlePopState = () => {
+      overlayEntryRef.current = false;
+      setOverlayEpisode(null);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [overlayEpisode != null, overlayEpisode?.seasonNumber, overlayEpisode?.episodeNumber, show.id]);
+  }, [overlayOpen]);
 
   const openResumeOverlay = useCallback(() => {
     router.replace(`${pathname}?season=${resumeSeason}`, { scroll: false });
