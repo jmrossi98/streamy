@@ -8,6 +8,8 @@
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
+import { cached } from "./ttlCache";
+import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 
 const RADARR_URL = process.env.RADARR_URL?.replace(/\/$/, "");
 const RADARR_API_KEY = process.env.RADARR_API_KEY;
@@ -417,6 +419,21 @@ export function fileBaseName(relativePath: string): string {
  * had been discarded on import. Falls back to the movie title only if a file
  * is somehow missing its own filename (movieFile without a relativePath).
  */
+async function movieProtocol(movieId: number): Promise<DownloadProtocol | undefined> {
+  try {
+    const found = await cached(`radarr:movie-protocol:${movieId}`, 60 * 60_000, async () =>
+      protocolsFromHistory(
+        await radarrFetch<HistoryEvent[]>(`/api/v3/history/movie?movieId=${movieId}`),
+        (e) => e.movieId
+      )
+    );
+    return found.get(movieId);
+  } catch (err) {
+    console.error(`[radarr] movie history read failed for ${movieId}:`, err);
+    return undefined;
+  }
+}
+
 export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
@@ -431,12 +448,17 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
       >("/api/v3/movie"),
       getRadarrCompletedProtocols(),
     ]);
+    // Movies grabbed before the global 1000-grab window: their own history.
+    const older = await Promise.all(
+      movies.filter((m) => m.hasFile && !protocols.has(m.id)).map(async (m) => [m.id, await movieProtocol(m.id)] as const)
+    );
+    const olderById = new Map(older);
     return movies
       .filter((m) => m.hasFile)
       .map((m) => ({
         id: m.id,
         title: m.movieFile?.relativePath ? fileBaseName(m.movieFile.relativePath) : m.title,
-        protocol: protocols.get(m.id),
+        protocol: protocols.get(m.id) ?? olderById.get(m.id),
         sizeBytes: m.movieFile?.size ?? null,
         addedAt: m.movieFile?.dateAdded ?? null,
       }));

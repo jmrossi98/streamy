@@ -22,6 +22,7 @@ import { IMPORTING_STATES } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
 import { fileBaseName } from "./radarr";
+import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 import { readDownloadRouting, type DownloadRouting } from "./radarr";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import type {
@@ -339,6 +340,26 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
   });
 }
 
+// A file's protocol never changes, so a series' answer is kept for an hour.
+const SERIES_PROTOCOL_TTL_MS = 60 * 60_000;
+
+async function seriesProtocols(seriesId: number): Promise<Map<number, DownloadProtocol>> {
+  try {
+    return await cached(
+      `sonarr:series-protocols:${seriesId}`,
+      SERIES_PROTOCOL_TTL_MS,
+      async () =>
+        protocolsFromHistory(
+          await sonarrFetch<HistoryEvent[]>(`/api/v3/history/series?seriesId=${seriesId}`),
+          (e) => e.episodeId
+        )
+    );
+  } catch (err) {
+    console.error(`[sonarr] series history read failed for ${seriesId}:`, err);
+    return new Map();
+  }
+}
+
 async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
   try {
     const [series, protocols] = await Promise.all([
@@ -363,6 +384,10 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
             { id: number; relativePath: string; size?: number; dateAdded?: string }[]
           >(`/api/v3/episodefile?seriesId=${s.id}`),
         ]);
+        // Episodes older than the global 1000-grab window get their protocol
+        // from this series' own history -- see historyProtocolRules.
+        const missing = episodes.some((e) => e.hasFile && !protocols.has(e.id));
+        const ownHistory = missing ? await seriesProtocols(s.id) : new Map<number, DownloadProtocol>();
         const pathById = new Map(files.map((f) => [f.id, f.relativePath]));
         const sizeById = new Map(files.map((f) => [f.id, f.size ?? null]));
         const addedById = new Map(files.map((f) => [f.id, f.dateAdded ?? null]));
@@ -376,7 +401,7 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
               title: relativePath
                 ? fileBaseName(relativePath)
                 : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
-              protocol: protocols.get(e.id),
+              protocol: protocols.get(e.id) ?? ownHistory.get(e.id),
               sizeBytes: sizeById.get(e.episodeFileId) ?? null,
               addedAt: addedById.get(e.episodeFileId) ?? null,
             };
