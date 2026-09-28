@@ -159,8 +159,14 @@ export function ShowContent({
   const showRequestFlow = !hasVideo && requestConfigured;
   // Per-episode download controls are driven by Sonarr's live view of the
   // season, independent of whether the show as a whole is playable yet.
+  // Every season the selector offers, prefetched so switching is instant.
+  const seasonNumbersToPrefetch = [
+    ...Array.from({ length: show.numberOfSeasons }, (_, i) => i + 1),
+    ...(show.hasSpecials ? [0] : []),
+  ];
   const {
     statuses: episodeStatuses,
+    loaded: episodeStatusesLoaded,
     refresh: refreshEpisodeStatuses,
     setLocalState: setEpisodeState,
     setLocalStates: setSeasonEpisodeStates,
@@ -169,7 +175,8 @@ export function ShowContent({
     seasonNum,
     requestConfigured,
     initialEpisodeStatuses,
-    initialEpisodeStatusSeason
+    initialEpisodeStatusSeason,
+    seasonNumbersToPrefetch
   );
 
   // Roll the season's episodes up into one state so the season-level control
@@ -355,6 +362,7 @@ export function ShowContent({
               showId={show.id}
               seasonNumber={seasonNum}
               state={seasonState}
+              statusLoading={!episodeStatusesLoaded}
               onRequested={refreshEpisodeStatuses}
               onOptimistic={(next) =>
                 setSeasonEpisodeStates(
@@ -446,6 +454,11 @@ export function ShowContent({
                             </svg>
                           </span>
                         </div>
+                      ) : requestConfigured && !episodeStatusesLoaded ? (
+                        // Status not in yet: say nothing rather than guess.
+                        // "Not downloaded" here was wrong for anything already
+                        // on its way, and flipped a moment later.
+                        null
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center">
                           <span className="rounded bg-black/70 px-2 py-1 text-[11px] font-medium text-white/80">
@@ -453,9 +466,13 @@ export function ShowContent({
                               ? epState.progress != null
                                 ? `${epState.progress}%`
                                 : "Starting…"
-                              : epState
-                                ? "Starting…"
-                                : "Not downloaded"}
+                              : epState?.status === "noReleaseFound"
+                                ? // Not "Starting…": nothing is starting, and
+                                  // the row beside it already says why.
+                                  "No release found"
+                                : epState
+                                  ? "Starting…"
+                                  : "Not downloaded"}
                           </span>
                         </div>
                       )}
@@ -490,6 +507,7 @@ export function ShowContent({
                         seasonNumber={ep.seasonNumber}
                         episodeNumber={ep.episodeNumber}
                         state={episodeStatuses[ep.episodeNumber]}
+                        statusLoading={!episodeStatusesLoaded}
                         onRequested={refreshEpisodeStatuses}
                         onOptimistic={(next) => setEpisodeState(ep.episodeNumber, next)}
                       />

@@ -150,3 +150,22 @@ describe("dedupeDownloads", () => {
     expect(dedupeDownloads(rows, keyOf).map((r) => r.key)).toEqual(["b", "a"]);
   });
 });
+
+describe("sortDownloads by name", () => {
+  const named = (title: string) => ({ title, completed: true }) as SortableDownload & { title: string };
+
+  it("sorts alphabetically, ignoring case", () => {
+    const rows = [named("zebra"), named("Apple"), named("mango")];
+    expect(sortDownloads(rows, "name").map((r) => r.title)).toEqual(["Apple", "mango", "zebra"]);
+  });
+
+  it("puts episode 10 after episode 9", () => {
+    // Plain string order would put "E10" before "E9".
+    const rows = [named("Show - S2 E10"), named("Show - S2 E9"), named("Show - S2 E1")];
+    expect(sortDownloads(rows, "name").map((r) => r.title)).toEqual([
+      "Show - S2 E1",
+      "Show - S2 E9",
+      "Show - S2 E10",
+    ]);
+  });
+});

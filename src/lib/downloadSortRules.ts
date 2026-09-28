@@ -8,16 +8,19 @@
 /** Only the fields the ordering reads, so this does not depend on the row type. */
 export type SortableDownload = {
   completed: boolean;
+  /** Used only by the name sort. */
+  title?: string;
   /** When the row started: queued, requested, grabbed or landed. */
   startedAt?: string | null;
   addedAt?: string | null;
 };
 
-export type DownloadSort = "status" | "recent";
+export type DownloadSort = "status" | "recent" | "name";
 
 export const DOWNLOAD_SORTS: { id: DownloadSort; label: string }[] = [
   { id: "status", label: "Status" },
   { id: "recent", label: "Recently added" },
+  { id: "name", label: "Name" },
 ];
 
 function addedTime(row: SortableDownload): number {
@@ -41,7 +44,16 @@ function addedTime(row: SortableDownload): number {
  * is the caller's progress ordering. Sorting is stable in every engine this
  * runs on, so equal keys keep that order rather than shuffling between polls.
  */
+/**
+ * Name order that reads the way a person would: numeric-aware, so S2 E10
+ * sorts after S2 E9 rather than before it, and case-insensitive.
+ */
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 export function sortDownloads<T extends SortableDownload>(rows: T[], sort: DownloadSort): T[] {
+  if (sort === "name") {
+    return [...rows].sort((a, b) => byName.compare(a.title ?? "", b.title ?? ""));
+  }
   if (sort !== "recent") return rows;
   // Purely by time now, with no in-flight pinning. Pinning existed because
   // only finished rows had a date, so sorting by it buried everything else;
