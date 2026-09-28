@@ -4,6 +4,7 @@ import {
   isUnhealthy,
   isImportStuck,
   isDeadSwarm,
+  isMetadataDead,
   IMPORT_STUCK_MINUTES,
   pickIdleEpisodeBatch,
   REHEAL_COOLDOWN_MS,
@@ -85,7 +86,7 @@ function onIdleCooldown(key: string): boolean {
 
 async function healOne(
   mediaType: "movie" | "show",
-  entry: QueueHealth,
+  entry: QueueHealth & { torrentState?: string | null },
   swarm: Map<string, { swarmSeeds: number; connectedSeeds: number }> = new Map()
 ): Promise<HealedDownload | null> {
   // Keyed per episode (or movie), not per queue entry.
@@ -117,7 +118,9 @@ async function healOne(
   // usually about conditions, not the release: a VPN reconnect or a brief
   // peer drought. Blocklisting those poisoned the best-seeded releases and
   // pushed later searches onto steadily worse ones.
-  const deadSwarm = isDeadSwarm(entry.downloadId ? swarm.get(entry.downloadId.toLowerCase()) : undefined);
+  const deadSwarm =
+    isMetadataDead(entry) ||
+    isDeadSwarm(entry.downloadId ? swarm.get(entry.downloadId.toLowerCase()) : undefined);
   const failed = shouldBlocklistStalled(entry.errorMessage, stalls, deadSwarm);
   try {
     // Cancel this entry, never the title's whole queue.
@@ -437,13 +440,21 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
   // Swarm seed counts by info hash, so a stalled torrent nobody can seed is
   // blocklisted on its first stall. Unreadable qBittorrent just means no
   // extra knowledge -- the usual stall rules still apply.
-  const swarm = new Map<string, { swarmSeeds: number; connectedSeeds: number }>();
+  const swarm = new Map<string, { swarmSeeds: number; connectedSeeds: number; state: string }>();
   try {
     const { getTorrentHealth } = await import("./qbittorrent");
     for (const t of (await getTorrentHealth()) ?? []) if (t.hash) swarm.set(t.hash, t);
   } catch (err) {
     console.error("[healer] could not read torrent swarms:", err);
   }
+
+  // qBittorrent's own state on each torrent entry, so "queued" in Sonarr can
+  // be told apart from "still fetching metadata" (see isWaitingItsTurn).
+  const withTorrentState = (e: QueueHealth) => ({
+    ...e,
+    torrentState:
+      e.protocol === "torrent" && e.downloadId ? swarm.get(e.downloadId.toLowerCase())?.state ?? null : null,
+  });
 
   const isUnsafe = (e: QueueHealth): e is UnsafeEntry => e.unsafe != null;
   // An unsafe entry is dealt with on its own path and kept out of the stall
@@ -452,8 +463,8 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
   const healed = await Promise.all([
     ...radarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("movie", e)),
     ...sonarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("show", e)),
-    ...radarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm)),
-    ...sonarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm)),
+    ...radarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm)),
+    ...sonarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm)),
     ...dueStuckImports([...radarrQueue, ...sonarrQueue]).map((e) =>
       replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
     ),
