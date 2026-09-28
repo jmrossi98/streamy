@@ -207,3 +207,33 @@ export function idleBackoffMs(tries: number): number {
   if (tries <= 1) return REHEAL_COOLDOWN_MS;
   return Math.min(REHEAL_COOLDOWN_MS * 2 ** (tries - 1), MAX_IDLE_BACKOFF_MS);
 }
+
+/**
+ * Most idle episodes the healer re-searches in one Sonarr command.
+ *
+ * On 2026-09-28 it fired one EpisodeSearch for 28 episodes -- bonus specials
+ * no indexer carries -- which ran for minutes while five Sopranos episodes
+ * Jake had just requested waited behind it for ~25 minutes. A search costs
+ * ~17s per episode on an idle Sonarr, so five keeps any one healer command
+ * under a couple of minutes; the rest get their turn on later passes.
+ */
+export const IDLE_EPISODE_BATCH = 5;
+
+/**
+ * Which idle episodes to re-search this pass: those off cooldown, fewest
+ * previous tries first (a title that keeps coming up empty yields to one
+ * that has barely been tried), capped at `max`.
+ */
+export function pickIdleEpisodeBatch<T extends { episodeId: number }>(
+  candidates: T[],
+  triesOf: (e: T) => number,
+  onCooldown: (e: T) => boolean,
+  max: number = IDLE_EPISODE_BATCH
+): T[] {
+  return candidates
+    .filter((e) => !onCooldown(e))
+    .map((e, i) => ({ e, i, tries: triesOf(e) }))
+    .sort((a, b) => a.tries - b.tries || a.i - b.i)
+    .slice(0, max)
+    .map((x) => x.e);
+}

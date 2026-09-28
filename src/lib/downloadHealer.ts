@@ -2,6 +2,7 @@ import {
   idleBackoffMs,
   isPermanentlyBlocked,
   isUnhealthy,
+  pickIdleEpisodeBatch,
   REHEAL_COOLDOWN_MS,
   shouldBlocklist,
   shouldBlocklistStalled,
@@ -25,6 +26,7 @@ import {
   cancelSonarrQueueItem,
   searchSonarrSeries,
   expireSonarrBlocklist,
+  outstandingSearches,
 } from "./sonarr";
 import { countRecentRejections, getPermanentBlocks, recordRejection } from "./rejectedReleases";
 
@@ -296,16 +298,33 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
     console.error("[healer] could not read the ordered search queue:", err);
   }
 
-  // Batch the episode search: one command for everything due, rather than a
-  // request per episode, so a large backlog doesn't hammer Sonarr.
-  const dueEpisodes = episodes.filter((e) => {
-    if (queued.has(e.episodeId)) return false;
+  // Re-searching idle episodes is background work, and it yields to anything
+  // someone asked for: while requested episodes are waiting in the ordered
+  // queue, or any search is already running, this pass adds nothing. Sonarr
+  // runs searches one after another, so a healer search started now is time
+  // a fresh request spends waiting behind it. Unreadable counts as busy.
+  const [busy, pending] = await Promise.all([
+    outstandingSearches(),
+    import("./pendingEpisodeSearch")
+      .then((m) => m.pendingSearchStats())
+      .catch(() => null),
+  ]);
+  if (busy !== 0 || (pending?.total ?? 0) > 0) {
+    return healed;
+  }
+
+  // A small batch per pass rather than one command for everything due -- see
+  // IDLE_EPISODE_BATCH for what the unbounded version cost.
+  const dueEpisodes = pickIdleEpisodeBatch(
+    episodes.filter((e) => !queued.has(e.episodeId)),
+    (e) => idleTries.get(`idle:episode:${e.episodeId}`) ?? 0,
+    (e) => onIdleCooldown(`idle:episode:${e.episodeId}`)
+  );
+  for (const e of dueEpisodes) {
     const key = `idle:episode:${e.episodeId}`;
-    if (onIdleCooldown(key)) return false;
     lastHealedAt.set(key, Date.now());
     idleTries.set(key, (idleTries.get(key) ?? 0) + 1);
-    return true;
-  });
+  }
   if (dueEpisodes.length > 0) {
     try {
       await searchSonarrEpisodes(dueEpisodes.map((e) => e.episodeId));

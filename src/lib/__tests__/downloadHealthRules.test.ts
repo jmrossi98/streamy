@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPermanentlyBlocked, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -126,5 +126,20 @@ describe("shouldBlocklistStalled", () => {
 
   it("treats a missing message the same as shouldBlocklist does", () => {
     expect(shouldBlocklistStalled(null, 1)).toBe(shouldBlocklist(null));
+  });
+});
+
+describe("pickIdleEpisodeBatch", () => {
+  const eps = [1, 2, 3, 4, 5, 6, 7].map((episodeId) => ({ episodeId }));
+  const tries: Record<number, number> = { 1: 4, 2: 0, 3: 1, 4: 0, 5: 2, 6: 0, 7: 0 };
+
+  it("caps the batch and prefers the least-tried, keeping list order among ties", () => {
+    const got = pickIdleEpisodeBatch(eps, (e) => tries[e.episodeId], () => false, 5);
+    expect(got.map((e) => e.episodeId)).toEqual([2, 4, 6, 7, 3]);
+  });
+
+  it("skips episodes on cooldown", () => {
+    const got = pickIdleEpisodeBatch(eps, (e) => tries[e.episodeId], (e) => e.episodeId % 2 === 0, 5);
+    expect(got.map((e) => e.episodeId)).toEqual([7, 3, 5, 1]);
   });
 });
