@@ -22,9 +22,18 @@ set -e
 
 mkdir -p /app/data /app/.next/cache
 
+# Restarts and recreates with nothing to migrate skip `migrate deploy`
+# entirely -- see scripts/pending-migrations.cjs for why that matters.
+if [ "$RUN_MIGRATE" = '1' ] && node /app/pending-migrations.cjs; then
+  RUN_MIGRATE=0
+fi
+
 if [ "$RUN_MIGRATE" = '1' ]; then
   attempt=1
-  max_attempts=5
+  # ~90s of retries (2+4+6+8+10x7): the 2026-09-27 outage outlasted the old
+  # 10s budget. Still inside the healthcheck's start_period plus its retries,
+  # so autoheal cannot kill a migration that is merely waiting its turn.
+  max_attempts=12
   until node node_modules/prisma/build/index.js migrate deploy; do
     if [ "$attempt" -ge "$max_attempts" ]; then
       echo "migrate deploy: giving up after $attempt attempts" >&2
@@ -34,7 +43,8 @@ if [ "$RUN_MIGRATE" = '1' ]; then
     # attempt 1 alone clears most contention; the ceiling exists for whatever
     # holds the lock longer, without turning a genuine failure into a long
     # silent hang before the container gives up and reports it.
-    delay=$((attempt))
+    delay=$((attempt * 2))
+    [ "$delay" -gt 10 ] && delay=10
     echo "migrate deploy: attempt $attempt failed (likely a lock held by litestream's replication), retrying in ${delay}s" >&2
     sleep "$delay"
     attempt=$((attempt + 1))
