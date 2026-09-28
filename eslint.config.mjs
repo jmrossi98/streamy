@@ -6,6 +6,9 @@ import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 export default [
   ...nextCoreWebVitals,
   {
+    // Scoped to the files eslint-config-next registers the react-hooks plugin
+    // for; unscoped, any .cjs file crashes lint with "could not find plugin".
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts}"],
     rules: {
       // New in eslint-config-next 16 (react-hooks v6), and it fires on eight
       // pre-existing call sites that predate this upgrade. Downgraded to a
