@@ -138,3 +138,28 @@ export function countBlockingSearches(
     return age < staleAfterMinutes * 60_000;
   }).length;
 }
+
+/**
+ * Whether Sonarr is still running the initial refresh of a series it just
+ * added.
+ *
+ * That refresh ends with Sonarr's "post-add actions", which set every
+ * episode's monitored flag from its season's -- and Streamy adds a series
+ * with every season unmonitored, then marks just the requested episodes
+ * wanted. Marking them before post-add has run is a race Sonarr wins a moment
+ * later: The Vince Staples Show S2 was requested, all six episodes flipped
+ * back to unmonitored, the season search skipped them, and the ordered queue
+ * read "unmonitored" as "cancelled" and dropped them. The page showed "Not
+ * downloaded" straight after "Download season".
+ */
+export function seriesRefreshPending(
+  commands: (SonarrCommand & { body?: { seriesId?: number; seriesIds?: number[] } })[],
+  seriesId: number
+): boolean {
+  return commands.some(
+    (c) =>
+      c.name === "RefreshSeries" &&
+      (c.status === "queued" || c.status === "started") &&
+      (c.body?.seriesId === seriesId || (c.body?.seriesIds ?? []).includes(seriesId))
+  );
+}

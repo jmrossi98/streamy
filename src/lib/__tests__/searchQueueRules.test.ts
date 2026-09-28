@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countBlockingSearches, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
+import { countBlockingSearches, seriesRefreshPending, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
 
 /** Position-ordered, as the queue hands them over. */
 function row(seriesId: number, episodeId: number): QueuedSearch {
@@ -164,5 +164,25 @@ describe("countBlockingSearches backlog", () => {
     expect(
       countBlockingSearches([{ name: "EpisodeSearch", status: "started", started: minsAgo(45) }])
     ).toBe(0);
+  });
+});
+
+describe("seriesRefreshPending", () => {
+  it("is true while this series' refresh is queued or running", () => {
+    expect(seriesRefreshPending([{ name: "RefreshSeries", status: "started", body: { seriesIds: [24] } }], 24)).toBe(true);
+    expect(seriesRefreshPending([{ name: "RefreshSeries", status: "queued", body: { seriesId: 24 } }], 24)).toBe(true);
+  });
+
+  it("ignores finished refreshes, other series and other commands", () => {
+    expect(
+      seriesRefreshPending(
+        [
+          { name: "RefreshSeries", status: "completed", body: { seriesIds: [24] } },
+          { name: "RefreshSeries", status: "started", body: { seriesIds: [19] } },
+          { name: "EpisodeSearch", status: "started", body: {} },
+        ],
+        24
+      )
+    ).toBe(false);
   });
 });
