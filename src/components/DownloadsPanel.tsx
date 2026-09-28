@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { StreamySelect } from "@/components/StreamySelect";
 import {
   DOWNLOAD_SORTS,
+  dedupeDownloads,
   sortDownloads,
   type DownloadSort,
 } from "@/lib/downloadSortRules";
@@ -188,7 +189,10 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
 
   const needle = query.trim().toLowerCase();
   const visibleDownloads = sortDownloads(
-    [...downloads, ...bridged]
+    // One row per episode/movie before anything else: the same episode can be
+    // queued, downloading and on disk at once, and duplicate keys made React
+    // leave stale copies of it on screen after every poll.
+    dedupeDownloads([...downloads, ...bridged], rowKey)
       .filter((d) => !removedKeys.has(rowKey(d)))
       // Title only: it is the one field a viewer can see and type. Matching
       // the status text as well would make "downloaded" select most of the
@@ -265,7 +269,10 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           // entry to remove, so the route has to be told that rather than
           // inferring it from a null queueId -- which also means "whole
           // series" for a row that really is downloading.
-          queued: d.queued === true,
+          // Batched episodes read as "Searching" but are still rows in the
+          // ordered queue with no download-client entry; without this they
+          // would fall through to the whole-series cancel.
+          queued: d.queued === true || (d.searching === true && d.episodeId != null && d.queueId == null),
           action,
           // For the audit log only -- the route already has everything it
           // needs to actually perform the action without this, but has no

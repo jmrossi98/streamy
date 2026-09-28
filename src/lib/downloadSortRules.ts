@@ -50,3 +50,56 @@ export function sortDownloads<T extends SortableDownload>(rows: T[], sort: Downl
   // reason to open this panel at all.
   return [...rows].sort((a, b) => addedTime(b) - addedTime(a));
 }
+
+/** Only the fields deduplication reads. */
+export type DedupableDownload = SortableDownload & {
+  queued?: boolean;
+  searching?: boolean;
+};
+
+/**
+ * How much a row says about what is happening right now. Higher wins.
+ *
+ * An active transfer beats a finished file because the only way to have both
+ * is an upgrade in progress, and that is the news. A finished file beats a
+ * queued or searching row because a search still listed for an episode that
+ * already has a file is stale bookkeeping -- the drain drops it on its next
+ * pass -- not something the viewer needs to see twice.
+ */
+function rowWeight(row: DedupableDownload): number {
+  if (!row.completed && !row.queued && !row.searching) return 3;
+  if (row.completed) return 2;
+  if (row.searching) return 1;
+  return 0;
+}
+
+/**
+ * One row per key, keeping the most informative.
+ *
+ * The panel gathers from three places -- the ordered search queue, the
+ * download client's queue, and the files on disk -- and one episode can be in
+ * all three at once while it moves between them. Rendering all three gave
+ * several rows the same React key. React cannot tell same-keyed siblings apart
+ * across updates, so it left stale copies behind on every poll: the screen
+ * filled with repeats of the same episode, each frozen at an older progress.
+ *
+ * Order is otherwise preserved, so this composes with sortDownloads.
+ */
+export function dedupeDownloads<T extends DedupableDownload>(
+  rows: T[],
+  keyOf: (row: T) => string
+): T[] {
+  const best = new Map<string, T>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const key = keyOf(row);
+    const current = best.get(key);
+    if (!current) {
+      best.set(key, row);
+      order.push(key);
+    } else if (rowWeight(row) > rowWeight(current)) {
+      best.set(key, row);
+    }
+  }
+  return order.map((key) => best.get(key) as T);
+}

@@ -629,6 +629,8 @@ export type QueuedEpisodeSearch = {
   seriesId: number;
   /** When it was asked for, so the newest request sorts to the top. */
   enqueuedAt: string | null;
+  /** Covered by a SeasonSearch right now rather than waiting its turn. */
+  batched: boolean;
   /** "The Sopranos - S2 E3 - Title", ready to show. */
   title: string;
   attempts: number;
@@ -666,7 +668,13 @@ const LABEL_DEADLINE_MS = 4000;
 
 export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]> {
   if (!isSonarrConfigured()) return [];
-  let pending: { episodeId: number; seriesId: number; attempts: number; enqueuedAt?: Date }[] = [];
+  let pending: {
+    episodeId: number;
+    seriesId: number;
+    attempts: number;
+    enqueuedAt?: Date;
+    searchAfter?: Date | null;
+  }[] = [];
   try {
     const { pendingSearchesForDisplay } = await import("./pendingEpisodeSearch");
     pending = await pendingSearchesForDisplay();
@@ -714,6 +722,7 @@ export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]>
     episodeId: p.episodeId,
     seriesId: p.seriesId,
     enqueuedAt: p.enqueuedAt ? new Date(p.enqueuedAt).toISOString() : null,
+    batched: p.searchAfter != null && new Date(p.searchAfter).getTime() > Date.now(),
     title: episodeLabels.get(p.episodeId) ?? `Episode ${p.episodeId}`,
     attempts: p.attempts,
   }));
@@ -1077,6 +1086,34 @@ function searchQueue() {
  * instead.
  */
 /**
+ * How long a SeasonSearch gets before its episodes fall back to individual
+ * searches. Measured: a 21-episode SeasonSearch took 144s on an idle Sonarr
+ * and several minutes under load, so fifteen minutes is generous without
+ * leaving a missed episode waiting long.
+ */
+const BATCH_GRACE_MS = 15 * 60_000;
+
+/**
+ * Records episodes a SeasonSearch/SeriesSearch is covering.
+ *
+ * Without this, only the individually searched lead episodes had rows, so a
+ * season request showed two rows and the rest appeared only once grabbed --
+ * reported for South Park as "newly queued downloads aren't showing up". They
+ * are recorded now with a searchAfter in the future: visible immediately,
+ * left alone by the drain while the batch works, and searched individually
+ * afterwards only if the batch missed them.
+ */
+async function recordBatchedEpisodes(seriesId: number, episodeIds: number[]): Promise<void> {
+  if (episodeIds.length === 0) return;
+  for (const id of episodeIds) markEpisodeSearchTriggered(id);
+  await (await searchQueue()).enqueueEpisodeSearches(
+    seriesId,
+    episodeIds,
+    new Date(Date.now() + BATCH_GRACE_MS)
+  );
+}
+
+/**
  * Records the request, then starts working on it.
  *
  * The await matters and is the whole point: the caller's HTTP response is
@@ -1281,6 +1318,7 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
   // when they are batched -- and a long-running show is hundreds of them.
   const ids = wanted.map((e) => e.id);
   await searchEpisodesInOrder(seriesId, ids.slice(0, LEAD_EPISODES));
+  await recordBatchedEpisodes(seriesId, ids.slice(LEAD_EPISODES));
 
   if (ids.length > LEAD_EPISODES) {
     sonarrFetch(`/api/v3/command`, {
@@ -1360,6 +1398,7 @@ export async function requestSeason(
     const lead = ids.slice(0, LEAD_EPISODES);
     const rest = ids.slice(LEAD_EPISODES);
     await searchEpisodesInOrder(series.sonarrId, lead);
+    await recordBatchedEpisodes(series.sonarrId, rest);
 
     if (rest.length > 0) {
       // Fire-and-forget, and deliberately not part of the ordered queue: this
