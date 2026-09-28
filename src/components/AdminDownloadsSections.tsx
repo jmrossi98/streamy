@@ -257,7 +257,10 @@ export async function AdminDownloadsSections() {
     progress: null,
     mediaType: "show" as const,
     completed: false,
-    queued: true,
+    // A batched episode is being searched right now, as part of its season;
+    // "Queued" would say it was waiting when it is not.
+    queued: !q.batched,
+    searching: q.batched,
     startedAt: q.enqueuedAt,
     // Only once it has actually failed a round, so a queue that is simply
     // long does not read as a queue that is going wrong.

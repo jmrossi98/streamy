@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sortDownloads, type SortableDownload } from "../downloadSortRules";
+import { dedupeDownloads, sortDownloads, type SortableDownload } from "../downloadSortRules";
 
 const row = (title: string, completed: boolean, addedAt?: string | null) =>
   ({ title, completed, addedAt }) as SortableDownload & { title: string };
@@ -89,5 +89,64 @@ describe("sortDownloads", () => {
     const rows = [row("old", true, "2026-01-01"), row("new", true, "2026-09-01")];
     sortDownloads(rows, "recent");
     expect(rows.map((r) => r.title)).toEqual(["old", "new"]);
+  });
+});
+
+describe("dedupeDownloads", () => {
+  type R = { key: string; label: string; completed: boolean; queued?: boolean; searching?: boolean };
+  const keyOf = (r: R) => r.key;
+
+  it("keeps one row per key", () => {
+    const rows: R[] = [
+      { key: "ep-1", label: "queued", completed: false, queued: true },
+      { key: "ep-1", label: "done", completed: true },
+      { key: "ep-2", label: "other", completed: false },
+    ];
+    expect(dedupeDownloads(rows, keyOf).map((r) => r.key)).toEqual(["ep-1", "ep-2"]);
+  });
+
+  it("prefers an active transfer over a finished file (an upgrade in progress)", () => {
+    const rows: R[] = [
+      { key: "ep-1", label: "done", completed: true },
+      { key: "ep-1", label: "active", completed: false },
+    ];
+    expect(dedupeDownloads(rows, keyOf)[0].label).toBe("active");
+  });
+
+  it("prefers a finished file over a stale queued search", () => {
+    const rows: R[] = [
+      { key: "ep-1", label: "queued", completed: false, queued: true },
+      { key: "ep-1", label: "done", completed: true },
+    ];
+    expect(dedupeDownloads(rows, keyOf)[0].label).toBe("done");
+  });
+
+  it("prefers searching over merely queued", () => {
+    const rows: R[] = [
+      { key: "ep-1", label: "queued", completed: false, queued: true },
+      { key: "ep-1", label: "searching", completed: false, searching: true },
+    ];
+    expect(dedupeDownloads(rows, keyOf)[0].label).toBe("searching");
+  });
+
+  it("collapses all three sources for one episode into the active one", () => {
+    // The live case: queued search + download-client entry + file on disk.
+    const rows: R[] = [
+      { key: "ep-9", label: "queued", completed: false, queued: true },
+      { key: "ep-9", label: "done", completed: true },
+      { key: "ep-9", label: "active", completed: false },
+    ];
+    const out = dedupeDownloads(rows, keyOf);
+    expect(out).toHaveLength(1);
+    expect(out[0].label).toBe("active");
+  });
+
+  it("preserves first-seen order of keys", () => {
+    const rows: R[] = [
+      { key: "b", label: "b", completed: true },
+      { key: "a", label: "a", completed: true },
+      { key: "b", label: "b2", completed: false },
+    ];
+    expect(dedupeDownloads(rows, keyOf).map((r) => r.key)).toEqual(["b", "a"]);
   });
 });

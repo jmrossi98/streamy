@@ -346,6 +346,10 @@ model PendingEpisodeSearch {
   /// Bumped on each failure so one permanently broken episode gets dropped
   /// instead of blocking everything queued behind it.
   attempts   Int      @default(0)
+  /// Not searched individually before this. Set for episodes a SeasonSearch
+  /// is already covering, so they are visible in the queue straight away but
+  /// only fall back to their own search if the batch missed them.
+  searchAfter DateTime?
 
   @@index([enqueuedAt, position])
 }

@@ -16,6 +16,7 @@ export type PendingSearch = {
   seriesId: number;
   attempts: number;
   enqueuedAt?: Date;
+  searchAfter?: Date | null;
 };
 
 /** Dropped after this many failures, so one bad episode can't block a season. */
@@ -30,7 +31,8 @@ export const MAX_SEARCH_ATTEMPTS = 3;
  */
 export async function enqueueEpisodeSearches(
   seriesId: number,
-  episodeIds: number[]
+  episodeIds: number[],
+  searchAfter: Date | null = null
 ): Promise<void> {
   if (episodeIds.length === 0) return;
   const enqueuedAt = new Date();
@@ -39,7 +41,7 @@ export async function enqueueEpisodeSearches(
   for (const [position, episodeId] of episodeIds.entries()) {
     try {
       await prisma.pendingEpisodeSearch.create({
-        data: { episodeId, seriesId, position, enqueuedAt },
+        data: { episodeId, seriesId, position, enqueuedAt, searchAfter },
       });
     } catch {
       // Unique violation: already queued, which is the intended no-op.
@@ -69,6 +71,9 @@ export async function nextPendingSearch(
   // The whole queue, cheap at this size (a few hundred rows at worst) and the
   // only way to pick fairly across series in one round trip.
   const rows = await prisma.pendingEpisodeSearch.findMany({
+    // Rows still inside a batch's grace window are skipped, not deleted: the
+    // SeasonSearch covering them may yet miss one, and this is the fallback.
+    where: { OR: [{ searchAfter: null }, { searchAfter: { lte: new Date() } }] },
     orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
     select: { episodeId: true, seriesId: true, attempts: true },
   });
@@ -164,7 +169,7 @@ export async function pendingSearchStats(): Promise<QueueStats> {
 export async function pendingSearchesForDisplay(): Promise<PendingSearch[]> {
   const rows = await prisma.pendingEpisodeSearch.findMany({
     orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
-    select: { episodeId: true, seriesId: true, attempts: true, enqueuedAt: true },
+    select: { episodeId: true, seriesId: true, attempts: true, enqueuedAt: true, searchAfter: true },
   });
   return rows;
 }
