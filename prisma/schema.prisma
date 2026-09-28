@@ -350,6 +350,9 @@ model PendingEpisodeSearch {
   /// is already covering, so they are visible in the queue straight away but
   /// only fall back to their own search if the batch missed them.
   searchAfter DateTime?
+  /// "Show - S1 E3 - Title", written once so the admin panel never needs
+  /// Sonarr to name a row.
+  label       String?
 
   @@index([enqueuedAt, position])
 }

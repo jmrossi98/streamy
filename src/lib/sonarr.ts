@@ -660,6 +660,36 @@ export type QueuedEpisodeSearch = {
  * from ids, so a queued row says the same thing the show page does.
  */
 /**
+ * Names every episode of a series and stores the names on its queue rows.
+ *
+ * Called right after a request is enqueued -- when Sonarr has just answered,
+ * so it is the one moment a lookup is sure to work -- and again from the
+ * panel for any row still unnamed. Never throws: a row without a name is
+ * still a row.
+ */
+async function storeSeriesLabels(seriesId: number): Promise<Map<number, string>> {
+  const labels = new Map<number, string>();
+  try {
+    const [series, eps] = await Promise.all([
+      sonarrFetch<{ title: string }>(`/api/v3/series/${seriesId}`),
+      sonarrFetch<{ id: number; seasonNumber: number; episodeNumber: number; title: string }[]>(
+        `/api/v3/episode?seriesId=${seriesId}`
+      ),
+    ]);
+    for (const e of eps) {
+      labels.set(
+        e.id,
+        `${series.title} - S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` - ${e.title}` : ""}`
+      );
+    }
+    await (await searchQueue()).setPendingLabels(labels);
+  } catch (err) {
+    console.error(`[sonarr] could not label queued episodes for series ${seriesId}:`, err);
+  }
+  return labels;
+}
+
+/**
  * Labels already resolved, kept for the life of the process.
  *
  * The rows come from Streamy's own database and are always available; the
@@ -684,6 +714,7 @@ export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]>
     attempts: number;
     enqueuedAt?: Date;
     searchAfter?: Date | null;
+    label?: string | null;
   }[] = [];
   try {
     const { pendingSearchesForDisplay } = await import("./pendingEpisodeSearch");
@@ -694,32 +725,21 @@ export async function getQueuedEpisodeSearches(): Promise<QueuedEpisodeSearch[]>
   }
   if (pending.length === 0) return [];
 
-  // Only the series whose labels are not already known.
+  // Stored names first; only rows with neither a stored nor a cached name
+  // need Sonarr, and those lookups also write the name back for next time.
+  for (const p of pending) {
+    if (p.label) episodeLabels.set(p.episodeId, p.label);
+  }
   const unknown = pending.filter((p) => !episodeLabels.has(p.episodeId));
   const seriesIds = [...new Set(unknown.map((p) => p.seriesId))];
 
   if (seriesIds.length > 0) {
-    // Bounded, and separately from the rows themselves. Naming is the
-    // optional half: a row with no name is still a row the viewer needs to
-    // see, whereas waiting for Sonarr to name it can cost the whole panel.
+    // Bounded, and separately from the rows themselves: a row with no name is
+    // still a row the viewer needs to see.
     const labelling = Promise.all(
       seriesIds.map(async (seriesId) => {
-        try {
-          const [series, eps] = await Promise.all([
-            sonarrFetch<{ title: string }>(`/api/v3/series/${seriesId}`),
-            sonarrFetch<
-              { id: number; seasonNumber: number; episodeNumber: number; title: string }[]
-            >(`/api/v3/episode?seriesId=${seriesId}`),
-          ]);
-          for (const e of eps) {
-            episodeLabels.set(
-              e.id,
-              `${series.title} - S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` - ${e.title}` : ""}`
-            );
-          }
-        } catch (err) {
-          console.error(`[sonarr] could not label queued searches for series ${seriesId}:`, err);
-        }
+        const labels = await storeSeriesLabels(seriesId);
+        for (const [id, label] of labels) episodeLabels.set(id, label);
       })
     );
     await Promise.race([
@@ -1121,6 +1141,7 @@ async function recordBatchedEpisodes(seriesId: number, episodeIds: number[]): Pr
     episodeIds,
     new Date(Date.now() + BATCH_GRACE_MS)
   );
+  await storeSeriesLabels(seriesId);
 }
 
 /**
@@ -1145,6 +1166,7 @@ async function searchEpisodesInOrder(seriesId: number, episodeIds: number[]): Pr
   // that had, in reality, only just been asked for.
   for (const id of episodeIds) markEpisodeSearchTriggered(id);
   await (await searchQueue()).enqueueEpisodeSearches(seriesId, episodeIds);
+  await storeSeriesLabels(seriesId);
   void drainEpisodeSearches();
 }
 
