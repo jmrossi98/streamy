@@ -15,7 +15,7 @@ import { cached } from "./ttlCache";
 import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
-import { expireBlocklist, toQueueHealth } from "./radarr";
+import { expireBlocklist, QUEUE_PAGE_SIZE, toQueueHealth } from "./radarr";
 import { computeProgress } from "./radarr";
 import { normalizeProtocol, type DownloadProtocol } from "./radarr";
 import { IMPORTING_STATES } from "./radarr";
@@ -150,7 +150,7 @@ async function resolveSonarrStatus(series: {
   statistics?: { episodeFileCount?: number };
 }): Promise<MediaRequestStatus> {
   if ((series.statistics?.episodeFileCount ?? 0) > 0) return "available";
-  const queue = await sonarrFetch<{ records: { seriesId: number }[] }>(`/api/v3/queue`);
+  const queue = await sonarrFetch<{ records: { seriesId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
   if (queue.records.some((r) => r.seriesId === series.id)) return "downloading";
 
   const episodes = await sonarrFetch<
@@ -206,7 +206,7 @@ export async function getSonarrDownloadProgress(sonarrId: number): Promise<numbe
   if (!isSonarrConfigured()) return null;
   try {
     const queue = await sonarrFetch<{ records: { seriesId: number; size: number; sizeleft: number }[] }>(
-      `/api/v3/queue`
+      `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
     );
     const entry = queue.records.find((r) => r.seriesId === sonarrId);
     if (!entry || !entry.size) return null;
@@ -234,7 +234,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue`);
+    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     return queue.records.map((r) => {
       const unsafe = classifyBadRelease(r);
       return {
@@ -447,7 +447,7 @@ export async function deleteSonarrEpisode(episodeId: number): Promise<boolean> {
 export async function cancelSonarrDownload(sonarrId: number, blocklist = false): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
-    const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue`);
+    const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     // A series can legitimately have several episodes in flight at once.
     const entries = queue.records.filter((r) => r.seriesId === sonarrId);
     for (const entry of entries) {
@@ -604,7 +604,7 @@ export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; titl
       sonarrFetch<{
         records: { id: number; title: string; seriesId: number; seasonNumber: number; monitored: boolean }[];
       }>(`/api/v3/wanted/missing?pageSize=50&sortKey=airDateUtc&sortDirection=descending`),
-      sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue`),
+      sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`),
     ]);
     const queued = new Set(
       queue.records.map((r) => r.episodeId).filter((id): id is number => id != null)
@@ -1136,7 +1136,7 @@ export async function getSonarrSeasonStatuses(
 
     const queue = await sonarrFetch<{
       records: { episodeId?: number; size: number; sizeleft: number }[];
-    }>(`/api/v3/queue`);
+    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     const queued = new Map<number, { size: number; sizeleft: number }>();
     for (const r of queue.records) {
       if (r.episodeId != null) queued.set(r.episodeId, { size: r.size, sizeleft: r.sizeleft });
@@ -1627,7 +1627,7 @@ export async function manageSonarrEpisodes(
 
     // Drop anything currently downloading for these episodes.
     const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
-      `/api/v3/queue`
+      `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
     );
     for (const record of queue.records) {
       if (record.episodeId != null && targetIds.has(record.episodeId)) {

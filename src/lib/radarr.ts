@@ -12,6 +12,19 @@ import { cached } from "./ttlCache";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 
 const RADARR_URL = process.env.RADARR_URL?.replace(/\/$/, "");
+
+/**
+ * Page size for every Radarr/Sonarr queue read.
+ *
+ * The queue endpoint is paged and defaults to TEN records. Fourteen reads here
+ * asked for it without a size, so each saw only the first ten downloads: with
+ * the Sopranos batch queued, an episode on page two flipped between
+ * "downloading 43%" and "Starting..." from one poll to the next, the healer
+ * took page-two episodes for idle and searched them again, and cancel could
+ * not find their queue entries. A test (queuePageSize.test.ts) keeps any
+ * new read from going back to the default.
+ */
+export const QUEUE_PAGE_SIZE = 1000;
 const RADARR_API_KEY = process.env.RADARR_API_KEY;
 const RADARR_ROOT_FOLDER = process.env.RADARR_ROOT_FOLDER;
 const RADARR_QUALITY_PROFILE_ID = process.env.RADARR_QUALITY_PROFILE_ID;
@@ -96,7 +109,7 @@ async function resolveRadarrStatus(
   movie: { id: number; hasFile: boolean; lastSearchTime?: string | null }
 ): Promise<MediaRequestStatus> {
   if (movie.hasFile) return "available";
-  const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue`);
+  const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
   if (queue.records.some((r) => r.movieId === movie.id)) return "downloading";
   return isSearchStale(movie.lastSearchTime) ? "noReleaseFound" : "requested";
 }
@@ -145,7 +158,7 @@ export async function getRadarrStatusByTmdbId(tmdbId: string): Promise<{
     if (!movie) return null;
     if (movie.hasFile) return { status: "available", radarrId: movie.id };
 
-    const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue`);
+    const queue = await radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     if (queue.records.some((r) => r.movieId === movie.id)) {
       return { status: "downloading", radarrId: movie.id };
     }
@@ -196,7 +209,7 @@ export async function getRadarrDownloadProgress(radarrId: number): Promise<numbe
   if (!isRadarrConfigured()) return null;
   try {
     const queue = await radarrFetch<{ records: { movieId: number; size: number; sizeleft: number }[] }>(
-      `/api/v3/queue`
+      `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
     );
     const entry = queue.records.find((r) => r.movieId === radarrId);
     if (!entry || !entry.size) return null;
@@ -229,7 +242,7 @@ export async function getRadarrQueueDetail(radarrId: number): Promise<RadarrQueu
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue`);
+    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     const entry = queue.records.find((r) => r.movieId === radarrId);
     if (!entry) return null;
     const unsafe = classifyBadRelease(entry);
@@ -327,7 +340,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue`);
+    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     return queue.records.map((r) => {
       const unsafe = classifyBadRelease(r);
       return {
@@ -480,7 +493,7 @@ export async function cancelRadarrDownload(
 ): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
-    const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(`/api/v3/queue`);
+    const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
     const entry = queue.records.find((r) => r.movieId === radarrId);
     if (entry) {
       await radarrFetch(
@@ -582,7 +595,7 @@ export async function getIdleWantedMovies(): Promise<IdleWantedMovie[]> {
       radarrFetch<{ id: number; title: string; hasFile: boolean; monitored: boolean }[]>(
         "/api/v3/movie"
       ),
-      radarrFetch<{ records: { movieId: number }[] }>("/api/v3/queue"),
+      radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`),
     ]);
     const queued = new Set(queue.records.map((r) => r.movieId));
     return movies
