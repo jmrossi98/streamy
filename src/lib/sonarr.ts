@@ -8,6 +8,7 @@
 
 import {
   countBlockingSearches,
+  seriesRefreshPending,
   type SonarrCommand,
 } from "./searchQueueRules";
 import { cached } from "./ttlCache";
@@ -1031,9 +1032,40 @@ async function episodesWhenReady(
     const episodes = await sonarrFetch<SonarrEpisode[]>(
       `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
     );
+    if (episodes.length > 0 && justCreated) {
+      // Episodes exist before Sonarr's post-add actions have run, and those
+      // reset every episode's monitored flag -- see seriesRefreshPending. Hold
+      // until the initial refresh has finished, so the monitoring the caller
+      // applies next is the last word rather than being undone a moment later.
+      await waitForSeriesRefresh(seriesId, deadline + SERIES_REFRESH_EXTRA_MS);
+      return await sonarrFetch<SonarrEpisode[]>(
+        `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
+      );
+    }
     if (episodes.length > 0 || !justCreated || Date.now() >= deadline) return episodes;
     await new Promise((resolve) => setTimeout(resolve, EPISODE_POPULATE_POLL_MS));
   }
+}
+
+// Extra time allowed for a new series' initial refresh beyond the wait for
+// its episodes to appear: the disk scan and post-add actions come after.
+const SERIES_REFRESH_EXTRA_MS = 20_000;
+
+async function waitForSeriesRefresh(seriesId: number, deadline: number): Promise<void> {
+  while (Date.now() < deadline) {
+    let pending = false;
+    try {
+      const commands = await sonarrFetch<Parameters<typeof seriesRefreshPending>[0]>("/api/v3/command");
+      pending = seriesRefreshPending(commands, seriesId);
+    } catch {
+      // Unreadable command list: carry on rather than block the request; the
+      // worst case is the race this guards against, not a failure.
+      return;
+    }
+    if (!pending) return;
+    await new Promise((resolve) => setTimeout(resolve, EPISODE_POPULATE_POLL_MS));
+  }
+  console.warn(`[sonarr] series ${seriesId} still refreshing at the deadline; monitoring anyway`);
 }
 
 /** Every episode Sonarr knows about for one season. */
