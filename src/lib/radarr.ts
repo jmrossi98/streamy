@@ -598,6 +598,13 @@ export type QueueHealth = {
   /** How long this entry has been sitting in the queue. */
   ageMinutes: number;
   hasProgress: boolean;
+  /** Queue status: "downloading", "queued", "completed", ... */
+  clientStatus: string | null;
+  /** Import pipeline state, e.g. "importPending", and its "ok"/"warning"/"error". */
+  trackedDownloadState: string | null;
+  trackedDownloadStatus: string | null;
+  /** Radarr/Sonarr's own words for an import problem, for the log. */
+  importProblem: string | null;
 };
 
 export function toQueueHealth(r: {
@@ -611,6 +618,8 @@ export function toQueueHealth(r: {
   downloadId?: string;
   episodeId?: number;
   statusMessages?: { messages?: string[] }[];
+  trackedDownloadState?: string;
+  trackedDownloadStatus?: string;
 }, externalId: number): QueueHealth {
   const added = r.added ? Date.parse(r.added) : Date.now();
   return {
@@ -623,6 +632,10 @@ export function toQueueHealth(r: {
     errorMessage: r.errorMessage ?? (r.status === "warning" || r.status === "failed" ? r.status : null),
     ageMinutes: (Date.now() - added) / 60000,
     hasProgress: r.size > 0 && r.sizeleft < r.size,
+    clientStatus: r.status ?? null,
+    trackedDownloadState: r.trackedDownloadState ?? null,
+    trackedDownloadStatus: r.trackedDownloadStatus ?? null,
+    importProblem: (r.statusMessages ?? []).flatMap((m) => m.messages ?? []).join("; ") || null,
   };
 }
 
@@ -642,6 +655,8 @@ export async function getRadarrQueueHealth(): Promise<QueueHealth[]> {
         status?: string;
         downloadId?: string;
         statusMessages?: { messages?: string[] }[];
+        trackedDownloadState?: string;
+        trackedDownloadStatus?: string;
       }[];
     }>(`/api/v3/queue?pageSize=250`);
     return queue.records.map((r) => toQueueHealth(r, r.movieId));

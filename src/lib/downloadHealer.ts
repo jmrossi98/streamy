@@ -2,6 +2,8 @@ import {
   idleBackoffMs,
   isPermanentlyBlocked,
   isUnhealthy,
+  isImportStuck,
+  IMPORT_STUCK_MINUTES,
   pickIdleEpisodeBatch,
   REHEAL_COOLDOWN_MS,
   shouldBlocklist,
@@ -128,7 +130,7 @@ async function healOne(
     const cancelled =
       mediaType === "movie"
         ? await cancelRadarrQueueItem(entry.queueId, { blocklist: failed })
-        : await cancelSonarrQueueItem(entry.queueId, { blocklist: failed });
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: failed, keepWanted: true });
     if (!cancelled) return null;
 
     // Re-search only what was just cancelled. A SeriesSearch re-grabs every
@@ -191,7 +193,7 @@ async function rejectUnsafe(
     const removed =
       mediaType === "movie"
         ? await cancelRadarrQueueItem(entry.queueId, { blocklist: true })
-        : await cancelSonarrQueueItem(entry.queueId, { blocklist: true });
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: true, keepWanted: true });
     if (!removed) return null;
 
     const recent = await countRecentRejections(mediaType, entry.externalId).catch(() => 0);
@@ -214,6 +216,59 @@ async function rejectUnsafe(
     console.error(`[healer] failed to reject "${entry.title}":`, err);
     return null;
   }
+}
+
+// When each queue entry was first seen stuck unable to import, by queue id.
+const importStuckSince = new Map<number, number>();
+
+/**
+ * Replaces a finished download that has been failing to import for
+ * IMPORT_STUCK_MINUTES -- see isImportStuck. Blocklisted (with the usual
+ * expiry) because the file itself is the problem, and searched again at once.
+ */
+async function replaceStuckImport(
+  mediaType: "movie" | "show",
+  entry: QueueHealth
+): Promise<HealedDownload | null> {
+  try {
+    const removed =
+      mediaType === "movie"
+        ? await cancelRadarrQueueItem(entry.queueId, { blocklist: true })
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: true, keepWanted: true });
+    if (!removed) return null;
+    importStuckSince.delete(entry.queueId);
+    if (mediaType === "movie") {
+      await searchRadarrMovie(entry.externalId);
+      lastHealedAt.set(`idle:movie:${entry.externalId}`, Date.now());
+    } else if (entry.episodeId != null) {
+      await searchSonarrEpisodes([entry.episodeId]);
+      lastHealedAt.set(`idle:episode:${entry.episodeId}`, Date.now());
+    } else {
+      await searchSonarrSeries(entry.externalId);
+    }
+    const why = entry.importProblem ?? entry.trackedDownloadState ?? "import stuck";
+    console.warn(`[healer] replacing "${entry.title}": finished but cannot import (${why})`);
+    return { title: entry.title, reason: `finished but could not import: ${why}` };
+  } catch (err) {
+    console.error(`[healer] failed to replace stuck import "${entry.title}":`, err);
+    return null;
+  }
+}
+
+/** Entries stuck importing for long enough to act on; updates the clock. */
+function dueStuckImports(entries: QueueHealth[], now = Date.now()): QueueHealth[] {
+  const seen = new Set<number>();
+  const due: QueueHealth[] = [];
+  for (const e of entries) {
+    if (e.unsafe || !isImportStuck(e)) continue;
+    seen.add(e.queueId);
+    const since = importStuckSince.get(e.queueId) ?? now;
+    importStuckSince.set(e.queueId, since);
+    if (now - since >= IMPORT_STUCK_MINUTES * 60_000) due.push(e);
+  }
+  // An entry that imported, or left the queue, starts from zero if it is back.
+  for (const id of [...importStuckSince.keys()]) if (!seen.has(id)) importStuckSince.delete(id);
+  return due;
 }
 
 /**
@@ -385,6 +440,9 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     ...sonarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("show", e)),
     ...radarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e)),
     ...sonarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e)),
+    ...dueStuckImports([...radarrQueue, ...sonarrQueue]).map((e) =>
+      replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
+    ),
   ]);
   // Episodes no longer in either queue have finished or been removed, so their
   // stall count is history. Without this the map grows for the life of the

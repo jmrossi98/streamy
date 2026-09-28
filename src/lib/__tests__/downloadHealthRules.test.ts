@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -141,5 +141,22 @@ describe("pickIdleEpisodeBatch", () => {
   it("skips episodes on cooldown", () => {
     const got = pickIdleEpisodeBatch(eps, (e) => tries[e.episodeId], (e) => e.episodeId % 2 === 0, 5);
     expect(got.map((e) => e.episodeId)).toEqual([7, 3, 5, 1]);
+  });
+});
+
+describe("waiting and stuck-import rules", () => {
+  it("never calls a queued, paused or delayed entry unhealthy", () => {
+    for (const clientStatus of ["queued", "Paused", "delay"]) {
+      expect(isUnhealthy({ errorMessage: null, ageMinutes: 300, hasProgress: false, clientStatus })).toBe(false);
+    }
+    expect(isUnhealthy({ errorMessage: null, ageMinutes: 300, hasProgress: false, clientStatus: "downloading" })).toBe(true);
+  });
+
+  it("flags only a completed download whose import is failing", () => {
+    const base = { clientStatus: "completed", trackedDownloadState: "importPending", trackedDownloadStatus: "warning" };
+    expect(isImportStuck(base)).toBe(true);
+    expect(isImportStuck({ ...base, trackedDownloadStatus: "ok" })).toBe(false);
+    expect(isImportStuck({ ...base, trackedDownloadState: "importing" })).toBe(false);
+    expect(isImportStuck({ ...base, clientStatus: "downloading" })).toBe(false);
   });
 });

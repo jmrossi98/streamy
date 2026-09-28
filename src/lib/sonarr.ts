@@ -637,7 +637,16 @@ export async function expireSonarrBlocklist(
 /** Cancels one specific queued download, leaving the series' other episodes alone. */
 export async function cancelSonarrQueueItem(
   queueId: number,
-  { blocklist = false }: { blocklist?: boolean } = {}
+  {
+    blocklist = false,
+    // True for the healer replacing a bad or stalled download: the episode is
+    // still wanted, and a replacement search follows. Everything below this
+    // flag is what makes a *person's* cancel final -- applied to the healer it
+    // unmonitored every episode it re-grabbed, so the idle pass (monitored
+    // only) stopped seeing it, upgrades stopped, and a re-grab that failed
+    // left the episode stranded for good.
+    keepWanted = false,
+  }: { blocklist?: boolean; keepWanted?: boolean } = {}
 ): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
@@ -668,7 +677,7 @@ export async function cancelSonarrQueueItem(
     //
     // The episode-level path (manageSonarrEpisodes) always did both of these;
     // this one, which is what the admin downloads panel calls, did neither.
-    if (episodeId != null) {
+    if (episodeId != null && !keepWanted) {
       try {
         await sonarrFetch(`/api/v3/episode/monitor`, {
           method: "PUT",
@@ -893,6 +902,8 @@ export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
         status?: string;
         downloadId?: string;
         statusMessages?: { messages?: string[] }[];
+        trackedDownloadState?: string;
+        trackedDownloadStatus?: string;
       }[];
     }>(`/api/v3/queue?pageSize=250`);
     return queue.records.map((r) => toQueueHealth(r, r.seriesId));

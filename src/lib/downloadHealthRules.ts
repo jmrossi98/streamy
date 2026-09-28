@@ -17,6 +17,8 @@ export const TRANSIENT_GRACE_MINUTES = 30;
 export type DownloadHealth = {
   /** Radarr/Sonarr's own diagnosis, e.g. "stalled with no connections". */
   errorMessage: string | null;
+  /** The queue record's status ("downloading", "queued", "paused", ...). */
+  clientStatus?: string | null;
   /** How long the entry has been sitting in the queue. */
   ageMinutes: number;
   hasProgress: boolean;
@@ -35,9 +37,56 @@ function isTransient(message: string): boolean {
   return TRANSIENT_STATUSES.some((t) => m.includes(t));
 }
 
+/**
+ * Queue statuses that mean "waiting for its turn", not "dead".
+ *
+ * SABnzbd downloads one job at a time, so with nine 5 GB Sopranos episodes
+ * grabbed together, the last one sits at 0% for ~45 minutes -- and "no
+ * progress after 12 minutes" read that as a stall. The healer cancelled it,
+ * re-searched, usually re-grabbed the same release onto the *back* of the
+ * queue, and after a few rounds blocklisted a perfectly good release and
+ * pushed the episode onto a worse one or a torrent. "paused" is a person or
+ * SAB's own low-disk guard; "delay" is Sonarr holding a release back on
+ * purpose. None of these is the release's fault.
+ */
+const WAITING_STATUSES = new Set(["queued", "paused", "delay"]);
+
+export function isWaitingItsTurn(status: string | null | undefined): boolean {
+  return !!status && WAITING_STATUSES.has(status.toLowerCase());
+}
+
+/** How long a finished download may fail to import before it is replaced. */
+export const IMPORT_STUCK_MINUTES = 30;
+
+/**
+ * Whether a finished download is stuck unable to import.
+ *
+ * Sonarr leaves such an entry at "importPending"/"importBlocked" with a
+ * warning forever: The Sopranos S04E09 sat 11 hours on "Unable to determine
+ * if file is a sample" because the .mkv was zeros from byte 0 -- corrupt, so
+ * no amount of waiting would import it, and the queue-based healer never
+ * looked at it because it had "progress" (it was 100% done). Only the
+ * current state is judged here; the caller supplies how long it has been
+ * seen stuck, so a warning that clears on its own is never acted on.
+ */
+export function isImportStuck(entry: {
+  clientStatus?: string | null;
+  trackedDownloadState?: string | null;
+  trackedDownloadStatus?: string | null;
+}): boolean {
+  const state = (entry.trackedDownloadState ?? "").toLowerCase();
+  const status = (entry.trackedDownloadStatus ?? "").toLowerCase();
+  return (
+    (entry.clientStatus ?? "").toLowerCase() === "completed" &&
+    ["importpending", "importblocked", "importfailed"].includes(state) &&
+    (status === "warning" || status === "error")
+  );
+}
+
 /** Whether a queue entry is dead enough to be worth dropping and re-grabbing. */
 export function isUnhealthy(entry: DownloadHealth): boolean {
   if (entry.ageMinutes < STALL_GRACE_MINUTES) return false;
+  if (isWaitingItsTurn(entry.clientStatus)) return false;
   // A transient status still has to go somewhere eventually, so it is judged
   // on a longer clock rather than exempted -- a torrent that cannot find
   // metadata in half an hour is not going to.
