@@ -489,19 +489,29 @@ async function outstandingSearches(): Promise<number | null> {
  * deterministic. Gives up after a timeout so one unfindable episode can't
  * wedge the rest of the season behind it.
  */
-async function waitForSonarrCommand(commandId: number): Promise<void> {
+/**
+ * Waits for a Sonarr command to finish. True if it did, false if the deadline
+ * passed with it still queued or running.
+ *
+ * The distinction matters to the caller. This used to return nothing either
+ * way, and the drain then deleted the episode's queue row as if the search had
+ * happened -- so a search stuck in a backed-up Sonarr simply vanished from the
+ * admin panel, and the episode read as never requested.
+ */
+async function waitForSonarrCommand(commandId: number): Promise<boolean> {
   const deadline = Date.now() + COMMAND_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
       const cmd = await sonarrFetch<{ status: string }>(`/api/v3/command/${commandId}`);
       if (cmd.status === "completed" || cmd.status === "failed" || cmd.status === "aborted") {
-        return;
+        return true;
       }
     } catch {
-      return; // treat an unreadable command as done rather than stalling the chain
+      return true; // treat an unreadable command as done rather than stalling the chain
     }
     await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_MS));
   }
+  return false;
 }
 
 /**
@@ -1232,7 +1242,16 @@ async function drainEpisodeSearches(deadline: number | null = null): Promise<voi
           body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [next.episodeId] }),
         });
         markEpisodeSearchTriggered(next.episodeId);
-        await waitForSonarrCommand(cmd.id);
+        const finished = await waitForSonarrCommand(cmd.id);
+        if (!finished) {
+          // Still waiting in Sonarr's own queue. Keep the row -- the search
+          // has not run -- and stop this pass: Sonarr is backed up, and
+          // issuing more is exactly how the backlog grew.
+          console.warn(
+            `[sonarr] search for episode ${next.episodeId} still queued in Sonarr; pausing the drain`
+          );
+          return;
+        }
         await queue.completePendingSearch(next.episodeId);
       } catch (err) {
         console.error(`[sonarr] ordered search failed for episode ${next.episodeId}:`, err);

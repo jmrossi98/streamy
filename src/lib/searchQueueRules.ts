@@ -121,7 +121,14 @@ export function countBlockingSearches(
 ): number {
   return commands.filter((c) => {
     if (c.name !== "EpisodeSearch") return false;
-    if (c.status !== "queued" && c.status !== "started") return false;
+    // A queued command is backlog, however long it has waited -- it is in
+    // line, not stuck. Only a command that *started* and has been running too
+    // long is wedged. The first version aged queued commands out as well, so
+    // once Sonarr fell behind the guard stopped counting its own backlog and
+    // the drain kept adding to it: thirty searches deep, with a newly
+    // requested season buried at the back.
+    if (c.status === "queued") return true;
+    if (c.status !== "started") return false;
     const since = c.started ?? c.queued;
     if (!since) return true;
     const age = now - new Date(since).getTime();

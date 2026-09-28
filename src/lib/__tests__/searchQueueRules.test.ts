@@ -148,3 +148,21 @@ describe("countBlockingSearches", () => {
     expect(countBlockingSearches(cmds, Date.now(), 5)).toBe(0);
   });
 });
+
+describe("countBlockingSearches backlog", () => {
+  const minsAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+
+  it("counts a queued search however long it has waited", () => {
+    // Waiting in line is backlog, not a wedge. Ageing these out is what let
+    // the drain pile thirty searches onto a busy Sonarr.
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "queued", queued: minsAgo(45) }])
+    ).toBe(1);
+  });
+
+  it("still ignores a started search that has run past the stale window", () => {
+    expect(
+      countBlockingSearches([{ name: "EpisodeSearch", status: "started", started: minsAgo(45) }])
+    ).toBe(0);
+  });
+});
