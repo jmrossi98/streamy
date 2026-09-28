@@ -84,6 +84,8 @@ export async function deleteTorrents(hashes: string[]): Promise<boolean> {
 
 /** One torrent, reduced to what a health check needs. */
 export type TorrentHealth = {
+  /** Info hash, lowercase -- what Sonarr/Radarr report as the downloadId. */
+  hash: string;
   name: string;
   state: string;
   progress: number;
@@ -112,6 +114,7 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
     });
     if (!res.ok) return null;
     const body = (await res.json()) as {
+      hash?: string;
       name?: string;
       state?: string;
       progress?: number;
@@ -120,6 +123,7 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
       dlspeed?: number;
     }[];
     return body.map((t) => ({
+      hash: (t.hash ?? "").toLowerCase(),
       name: t.name ?? "(unnamed)",
       state: t.state ?? "unknown",
       progress: t.progress ?? 0,

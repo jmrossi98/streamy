@@ -3,6 +3,7 @@ import {
   isPermanentlyBlocked,
   isUnhealthy,
   isImportStuck,
+  isDeadSwarm,
   IMPORT_STUCK_MINUTES,
   pickIdleEpisodeBatch,
   REHEAL_COOLDOWN_MS,
@@ -84,7 +85,8 @@ function onIdleCooldown(key: string): boolean {
 
 async function healOne(
   mediaType: "movie" | "show",
-  entry: QueueHealth
+  entry: QueueHealth,
+  swarm: Map<string, { swarmSeeds: number; connectedSeeds: number }> = new Map()
 ): Promise<HealedDownload | null> {
   // Keyed per episode (or movie), not per queue entry.
   //
@@ -115,7 +117,8 @@ async function healOne(
   // usually about conditions, not the release: a VPN reconnect or a brief
   // peer drought. Blocklisting those poisoned the best-seeded releases and
   // pushed later searches onto steadily worse ones.
-  const failed = shouldBlocklistStalled(entry.errorMessage, stalls);
+  const deadSwarm = isDeadSwarm(entry.downloadId ? swarm.get(entry.downloadId.toLowerCase()) : undefined);
+  const failed = shouldBlocklistStalled(entry.errorMessage, stalls, deadSwarm);
   try {
     // Cancel this entry, never the title's whole queue.
     //
@@ -431,6 +434,17 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     getSonarrQueueHealth(),
   ]);
 
+  // Swarm seed counts by info hash, so a stalled torrent nobody can seed is
+  // blocklisted on its first stall. Unreadable qBittorrent just means no
+  // extra knowledge -- the usual stall rules still apply.
+  const swarm = new Map<string, { swarmSeeds: number; connectedSeeds: number }>();
+  try {
+    const { getTorrentHealth } = await import("./qbittorrent");
+    for (const t of (await getTorrentHealth()) ?? []) if (t.hash) swarm.set(t.hash, t);
+  } catch (err) {
+    console.error("[healer] could not read torrent swarms:", err);
+  }
+
   const isUnsafe = (e: QueueHealth): e is UnsafeEntry => e.unsafe != null;
   // An unsafe entry is dealt with on its own path and kept out of the stall
   // rules below: those re-grab without blocklisting, which for a fake would
@@ -438,8 +452,8 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
   const healed = await Promise.all([
     ...radarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("movie", e)),
     ...sonarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("show", e)),
-    ...radarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e)),
-    ...sonarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e)),
+    ...radarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm)),
+    ...sonarrQueue.filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm)),
     ...dueStuckImports([...radarrQueue, ...sonarrQueue]).map((e) =>
       replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
     ),

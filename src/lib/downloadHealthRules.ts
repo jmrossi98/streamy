@@ -212,9 +212,20 @@ export const STALL_BLOCKLIST_AFTER = 2;
  */
 export function shouldBlocklistStalled(
   errorMessage: string | null,
-  stallsForThisEpisode: number
+  stallsForThisEpisode: number,
+  // The torrent's whole swarm has no seeder -- not "none connected right
+  // now", but none known to the tracker. That is the release, not
+  // conditions: the first stall of The Sopranos S05E05 re-grabbed the same
+  // 0-seed torrent twice because a first stall is never blocklisted, and
+  // Sonarr had no reason to pick anything else.
+  deadSwarm = false
 ): boolean {
-  return shouldBlocklist(errorMessage) || stallsForThisEpisode >= STALL_BLOCKLIST_AFTER;
+  return deadSwarm || shouldBlocklist(errorMessage) || stallsForThisEpisode >= STALL_BLOCKLIST_AFTER;
+}
+
+/** A torrent no seeder anywhere can finish: none connected and none in the swarm. */
+export function isDeadSwarm(t: { swarmSeeds: number; connectedSeeds: number } | undefined): boolean {
+  return !!t && t.swarmSeeds === 0 && t.connectedSeeds === 0;
 }
 
 // After a rejection the healer searches again straight away, so the next

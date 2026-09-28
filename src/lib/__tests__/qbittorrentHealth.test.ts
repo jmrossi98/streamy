@@ -3,6 +3,7 @@ import { stalledDownloads, type TorrentHealth } from "../qbittorrent";
 
 function t(over: Partial<TorrentHealth> = {}): TorrentHealth {
   return {
+    hash: "abc123",
     name: "Something.1986.1080p",
     state: "downloading",
     progress: 0.5,
