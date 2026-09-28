@@ -8,6 +8,7 @@
 
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
+import { cached } from "./ttlCache";
 // Lazy-load mock module only when needed (dev without API key) — avoids
 // compiling 200 lines of mock data on every page in dev when using real API.
 let _mock: typeof import("./tmdb-mock") | null = null;
@@ -477,6 +478,33 @@ export const getShowById = cache(async (id: string) =>
         () => unstable_cache(() => getShowByIdUncached(id), ["tmdb-show", id], { revalidate: CACHE_REVALIDATE })()
       )
 );
+
+/**
+ * A title's original language as TMDB reports it (ISO 639-1, "ja"), which
+ * decides the default audio track -- see audioLanguageRules.ts.
+ *
+ * Its own lookup rather than a field on ShowDetail/MovieDetail: those are
+ * persisted for a day in Next's data cache (a volume that survives deploys),
+ * so a new field would read as missing on every cached title until each
+ * entry happened to expire. A miss is not cached, so a TMDB blip costs one
+ * retry rather than a day of dubbed audio.
+ */
+export async function getOriginalLanguage(kind: "tv" | "movie", id: string): Promise<string | null> {
+  if (USE_MOCK) return null;
+  return cached(
+    `tmdb-lang:${kind}:${id}`,
+    ONE_DAY_MS,
+    async () => {
+      try {
+        const data = await fetchTmdb<{ original_language?: string }>(`${kind}/${id}`);
+        return data.original_language || null;
+      } catch {
+        return null;
+      }
+    },
+    { skipCacheIf: (v) => v === null }
+  );
+}
 
 /** Resolves a TMDB TV show id to its TVDB id (Sonarr is keyed by TVDB, not TMDB). */
 export async function getTvExternalIds(tmdbId: string): Promise<{ tvdbId: number | null }> {

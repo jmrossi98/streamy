@@ -33,6 +33,8 @@ type EpisodePlayerProps = {
   /** Skip straight to the transcode instead of attempting direct play first
    * -- see the movie player's WatchPlayerProps for the full rationale. */
   forceTranscode?: boolean;
+  /** Subtitle track to switch on at start (English under foreign audio). */
+  defaultSubtitle?: number | null;
 };
 
 const NEXT_EPISODE_COUNTDOWN_SEC = 15;
@@ -54,6 +56,7 @@ export function EpisodePlayer({
   onClose,
   subtitleTracks = [],
   forceTranscode = false,
+  defaultSubtitle = null,
 }: EpisodePlayerProps) {
   const router = useRouter();
   const [showNextOverlay, setShowNextOverlay] = useState(false);
@@ -91,6 +94,7 @@ export function EpisodePlayer({
     runtimeMinutes,
     autoPlay,
     forceTranscode,
+    defaultSubtitle,
     subtitleTracks,
     identityKey: `${showId}-${seasonNumber}-${episodeNumber}`,
     saveProgress,

@@ -65,6 +65,9 @@ export type PlayerEngineOptions = {
    * with no sound and never says anything's wrong. */
   forceTranscode?: boolean;
   subtitleTracks: SubtitleOption[];
+  /** Subtitle to switch on at start -- English under foreign-language audio
+   * (see audioLanguageRules.ts). May arrive after mount, like forceTranscode. */
+  defaultSubtitle?: number | null;
   /** Stable identity for "the thing being played" -- a movieId, or
    * `${showId}-${season}-${episode}`. Only used as an effect dependency, to
    * re-run the unmount cleanup when the viewer moves to a different title
@@ -78,7 +81,7 @@ export type PlayerEngineOptions = {
 };
 
 export function usePlayerEngine(opts: PlayerEngineOptions) {
-  const { videoUrl, initialProgressSeconds, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, identityKey, saveProgress } = opts;
+  const { videoUrl, initialProgressSeconds, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, identityKey, saveProgress } = opts;
   const hasSource = !!videoUrl;
   // Always direct-plays and falls back to a transcode only if the browser
   // can't decode the source -- no manual quality picker. That picker (4K/
@@ -106,7 +109,16 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   const [nativeHlsSupport] = useState(supportsNativeHls);
   const needsHlsJs = transcoding && !nativeHlsSupport;
   const hlsRef = useRef<Hls | null>(null);
-  const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null);
+  const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(defaultSubtitle);
+  // Applies the default once per title, including one that arrives after
+  // mount (the show-page overlay learns it from a fetch). Once applied, the
+  // viewer's own choice -- including switching subtitles off -- stands.
+  const defaultSubtitleAppliedForRef = useRef<string | null>(defaultSubtitle != null ? identityKey : null);
+  useEffect(() => {
+    if (defaultSubtitle == null || defaultSubtitleAppliedForRef.current === identityKey) return;
+    defaultSubtitleAppliedForRef.current = identityKey;
+    setSelectedSubtitle(defaultSubtitle);
+  }, [defaultSubtitle, identityKey]);
   // No start-position parameter, deliberately. Jellyfin's HLS output is a
   // complete VOD playlist of the *whole* title (verified directly against the
   // server: 891 segments / 2671s, byte-identical with and without
