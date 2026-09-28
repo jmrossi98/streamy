@@ -18,7 +18,8 @@ import {
 const NEW_WITHIN_MS = 24 * 3600_000;
 
 /** Filter choices kept per browser, so the panel opens the way it was left. */
-const PREFS_KEY = "streamy.jobs.filters.v1";
+// v2: v1 could hold the short-lived "mid"/"senior" levels, which no longer exist.
+const PREFS_KEY = "streamy.jobs.filters.v2";
 type Prefs = { levels: string[]; hiddenTags: string[]; onlyNew: boolean; hideOpened: boolean };
 
 function loadPrefs(): Partial<Prefs> | null {
@@ -169,8 +170,7 @@ export function JobListingsPanel({
   const [metros, setMetros] = useState<Set<string>>(new Set());
   const [company, setCompany] = useState<string>("all");
   const [categories, setCategories] = useState<Set<string>>(new Set());
-  // Mid-level by default: that is the search right now (2026-09-28).
-  const [levels, setLevels] = useState<Set<string>>(new Set(["mid"]));
+  const [levels, setLevels] = useState<Set<string>>(new Set());
   const [tags, setTags] = useState<Set<string>>(new Set());
   /** Company groups to leave out, e.g. quant firms and startups. */
   const [hiddenTags, setHiddenTags] = useState<Set<string>>(new Set());
@@ -520,7 +520,7 @@ export function JobListingsPanel({
                     NEW
                   </span>
                 )}
-                {listing.level !== "mid" && listing.level in LEVEL_LABELS && (
+                {listing.level !== "midsenior" && listing.level in LEVEL_LABELS && (
                   <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-white/40">
                     {LEVEL_LABELS[listing.level as JobLevel]}
                   </span>

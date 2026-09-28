@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LEVEL_LABELS, LEVEL_ORDER } from "@/lib/jobFilters";
 
 export type JobSourceRow = {
   id: string;
@@ -25,9 +26,17 @@ export type JobSourceRow = {
  * clear: a company can be worth watching in a list without being worth an
  * email at two in the morning.
  */
-export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
+export function JobSourcesPanel({
+  sources,
+  alertLevels: initialAlertLevels,
+}: {
+  sources: JobSourceRow[];
+  /** Job levels included in alert emails, across every board. */
+  alertLevels: string[];
+}) {
   const router = useRouter();
   const [rows, setRows] = useState(sources);
+  const [alertLevels, setAlertLevels] = useState<Set<string>>(new Set(initialAlertLevels));
   const [provider, setProvider] = useState("greenhouse");
   const [slug, setSlug] = useState("");
   const [company, setCompany] = useState("");
@@ -88,6 +97,17 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
     }
   }
 
+  async function toggleAlertLevel(level: string) {
+    const prev = alertLevels;
+    const next = new Set(prev);
+    if (next.has(level)) next.delete(level);
+    else next.add(level);
+    setAlertLevels(next);
+    // Put it back if the server refused, so the pills never show a setting
+    // that is not the one emails are actually using.
+    if (!(await send({ action: "alertLevels", levels: [...next] }))) setAlertLevels(prev);
+  }
+
   async function toggle(row: JobSourceRow, field: "enabled" | "notify") {
     const value = !row[field];
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [field]: value } : r)));
@@ -99,6 +119,29 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
 
   return (
     <div className="space-y-4">
+      {/* Which levels are emailed about, for every board with Email on. The
+          panel above still lists every level; this only decides what arrives
+          in the inbox. */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+        <span className="text-white/40">Email alerts for</span>
+        {LEVEL_ORDER.map((level) => (
+          <button
+            key={level}
+            type="button"
+            onClick={() => void toggleAlertLevel(level)}
+            aria-pressed={alertLevels.has(level)}
+            className={`rounded border px-2 py-0.5 transition-colors ${
+              alertLevels.has(level)
+                ? "border-white/40 bg-white/15 text-white"
+                : "border-white/15 text-white/55 hover:bg-white/10"
+            }`}
+          >
+            {LEVEL_LABELS[level]}
+          </button>
+        ))}
+        {alertLevels.size === 0 && <span className="text-amber-300/80">no alerts will be sent</span>}
+      </div>
+
       <form onSubmit={add} className="flex flex-wrap items-end gap-2 text-xs">
         <label className="flex flex-col gap-1">
           <span className="text-white/40">Provider</span>
@@ -164,7 +207,7 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
             <span className="text-white/30">
               {row.provider}:{row.slug}
             </span>
-            <span className="text-white/35">{row.openRoles} mid-level open</span>
+            <span className="text-white/35">{row.openRoles} open</span>
             {row.tag && (
               <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/50">
                 {row.tag}
@@ -184,7 +227,9 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
                 checked={row.notify}
                 onChange={() => void toggle(row, "notify")}
               />
-              Notify
+              <span title="Include this board's new roles in alert emails. Off still polls and lists them.">
+                Email
+              </span>
             </label>
             <button
               type="button"

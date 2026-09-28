@@ -426,10 +426,10 @@ model JobPosting {
   /// shows up as postings are re-polled instead of silently rewriting history.
   category String @default("swe")
 
-  /// Seniority as the title implies it: entry, mid, senior or staff. Unmarked
-  /// titles are mid by convention -- see lib/jobFilters.ts for why that beats
-  /// an "unspecified" bucket holding most of the rows.
-  level String @default("mid")
+  /// Seniority as the title implies it: entry, midsenior or staff. Unmarked
+  /// titles are midsenior by convention -- see lib/jobFilters.ts for why that
+  /// beats a fourth bucket holding most of the rows.
+  level String @default("midsenior")
 
   /// When this listing was last opened from the panel.
   ///
