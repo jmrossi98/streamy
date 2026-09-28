@@ -165,7 +165,7 @@ describe("healStalledDownloads: unsafe releases", () => {
 
     await healStalledDownloads();
 
-    expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(77, { blocklist: true });
+    expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(77, { blocklist: true, keepWanted: true });
     expect(m.cancelSonarrDownload).not.toHaveBeenCalled();
     expect(m.searchSonarrEpisodes).toHaveBeenCalledWith([901]);
     expect(m.recordRejection).toHaveBeenCalledWith(
@@ -231,5 +231,63 @@ describe("healStalledDownloads: idle episode re-search", () => {
     await healStalledDownloads();
     expect(m.searchSonarrEpisodes).toHaveBeenCalledTimes(1);
     expect(m.searchSonarrEpisodes.mock.calls[0][0]).toEqual([9200, 9201, 9202, 9203, 9204]);
+  });
+});
+
+describe("healStalledDownloads: waiting and stuck imports", () => {
+  const queued = (over: object = {}) => ({
+    queueId: 5100,
+    externalId: 19,
+    episodeId: 1551,
+    downloadId: "SABnzbd_nzo_x",
+    title: "The.Sopranos.S05E10.1080p.BluRay",
+    errorMessage: null,
+    ageMinutes: 40,
+    hasProgress: false,
+    unsafe: null,
+    clientStatus: "queued",
+    trackedDownloadState: "downloading",
+    trackedDownloadStatus: "ok",
+    importProblem: null,
+    ...over,
+  });
+
+  it("leaves a job waiting its turn in the download client alone", async () => {
+    m.getSonarrQueueHealth.mockResolvedValue([queued()]);
+    await healStalledDownloads();
+    expect(m.cancelSonarrQueueItem).not.toHaveBeenCalled();
+  });
+
+  it("still re-grabs a started download that has made no progress, keeping the episode wanted", async () => {
+    m.getSonarrQueueHealth.mockResolvedValue([queued({ queueId: 5101, episodeId: 1552, clientStatus: "downloading" })]);
+    await healStalledDownloads();
+    expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(5101, { blocklist: false, keepWanted: true });
+  });
+
+  it("replaces a finished download that cannot import, but only after it has stayed stuck", async () => {
+    vi.useFakeTimers();
+    try {
+      const stuck = queued({
+        queueId: 5102,
+        episodeId: 1540,
+        hasProgress: true,
+        clientStatus: "completed",
+        trackedDownloadState: "importPending",
+        trackedDownloadStatus: "warning",
+        importProblem: "Unable to determine if file is a sample",
+      });
+      m.getSonarrQueueHealth.mockResolvedValue([stuck]);
+      vi.setSystemTime(new Date("2026-09-28T12:00:00Z"));
+      await healStalledDownloads();
+      expect(m.cancelSonarrQueueItem).not.toHaveBeenCalled();
+
+      vi.setSystemTime(new Date("2026-09-28T12:31:00Z"));
+      const healed = await healStalledDownloads();
+      expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(5102, { blocklist: true, keepWanted: true });
+      expect(m.searchSonarrEpisodes).toHaveBeenCalledWith([1540]);
+      expect(healed.some((h) => h.reason.includes("could not import"))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
