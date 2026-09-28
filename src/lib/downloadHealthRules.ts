@@ -19,6 +19,8 @@ export type DownloadHealth = {
   errorMessage: string | null;
   /** The queue record's status ("downloading", "queued", "paused", ...). */
   clientStatus?: string | null;
+  /** qBittorrent's own state for a torrent ("metaDL", "queuedDL", ...), when known. */
+  torrentState?: string | null;
   /** How long the entry has been sitting in the queue. */
   ageMinutes: number;
   hasProgress: boolean;
@@ -51,8 +53,30 @@ function isTransient(message: string): boolean {
  */
 const WAITING_STATUSES = new Set(["queued", "paused", "delay"]);
 
-export function isWaitingItsTurn(status: string | null | undefined): boolean {
+// qBittorrent states that really are "waiting". Not metaDL: Sonarr reports a
+// torrent still fetching its metadata as "queued" too, and The Sopranos
+// S05E05 sat 50 minutes in metaDL, shielded by the waiting rule.
+const TORRENT_WAITING_STATES = new Set([
+  "queueddl", "pauseddl", "stoppeddl", "checkingdl", "checkingresumedata", "allocating", "moving",
+]);
+
+export function isWaitingItsTurn(
+  status: string | null | undefined,
+  torrentState?: string | null
+): boolean {
+  if (torrentState) return TORRENT_WAITING_STATES.has(torrentState.toLowerCase());
   return !!status && WAITING_STATUSES.has(status.toLowerCase());
+}
+
+/**
+ * A torrent that has not even fetched its metadata in this long has no
+ * reachable peer and will not start. Ten minutes is the whole request-to-ready
+ * budget, so it is replaced rather than waited on.
+ */
+export const METADATA_DEAD_MINUTES = 10;
+
+export function isMetadataDead(entry: { torrentState?: string | null; ageMinutes: number }): boolean {
+  return (entry.torrentState ?? "").toLowerCase() === "metadl" && entry.ageMinutes >= METADATA_DEAD_MINUTES;
 }
 
 /** How long a finished download may fail to import before it is replaced. */
@@ -85,8 +109,9 @@ export function isImportStuck(entry: {
 
 /** Whether a queue entry is dead enough to be worth dropping and re-grabbing. */
 export function isUnhealthy(entry: DownloadHealth): boolean {
+  if (isMetadataDead(entry)) return true;
   if (entry.ageMinutes < STALL_GRACE_MINUTES) return false;
-  if (isWaitingItsTurn(entry.clientStatus)) return false;
+  if (isWaitingItsTurn(entry.clientStatus, entry.torrentState)) return false;
   // A transient status still has to go somewhere eventually, so it is judged
   // on a longer clock rather than exempted -- a torrent that cannot find
   // metadata in half an hour is not going to.

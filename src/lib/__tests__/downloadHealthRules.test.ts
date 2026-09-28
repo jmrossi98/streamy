@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isDeadSwarm, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isDeadSwarm, isMetadataDead, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -172,5 +172,22 @@ describe("dead swarms", () => {
     expect(isDeadSwarm({ swarmSeeds: 3, connectedSeeds: 0 })).toBe(false);
     expect(isDeadSwarm({ swarmSeeds: 0, connectedSeeds: 1 })).toBe(false);
     expect(isDeadSwarm(undefined)).toBe(false);
+  });
+});
+
+describe("torrent metadata and waiting states", () => {
+  it("does not treat a torrent stuck fetching metadata as waiting its turn", () => {
+    const e = { errorMessage: null, ageMinutes: 50, hasProgress: false, clientStatus: "queued", torrentState: "metaDL" };
+    expect(isUnhealthy(e)).toBe(true);
+    expect(isMetadataDead(e)).toBe(true);
+  });
+
+  it("gives metadata ten minutes, ahead of the general stall grace", () => {
+    expect(isMetadataDead({ torrentState: "metaDL", ageMinutes: 9 })).toBe(false);
+    expect(isUnhealthy({ errorMessage: null, ageMinutes: 10, hasProgress: false, clientStatus: "queued", torrentState: "metaDL" })).toBe(true);
+  });
+
+  it("still leaves a torrent genuinely queued in qBittorrent alone", () => {
+    expect(isUnhealthy({ errorMessage: null, ageMinutes: 60, hasProgress: false, clientStatus: "queued", torrentState: "queuedDL" })).toBe(false);
   });
 });
