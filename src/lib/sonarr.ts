@@ -518,7 +518,7 @@ const MAX_BACKLOG_WAITS = 20;
  * struggling, and guessing zero is how the backlog got built in the first
  * place.
  */
-async function outstandingSearches(): Promise<number | null> {
+export async function outstandingSearches(): Promise<number | null> {
   try {
     const commands = await sonarrFetch<SonarrCommand[]>("/api/v3/command");
     // A command that has been running too long is wedged, not busy, and is
@@ -576,7 +576,7 @@ export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; titl
   try {
     const [wanted, queue] = await Promise.all([
       sonarrFetch<{
-        records: { id: number; title: string; seriesId: number; monitored: boolean }[];
+        records: { id: number; title: string; seriesId: number; seasonNumber: number; monitored: boolean }[];
       }>(`/api/v3/wanted/missing?pageSize=50&sortKey=airDateUtc&sortDirection=descending`),
       sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue`),
     ]);
@@ -584,7 +584,12 @@ export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; titl
       queue.records.map((r) => r.episodeId).filter((id): id is number => id != null)
     );
     return wanted.records
-      .filter((e) => e.monitored && !queued.has(e.id))
+      // Season 0 is left out: specials are bonus clips and behind-the-scenes
+      // featurettes that indexers almost never carry, so re-searching them
+      // only ever came up empty -- 27 of them at a time, on every pass,
+      // ahead of real requests. A special someone explicitly asks for still
+      // goes through the ordered queue, which retries it on its own.
+      .filter((e) => e.monitored && e.seasonNumber !== 0 && !queued.has(e.id))
       .map((e) => ({ episodeId: e.id, title: e.title }));
   } catch (err) {
     console.error("[sonarr] getIdleWantedEpisodes failed:", err);

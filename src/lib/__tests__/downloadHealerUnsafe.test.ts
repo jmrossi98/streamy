@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
   cancelSonarrQueueItem: vi.fn(),
   searchSonarrSeries: vi.fn(),
   expireSonarrBlocklist: vi.fn(),
+  outstandingSearches: vi.fn(),
   recordRejection: vi.fn(),
   getPermanentBlocks: vi.fn(),
   countRecentRejections: vi.fn(),
@@ -39,12 +40,14 @@ vi.mock("../sonarr", () => ({
   cancelSonarrQueueItem: m.cancelSonarrQueueItem,
   searchSonarrSeries: m.searchSonarrSeries,
   expireSonarrBlocklist: m.expireSonarrBlocklist,
+  outstandingSearches: m.outstandingSearches,
 }));
 // Mocked for the same reason as the clients above: this file tests heal
 // policy, and the real module reaches the database, which the unit tests do
 // not have (CI installs with --ignore-scripts).
 vi.mock("../pendingEpisodeSearch", () => ({
   pendingSearchIds: vi.fn(async () => [] as number[]),
+  pendingSearchStats: vi.fn(async () => ({ total: 0, oldestWaitMinutes: 0, series: 0, retrying: 0 })),
 }));
 
 vi.mock("../rejectedReleases", () => ({
@@ -81,6 +84,7 @@ beforeEach(() => {
   m.getIdleWantedEpisodes.mockResolvedValue([]);
   m.expireRadarrBlocklist.mockResolvedValue(0);
   m.expireSonarrBlocklist.mockResolvedValue(0);
+  m.outstandingSearches.mockResolvedValue(0);
   m.getPermanentBlocks.mockResolvedValue([]);
   m.countRecentRejections.mockResolvedValue(1);
   m.cancelRadarrQueueItem.mockImplementation(async () => (calls.push("remove"), true));
@@ -201,5 +205,31 @@ describe("healStalledDownloads: blocklist expiry", () => {
 
     expect(m.expireRadarrBlocklist).not.toHaveBeenCalled();
     expect(m.expireSonarrBlocklist).not.toHaveBeenCalled();
+  });
+});
+
+describe("healStalledDownloads: idle episode re-search", () => {
+  const idle = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ episodeId: from + i, title: `Ep ${from + i}` }));
+
+  it("adds nothing while a search is already running, so a fresh request is not queued behind it", async () => {
+    m.outstandingSearches.mockResolvedValue(1);
+    m.getIdleWantedEpisodes.mockResolvedValue(idle(9000, 3));
+    await healStalledDownloads();
+    expect(m.searchSonarrEpisodes).not.toHaveBeenCalled();
+  });
+
+  it("treats an unreadable command queue as busy", async () => {
+    m.outstandingSearches.mockResolvedValue(null);
+    m.getIdleWantedEpisodes.mockResolvedValue(idle(9100, 3));
+    await healStalledDownloads();
+    expect(m.searchSonarrEpisodes).not.toHaveBeenCalled();
+  });
+
+  it("re-searches a small batch rather than everything at once", async () => {
+    m.getIdleWantedEpisodes.mockResolvedValue(idle(9200, 28));
+    await healStalledDownloads();
+    expect(m.searchSonarrEpisodes).toHaveBeenCalledTimes(1);
+    expect(m.searchSonarrEpisodes.mock.calls[0][0]).toEqual([9200, 9201, 9202, 9203, 9204]);
   });
 });
