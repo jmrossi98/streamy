@@ -426,10 +426,10 @@ model JobPosting {
   /// shows up as postings are re-polled instead of silently rewriting history.
   category String @default("swe")
 
-  /// Seniority as the title implies it: entry, midsenior or staff. Unmarked
-  /// titles are midsenior by convention -- see lib/jobFilters.ts for why that
-  /// beats a fourth bucket holding most of the rows.
-  level String @default("midsenior")
+  /// Seniority as the title implies it: entry, mid, senior or staff. Unmarked
+  /// titles are mid by convention -- see lib/jobFilters.ts for why that beats
+  /// an "unspecified" bucket holding most of the rows.
+  level String @default("mid")
 
   /// When this listing was last opened from the panel.
   ///
@@ -446,6 +446,11 @@ model JobPosting {
   /// Set once this has been announced, so a re-poll or a restart cannot
   /// announce it twice.
   notifiedAt DateTime?
+  /// Hidden from the panel and never announced: first seen over a month ago.
+  /// Archived rather than deleted, because a deleted posting still on its
+  /// board would be re-created by the next poll and come back as "new". The
+  /// row is deleted for real once it leaves the board (see STALE_AFTER_HOURS).
+  archivedAt DateTime?
 
   @@index([firstSeen])
   @@index([lastSeen])
@@ -453,6 +458,7 @@ model JobPosting {
   @@index([category])
   @@index([level])
   @@index([openedAt])
+  @@index([archivedAt])
 }
 
 model HealthProbeRun {

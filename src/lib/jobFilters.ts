@@ -417,17 +417,23 @@ export function isSoftwareRole(title: string): boolean {
 /**
  * Seniority, as coarsely as a job title can honestly support.
  *
- * Three buckets because that is the real decision: is this below me, at me, or
- * above me. Finer grades (L4 vs L5, II vs III) are not comparable between
+ * Mid and senior were one bucket ("midsenior") until 2026-09-28, when the
+ * search narrowed to mid-level roles only -- a "Senior Software Engineer"
+ * counted as mid made that filter useless. They split on the explicit markers
+ * a title carries; finer grades (L4 vs L5) are not comparable between
  * companies and are mostly absent from titles anyway.
  */
-export type JobLevel = "entry" | "midsenior" | "staff";
+export type JobLevel = "entry" | "mid" | "senior" | "staff";
 
 export const LEVEL_LABELS: Record<JobLevel, string> = {
   entry: "Entry / new grad",
-  midsenior: "Mid / senior",
+  mid: "Mid",
+  senior: "Senior",
   staff: "Lead / staff+",
 };
+
+/** Display order, junior to senior. */
+export const LEVEL_ORDER: JobLevel[] = ["entry", "mid", "senior", "staff"];
 
 /**
  * Checked before everything else, and worth stating why.
@@ -470,17 +476,18 @@ const LEVEL_PATTERNS: [JobLevel, string[]][] = [
       "graduate program",
     ],
   ],
-  [
-    // Explicit senior markers. Anything unmarked also lands here -- see below.
-    "midsenior",
-    ["senior", "sr.", "sr ", "mid-level", "mid level", "ii", "iii"],
-  ],
+  // Senior before mid, so "Senior Engineer II" is senior and "III" is not
+  // read as containing "II" (whole-word matching makes that moot, but the
+  // order states the intent). III is senior at the companies that use it.
+  ["senior", ["senior", "sr.", "sr ", "iii"]],
+  // Explicit mid markers. Anything unmarked also lands here -- see below.
+  ["mid", ["mid-level", "mid level", "ii"]],
 ];
 
 /**
  * The level a title implies.
  *
- * An unmarked title returns midsenior rather than null. That is a convention
+ * An unmarked title returns mid rather than null. That is a convention
  * rather than a fact: a plain "Software Engineer" is an ordinary individual
  * contributor posting at almost every company here, and the alternative --
  * a fourth "unspecified" bucket -- would hold the majority of postings and
@@ -491,5 +498,5 @@ export function classifyLevel(title: string): JobLevel {
   for (const [level, patterns] of LEVEL_PATTERNS) {
     if (patterns.some((p) => titleHas(hay, p))) return level;
   }
-  return "midsenior";
+  return "mid";
 }

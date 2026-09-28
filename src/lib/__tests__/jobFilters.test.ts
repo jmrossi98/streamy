@@ -275,8 +275,11 @@ describe("classifyLevel", () => {
   it("treats an unmarked title as mid/senior", () => {
     // A convention, not a fact: a plain "Software Engineer" is an ordinary IC
     // posting nearly everywhere, and a fourth bucket would hold most rows.
-    expect(classifyLevel("Software Engineer")).toBe("midsenior");
-    expect(classifyLevel("Senior Software Engineer")).toBe("midsenior");
-    expect(classifyLevel("Backend Engineer II")).toBe("midsenior");
+    expect(classifyLevel("Software Engineer")).toBe("mid");
+    expect(classifyLevel("Senior Software Engineer")).toBe("senior");
+    expect(classifyLevel("Sr. Backend Engineer")).toBe("senior");
+    expect(classifyLevel("Backend Engineer II")).toBe("mid");
+    expect(classifyLevel("Software Engineer III")).toBe("senior");
+    expect(classifyLevel("Mid-Level Platform Engineer")).toBe("mid");
   });
 });
