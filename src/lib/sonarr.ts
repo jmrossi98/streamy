@@ -8,7 +8,9 @@
 
 import {
   countBlockingSearches,
+  planSearches,
   seriesRefreshPending,
+  type SearchCandidate,
   type SonarrCommand,
 } from "./searchQueueRules";
 import { cached } from "./ttlCache";
@@ -503,7 +505,12 @@ const COMMAND_TIMEOUT_MS = 300_000;
  * is ready behind it, few enough that the expensive per-episode search is
  * paid twice rather than thirteen times.
  */
-const LEAD_EPISODES = 2;
+// Zero since 2026-09-28: order no longer matters ("we don't need to download
+// in order of episode number as long as we can speed up search/download
+// time"), and one SeasonSearch covers a whole 8-episode season in ~40 s where
+// searching the lead episodes first just delayed it. Kept as a constant so the
+// behaviour is one number away if first-episode-first is ever wanted back.
+const LEAD_EPISODES = 0;
 
 /**
  * Searches allowed in flight at once.
@@ -522,6 +529,9 @@ const LEAD_EPISODES = 2;
  * half an hour.
  */
 const MAX_OUTSTANDING_SEARCHES = 3;
+
+/** Due rows checked per drain round before planning searches from them. */
+const DRAIN_BATCH_ROWS = 40;
 
 /** How long to wait before looking at the command queue again. */
 const BACKLOG_POLL_MS = 15_000;
@@ -1316,9 +1326,6 @@ async function drainEpisodeSearches(deadline: number | null = null): Promise<voi
     const queue = await searchQueue();
     for (const id of await queue.pendingSearchIds()) markEpisodeSearchTriggered(id);
 
-    // Which series the rotation served last, so each show advances one
-    // episode at a time instead of one show finishing before the next starts.
-    let lastSeriesId: number | null = null;
     let backlogWaits = 0;
 
     for (;;) {
@@ -1353,61 +1360,77 @@ async function drainEpisodeSearches(deadline: number | null = null): Promise<voi
       // searched as soon as that is true.
       const downloading = await episodesInQueue();
 
-      const next = await queue.nextPendingSearch(lastSeriesId);
-      if (!next) return;
-      // Advanced before the search, not after: a throw below must still
-      // move the rotation on, or a failing series would be handed back
-      // every cycle and starve the others.
-      lastSeriesId = next.seriesId;
-      try {
-        // Re-checked at its turn rather than trusting the queue, which may
-        // have been written an hour ago. An explicit EpisodeSearch grabs
-        // regardless of monitoring, so without this a cancelled episode would
-        // simply start downloading again. Unmonitored means cancelled.
-        const episode = await sonarrFetch<{ monitored: boolean; hasFile: boolean }>(
-          `/api/v3/episode/${next.episodeId}`
-        );
-        if (!episode.monitored || episode.hasFile) {
-          await queue.completePendingSearch(next.episodeId);
-          continue;
-        }
+      const due = await queue.duePendingSearches();
+      if (due.length === 0) return;
 
-        // Already downloading counts as done here.
-        //
-        // The healer grabs wanted-but-idle episodes in bulk, so by the time an
-        // episode's turn comes round it is often already in Sonarr's queue.
-        // Searching it again grabs a second copy of something in flight, and
-        // -- because the row stayed in the queue -- the queue never got
-        // shorter, which the warden then reported as the queue being stuck
-        // while fifteen episodes were visibly downloading.
-        if (downloading.has(next.episodeId)) {
-          await queue.completePendingSearch(next.episodeId);
-          continue;
-        }
-
-        const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
-          method: "POST",
-          body: JSON.stringify({ name: "EpisodeSearch", episodeIds: [next.episodeId] }),
-        });
-        markEpisodeSearchTriggered(next.episodeId);
-        const finished = await waitForSonarrCommand(cmd.id);
-        if (!finished) {
-          // Still waiting in Sonarr's own queue. Keep the row -- the search
-          // has not run -- and stop this pass: Sonarr is backed up, and
-          // issuing more is exactly how the backlog grew.
-          console.warn(
-            `[sonarr] search for episode ${next.episodeId} still queued in Sonarr; pausing the drain`
+      // Validated at their turn rather than trusting the queue, which may have
+      // been written an hour ago. An explicit search grabs regardless of
+      // monitoring, so without this a cancelled episode would simply start
+      // downloading again: unmonitored means cancelled. Already downloading
+      // counts as done -- searching it again grabs a second copy.
+      const candidates: SearchCandidate[] = [];
+      for (const row of due.slice(0, DRAIN_BATCH_ROWS)) {
+        try {
+          const episode = await sonarrFetch<{ monitored: boolean; hasFile: boolean; seasonNumber: number }>(
+            `/api/v3/episode/${row.episodeId}`
           );
-          return;
+          if (!episode.monitored || episode.hasFile || downloading.has(row.episodeId)) {
+            await queue.completePendingSearch(row.episodeId);
+            continue;
+          }
+          candidates.push({ episodeId: row.episodeId, seriesId: row.seriesId, seasonNumber: episode.seasonNumber });
+        } catch (err) {
+          console.error(`[sonarr] could not check queued episode ${row.episodeId}:`, err);
+          await queue.failPendingSearch(row.episodeId);
         }
-        await queue.completePendingSearch(next.episodeId);
-      } catch (err) {
-        console.error(`[sonarr] ordered search failed for episode ${next.episodeId}:`, err);
-        await queue.failPendingSearch(next.episodeId);
+      }
+      if (candidates.length === 0) continue;
+
+      // Grouped and run side by side, not one episode at a time in request
+      // order -- see planSearches. Order stopped mattering on 2026-09-28;
+      // time to ready is what counts.
+      const plan = planSearches(candidates, MAX_OUTSTANDING_SEARCHES - outstanding);
+      const results = await Promise.all(
+        plan.map(async (search) => {
+          try {
+            const cmd = await sonarrFetch<{ id: number }>(`/api/v3/command`, {
+              method: "POST",
+              body: JSON.stringify(
+                search.kind === "season"
+                  ? { name: "SeasonSearch", seriesId: search.seriesId, seasonNumber: search.seasonNumber }
+                  : { name: "EpisodeSearch", episodeIds: search.episodeIds }
+              ),
+            });
+            for (const id of search.episodeIds) markEpisodeSearchTriggered(id);
+            return { search, finished: await waitForSonarrCommand(cmd.id), failed: false };
+          } catch (err) {
+            console.error(`[sonarr] ${search.kind} search failed for ${search.episodeIds.join(",")}:`, err);
+            return { search, finished: false, failed: true };
+          }
+        })
+      );
+
+      let stillQueued = false;
+      for (const { search, finished, failed } of results) {
+        if (failed) {
+          for (const id of search.episodeIds) await queue.failPendingSearch(id);
+        } else if (finished) {
+          for (const id of search.episodeIds) await queue.completePendingSearch(id);
+        } else {
+          // Still waiting in Sonarr's own queue: the search has not run, so
+          // the rows stay.
+          stillQueued = true;
+        }
+      }
+      if (stillQueued) {
+        // Sonarr is backed up, and issuing more is exactly how the backlog grew.
+        console.warn("[sonarr] searches still queued in Sonarr; pausing the drain");
+        return;
+      }
+      if (results.some((r) => r.failed)) {
         // The usual cause is Sonarr being briefly unreachable, which affects
-        // whatever is at the head of the queue rather than this episode in
-        // particular -- so pause instead of burning its attempts in a
-        // fraction of a second.
+        // whatever is at the head of the queue rather than these episodes in
+        // particular -- so pause instead of burning their attempts at once.
         await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_MS));
       }
     }
