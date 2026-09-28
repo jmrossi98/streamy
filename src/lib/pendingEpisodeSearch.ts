@@ -17,6 +17,7 @@ export type PendingSearch = {
   attempts: number;
   enqueuedAt?: Date;
   searchAfter?: Date | null;
+  label?: string | null;
 };
 
 /** Dropped after this many failures, so one bad episode can't block a season. */
@@ -169,7 +170,24 @@ export async function pendingSearchStats(): Promise<QueueStats> {
 export async function pendingSearchesForDisplay(): Promise<PendingSearch[]> {
   const rows = await prisma.pendingEpisodeSearch.findMany({
     orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
-    select: { episodeId: true, seriesId: true, attempts: true, enqueuedAt: true, searchAfter: true },
+    select: {
+      episodeId: true,
+      seriesId: true,
+      attempts: true,
+      enqueuedAt: true,
+      searchAfter: true,
+      label: true,
+    },
   });
   return rows;
+}
+
+/** Writes display names onto rows that do not have one yet. */
+export async function setPendingLabels(labels: Map<number, string>): Promise<void> {
+  for (const [episodeId, label] of labels) {
+    await prisma.pendingEpisodeSearch.updateMany({
+      where: { episodeId, label: null },
+      data: { label },
+    });
+  }
 }
