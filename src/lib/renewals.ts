@@ -25,13 +25,14 @@
 import { connect } from "node:tls";
 import { cached } from "./ttlCache";
 import { daysUntil } from "./spendRules";
+import { buildUsenetRenewals } from "./usenetRenewalRules";
 
 const PROBE_TIMEOUT_MS = 8_000;
 
 /** Renewals move on the order of days; nothing here needs a fresh read. */
 const RENEWAL_TTL_MS = 60 * 60_000;
 
-export type RenewalSource = "iptv" | "tls" | "domain" | "manual";
+export type RenewalSource = "iptv" | "tls" | "domain" | "usenet" | "manual";
 
 export type Renewal = {
   name: string;
@@ -222,6 +223,64 @@ async function domainRenewal(): Promise<Renewal[]> {
  * and remains testable without one.
  */
 /**
+ * Usenet providers and indexers, from SABnzbd and Prowlarr.
+ *
+ * Neither service reports an account's expiry the way an IPTV panel does, so
+ * the rows carry what can be read -- usage per provider, and whether each one
+ * is still authenticating -- plus an expiry wherever one has been set in the
+ * tool itself. See usenetRenewalRules for the reasoning.
+ */
+async function usenetRenewals(): Promise<Renewal[]> {
+  const sab = process.env.SABNZBD_URL?.replace(/\/$/, "");
+  const sabKey = process.env.SABNZBD_API_KEY ?? "";
+  const prowlarr = process.env.PROWLARR_URL?.replace(/\/$/, "");
+  const prowlarrKey = process.env.PROWLARR_API_KEY ?? "";
+
+  const get = async <T,>(url: string, headers: Record<string, string> = {}): Promise<T | null> => {
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        cache: "no-store",
+        headers,
+      });
+      return res.ok ? ((await res.json()) as T) : null;
+    } catch {
+      return null;
+    }
+  };
+  const sabApi = (mode: string, extra = "") =>
+    `${sab}/api?mode=${mode}${extra}&output=json&apikey=${encodeURIComponent(sabKey)}`;
+  const px = { "X-Api-Key": prowlarrKey };
+
+  const [config, stats, status, indexers, indexerStatus] = await Promise.all([
+    sab ? get<{ config?: { servers?: unknown[] } }>(sabApi("get_config", "&section=servers")) : null,
+    sab ? get<{ servers?: Record<string, unknown> }>(sabApi("server_stats")) : null,
+    sab ? get<{ status?: { servers?: unknown[] } }>(sabApi("status")) : null,
+    prowlarr ? get<unknown[]>(`${prowlarr}/api/v1/indexer`, px) : null,
+    prowlarr ? get<unknown[]>(`${prowlarr}/api/v1/indexerstatus`, px) : null,
+  ]);
+
+  const rows: Renewal[] = buildUsenetRenewals({
+    servers: (config?.config?.servers ?? []) as never,
+    stats: (stats?.servers ?? {}) as never,
+    status: (status?.status?.servers ?? []) as never,
+    indexers: (indexers ?? []) as never,
+    indexerStatus: (indexerStatus ?? []) as never,
+    now: Date.now(),
+  });
+
+  // An unreachable service is a row, not an absence: "no usenet rows" would
+  // read as "nothing to renew".
+  if (sab && !config) {
+    rows.push({ name: "SABnzbd", source: "usenet", expiresUtc: null, daysLeft: null, detail: "usenet providers", problem: "could not read SABnzbd" });
+  }
+  if (prowlarr && !indexers) {
+    rows.push({ name: "Prowlarr", source: "usenet", expiresUtc: null, daysLeft: null, detail: "usenet indexers", problem: "could not read Prowlarr" });
+  }
+  return rows;
+}
+
+/**
  * Everything that can be asked, soonest first.
  *
  * Rows that couldn't be read sort last rather than being dropped: "this one
@@ -230,12 +289,13 @@ async function domainRenewal(): Promise<Renewal[]> {
  */
 export async function getAutomaticRenewals(): Promise<Renewal[]> {
   return cached("renewals:auto", RENEWAL_TTL_MS, async () => {
-    const [iptv, tls, domain] = await Promise.all([
+    const [iptv, tls, domain, usenet] = await Promise.all([
       iptvRenewals(),
       tlsRenewal(),
       domainRenewal(),
+      usenetRenewals(),
     ]);
-    return sortRenewals([...iptv, ...tls, ...domain]);
+    return sortRenewals([...iptv, ...tls, ...domain, ...usenet]);
   });
 }
 
