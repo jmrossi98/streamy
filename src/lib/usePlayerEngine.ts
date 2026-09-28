@@ -5,6 +5,7 @@ import Hls from "hls.js";
 import { isMobileViewport } from "./videoFullscreen";
 import { supportsNativeHls } from "./hlsSupport";
 import { usePlayerChrome } from "./usePlayerChrome";
+import { classifyPlayRejection, hlsFatalAction, HLS_LOAD_CONFIG } from "./playbackErrorRules";
 import type { SubtitleOption } from "@/components/SubtitleSelector";
 
 /**
@@ -286,10 +287,21 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       setPlaybackError(true);
       return;
     }
-    const hls = new Hls();
+    const hls = new Hls(HLS_LOAD_CONFIG);
     hlsRef.current = hls;
+    // Fatal errors are retried in place before anything is shown -- see
+    // playbackErrorRules. A cold transcode that has not produced its first
+    // segment yet was the usual "fails first time, works on retry" case.
+    let fatalAttempts = 0;
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal) return;
+      const action = hlsFatalAction(String(data.type), fatalAttempts);
+      if (action !== "give-up") {
+        fatalAttempts += 1;
+        if (action === "restart-load") setTimeout(() => hls.startLoad(), 1000 * fatalAttempts);
+        else hls.recoverMediaError();
+        return;
+      }
       // Nothing lower to fall back to here -- this is already the
       // transcode, and Jellyfin already picked a broadly-compatible target.
       // Mirrors the video onError real-error branch the caller wires up.
@@ -390,11 +402,15 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
           setVideoLoading(false);
           setShowOverlay(false);
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          const kind = classifyPlayRejection(err);
+          // A new source is loading; its own canplay handler starts playback.
+          if (kind === "ignore") return;
           setVideoLoading(false);
           setPlaying(false);
           setShowOverlay(true);
-          setPlaybackError(true);
+          // Autoplay was refused: show the play button, not an error.
+          setPlaybackError(kind === "fail");
         });
     };
     const doPlay = () => {
@@ -441,9 +457,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
           setPlaying(true);
           setShowOverlay(false);
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          const kind = classifyPlayRejection(err);
+          if (kind === "ignore") return;
           setVideoLoading(false);
-          setPlaybackError(true);
+          setPlaybackError(kind === "fail");
         });
     };
     const doPlay = () => {
@@ -527,6 +545,10 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // real error -- there's nothing lower to fall back to. Callers wire this
   // straight onto the <video>'s onError.
   const onVideoError = () => {
+    // hls.js owns the element: it sees the same failure, retries it (see the
+    // ERROR handler above) and reports only what it cannot recover. Reacting
+    // here as well turned every recoverable hiccup into "Playback failed".
+    if (needsHlsJs) return;
     if (hasSource && !transcoding) {
       // resumeAtRef alone carries the position across the swap now -- the
       // reload effect seeks the new source there once it's ready.
