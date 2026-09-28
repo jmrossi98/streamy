@@ -163,3 +163,61 @@ export function seriesRefreshPending(
       (c.body?.seriesId === seriesId || (c.body?.seriesIds ?? []).includes(seriesId))
   );
 }
+
+// ------------------------------------------------------------ batching
+
+/**
+ * Due episodes in one season at or above this count are searched with one
+ * SeasonSearch instead of per episode.
+ *
+ * Measured 2026-09-28 on an idle Sonarr: one EpisodeSearch 8.7 s; a
+ * SeasonSearch covering all 8 episodes of The Chair Company S1, 40 s -- about
+ * 5 s an episode against 8.7, and one set of indexer queries instead of eight
+ * (NZBgeek's API has a daily cap). Below three the saving does not pay for a
+ * season query's larger result set.
+ */
+export const SEASON_SEARCH_MIN_EPISODES = 3;
+
+/** Largest EpisodeSearch sent in one command, so one slow batch cannot hog a slot. */
+export const MAX_EPISODES_PER_COMMAND = 10;
+
+export type SearchCandidate = { episodeId: number; seriesId: number; seasonNumber: number };
+
+export type PlannedSearch =
+  | { kind: "season"; seriesId: number; seasonNumber: number; episodeIds: number[] }
+  | { kind: "episodes"; seriesId: number; episodeIds: number[] };
+
+/**
+ * Turns due episodes into at most `slots` Sonarr search commands.
+ *
+ * Order does not matter any more (Jake, 2026-09-28: "we don't need to download
+ * in order of episode number as long as we can speed up search/download
+ * time"), so instead of one EpisodeSearch per episode, awaited one after
+ * another, episodes are grouped by series and season: a big enough group is
+ * one SeasonSearch, the rest one EpisodeSearch listing them all. Groups keep
+ * the order of their oldest request, so the earliest ask still goes first.
+ */
+export function planSearches(candidates: SearchCandidate[], slots: number): PlannedSearch[] {
+  if (slots <= 0) return [];
+  const groups = new Map<string, SearchCandidate[]>();
+  for (const c of candidates) {
+    const key = `${c.seriesId}:${c.seasonNumber}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+  const plan: PlannedSearch[] = [];
+  for (const group of groups.values()) {
+    const { seriesId, seasonNumber } = group[0];
+    const episodeIds = [...new Set(group.map((c) => c.episodeId))];
+    // Season 0 is specials: a "season search" there matches nothing useful.
+    if (episodeIds.length >= SEASON_SEARCH_MIN_EPISODES && seasonNumber > 0) {
+      plan.push({ kind: "season", seriesId, seasonNumber, episodeIds });
+    } else {
+      for (let i = 0; i < episodeIds.length; i += MAX_EPISODES_PER_COMMAND) {
+        plan.push({ kind: "episodes", seriesId, episodeIds: episodeIds.slice(i, i + MAX_EPISODES_PER_COMMAND) });
+      }
+    }
+    if (plan.length >= slots) break;
+  }
+  return plan.slice(0, slots);
+}

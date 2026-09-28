@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countBlockingSearches, seriesRefreshPending, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
+import { countBlockingSearches, planSearches, seriesRefreshPending, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
 
 /** Position-ordered, as the queue hands them over. */
 function row(seriesId: number, episodeId: number): QueuedSearch {
@@ -184,5 +184,38 @@ describe("seriesRefreshPending", () => {
         24
       )
     ).toBe(false);
+  });
+});
+
+describe("planSearches", () => {
+  const ep = (episodeId: number, seriesId: number, seasonNumber: number) => ({ episodeId, seriesId, seasonNumber });
+
+  it("turns three or more due episodes of a season into one season search", () => {
+    expect(planSearches([ep(1, 7, 1), ep(2, 7, 1), ep(3, 7, 1)], 3)).toEqual([
+      { kind: "season", seriesId: 7, seasonNumber: 1, episodeIds: [1, 2, 3] },
+    ]);
+  });
+
+  it("sends a couple of stray episodes as one episode search", () => {
+    expect(planSearches([ep(1, 7, 1), ep(9, 7, 2)], 3)).toEqual([
+      { kind: "episodes", seriesId: 7, episodeIds: [1] },
+      { kind: "episodes", seriesId: 7, episodeIds: [9] },
+    ]);
+  });
+
+  it("never plans a season search for specials", () => {
+    expect(planSearches([ep(1, 7, 0), ep(2, 7, 0), ep(3, 7, 0)], 3)[0].kind).toBe("episodes");
+  });
+
+  it("respects the free slots, oldest request first", () => {
+    const plan = planSearches([ep(1, 1, 1), ep(2, 2, 1), ep(3, 3, 1), ep(4, 4, 1)], 2);
+    expect(plan.map((p) => p.seriesId)).toEqual([1, 2]);
+    expect(planSearches([ep(1, 1, 1)], 0)).toEqual([]);
+  });
+
+  it("chunks a long list of scattered episodes", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ep(i + 1, 5, 0));
+    const plan = planSearches(many, 3);
+    expect(plan.map((p) => p.episodeIds.length)).toEqual([10, 2]);
   });
 });

@@ -81,6 +81,19 @@ export async function nextPendingSearch(
   return chooseNextSearch(rows, afterSeriesId);
 }
 
+/**
+ * Every search that is due now (outside any batch grace window), oldest
+ * request first. The drain batches these rather than taking one at a time --
+ * see planSearches.
+ */
+export async function duePendingSearches(): Promise<{ episodeId: number; seriesId: number; attempts: number }[]> {
+  return prisma.pendingEpisodeSearch.findMany({
+    where: { OR: [{ searchAfter: null }, { searchAfter: { lte: new Date() } }] },
+    orderBy: [{ enqueuedAt: "asc" }, { position: "asc" }],
+    select: { episodeId: true, seriesId: true, attempts: true },
+  });
+}
+
 export async function completePendingSearch(episodeId: number): Promise<void> {
   await prisma.pendingEpisodeSearch.deleteMany({ where: { episodeId } });
 }
