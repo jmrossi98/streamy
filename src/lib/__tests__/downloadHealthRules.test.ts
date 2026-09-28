@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isDeadSwarm, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -158,5 +158,19 @@ describe("waiting and stuck-import rules", () => {
     expect(isImportStuck({ ...base, trackedDownloadStatus: "ok" })).toBe(false);
     expect(isImportStuck({ ...base, trackedDownloadState: "importing" })).toBe(false);
     expect(isImportStuck({ ...base, clientStatus: "downloading" })).toBe(false);
+  });
+});
+
+describe("dead swarms", () => {
+  it("blocklists a stalled torrent with no seeder anywhere on its first stall", () => {
+    expect(shouldBlocklistStalled("The download is stalled with no connections", 1, true)).toBe(true);
+    expect(shouldBlocklistStalled("The download is stalled with no connections", 1, false)).toBe(false);
+  });
+
+  it("calls a swarm dead only when no seeder is connected or known", () => {
+    expect(isDeadSwarm({ swarmSeeds: 0, connectedSeeds: 0 })).toBe(true);
+    expect(isDeadSwarm({ swarmSeeds: 3, connectedSeeds: 0 })).toBe(false);
+    expect(isDeadSwarm({ swarmSeeds: 0, connectedSeeds: 1 })).toBe(false);
+    expect(isDeadSwarm(undefined)).toBe(false);
   });
 });
