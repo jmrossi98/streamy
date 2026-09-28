@@ -482,14 +482,14 @@ async function announceNew(quiet: Set<string>): Promise<{ count: number; notifie
 
   const lines = pending
     .slice(0, MAX_ANNOUNCED)
-    .map((p) => `${p.company} — ${p.title}\n  ${p.location}\n  ${p.url}`);
+    .map((p) => `${p.company} - ${p.title}\n  ${p.location}\n  ${p.url}`);
   if (pending.length > MAX_ANNOUNCED) {
     lines.push(`…and ${pending.length - MAX_ANNOUNCED} more in the admin panel.`);
   }
 
   const subject =
     pending.length === 1
-      ? `New role: ${pending[0].company} — ${pending[0].title}`
+      ? `New role: ${pending[0].company} - ${pending[0].title}`
       : `${pending.length} new roles`;
 
   let notified = false;
