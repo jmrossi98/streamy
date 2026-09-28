@@ -148,6 +148,28 @@ export function stuckImportVerdict(
  */
 export const REGRAB_LOOP_THRESHOLD = 3;
 
+/**
+ * Grabs per release title, counting each grab *event* once.
+ *
+ * A season pack writes one history record per episode it covers, all with the
+ * same timestamp -- The Vince Staples Show S02 pack read as "6x", a loop, from
+ * a single grab. A real loop is the same release grabbed at different times,
+ * so records sharing a title and a timestamp are one grab.
+ */
+export function countGrabEvents(records: { sourceTitle?: string; date?: string }[]): Record<string, number> {
+  const events = new Map<string, Set<string>>();
+  for (const r of records) {
+    const t = r.sourceTitle ?? "";
+    if (!t) continue;
+    // Seconds, not milliseconds: the per-episode records of one grab can
+    // differ in the last digits.
+    const at = (r.date ?? "").slice(0, 19);
+    if (!events.has(t)) events.set(t, new Set());
+    events.get(t)!.add(at);
+  }
+  return Object.fromEntries([...events].map(([t, s]) => [t, s.size]));
+}
+
 export function regrabVerdict(counts: Record<string, number>): ProbeResult {
   const id = "stuck.regrab_loop";
   const name = "No release being re-grabbed in a loop";

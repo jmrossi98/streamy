@@ -19,6 +19,7 @@ import {
   quarantineVerdict,
   stuckJobVerdict,
   regrabVerdict,
+  countGrabEvents,
   searchVerdict,
   stuckImportVerdict,
   summarise,
@@ -173,7 +174,7 @@ type HistoryRecord = { sourceTitle?: string; date?: string; eventType?: string }
 
 /** The same release grabbed over and over: a healer loop, not retries. */
 async function probeRegrabLoop(): Promise<ProbeResult> {
-  const counts: Record<string, number> = {};
+  const recent: HistoryRecord[] = [];
 
   for (const [base, key] of [
     [process.env.RADARR_URL, process.env.RADARR_API_KEY],
@@ -187,11 +188,10 @@ async function probeRegrabLoop(): Promise<ProbeResult> {
     for (const r of h?.records ?? []) {
       const age = ageMinutes(r.date);
       if (age == null || age > 60) continue;
-      const t = r.sourceTitle ?? "";
-      if (t) counts[t] = (counts[t] ?? 0) + 1;
+      recent.push(r);
     }
   }
-  return regrabVerdict(counts);
+  return regrabVerdict(countGrabEvents(recent));
 }
 
 /** Do the indexers still produce releases, not just answer requests? */
