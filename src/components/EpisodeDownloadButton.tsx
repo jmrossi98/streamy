@@ -42,10 +42,28 @@ export function useSeasonStatuses(
   enabled: boolean,
   /** Server-rendered statuses for `seedSeason`, so the first paint is already correct. */
   seed?: Record<number, EpisodeState>,
-  seedSeason?: number
+  seedSeason?: number,
+  /** Every season on the page, fetched in the background so switching is instant. */
+  prefetchSeasons: number[] = []
 ) {
   const [statuses, setStatuses] = useState<Record<number, EpisodeState>>(
     seedSeason === seasonNumber && seed ? seed : {}
+  );
+
+  // Statuses per season, kept for the life of the page.
+  //
+  // Switching seasons used to clear to {} and fetch, and {} renders exactly
+  // like "nothing downloaded" -- so every episode flashed a Download button
+  // until the response landed, then jumped to Starting or a percentage.
+  // Unknown and not-downloaded are different facts; the cache means a season
+  // already seen (or prefetched) paints its real state at once, and `loaded`
+  // lets the rest say "still checking" instead of lying.
+  const seasonCacheRef = useRef<Map<number, Record<number, EpisodeState>>>(
+    new Map(seed && seedSeason != null ? [[seedSeason, seed]] : [])
+  );
+  const currentSeasonRef = useRef(seasonNumber);
+  const [loadedSeason, setLoadedSeason] = useState<number | null>(
+    seedSeason === seasonNumber && seed ? seasonNumber : null
   );
 
   // Cancelling an episode is several sequential Sonarr calls server-side
@@ -65,8 +83,26 @@ export function useSeasonStatuses(
   // faster interval, and a ref mutation would not retrigger it.
   const [burstUntil, setBurstUntil] = useState(0);
 
+  const fetchSeason = useCallback(
+    async (season: number): Promise<Record<number, EpisodeState> | null> => {
+      try {
+        const res = await fetch(
+          `/api/requests/tv?tmdbId=${encodeURIComponent(showId)}&season=${season}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.statuses ?? {};
+      } catch {
+        return null;
+      }
+    },
+    [showId]
+  );
+
   const refresh = useCallback(async () => {
     if (!enabled) return;
+    const season = seasonNumber;
     try {
       // no-store, and it is not optional. A GET to an unchanging URL is
       // exactly what the browser's HTTP cache is for, so navigating away and
@@ -81,6 +117,12 @@ export function useSeasonStatuses(
       if (!res.ok) return;
       const data = await res.json();
       const fresh: Record<number, EpisodeState> = data.statuses ?? {};
+      seasonCacheRef.current.set(season, fresh);
+      // A response for a season the viewer has already switched away from
+      // goes into the cache only. Applying it would paint one season's
+      // statuses onto another's episodes.
+      if (currentSeasonRef.current !== season) return;
+      setLoadedSeason(season);
       const now = Date.now();
       setStatuses((prev) => {
         const merged: Record<number, EpisodeState> = { ...fresh };
@@ -104,14 +146,38 @@ export function useSeasonStatuses(
   // this seed exists to remove.
   const seededSeasonRef = useRef(seedSeason === seasonNumber ? seasonNumber : null);
   useEffect(() => {
+    currentSeasonRef.current = seasonNumber;
     if (seededSeasonRef.current === seasonNumber) {
       seededSeasonRef.current = null; // only skip the very first pass
       refresh();
       return;
     }
-    setStatuses({});
+    const cached = seasonCacheRef.current.get(seasonNumber);
+    setStatuses(cached ?? {});
+    setLoadedSeason(cached ? seasonNumber : null);
     refresh();
   }, [refresh, seasonNumber]);
+
+  // Background prefetch of every other season, one at a time so a long
+  // series does not fire dozens of Sonarr reads at once.
+  const prefetchKey = prefetchSeasons.join(",");
+  useEffect(() => {
+    if (!enabled || !prefetchKey) return;
+    let cancelled = false;
+    (async () => {
+      for (const season of prefetchKey.split(",").map(Number)) {
+        if (cancelled) return;
+        if (seasonCacheRef.current.has(season)) continue;
+        const fresh = await fetchSeason(season);
+        if (fresh && !seasonCacheRef.current.has(season)) {
+          seasonCacheRef.current.set(season, fresh);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, prefetchKey, fetchSeason]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -176,7 +242,13 @@ export function useSeasonStatuses(
     });
   }, []);
 
-  return { statuses, refresh, setLocalState, setLocalStates };
+  return {
+    statuses,
+    loaded: loadedSeason === seasonNumber,
+    refresh,
+    setLocalState,
+    setLocalStates,
+  };
 }
 
 type Props = {
@@ -185,6 +257,10 @@ type Props = {
   /** Omit to request the whole season. */
   episodeNumber?: number;
   state?: EpisodeState;
+  /** The season's statuses have not arrived yet, so "no state" means unknown,
+   *  not "not downloaded". Renders a placeholder instead of a Download button
+   *  that would be wrong a moment later. */
+  statusLoading?: boolean;
   onRequested: () => void;
   /** Paints the new state immediately, before the server round trip lands. */
   onOptimistic?: (next: EpisodeState | null) => void;
@@ -198,6 +274,7 @@ export function EpisodeDownloadButton({
   state,
   onRequested,
   onOptimistic,
+  statusLoading = false,
   className = "",
 }: Props) {
   const { status: authStatus } = useSession();
@@ -308,6 +385,17 @@ export function EpisodeDownloadButton({
   }
 
   if (authStatus !== "authenticated") return null;
+
+  if (statusLoading) {
+    // Same footprint as the button so the row does not reflow when the real
+    // state arrives.
+    return (
+      <span
+        aria-label="Checking download status"
+        className={`inline-block h-[26px] w-16 shrink-0 animate-pulse rounded border border-white/10 bg-white/5 ${className}`}
+      />
+    );
+  }
 
   const label = episodeNumber == null ? "Download season" : "Download";
 
