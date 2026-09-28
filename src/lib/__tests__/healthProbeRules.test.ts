@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  countGrabEvents,
   FRESHNESS_LIMITS_MINUTES,
   freshnessVerdict,
   regrabVerdict,
@@ -125,5 +126,21 @@ describe("summarise", () => {
     const s = summarise([ok, bad]);
     expect(s.success).toBe(false);
     expect(s.summary).toContain("B");
+  });
+});
+
+describe("countGrabEvents", () => {
+  it("counts a season pack's per-episode records as one grab", () => {
+    const at = "2026-09-28T13:45:12.1234567Z";
+    const pack = Array.from({ length: 6 }, () => ({ sourceTitle: "Show.S02.Complete.1080p", date: at }));
+    expect(countGrabEvents(pack)).toEqual({ "Show.S02.Complete.1080p": 1 });
+  });
+
+  it("still counts the same release grabbed at different times", () => {
+    const loop = ["13:00:01", "13:00:21", "13:00:41"].map((t) => ({
+      sourceTitle: "Movie.2020.1080p",
+      date: `2026-09-28T${t}Z`,
+    }));
+    expect(countGrabEvents(loop)).toEqual({ "Movie.2020.1080p": 3 });
   });
 });
