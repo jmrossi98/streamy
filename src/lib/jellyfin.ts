@@ -11,6 +11,8 @@
  * also keeps JELLYFIN_API_KEY server-side instead of embedding it in a URL
  * handed to the client.
  */
+import { cached } from "./ttlCache";
+import type { AudioTrack } from "./audioLanguageRules";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -274,7 +276,11 @@ export function jellyfinTranscodeStreamUrl(
 export function jellyfinHlsMasterUrl(
   itemId: string,
   playSessionId?: string,
-  mediaSourceId?: string
+  mediaSourceId?: string,
+  // Which audio track to transcode -- the only way to play a track that is not
+  // the file's default (see audioLanguageRules.ts). Jellyfin echoes it into
+  // every variant/segment URL it emits, so setting it here covers the session.
+  audioStreamIndex?: number | null
 ): string {
   const params = new URLSearchParams({
     // Required by this server version -- omitting it fails the whole request
@@ -292,7 +298,36 @@ export function jellyfinHlsMasterUrl(
     api_key: JELLYFIN_API_KEY ?? "",
   });
   if (playSessionId) params.set("PlaySessionId", playSessionId);
+  if (audioStreamIndex != null) params.set("AudioStreamIndex", String(audioStreamIndex));
   return `${JELLYFIN_URL}/Videos/${itemId}/master.m3u8?${params.toString()}`;
+}
+
+/**
+ * An item's audio tracks, for picking the original-language one. Cached
+ * briefly: every HLS master request for a title asks, and a file's tracks do
+ * not change under it. A failure is not cached, and yields [] -- "play the
+ * file's default", which is what happened before any of this existed.
+ */
+export async function getJellyfinAudioTracks(itemId: string): Promise<AudioTrack[]> {
+  if (!isJellyfinConfigured()) return [];
+  try {
+    return await cached(
+      `jellyfin-audio:${itemId}`,
+      10 * 60_000,
+      async () => {
+        const result = await jellyfinFetch<{
+          Items: { MediaStreams?: { Type: string; Index: number; Language?: string; IsDefault?: boolean }[] }[];
+        }>(`/Items?Ids=${itemId}&Fields=MediaStreams`);
+        return (result.Items[0]?.MediaStreams ?? [])
+          .filter((s) => s.Type === "Audio")
+          .map((s) => ({ index: s.Index, language: s.Language ?? null, isDefault: !!s.IsDefault }));
+      },
+      { skipCacheIf: (tracks) => tracks.length === 0 }
+    );
+  } catch (err) {
+    console.error(`[jellyfin] getJellyfinAudioTracks failed for item ${itemId}:`, err);
+    return [];
+  }
 }
 
 /**

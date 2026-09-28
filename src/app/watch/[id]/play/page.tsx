@@ -9,6 +9,7 @@ import {
   needsForcedTranscode,
 } from "@/lib/jellyfin";
 import { PrefetchBack } from "./PrefetchBack";
+import { getLanguagePlan } from "@/lib/playbackLanguage";
 // Imported directly rather than via next/dynamic with `ssr: false`, which
 // Next 16 no longer allows from a Server Component. WatchPlayer is already a
 // client component, so Next handles the boundary and the browser-only work
@@ -33,9 +34,14 @@ export default async function WatchPlayPage({ params }: Props) {
 
   // Proxied through our own origin -- see the note in lib/jellyfin.ts.
   const videoUrl = jellyfinItemId ? `/api/stream/movie/${id}` : null;
-  const [subtitles, forceTranscode] = jellyfinItemId
+  const [subtitles, codecForcesTranscode] = jellyfinItemId
     ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId)])
     : [null, false];
+  // Original-language audio -- see the episode page and audioLanguageRules.ts.
+  const language = jellyfinItemId
+    ? await getLanguagePlan(jellyfinItemId, "movie", id, subtitles?.tracks)
+    : null;
+  const forceTranscode = codecForcesTranscode || !!language?.needsTranscode;
 
   // Furthest-along wins: a viewer who got further on the household's Roku
   // app shouldn't be restarted just because this browser's own saved
@@ -60,6 +66,7 @@ export default async function WatchPlayPage({ params }: Props) {
         closeHref={`/watch/${id}`}
         subtitleTracks={subtitles?.tracks}
         forceTranscode={forceTranscode}
+        defaultSubtitle={language?.defaultSubtitle ?? null}
       />
     </div>
   );

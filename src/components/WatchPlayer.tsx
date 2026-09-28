@@ -29,6 +29,8 @@ type WatchPlayerProps = {
    * browser just plays picture with no sound and never says anything's
    * wrong -- so there's nothing to catch after the fact. */
   forceTranscode?: boolean;
+  /** Subtitle track to switch on at start (English under foreign audio). */
+  defaultSubtitle?: number | null;
 };
 
 export function WatchPlayer({
@@ -42,6 +44,7 @@ export function WatchPlayer({
   closeHref,
   subtitleTracks = [],
   forceTranscode = false,
+  defaultSubtitle = null,
 }: WatchPlayerProps) {
   // Stable across renders (see usePlayerEngine's saveProgress doc) --
   // movieId is the only thing this closes over, and that's a prop.
@@ -76,6 +79,7 @@ export function WatchPlayer({
     runtimeMinutes,
     autoPlay,
     forceTranscode,
+    defaultSubtitle,
     subtitleTracks,
     identityKey: movieId,
     saveProgress,

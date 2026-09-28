@@ -131,7 +131,9 @@ export async function proxyJellyfinHlsResource(
   // this. A live channel does not: Jellyfin opens a *stream* for it and hands
   // back an id for that stream, and the transcode has to name that id rather
   // than the channel's.
-  mediaSourceId?: string
+  mediaSourceId?: string,
+  // Master playlist only: which audio track to transcode (see playbackLanguage.ts).
+  audioStreamIndex?: number | null
 ): Promise<Response> {
   const incoming = new URL(request.url);
   // The master playlist is the one request usePlayerEngine builds itself
@@ -164,7 +166,8 @@ export async function proxyJellyfinHlsResource(
       ? jellyfinHlsMasterUrl(
           itemId,
           incoming.searchParams.get("session") || undefined,
-          mediaSourceId
+          mediaSourceId,
+          audioStreamIndex
         )
       : jellyfinHlsResourceUrl(itemId, jellyfinPath, forwardedParams);
   const range = request.headers.get("range");

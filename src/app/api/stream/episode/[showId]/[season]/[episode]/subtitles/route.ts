@@ -1,5 +1,6 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { findJellyfinEpisodeItemId, getJellyfinSubtitleTracks, needsForcedTranscode } from "@/lib/jellyfin";
+import { getLanguagePlan } from "@/lib/playbackLanguage";
 
 export const dynamic = "force-dynamic";
 
@@ -28,12 +29,17 @@ export async function GET(_request: Request, { params }: Props) {
 
   const itemId = await findJellyfinEpisodeItemId(showId, seasonNum, episodeNum);
   if (!itemId) {
-    return Response.json({ tracks: [], forceTranscode: false });
+    return Response.json({ tracks: [], forceTranscode: false, defaultSubtitle: null });
   }
 
-  const [subtitles, forceTranscode] = await Promise.all([
+  const [subtitles, codecForcesTranscode] = await Promise.all([
     getJellyfinSubtitleTracks(itemId),
     needsForcedTranscode(itemId),
   ]);
-  return Response.json({ tracks: subtitles?.tracks ?? [], forceTranscode });
+  const language = await getLanguagePlan(itemId, "tv", showId, subtitles?.tracks);
+  return Response.json({
+    tracks: subtitles?.tracks ?? [],
+    forceTranscode: codecForcesTranscode || language.needsTranscode,
+    defaultSubtitle: language.defaultSubtitle,
+  });
 }

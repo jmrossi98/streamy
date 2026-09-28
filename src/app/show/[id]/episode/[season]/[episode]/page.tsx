@@ -9,6 +9,7 @@ import {
   needsForcedTranscode,
 } from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
+import { getLanguagePlan } from "@/lib/playbackLanguage";
 
 type Props = {
   params: Promise<{ id: string; season: string; episode: string }>;
@@ -48,9 +49,15 @@ export default async function EpisodeWatchPage({ params }: Props) {
   const videoUrl = jellyfinItemId
     ? `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}`
     : null;
-  const [subtitles, forceTranscode] = jellyfinItemId
+  const [subtitles, codecForcesTranscode] = jellyfinItemId
     ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId)])
     : [null, false];
+  // Original-language audio (subbed, not dubbed) -- a non-default track can
+  // only be selected by transcoding. See audioLanguageRules.ts.
+  const language = jellyfinItemId
+    ? await getLanguagePlan(jellyfinItemId, "tv", showId, subtitles?.tracks)
+    : null;
+  const forceTranscode = codecForcesTranscode || !!language?.needsTranscode;
 
   // Furthest-along wins -- see the movie watch page for the rationale.
   const jellyfinProgressSeconds = jellyfinItemId
@@ -92,6 +99,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
         closeHref={backHref}
         subtitleTracks={subtitles?.tracks}
         forceTranscode={forceTranscode}
+        defaultSubtitle={language?.defaultSubtitle ?? null}
       />
     </div>
   );
