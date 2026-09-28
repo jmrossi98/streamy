@@ -10,6 +10,7 @@ import {
   countBlockingSearches,
   type SonarrCommand,
 } from "./searchQueueRules";
+import { cached } from "./ttlCache";
 import { getTvExternalIds } from "./tmdb";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
@@ -87,16 +88,44 @@ export function hasRecentlyTriggeredSearch(episodeId: number): boolean {
 // rather than a bounded wait or a clear error.
 const ARR_FETCH_TIMEOUT_MS = 15_000;
 
+/**
+ * Backoff for a read that could not connect at all. Sonarr's web server
+ * saturates for short stretches under search load -- its accept queue was
+ * measured full (513 waiting) while the process was still alive -- and a
+ * single attempt turned that into a request that failed outright and showed
+ * "Retry". Two more tries over about five seconds ride it out.
+ */
+const CONNECT_RETRY_DELAYS_MS = [1_500, 4_000];
+
+function isConnectFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { cause?: { code?: string } }).cause?.code ?? "";
+  return err.message === "fetch failed" || /ECONN|UND_ERR_CONNECT|EHOSTUNREACH|ETIMEDOUT/.test(code);
+}
+
 async function sonarrFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${SONARR_URL}${path}`, {
-    ...init,
-    headers: {
-      "X-Api-Key": SONARR_API_KEY!,
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    signal: init?.signal ?? AbortSignal.timeout(ARR_FETCH_TIMEOUT_MS),
-  });
+  // Only reads are retried. Repeating a POST whose response was lost could
+  // start the same search twice, which is worse than asking the viewer.
+  const method = (init?.method ?? "GET").toUpperCase();
+  const delays = method === "GET" ? CONNECT_RETRY_DELAYS_MS : [];
+  let res: Response;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      res = await fetch(`${SONARR_URL}${path}`, {
+        ...init,
+        headers: {
+          "X-Api-Key": SONARR_API_KEY!,
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+        signal: init?.signal ?? AbortSignal.timeout(ARR_FETCH_TIMEOUT_MS),
+      });
+      break;
+    } catch (err) {
+      if (attempt >= delays.length || !isConnectFailure(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Sonarr API error: ${res.status} ${body}`.trim());
@@ -286,8 +315,30 @@ export async function getSonarrCompletedProtocols(): Promise<Map<number, Downloa
  * like it was missing from the panel, and left no way to delete one episode
  * without taking the entire series with it.
  */
+/**
+ * How long the completed-episodes list is reused.
+ *
+ * Building it costs the series list plus two calls per series with files --
+ * about forty requests with the current library -- and the downloads panel
+ * re-rendered it every 2.5 seconds while open. That was roughly sixteen
+ * requests a second at Sonarr for as long as the tab stayed up, on top of its
+ * own search load, and it is the likeliest reason Sonarr's web server kept
+ * saturating. Files on disk change on the scale of minutes; thirty seconds of
+ * staleness costs a finished episode half a minute of appearing late.
+ */
+const COMPLETED_EPISODES_TTL_MS = 30_000;
+
 export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> {
   if (!isSonarrConfigured()) return [];
+  // Single-flight too: two open tabs share one fetch instead of doubling it.
+  return cached("sonarr:completed-episodes", COMPLETED_EPISODES_TTL_MS, fetchCompletedEpisodes, {
+    // An empty answer is usually a failed read, and caching it would blank
+    // the list for the whole TTL.
+    skipCacheIf: (rows) => rows.length === 0,
+  });
+}
+
+async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
   try {
     const [series, protocols] = await Promise.all([
       sonarrFetch<{ id: number; title: string; statistics?: { episodeFileCount?: number } }[]>(
