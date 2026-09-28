@@ -16,6 +16,7 @@
  */
 import { prisma } from "./db";
 import { notify } from "./notify";
+import { getJobAlertLevels } from "./appSettings";
 import {
   boardUrl,
   customPageUrl,
@@ -57,12 +58,6 @@ const STALE_AFTER_HOURS = 72;
  */
 const ARCHIVE_AFTER_DAYS = 30;
 
-/**
- * Only these levels are emailed about. Everything is still stored and shown in
- * the panel (the level filter there decides what is seen); this narrows only
- * what interrupts. Mid-level only, as of 2026-09-28.
- */
-const ANNOUNCED_LEVELS: ReadonlySet<string> = new Set(["mid"]);
 
 /** Announce at most this many in one message; the rest are in the panel. */
 const MAX_ANNOUNCED = 12;
@@ -497,9 +492,11 @@ async function announceNew(quiet: Set<string>): Promise<{ count: number; notifie
   // A company can be worth watching without being worth an email. Its postings
   // are still stamped below, so turning notifications back on does not then
   // announce everything it has ever had.
-  // Levels outside ANNOUNCED_LEVELS are stamped with the rest, for the same
-  // reason: widening the level later must not announce the backlog.
-  const pending = all.filter((p) => !quiet.has(p.company) && ANNOUNCED_LEVELS.has(p.level));
+  // Which levels are emailed about is the admin's choice (Boards watched ->
+  // "Email alerts for"). Levels outside it are stamped with the rest, for the
+  // same reason: widening the choice later must not announce the backlog.
+  const levels = new Set(await getJobAlertLevels());
+  const pending = all.filter((p) => !quiet.has(p.company) && levels.has(p.level));
   if (pending.length === 0) {
     await prisma.jobPosting.updateMany({
       where: { id: { in: all.map((p) => p.id) } },

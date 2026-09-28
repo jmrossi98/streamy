@@ -3,6 +3,7 @@ import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logAudit } from "@/lib/auditLog";
 import { boardUrl, parseJobSources } from "@/lib/jobBoards";
+import { setJobAlertLevels } from "@/lib/appSettings";
 
 /**
  * Add, remove or adjust a company board.
@@ -77,6 +78,14 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ error: "That board is already in the list." }, { status: 409 });
     }
+  }
+
+  // Which job levels are included in alert emails (not per board).
+  if (action === "alertLevels") {
+    const levels = Array.isArray(body?.levels) ? body.levels.map(String) : [];
+    const saved = await setJobAlertLevels(levels);
+    logAudit(admin.name, "jobSource.alertLevels", saved.join(",") || "(none)");
+    return NextResponse.json({ ok: true, levels: saved });
   }
 
   const id = typeof body?.id === "string" ? body.id : "";

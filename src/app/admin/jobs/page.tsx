@@ -2,16 +2,18 @@ import { PanelBoundary } from "@/components/PanelBoundary";
 import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { JobSourcesPanel } from "@/components/JobSourcesPanel";
 import { getJobPostings, isJobBoardConfigured, jobSources } from "@/lib/jobPostings";
+import { getJobAlertLevels } from "@/lib/appSettings";
 
 export default async function AdminJobsPage() {
   // Above the whole matched set, not a round number: filtering happens in the
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
+    getJobAlertLevels(),
   ]);
 
   // Counted from the postings rather than stored on the board, so the number
@@ -22,11 +24,8 @@ export default async function AdminJobsPage() {
     if (src.tag) tagByCompany.set(src.company, src.tag);
   }
 
-  // Mid-level only, matching the search (2026-09-28): a board with forty
-  // staff roles and nothing at mid is not worth the count it would show.
   const openByCompany = new Map<string, number>();
   for (const job of jobListings) {
-    if (job.level !== "mid") continue;
     openByCompany.set(job.company, (openByCompany.get(job.company) ?? 0) + 1);
   }
 
@@ -63,6 +62,7 @@ export default async function AdminJobsPage() {
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <PanelBoundary name="Boards watched">
             <JobSourcesPanel
+              alertLevels={alertLevels}
               sources={sources.map((src) => ({
                 id: src.id,
                 provider: src.provider,
