@@ -164,7 +164,7 @@ export function JobSourcesPanel({ sources }: { sources: JobSourceRow[] }) {
             <span className="text-white/30">
               {row.provider}:{row.slug}
             </span>
-            <span className="text-white/35">{row.openRoles} open</span>
+            <span className="text-white/35">{row.openRoles} mid-level open</span>
             {row.tag && (
               <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/50">
                 {row.tag}

@@ -1,7 +1,42 @@
 "use client";
 
-import { useState } from "react";
-import { CATEGORY_LABELS, LEVEL_LABELS, type JobCategory, type JobLevel } from "@/lib/jobFilters";
+import { useEffect, useState } from "react";
+import {
+  CATEGORY_LABELS,
+  LEVEL_LABELS,
+  LEVEL_ORDER,
+  type JobCategory,
+  type JobLevel,
+} from "@/lib/jobFilters";
+
+/**
+ * How recently a posting must have first appeared to count as NEW.
+ *
+ * A day rather than "the latest poll": polls run every 30 minutes and most add
+ * one or two postings, so the latest batch alone was usually a single row.
+ */
+const NEW_WITHIN_MS = 24 * 3600_000;
+
+/** Filter choices kept per browser, so the panel opens the way it was left. */
+const PREFS_KEY = "streamy.jobs.filters.v1";
+type Prefs = { levels: string[]; hiddenTags: string[]; onlyNew: boolean; hideOpened: boolean };
+
+function loadPrefs(): Partial<Prefs> | null {
+  try {
+    const raw = window.localStorage.getItem(PREFS_KEY);
+    return raw ? (JSON.parse(raw) as Partial<Prefs>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePrefs(prefs: Prefs) {
+  try {
+    window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Private windows and blocked storage: the filters still work, just unsaved.
+  }
+}
 
 export type JobListingRow = {
   id: string;
@@ -68,12 +103,15 @@ function FilterRow({
   selected,
   onToggle,
   onClear,
+  anyLabel = "Any",
 }: {
   label: string;
   options: { key: string; label: string }[];
   selected: Set<string>;
   onToggle: (key: string) => void;
   onClear: () => void;
+  /** The "nothing selected" pill -- "Any" for include filters, "None" for Hide. */
+  anyLabel?: string;
 }) {
   if (options.length < 2) return null;
   return (
@@ -89,7 +127,7 @@ function FilterRow({
               : "border-white/15 text-white/55 hover:bg-white/10"
           }`}
         >
-          Any
+          {anyLabel}
         </button>
         {options.map((option) => (
           <button
@@ -131,8 +169,17 @@ export function JobListingsPanel({
   const [metros, setMetros] = useState<Set<string>>(new Set());
   const [company, setCompany] = useState<string>("all");
   const [categories, setCategories] = useState<Set<string>>(new Set());
-  const [levels, setLevels] = useState<Set<string>>(new Set());
+  // Mid-level by default: that is the search right now (2026-09-28).
+  const [levels, setLevels] = useState<Set<string>>(new Set(["mid"]));
   const [tags, setTags] = useState<Set<string>>(new Set());
+  /** Company groups to leave out, e.g. quant firms and startups. */
+  const [hiddenTags, setHiddenTags] = useState<Set<string>>(new Set());
+  /** Only postings first seen within NEW_WITHIN_MS. */
+  const [onlyNew, setOnlyNew] = useState(false);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  // Fixed at mount: "new" is judged against when the page was opened, which
+  // keeps render pure and the badge from flickering off mid-read.
+  const [now] = useState(() => Date.now());
   /** Newest first by default: this is a list you check for what changed. */
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "company">("newest");
   const [hideOpened, setHideOpened] = useState(false);
@@ -144,6 +191,26 @@ export function JobListingsPanel({
    * the list you come back to looks untouched.
    */
   const [openedNow, setOpenedNow] = useState<Set<string>>(new Set());
+
+  // Restored after mount rather than in the initial state, so the server
+  // render and the first client render agree.
+  useEffect(() => {
+    const saved = loadPrefs();
+    if (saved) {
+      /* eslint-disable react-hooks/set-state-in-effect */
+      if (Array.isArray(saved.levels)) setLevels(new Set(saved.levels));
+      if (Array.isArray(saved.hiddenTags)) setHiddenTags(new Set(saved.hiddenTags));
+      if (typeof saved.onlyNew === "boolean") setOnlyNew(saved.onlyNew);
+      if (typeof saved.hideOpened === "boolean") setHideOpened(saved.hideOpened);
+      /* eslint-enable react-hooks/set-state-in-effect */
+    }
+    setPrefsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    savePrefs({ levels: [...levels], hiddenTags: [...hiddenTags], onlyNew, hideOpened });
+  }, [prefsLoaded, levels, hiddenTags, onlyNew, hideOpened]);
 
   function markOpened(id: string) {
     setOpenedNow((prev) => new Set(prev).add(id));
@@ -187,6 +254,7 @@ export function JobListingsPanel({
   const companies = [...companyCounts.keys()].sort((a, b) => a.localeCompare(b));
 
   const isOpened = (l: JobListingRow) => l.opened || openedNow.has(l.id);
+  const isNew = (l: JobListingRow) => now - (Date.parse(l.firstSeen) || 0) < NEW_WITHIN_MS;
 
   // Each filter is OR within itself and AND across filters: "New York or
   // Seattle" AND "AI or embedded". An empty set means that filter is off.
@@ -203,8 +271,11 @@ export function JobListingsPanel({
     categories.size === 0 ? byCompany : byCompany.filter((l) => categories.has(l.category));
   const byTag =
     tags.size === 0 ? byCategory : byCategory.filter((l) => l.tag && tags.has(l.tag));
-  const byLevel = levels.size === 0 ? byTag : byTag.filter((l) => levels.has(l.level));
-  const visible = hideOpened ? byLevel.filter((l) => !isOpened(l)) : byLevel;
+  const byHidden =
+    hiddenTags.size === 0 ? byTag : byTag.filter((l) => !(l.tag && hiddenTags.has(l.tag)));
+  const byLevel = levels.size === 0 ? byHidden : byHidden.filter((l) => levels.has(l.level));
+  const byNew = onlyNew ? byLevel.filter(isNew) : byLevel;
+  const visible = hideOpened ? byNew.filter((l) => !isOpened(l)) : byNew;
 
   // When a posting was advertised, falling back to when we first saw it. Some
   // providers give no date at all, and for those "new to us" is the only
@@ -215,6 +286,7 @@ export function JobListingsPanel({
     return sortBy === "oldest" ? dateOf(a) - dateOf(b) : dateOf(b) - dateOf(a);
   });
   const openedCount = listings.filter(isOpened).length;
+  const newCount = listings.filter(isNew).length;
 
   // Only categories actually present, so the row is not a list of buckets that
   // happen to exist in the code.
@@ -277,6 +349,11 @@ export function JobListingsPanel({
           </label>
         )}
 
+        <label className="flex items-center gap-1.5 text-white/40">
+          <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
+          Only new ({newCount})
+        </label>
+
         {company !== "all" && (
           <button
             type="button"
@@ -321,11 +398,23 @@ export function JobListingsPanel({
       />
 
       <FilterRow
+        label="Hide"
+        selected={hiddenTags}
+        onToggle={(k) => setHiddenTags((prev) => toggleIn(prev, k))}
+        onClear={() => setHiddenTags(new Set())}
+        anyLabel="None"
+        options={presentTags.map((t) => ({
+          key: t,
+          label: t.charAt(0).toUpperCase() + t.slice(1),
+        }))}
+      />
+
+      <FilterRow
         label="Level"
         selected={levels}
         onToggle={(k) => setLevels((prev) => toggleIn(prev, k))}
         onClear={() => setLevels(new Set())}
-        options={(["entry", "midsenior", "staff"] as JobLevel[]).map((l) => ({
+        options={LEVEL_ORDER.map((l) => ({
           key: l,
           label: LEVEL_LABELS[l],
         }))}
@@ -356,6 +445,7 @@ export function JobListingsPanel({
           ]
             .filter(Boolean)
             .join("")}
+          {onlyNew ? ", new today" : ""}
           {hideOpened ? ", unexplored." : "."}
         </p>
       ) : (
@@ -425,7 +515,12 @@ export function JobListingsPanel({
                     Remote
                   </span>
                 )}
-                {listing.level !== "midsenior" && listing.level in LEVEL_LABELS && (
+                {isNew(listing) && (
+                  <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                    NEW
+                  </span>
+                )}
+                {listing.level !== "mid" && listing.level in LEVEL_LABELS && (
                   <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-white/40">
                     {LEVEL_LABELS[listing.level as JobLevel]}
                   </span>

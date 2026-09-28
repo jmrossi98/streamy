@@ -22,8 +22,11 @@ export default async function AdminJobsPage() {
     if (src.tag) tagByCompany.set(src.company, src.tag);
   }
 
+  // Mid-level only, matching the search (2026-09-28): a board with forty
+  // staff roles and nothing at mid is not worth the count it would show.
   const openByCompany = new Map<string, number>();
   for (const job of jobListings) {
+    if (job.level !== "mid") continue;
     openByCompany.set(job.company, (openByCompany.get(job.company) ?? 0) + 1);
   }
 

@@ -46,6 +46,24 @@ const FETCH_TIMEOUT_MS = 20_000;
  */
 const STALE_AFTER_HOURS = 72;
 
+/**
+ * Postings first seen longer ago than this are archived: hidden from the panel
+ * and never announced, even while still listed.
+ *
+ * A role that has sat open for a month is either hard to fill or evergreen
+ * boilerplate, and either way it is no longer news. Archived, not deleted: a
+ * deleted posting still on its board would be re-created by the next poll and
+ * come back as "new". STALE_AFTER_HOURS deletes it once it leaves the board.
+ */
+const ARCHIVE_AFTER_DAYS = 30;
+
+/**
+ * Only these levels are emailed about. Everything is still stored and shown in
+ * the panel (the level filter there decides what is seen); this narrows only
+ * what interrupts. Mid-level only, as of 2026-09-28.
+ */
+const ANNOUNCED_LEVELS: ReadonlySet<string> = new Set(["mid"]);
+
 /** Announce at most this many in one message; the rest are in the panel. */
 const MAX_ANNOUNCED = 12;
 
@@ -453,6 +471,14 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     outcome.removed = count;
   }
 
+  await prisma.jobPosting.updateMany({
+    where: {
+      archivedAt: null,
+      firstSeen: { lt: new Date(now.getTime() - ARCHIVE_AFTER_DAYS * 86_400_000) },
+    },
+    data: { archivedAt: now },
+  });
+
   const quiet = new Set(all.filter((src) => !src.notify).map((src) => src.company));
   const announced = await announceNew(quiet);
   outcome.announced = announced.count;
@@ -463,7 +489,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
 /** Sends one message for everything not yet announced, and stamps them. */
 async function announceNew(quiet: Set<string>): Promise<{ count: number; notified: boolean }> {
   const all = await prisma.jobPosting.findMany({
-    where: { notifiedAt: null },
+    where: { notifiedAt: null, archivedAt: null },
     orderBy: [{ company: "asc" }, { title: "asc" }],
   });
   if (all.length === 0) return { count: 0, notified: false };
@@ -471,7 +497,9 @@ async function announceNew(quiet: Set<string>): Promise<{ count: number; notifie
   // A company can be worth watching without being worth an email. Its postings
   // are still stamped below, so turning notifications back on does not then
   // announce everything it has ever had.
-  const pending = all.filter((p) => !quiet.has(p.company));
+  // Levels outside ANNOUNCED_LEVELS are stamped with the rest, for the same
+  // reason: widening the level later must not announce the backlog.
+  const pending = all.filter((p) => !quiet.has(p.company) && ANNOUNCED_LEVELS.has(p.level));
   if (pending.length === 0) {
     await prisma.jobPosting.updateMany({
       where: { id: { in: all.map((p) => p.id) } },
@@ -528,6 +556,7 @@ export type JobPostingRow = {
 export async function getJobPostings(limit = 100): Promise<JobPostingRow[]> {
   try {
     return await prisma.jobPosting.findMany({
+      where: { archivedAt: null },
       orderBy: { firstSeen: "desc" },
       take: limit,
       select: {
