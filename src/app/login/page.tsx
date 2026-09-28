@@ -143,7 +143,7 @@ export default function LoginPage() {
           <p className="text-white/70 text-sm mb-6">
             {mode === "signin"
               ? "Enter your name and password."
-              : "Pick a name and password of at least 8 characters. An admin approves new accounts before the first sign-in — nothing is emailed to you."}
+              : "Pick a name and password of at least 8 characters. An admin approves new accounts before the first sign-in - nothing is emailed to you."}
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
