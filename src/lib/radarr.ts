@@ -605,6 +605,10 @@ export type QueueHealth = {
   trackedDownloadStatus: string | null;
   /** Radarr/Sonarr's own words for an import problem, for the log. */
   importProblem: string | null;
+  /** "usenet" or "torrent". */
+  protocol: string | null;
+  /** The episode/movie already has a file, so this download is an upgrade. */
+  isUpgrade: boolean;
 };
 
 export function toQueueHealth(r: {
@@ -620,6 +624,9 @@ export function toQueueHealth(r: {
   statusMessages?: { messages?: string[] }[];
   trackedDownloadState?: string;
   trackedDownloadStatus?: string;
+  protocol?: string;
+  /** Sonarr's episodeHasFile, or Radarr's movie.hasFile. */
+  hasFile?: boolean;
 }, externalId: number): QueueHealth {
   const added = r.added ? Date.parse(r.added) : Date.now();
   return {
@@ -636,6 +643,8 @@ export function toQueueHealth(r: {
     trackedDownloadState: r.trackedDownloadState ?? null,
     trackedDownloadStatus: r.trackedDownloadStatus ?? null,
     importProblem: (r.statusMessages ?? []).flatMap((m) => m.messages ?? []).join("; ") || null,
+    protocol: r.protocol ?? null,
+    isUpgrade: !!r.hasFile,
   };
 }
 
@@ -657,9 +666,11 @@ export async function getRadarrQueueHealth(): Promise<QueueHealth[]> {
         statusMessages?: { messages?: string[] }[];
         trackedDownloadState?: string;
         trackedDownloadStatus?: string;
+        protocol?: string;
+        movie?: { hasFile?: boolean };
       }[];
-    }>(`/api/v3/queue?pageSize=250`);
-    return queue.records.map((r) => toQueueHealth(r, r.movieId));
+    }>(`/api/v3/queue?pageSize=250&includeMovie=true`);
+    return queue.records.map((r) => toQueueHealth({ ...r, hasFile: r.movie?.hasFile }, r.movieId));
   } catch (err) {
     console.error("[radarr] getRadarrQueueHealth failed:", err);
     return [];

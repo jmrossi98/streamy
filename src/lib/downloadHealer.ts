@@ -457,6 +457,20 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     if (!live.has(key)) stallTries.delete(key);
   }
 
+  // New content ahead of upgrades in SABnzbd -- see sabPriorityRules.ts.
+  // Best-effort: a failure here must not cost the rest of the pass.
+  try {
+    const { prioritizeNewDownloads } = await import("./sabnzbd");
+    const changed = await prioritizeNewDownloads(
+      [...radarrQueue, ...sonarrQueue]
+        .filter((e) => e.protocol === "usenet" && e.downloadId)
+        .map((e) => ({ downloadId: e.downloadId!, isUpgrade: e.isUpgrade }))
+    );
+    if (changed > 0) console.log(`[healer] reordered ${changed} SABnzbd job(s): new content before upgrades`);
+  } catch (err) {
+    console.error("[healer] could not reorder SABnzbd:", err);
+  }
+
   const idleHealed = await healIdleWantedTitles();
   return [...healed.filter((h): h is HealedDownload => h !== null), ...idleHealed];
 }

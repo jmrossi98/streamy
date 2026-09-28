@@ -904,9 +904,11 @@ export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
         statusMessages?: { messages?: string[] }[];
         trackedDownloadState?: string;
         trackedDownloadStatus?: string;
+        protocol?: string;
+        episodeHasFile?: boolean;
       }[];
     }>(`/api/v3/queue?pageSize=250`);
-    return queue.records.map((r) => toQueueHealth(r, r.seriesId));
+    return queue.records.map((r) => toQueueHealth({ ...r, hasFile: r.episodeHasFile }, r.seriesId));
   } catch (err) {
     console.error("[sonarr] getSonarrQueueHealth failed:", err);
     return [];
