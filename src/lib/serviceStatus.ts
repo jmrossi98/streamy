@@ -946,6 +946,46 @@ async function dispatcharrStatus(): Promise<ServiceStatus> {
 }
 
 /**
+ * Pi-hole, the tailnet's only DNS server (Tailscale "Override local DNS").
+ *
+ * If it stops answering, every tailnet device off the exit node loses DNS --
+ * which reads as "the internet is down", not as a Pi-hole problem. So this
+ * asks it two real questions rather than checking a web port: an ordinary
+ * name must resolve (unbound upstream is working) and a known ad domain must
+ * come back 0.0.0.0 (the blocklists are loaded). Addressed at the same
+ * mediabox tailnet IP as Jellyfin, so no separate setting can drift.
+ */
+async function piholeStatus(): Promise<ServiceStatus> {
+  const group = "System" as const;
+  const name = "Pi-hole DNS";
+  const jellyfin = env("JELLYFIN_URL");
+  if (!jellyfin) return { name, group, state: "unconfigured", detail: "No JELLYFIN_URL to locate the mediabox" };
+  const host = new URL(jellyfin).hostname;
+  const address = `${host}:53`;
+  const { Resolver } = await import("node:dns/promises");
+  const resolver = new Resolver({ timeout: 3000, tries: 2 });
+  resolver.setServers([host]);
+  try {
+    const [normal, ad] = await Promise.all([
+      resolver.resolve4("example.com"),
+      resolver.resolve4("app-measurement.com").catch(() => ["(no answer)"]),
+    ]);
+    if (normal.length === 0) return { name, group, state: "down", detail: "resolves nothing", address };
+    const blocking = ad.every((a) => a === "0.0.0.0");
+    return {
+      name,
+      group,
+      state: blocking ? "up" : "down",
+      detail: blocking ? "resolving and blocking" : `resolving but NOT blocking (ad domain -> ${ad.join(",")})`,
+      address,
+    };
+  } catch (err) {
+    const code = (err as { code?: string }).code ?? String(err);
+    return { name, group, state: "down", detail: `no answer (${code}) -- tailnet DNS is down`, address };
+  }
+}
+
+/**
  * SABnzbd. Reports the queue when a key is available, because "reachable" is
  * the least interesting thing about a download client -- a paused queue is the
  * failure that actually loses you downloads, and it looks perfectly healthy
@@ -1315,6 +1355,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     backup,
     dispatcharr,
     sabnzbd,
+    pihole,
     flaresolverr,
     syncthing,
     webdav,
@@ -1359,6 +1400,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     backupStatus(),
     dispatcharrStatus(),
     sabnzbdStatus(),
+    piholeStatus(),
     flaresolverrStatus(),
     syncthingStatus(),
     webdavStatus(),
@@ -1400,6 +1442,9 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     ollama,
     openRouter,
     searxng,
+    // Tailnet DNS: when it is down, every device on the tailnet "has no
+    // internet", which is louder than anything below it.
+    pihole,
     // System group, in rough order of "how loudly does this failing matter".
     // This app's own disk first (it is the one that takes the site down),
     // then mediabox's hardware: capacity, then whether the drives are dying.
