@@ -5,6 +5,7 @@ import {
   looksLikeEventFeed,
   looksLikeNetworkFeed,
   looksLikePlaceholder,
+  channelCarriesNetwork,
   findCandidateChannels,
   findChannelForFixture,
   findEpgConfirmedChannel,
@@ -514,5 +515,38 @@ describe("findEpgConfirmedChannel / resolveChannelForFixture", () => {
   it("resolveChannelForFixture returns null when neither finds anything", () => {
     const fixture = { awayTeam: "Los Angeles Lakers", homeTeam: "Golden State Warriors" };
     expect(resolveChannelForFixture(fixture, channels, [])).toBeNull();
+  });
+});
+
+describe("channelCarriesNetwork", () => {
+  it("matches the network itself but not its siblings", () => {
+    expect(channelCarriesNetwork("US - ESPN HD", "ESPN")).toBe(true);
+    expect(channelCarriesNetwork("US - ESPN 2 HD", "ESPN")).toBe(false);
+    expect(channelCarriesNetwork("US - ESPNU", "ESPN")).toBe(false);
+    expect(channelCarriesNetwork("US - ESPN 2 HD", "ESPN2")).toBe(true);
+    expect(channelCarriesNetwork("AMAZON PRIME VIDEO HD", "Prime Video")).toBe(true);
+  });
+
+  it("wants an affiliate for an over-the-air network", () => {
+    expect(channelCarriesNetwork("USA - FOX 29 BUFFALO NY (WUTV)", "FOX")).toBe(true);
+    expect(channelCarriesNetwork("USA - FOX ROCHESTER NY (WUHF)", "FOX")).toBe(true);
+    expect(channelCarriesNetwork("US - FOX NEWS", "FOX")).toBe(false);
+    expect(channelCarriesNetwork("US - FOX SPORTS 1", "FOX")).toBe(false);
+    expect(channelCarriesNetwork("USA - ABC 7 BUFFALO NY (WKBW)", "FOX")).toBe(false);
+  });
+});
+
+describe("findCandidateChannels with broadcasts", () => {
+  it("ranks the carrying network's affiliates above a market-only match", () => {
+    // The case reported live 2026-09-27: a Bills game on FOX offered ABC
+    // Buffalo first, with the FOX stations below it.
+    const lineup = [
+      { id: "abc", name: "USA - ABC 7 BUFFALO NY (WKBW)" },
+      { id: "foxroc", name: "USA - FOX 31 ROCHESTER NY (WUHF)" },
+      { id: "foxbuf", name: "USA - FOX 29 BUFFALO NY (WUTV)" },
+      { id: "nfln", name: "SP - NFL NETWORK HD" },
+    ];
+    const fixture = { league: "NFL", awayTeam: "Los Angeles Chargers", homeTeam: "Buffalo Bills", broadcasts: ["FOX"] };
+    expect(findCandidateChannels(fixture, lineup).map((c) => c.id)).toEqual(["foxbuf", "foxroc", "abc", "nfln"]);
   });
 });

@@ -64,6 +64,12 @@ export type Fixture = {
    */
   awayTeam: string | null;
   homeTeam: string | null;
+  /**
+   * The networks ESPN lists as carrying it ("FOX", "ESPN2", "Prime Video").
+   * National names: "FOX" means whichever FOX affiliate serves the viewer.
+   * Optional so older callers and tests that build fixtures by hand still fit.
+   */
+  broadcasts?: string[];
 };
 
 type EspnCompetitor = {
@@ -79,6 +85,8 @@ type EspnEvent = {
   shortName?: string;
   competitions?: {
     competitors?: EspnCompetitor[];
+    broadcasts?: { names?: string[] }[];
+    geoBroadcasts?: { media?: { shortName?: string } }[];
     status?: { type?: { state?: string; shortDetail?: string; detail?: string } };
   }[];
 };
@@ -119,6 +127,16 @@ function toFixture(league: string, e: EspnEvent): Fixture | null {
     name: cleanText(name),
     awayTeam: cleanText(away?.displayName) || null,
     homeTeam: cleanText(home?.displayName) || null,
+    broadcasts: [
+      ...new Set(
+        [
+          ...(comp?.broadcasts ?? []).flatMap((b) => b.names ?? []),
+          ...(comp?.geoBroadcasts ?? []).map((g) => g.media?.shortName ?? ""),
+        ]
+          .map((n) => cleanText(n))
+          .filter(Boolean)
+      ),
+    ],
   };
 }
 
