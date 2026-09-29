@@ -25,10 +25,18 @@ import type { SubtitleOption } from "@/components/SubtitleSelector";
  * called on selection and again after every reload (v.load() resets track
  * modes back to whatever the <track> attributes said). Matched positionally:
  * textTracks[i] corresponds to the i-th rendered <track>. */
-function applySubtitleMode(v: HTMLVideoElement, tracks: SubtitleOption[], selected: number | null) {
-  for (let i = 0; i < v.textTracks.length && i < tracks.length; i++) {
-    v.textTracks[i].mode = tracks[i].index === selected ? "showing" : "disabled";
-  }
+/**
+ * Shows the selected subtitle and hides the rest.
+ *
+ * Matched through each <track> element's data-sub-index, not by position in
+ * v.textTracks: that list also holds tracks other code adds (hls.js creates
+ * caption tracks), so pairing by position could switch on the wrong one or
+ * none -- part of why subtitles never appeared (2026-09-29).
+ */
+function applySubtitleMode(v: HTMLVideoElement, _tracks: SubtitleOption[], selected: number | null) {
+  v.querySelectorAll<HTMLTrackElement>("track[data-sub-index]").forEach((el) => {
+    el.track.mode = Number(el.dataset.subIndex) === selected ? "showing" : "disabled";
+  });
 }
 
 /** Setting currentTime before the browser has any metadata (readyState 0)
@@ -287,7 +295,21 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       setPlaybackError(true);
       return;
     }
-    const hls = new Hls(HLS_LOAD_CONFIG);
+    const hls = new Hls({
+      ...HLS_LOAD_CONFIG,
+      // Subtitles are ours, not hls.js's: separate WebVTT files attached as
+      // <track> elements. hls.js's subtitle and caption controllers treat
+      // every subtitle text track on the element as theirs -- with none of
+      // their own selected they set them all to "disabled", and again each
+      // time one is switched on -- so a subtitle picked in the menu flicked on
+      // and straight back off, on every title played through the transcode.
+      // Left out, hls.js never touches the element's text tracks.
+      subtitleTrackController: undefined,
+      subtitleStreamController: undefined,
+      timelineController: undefined,
+      enableWebVTT: false,
+      enableCEA708Captions: false,
+    });
     hlsRef.current = hls;
     // Fatal errors are retried in place before anything is shown -- see
     // playbackErrorRules. A cold transcode that has not produced its first
