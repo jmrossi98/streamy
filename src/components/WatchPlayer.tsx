@@ -141,7 +141,7 @@ export function WatchPlayer({
         onPlay={onVideoPlay}
       >
         {subtitleTracks.map((t) => (
-          <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} />
+          <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} data-sub-index={t.index} />
         ))}
       </video>
       {showVideo && buffering && (
