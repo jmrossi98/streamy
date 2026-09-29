@@ -6,6 +6,8 @@ import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { getFlashGame } from "@/lib/flashGames";
 import { FlashPlayer } from "@/components/FlashPlayer";
+import { andkonGameUrl } from "@/lib/andkon";
+import { findCatalogAndkonPath } from "@/lib/flashCatalog";
 import { FlashImportPanel } from "@/components/FlashImportPanel";
 import { FlashDeleteButton } from "@/components/FlashDeleteButton";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -31,6 +33,9 @@ export default async function FlashGamePage({
 
   const game = await getFlashGame(slug);
   if (!game) notFound();
+  // Where the game came from on andkon, if anywhere -- recorded on import, or
+  // looked up in the catalogue for rows added by a library sync.
+  const andkonPath = game.andkonPath ?? findCatalogAndkonPath(game.flashpointId, game.title);
 
   const admin = await requireAdmin(session);
   const userId = await getValidSessionUserId(session);
@@ -86,6 +91,9 @@ export default async function FlashGamePage({
             slug={game.slug}
             width={game.width}
             height={game.height}
+            // Andkon-sourced games run as if on andkon.com, so sitelocked ones
+            // ("Game Game") play -- see FlashPlayer's spoofUrl.
+            spoofUrl={andkonPath ? `${andkonGameUrl(andkonPath)}${game.fileName}` : null}
           />
         ) : (
           // Known but not downloaded. The row exists because someone

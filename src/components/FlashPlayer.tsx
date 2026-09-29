@@ -18,10 +18,19 @@ type Props = {
   /** Stage size from the SWF header, so the frame is right before it loads. */
   width: number;
   height: number;
+  /**
+   * The address the game should believe it is running at. For sitelocked
+   * games: they check their own URL and refuse to run anywhere but the site
+   * that licensed them -- "Game Game" only plays on andkon.com. Ruffle has no
+   * spoof option on the web, but loading the bytes with a swfFileName makes
+   * that name the movie's URL (resolved against the page, so an absolute URL
+   * stands as-is), which is what the lock reads.
+   */
+  spoofUrl?: string | null;
 };
 
 type RufflePlayerElement = HTMLElement & {
-  load: (options: { url: string }) => Promise<void>;
+  load: (options: { url: string } | { data: ArrayBuffer; swfFileName?: string }) => Promise<void>;
   remove: () => void;
 };
 type RuffleApi = { newest: () => { createPlayer: () => RufflePlayerElement } | null };
@@ -62,7 +71,7 @@ function loadRuffle(): Promise<void> {
  * Flash movie has a fixed stage, and stretching it to an arbitrary box is how
  * you get a game whose buttons are in the wrong place.
  */
-export function FlashPlayer({ src, title, slug, width, height }: Props) {
+export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,7 +161,18 @@ export function FlashPlayer({ src, title, slug, width, height }: Props) {
         player.style.width = "100%";
         player.style.height = "100%";
         host.appendChild(player);
-        return player.load({ url: src });
+        if (!spoofUrl) return player.load({ url: src });
+        // Same file, fetched here so it can be handed over as bytes under
+        // the original site's address -- see spoofUrl.
+        return fetch(src)
+          .then((res) => {
+            if (!res.ok) throw new Error("This game couldn’t be loaded.");
+            return res.arrayBuffer();
+          })
+          .then((data) => {
+            if (cancelled || !player) return;
+            return player.load({ data, swfFileName: spoofUrl });
+          });
       })
       .then(() => {
         if (!cancelled) setLoading(false);
