@@ -1,7 +1,8 @@
 import { PanelBoundary } from "@/components/PanelBoundary";
 import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { JobSourcesPanel } from "@/components/JobSourcesPanel";
-import { getJobPostings, isJobBoardConfigured, jobSources } from "@/lib/jobPostings";
+import { getJobPostings, isJobBoardConfigured, jobSources, scrapedSiteReport } from "@/lib/jobPostings";
+import { HEALTH_RANK, scrapedSiteHealth, sourceHealth } from "@/lib/jobSourceHealthRules";
 import { getJobAlertLevels } from "@/lib/appSettings";
 import { listResumeVersions } from "@/lib/resume";
 import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
@@ -11,13 +12,22 @@ export default async function AdminJobsPage() {
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured, alertLevels, resumes] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels, resumes, scrapeReport] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
     getJobAlertLevels(),
     listResumeVersions().catch(() => []),
+    scrapedSiteReport(),
   ]);
+  const checkedAt = new Date();
+  const scrapedSites = scrapeReport.sites
+    .map((site) => ({
+      company: site.company,
+      count: site.count,
+      health: scrapedSiteHealth(site, scrapeReport.generatedAt, checkedAt),
+    }))
+    .sort((a, b) => HEALTH_RANK[a.health.status] - HEALTH_RANK[b.health.status]);
 
   // Counted from the postings rather than stored on the board, so the number
   // is always what the list actually holds -- a board can be configured and
@@ -83,6 +93,7 @@ export default async function AdminJobsPage() {
           <PanelBoundary name="Boards watched">
             <JobSourcesPanel
               alertLevels={alertLevels}
+              scrapedSites={scrapedSites}
               sources={sources.map((src) => ({
                 id: src.id,
                 provider: src.provider,
@@ -92,6 +103,7 @@ export default async function AdminJobsPage() {
                 notify: src.notify,
                 tag: src.tag,
                 openRoles: openByCompany.get(src.company) ?? 0,
+                health: sourceHealth(src, checkedAt),
               }))}
             />
           </PanelBoundary>

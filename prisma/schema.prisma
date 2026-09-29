@@ -398,6 +398,13 @@ model JobBoardSource {
   /// the same kind of listing -- and the panel filters by it.
   tag String?
 
+  /// Poll health, written every poll so the panel can say when a board has
+  /// stopped being readable. lastCount is roles returned before filtering.
+  lastCheckedAt DateTime?
+  lastSuccessAt DateTime?
+  lastError     String?
+  lastCount     Int?
+
   addedAt DateTime @default(now())
 
   @@unique([provider, slug])
