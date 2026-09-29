@@ -16,7 +16,12 @@ function isChromeOnlyRoute(pathname: string | null): boolean {
 
 function isFullscreenRoute(pathname: string | null): boolean {
   if (!pathname) return false;
-  return /^\/watch\/[^/]+\/play\/?$/.test(pathname) || /^\/show\/[^/]+\/episode\/[^/]+\/[^/]+\/?$/.test(pathname);
+  return (
+    /^\/watch\/[^/]+\/play\/?$/.test(pathname) ||
+    /^\/show\/[^/]+\/episode\/[^/]+\/[^/]+\/?$/.test(pathname) ||
+    // A tailored resume: a printable page, so no site chrome to print.
+    /^\/resume\/[^/]+\/?$/.test(pathname)
+  );
 }
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {

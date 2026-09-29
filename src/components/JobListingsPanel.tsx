@@ -191,6 +191,26 @@ export function JobListingsPanel({
    * the list you come back to looks untouched.
    */
   const [openedNow, setOpenedNow] = useState<Set<string>>(new Set());
+  /** Tailored-resume state per listing: working, the new version, or why it failed. */
+  const [tailoring, setTailoring] = useState<Record<string, "busy" | { id: string } | { error: string }>>({});
+
+  async function tailorResume(id: string) {
+    setTailoring((prev) => ({ ...prev, [id]: "busy" }));
+    try {
+      const res = await fetch("/api/admin/jobs/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postingId: id }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+      setTailoring((prev) => ({
+        ...prev,
+        [id]: res.ok && data.id ? { id: data.id } : { error: data.error ?? `Failed (HTTP ${res.status})` },
+      }));
+    } catch {
+      setTailoring((prev) => ({ ...prev, [id]: { error: "Network error" } }));
+    }
+  }
 
   // Restored after mount rather than in the initial state, so the server
   // render and the first client render agree.
@@ -489,6 +509,33 @@ export function JobListingsPanel({
                       : `First seen ${new Date(listing.firstSeen).toLocaleDateString()}`
                   }
                 >
+                  {(() => {
+                    const t = tailoring[listing.id];
+                    if (t === "busy") return <span className="text-white/50">tailoring resume…</span>;
+                    if (t && "id" in t)
+                      return (
+                        <a
+                          href={`/resume/${t.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-emerald-300 hover:underline"
+                        >
+                          open resume
+                        </a>
+                      );
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => void tailorResume(listing.id)}
+                        title={t && "error" in t ? t.error : "Write a resume tailored to this listing"}
+                        className={`rounded border px-1.5 py-0.5 hover:bg-white/10 ${
+                          t && "error" in t ? "border-red-400/40 text-red-300" : "border-white/15 text-white/55"
+                        }`}
+                      >
+                        {t && "error" in t ? "retry resume" : "tailor resume"}
+                      </button>
+                    );
+                  })()}
                   {isOpened(listing) && <span className="text-white/25">explored</span>}
                   {/* The provider's own date when there is one, ours when
                       there is not -- and said out loud, because "posted 3d
