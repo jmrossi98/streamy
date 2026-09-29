@@ -39,10 +39,6 @@ type Props = {
   searchAvailable: boolean;
   /** Fill the available height instead of capping the transcript at 24rem. */
   fullHeight?: boolean;
-  /** Where the expand/collapse button goes: the other view of this chat. */
-  toggleHref?: string;
-  /** "expand" in the admin tab, "collapse" in the expanded view. */
-  toggleKind?: "expand" | "collapse";
 };
 
 // The conversation survives moving between the admin tab and the expanded
@@ -58,8 +54,6 @@ export function OpsChat({
   statusError,
   searchAvailable,
   fullHeight = false,
-  toggleHref,
-  toggleKind = "expand",
 }: Props) {
   // Off by default, deliberately: search costs latency and a large share of an
   // 8k context, and it pulls untrusted web text into the prompt. Turning it on
@@ -280,22 +274,6 @@ export function OpsChat({
               />
               Search the web
             </label>
-          )}
-          {toggleHref && (
-            <a
-              href={toggleHref}
-              aria-label={toggleKind === "expand" ? "Expand the assistant" : "Back to the admin panel"}
-              title={toggleKind === "expand" ? "Expand" : "Collapse"}
-              className="ml-1 rounded p-1 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                {toggleKind === "expand" ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
-                )}
-              </svg>
-            </a>
           )}
         </div>
       </div>

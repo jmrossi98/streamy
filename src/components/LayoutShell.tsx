@@ -46,7 +46,10 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-[100dvh] flex-col overflow-hidden bg-netflix-black">
         {!fullscreen && (
-          <div className="shrink-0">
+          // Sized, not just a wrapper: the navbar is position:fixed, so an
+          // unsized slot collapsed to nothing and the page below slid under
+          // it -- the assistant's model picker sat beneath the nav links.
+          <div className="h-[calc(4rem+env(safe-area-inset-top,0px))] shrink-0">
             <Navbar />
           </div>
         )}

@@ -17,7 +17,7 @@ export default async function AssistantPage() {
   if (!(await requireAdmin(session))) redirect("/");
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col p-4 sm:p-6">
-      <AssistantChatPanel toggleHref="/admin/chat" toggleKind="collapse" />
+      <AssistantChatPanel />
     </div>
   );
 }
