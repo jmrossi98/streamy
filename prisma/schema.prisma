@@ -907,3 +907,28 @@ model GameChannelChoice {
   // Supports the opportunistic sweep of finished games on write.
   @@index([pickedAt])
 }
+
+/// A resume tailored to one job listing, generated from the experience bank
+/// in the Obsidian vault (Resume/). Every version is kept: the point is to
+/// see exactly what was sent where. See lib/resume.ts.
+model ResumeVersion {
+  id        String   @id @default(cuid())
+  /// The JobPosting it was tailored to. Not a relation: postings are pruned
+  /// once they leave their board, and the resume that was sent must outlive it.
+  postingId String?
+  company   String
+  title     String
+  url       String   @default("")
+  /// The resume itself, Markdown.
+  markdown  String
+  /// What was emphasised and why, plus what the research found -- for review
+  /// before sending, never part of the resume.
+  notes     String   @default("")
+  /// Which model wrote it, so versions from Claude and a local model can be
+  /// compared later.
+  model     String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([postingId])
+}

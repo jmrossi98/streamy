@@ -3,17 +3,20 @@ import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { JobSourcesPanel } from "@/components/JobSourcesPanel";
 import { getJobPostings, isJobBoardConfigured, jobSources } from "@/lib/jobPostings";
 import { getJobAlertLevels } from "@/lib/appSettings";
+import { listResumeVersions } from "@/lib/resume";
+import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
 
 export default async function AdminJobsPage() {
   // Above the whole matched set, not a round number: filtering happens in the
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured, alertLevels] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels, resumes] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
     getJobAlertLevels(),
+    listResumeVersions().catch(() => []),
   ]);
 
   // Counted from the postings rather than stored on the board, so the number
@@ -51,6 +54,23 @@ export default async function AdminJobsPage() {
                 tag: tagByCompany.get(job.company) ?? null,
                 postedAt: job.postedAt?.toISOString() ?? null,
                 firstSeen: job.firstSeen.toISOString(),
+              }))}
+            />
+          </PanelBoundary>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Tailored resumes</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PanelBoundary name="Tailored resumes">
+            <ResumeVersionsPanel
+              versions={resumes.map((r) => ({
+                id: r.id,
+                company: r.company,
+                title: r.title,
+                model: r.model,
+                createdAt: r.createdAt.toISOString(),
               }))}
             />
           </PanelBoundary>

@@ -234,3 +234,37 @@ export async function streamOpenRouterChat(
 
   return res.body.pipeThrough(sseToNdjson());
 }
+
+/**
+ * One non-streamed completion, for background work where nobody is watching
+ * tokens arrive (the resume builder). `webSearch` turns on OpenRouter's web
+ * plugin so the model can research before answering.
+ */
+export async function completeOpenRouter(
+  messages: { role: "system" | "user" | "assistant"; content: string }[],
+  opts: { models: string[]; maxTokens: number; webSearch?: boolean; timeoutMs?: number }
+): Promise<{ text: string; model: string }> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    body: JSON.stringify({
+      model: opts.models[0],
+      models: opts.models,
+      messages,
+      max_tokens: opts.maxTokens,
+      ...(opts.webSearch ? { plugins: [{ id: "web", max_results: 5 }] } : {}),
+    }),
+  });
+  const body = (await res.json().catch(() => null)) as {
+    model?: string;
+    choices?: { message?: { content?: string } }[];
+    error?: { message?: string };
+  } | null;
+  if (!res.ok || !body) throw new Error(body?.error?.message ?? `OpenRouter HTTP ${res.status}`);
+  const text = body.choices?.[0]?.message?.content ?? "";
+  if (!text.trim()) throw new Error("The model returned an empty answer.");
+  return { text, model: body.model ?? opts.models[0] };
+}
