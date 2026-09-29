@@ -18,6 +18,8 @@ export type AudioTrack = {
   /** ISO 639-2 as Jellyfin reports it ("jpn", "eng"), or null if untagged. */
   language: string | null;
   isDefault: boolean;
+  /** Jellyfin's DisplayTitle, e.g. "Japanese - AAC - Stereo", for the player menu. */
+  label?: string;
 };
 
 export type SubtitleTrackInfo = { index: number; language: string | null; label: string };
@@ -116,4 +118,32 @@ export function defaultSubtitleIndex(
   // leave most dialogue untranslated.
   const partial = /sign|song|forced/i;
   return (eng.find((s) => !partial.test(s.label)) ?? eng[0]).index;
+}
+
+const ALLOWED_SUBTITLE_LANGUAGES = new Set(["eng", "en", "spa", "es"]);
+
+/**
+ * Subtitle languages offered anywhere in Streamy: English and Spanish only
+ * (Jake, 2026-09-29). Untagged tracks stay -- they are almost always English
+ * (The Wire's only subtitles carry no tag), and dropping them would leave those
+ * titles with none at all.
+ */
+export function isAllowedSubtitleLanguage(language: string | null | undefined): boolean {
+  const l = (language ?? "").trim().toLowerCase();
+  return l === "" || l === "und" || ALLOWED_SUBTITLE_LANGUAGES.has(l);
+}
+
+/**
+ * The audio track for a transcode: the one the viewer picked in the player's
+ * menu when it is a real track of this title, else the plan's default. Checked
+ * against the title's own tracks so a stale or hand-edited URL cannot ask
+ * Jellyfin for a stream index that does not exist.
+ */
+export function chooseAudio(
+  plan: { audioTracks: { index: number }[]; audioStreamIndex: number | null },
+  requested: string | null
+): number | null {
+  const n = requested == null || requested === "" ? NaN : Number(requested);
+  if (Number.isInteger(n) && plan.audioTracks.some((t) => t.index === n)) return n;
+  return plan.audioStreamIndex;
 }

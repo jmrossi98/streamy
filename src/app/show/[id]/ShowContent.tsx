@@ -104,6 +104,8 @@ export function ShowContent({
   const [overlaySubtitleTracks, setOverlaySubtitleTracks] = useState<{ index: number; label: string }[]>([]);
   const [overlayForceTranscode, setOverlayForceTranscode] = useState(false);
   const [overlayDefaultSubtitle, setOverlayDefaultSubtitle] = useState<number | null>(null);
+  const [overlayAudioTracks, setOverlayAudioTracks] = useState<{ index: number; label: string; isDefault: boolean }[]>([]);
+  const [overlayDefaultAudio, setOverlayDefaultAudio] = useState<number | null>(null);
 
   // The watch pages resolve this server-side (they're server components); this
   // overlay only exists client-side, so it hits the list route instead. No
@@ -119,12 +121,16 @@ export function ShowContent({
         setOverlaySubtitleTracks(data.tracks ?? []);
         setOverlayForceTranscode(!!data.forceTranscode);
         setOverlayDefaultSubtitle(typeof data.defaultSubtitle === "number" ? data.defaultSubtitle : null);
+        setOverlayAudioTracks(Array.isArray(data.audioTracks) ? data.audioTracks : []);
+        setOverlayDefaultAudio(typeof data.defaultAudio === "number" ? data.defaultAudio : null);
       })
       .catch(() => {
         if (cancelled) return;
         setOverlaySubtitleTracks([]);
         setOverlayForceTranscode(false);
         setOverlayDefaultSubtitle(null);
+        setOverlayAudioTracks([]);
+        setOverlayDefaultAudio(null);
       });
     return () => {
       cancelled = true;
@@ -304,6 +310,8 @@ export function ShowContent({
             subtitleTracks={overlaySubtitleTracks}
             forceTranscode={overlayForceTranscode}
             defaultSubtitle={overlayDefaultSubtitle}
+            audioTracks={overlayAudioTracks}
+            defaultAudio={overlayDefaultAudio}
           />
         </div>
       )}

@@ -5,7 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { VideoChrome } from "./VideoChrome";
-import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
+import { type SubtitleOption } from "./SubtitleSelector";
+import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
 
 // No placeholder fallback on purpose: without a real file this used to play
@@ -35,6 +36,10 @@ type EpisodePlayerProps = {
   forceTranscode?: boolean;
   /** Subtitle track to switch on at start (English under foreign audio). */
   defaultSubtitle?: number | null;
+  /** The title's audio tracks, for the audio/subtitles menu. */
+  audioTracks?: AudioOption[];
+  /** The track playing at start. */
+  defaultAudio?: number | null;
 };
 
 const NEXT_EPISODE_COUNTDOWN_SEC = 15;
@@ -57,6 +62,8 @@ export function EpisodePlayer({
   subtitleTracks = [],
   forceTranscode = false,
   defaultSubtitle = null,
+  audioTracks = [],
+  defaultAudio = null,
 }: EpisodePlayerProps) {
   const router = useRouter();
   const [showNextOverlay, setShowNextOverlay] = useState(false);
@@ -75,6 +82,8 @@ export function EpisodePlayer({
     hasSource,
     selectedSubtitle,
     setSelectedSubtitle,
+    selectedAudio,
+    selectAudio,
     playing,
     showOverlay,
     videoLoading,
@@ -95,6 +104,8 @@ export function EpisodePlayer({
     autoPlay,
     forceTranscode,
     defaultSubtitle,
+    audioTracks,
+    defaultAudio,
     subtitleTracks,
     identityKey: `${showId}-${seasonNumber}-${episodeNumber}`,
     saveProgress,
@@ -197,13 +208,17 @@ export function EpisodePlayer({
           closeHref={closeHref}
           onClose={onClose}
           chrome={chrome}
-          extraTopRight={
-            subtitleTracks.length > 0 ? (
-              <SubtitleSelector tracks={subtitleTracks} value={selectedSubtitle} onChange={setSelectedSubtitle} />
-            ) : undefined
-          }
           extraBottomRight={
-            nextEpisodeHref ? (
+            <>
+            <PlaybackOptionsMenu
+              audioTracks={audioTracks}
+              selectedAudio={selectedAudio}
+              onAudio={selectAudio}
+              subtitleTracks={subtitleTracks}
+              selectedSubtitle={selectedSubtitle}
+              onSubtitle={setSelectedSubtitle}
+            />
+            {nextEpisodeHref ? (
               <Link
                 href={nextEpisodeHref}
                 prefetch
@@ -215,7 +230,8 @@ export function EpisodePlayer({
                   <path d="M6 5v14l8.5-7L6 5zm10 0v14h2V5h-2z" />
                 </svg>
               </Link>
-            ) : undefined
+            ) : null}
+            </>
           }
         />
       )}

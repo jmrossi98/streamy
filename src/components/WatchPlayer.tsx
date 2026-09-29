@@ -4,7 +4,8 @@ import { useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { VideoChrome } from "./VideoChrome";
-import { SubtitleSelector, type SubtitleOption } from "./SubtitleSelector";
+import { type SubtitleOption } from "./SubtitleSelector";
+import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
 
 // No placeholder fallback on purpose: without a real file this used to play
@@ -31,6 +32,10 @@ type WatchPlayerProps = {
   forceTranscode?: boolean;
   /** Subtitle track to switch on at start (English under foreign audio). */
   defaultSubtitle?: number | null;
+  /** The title's audio tracks, for the audio/subtitles menu. */
+  audioTracks?: AudioOption[];
+  /** The track playing at start. */
+  defaultAudio?: number | null;
 };
 
 export function WatchPlayer({
@@ -45,6 +50,8 @@ export function WatchPlayer({
   subtitleTracks = [],
   forceTranscode = false,
   defaultSubtitle = null,
+  audioTracks = [],
+  defaultAudio = null,
 }: WatchPlayerProps) {
   // Stable across renders (see usePlayerEngine's saveProgress doc) --
   // movieId is the only thing this closes over, and that's a prop.
@@ -60,6 +67,8 @@ export function WatchPlayer({
     hasSource,
     selectedSubtitle,
     setSelectedSubtitle,
+    selectedAudio,
+    selectAudio,
     playing,
     showOverlay,
     videoLoading,
@@ -80,6 +89,8 @@ export function WatchPlayer({
     autoPlay,
     forceTranscode,
     defaultSubtitle,
+    audioTracks,
+    defaultAudio,
     subtitleTracks,
     identityKey: movieId,
     saveProgress,
@@ -157,10 +168,15 @@ export function WatchPlayer({
           title={movieTitle}
           closeHref={closeHref}
           chrome={chrome}
-          extraTopRight={
-            subtitleTracks.length > 0 ? (
-              <SubtitleSelector tracks={subtitleTracks} value={selectedSubtitle} onChange={setSelectedSubtitle} />
-            ) : undefined
+          extraBottomRight={
+            <PlaybackOptionsMenu
+              audioTracks={audioTracks}
+              selectedAudio={selectedAudio}
+              onAudio={selectAudio}
+              subtitleTracks={subtitleTracks}
+              selectedSubtitle={selectedSubtitle}
+              onSubtitle={setSelectedSubtitle}
+            />
           }
         />
       )}

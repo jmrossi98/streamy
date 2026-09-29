@@ -77,6 +77,10 @@ export type PlayerEngineOptions = {
   /** Subtitle to switch on at start -- English under foreign-language audio
    * (see audioLanguageRules.ts). May arrive after mount, like forceTranscode. */
   defaultSubtitle?: number | null;
+  /** The title's audio tracks, for the audio menu. */
+  audioTracks?: { index: number; label: string; isDefault: boolean }[];
+  /** The track playing at start (the original language when present). */
+  defaultAudio?: number | null;
   /** Stable identity for "the thing being played" -- a movieId, or
    * `${showId}-${season}-${episode}`. Only used as an effect dependency, to
    * re-run the unmount cleanup when the viewer moves to a different title
@@ -90,7 +94,7 @@ export type PlayerEngineOptions = {
 };
 
 export function usePlayerEngine(opts: PlayerEngineOptions) {
-  const { videoUrl, initialProgressSeconds, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, identityKey, saveProgress } = opts;
+  const { videoUrl, initialProgressSeconds, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, audioTracks = [], defaultAudio = null, identityKey, saveProgress } = opts;
   const hasSource = !!videoUrl;
   // Always direct-plays and falls back to a transcode only if the browser
   // can't decode the source -- no manual quality picker. That picker (4K/
@@ -105,7 +109,13 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // One id for this whole viewing, sent as Jellyfin's PlaySessionId on every
   // transcode request so a seek is recognised as "move this session", not a
   // brand new independent stream. Generated once, lazily, on first render.
-  const [playSessionId] = useState(() => crypto.randomUUID());
+  const [playSessionId, setPlaySessionId] = useState(() => crypto.randomUUID());
+  // The audio track the viewer picked from the menu; null means "whatever the
+  // server chooses" (the original language when the file has it).
+  const [chosenAudio, setChosenAudio] = useState<number | null>(null);
+  // Set when a menu pick is swapping the stream mid-playback, so the effect
+  // below resumes at the same position once the new stream can play.
+  const audioSwapRef = useRef(false);
   // A transcode is *always* delivered as HLS, not a plain progressive MP4 --
   // that turned out to be unreliable in real testing (confirmed hanging
   // indefinitely in the browser, readyState never leaving HAVE_NOTHING,
@@ -143,7 +153,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // cold seek 10 minutes in, 0.13s for the next segment). That is both correct
   // and far faster than tearing the transcode down and rebuilding it, which is
   // what this used to do on every scrub.
-  const videoSrc = !videoUrl ? "" : transcoding ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}` : videoUrl;
+  const videoSrc = !videoUrl
+    ? ""
+    : transcoding
+      ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${chosenAudio != null ? `&audio=${chosenAudio}` : ""}`
+      : videoUrl;
   // Best-effort: tell Jellyfin to kill the ffmpeg job for the current session
   // before asking for a new position. Without this, Jellyfin can leave the
   // old encode running and just keep serving *that*, ignoring the new
@@ -392,6 +406,59 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     return () => v.removeEventListener("canplay", onReady);
   }, [transcoding, subtitleTracks, selectedSubtitle, needsHlsJs]);
 
+  // A menu pick while already transcoding: new session, same position. The
+  // hls.js effect above has already re-attached to the new source by the
+  // time this runs (it is declared first).
+  useEffect(() => {
+    if (!audioSwapRef.current) return;
+    audioSwapRef.current = false;
+    const v = videoRef.current;
+    if (!v) return;
+    const onReady = () => {
+      const target = resumeAtRef.current;
+      resumeAtRef.current = null;
+      if (target != null) {
+        try {
+          v.currentTime = target;
+        } catch {
+          /* not seekable yet; plays from the start instead of stalling */
+        }
+      }
+      applySubtitleMode(v, subtitleTracks, selectedSubtitle);
+      if (playIntentRef.current === "play") v.play().catch(() => {});
+      setVideoLoading(false);
+    };
+    v.addEventListener("canplay", onReady, { once: true });
+    return () => v.removeEventListener("canplay", onReady);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoSrc]);
+
+  const selectedAudio = chosenAudio ?? defaultAudio;
+
+  /**
+   * Switch audio track. Only a transcode can play a track that is not the
+   * file's default, so direct play hands over to one (the existing swap path
+   * keeps the position); an existing transcode restarts under a new session,
+   * because Jellyfin keeps serving the old encode -- old audio and all -- to a
+   * session id it already knows.
+   */
+  const selectAudio = (index: number) => {
+    if (index === selectedAudio) return;
+    const at = chrome.currentTime;
+    resumeAtRef.current = at > 0 ? at : initialProgressSeconds || null;
+    setVideoLoading(true);
+    if (!transcoding) {
+      didSwapRef.current = true;
+      setChosenAudio(index);
+      setAutoFellBack(true);
+      return;
+    }
+    audioSwapRef.current = true;
+    void stopCurrentTranscode();
+    setPlaySessionId(crypto.randomUUID());
+    setChosenAudio(index);
+  };
+
   // Viewer picked a subtitle track (or turned them off).
   useEffect(() => {
     const v = videoRef.current;
@@ -627,6 +694,9 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     videoSrc,
     selectedSubtitle,
     setSelectedSubtitle,
+    audioTracks,
+    selectedAudio,
+    selectAudio,
     playing,
     setPlaying,
     showOverlay,

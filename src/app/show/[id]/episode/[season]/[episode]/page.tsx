@@ -100,6 +100,8 @@ export default async function EpisodeWatchPage({ params }: Props) {
         subtitleTracks={subtitles?.tracks}
         forceTranscode={forceTranscode}
         defaultSubtitle={language?.defaultSubtitle ?? null}
+        audioTracks={language?.audioTracks ?? []}
+        defaultAudio={language?.defaultAudio ?? null}
       />
     </div>
   );
