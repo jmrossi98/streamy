@@ -15,8 +15,20 @@ export default async function AdminChatPage() {
     redirect("/");
   }
   return (
-    <div className="h-[calc(100dvh-17rem)] min-h-[26rem]">
-      <AssistantChatPanel toggleHref="/assistant" toggleKind="expand" />
+    <div className="flex h-[calc(100dvh-17rem)] min-h-[26rem] flex-col gap-2">
+      <div className="flex justify-end text-xs">
+        <a
+          href="/assistant"
+          target="_blank"
+          rel="noreferrer"
+          className="text-white/50 underline-offset-2 transition-colors hover:text-white hover:underline"
+        >
+          Open in new window ↗
+        </a>
+      </div>
+      <div className="min-h-0 flex-1">
+        <AssistantChatPanel />
+      </div>
     </div>
   );
 }

@@ -4,13 +4,7 @@ import { isOpenRouterConfigured, openRouterModel } from "@/lib/openrouter";
 import { isWebSearchConfigured } from "@/lib/webSearch";
 
 /** The assistant, as both the Admin tab and the expanded page render it. */
-export async function AssistantChatPanel({
-  toggleHref,
-  toggleKind,
-}: {
-  toggleHref: string;
-  toggleKind: "expand" | "collapse";
-}) {
+export async function AssistantChatPanel() {
   const status = isOllamaConfigured() ? await getOllamaStatus() : null;
   return (
     <div className="flex h-full min-h-0 flex-col rounded-lg border border-white/10 bg-netflix-dark/80 p-3 sm:p-4">
@@ -23,8 +17,6 @@ export async function AssistantChatPanel({
         statusError={status && !status.ok ? status.error : null}
         searchAvailable={isWebSearchConfigured()}
         fullHeight
-        toggleHref={toggleHref}
-        toggleKind={toggleKind}
       />
     </div>
   );
