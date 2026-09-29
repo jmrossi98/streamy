@@ -61,6 +61,26 @@ export function GameChannelPicker({
     (resolveStoredChoice(options, storedChoice) ?? options[0])?.id ?? null
   );
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
+  /** Channels that already failed to start this visit, so the fallback never loops. */
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
+
+  /**
+   * A channel that never started, after its own retries: try the next option
+   * that has not failed yet. Not remembered as the viewer's pick -- it was
+   * ours, and the stored choice should stay what they chose.
+   */
+  function giveUpOn(dead: LiveChannel) {
+    const failed = [...failedIds, dead.id];
+    setFailedIds(failed);
+    const next = options.find((c) => !failed.includes(c.id));
+    if (!next) {
+      setFallbackNote(null);
+      return;
+    }
+    setFallbackNote(`${dead.name} didn’t start, so we switched to ${next.name}.`);
+    setSelectedId(next.id);
+  }
 
   /**
    * Optimistic on purpose: the switch has already happened in the player, and
@@ -69,6 +89,7 @@ export function GameChannelPicker({
    */
   function pick(c: LiveChannel) {
     setSelectedId(c.id);
+    setFallbackNote(null);
     void fetch("/api/live/game-channel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -94,7 +115,9 @@ export function GameChannelPicker({
         channelId={selected.id}
         channelName={selected.name}
         nowPlaying={selected.now?.name ?? null}
+        onGiveUp={() => giveUpOn(selected)}
       />
+      {fallbackNote && <p className="mt-3 text-sm text-amber-300/90">{fallbackNote}</p>}
 
       {options.length > 1 && (
         <div className="mt-6">

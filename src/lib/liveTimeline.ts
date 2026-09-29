@@ -448,6 +448,49 @@ export function resolveChannelForFixture<C extends { id: string; name: string }>
   return findEpgConfirmedChannel(epgConfirmedNames, channels) ?? findChannelForFixture(fixture, channels);
 }
 
+/** Over-the-air networks: carried by a local affiliate, not one national feed. */
+const LOCAL_NETWORKS = new Set(["abc", "cbs", "nbc", "fox", "cw"]);
+
+/** Words that turn a network name into a different, sibling channel. */
+const SIBLING_SUFFIX = /^\s*(?:news|deportes|business|sports?|\+|plus|u\b|\d)/;
+
+/**
+ * Whether a channel is the network ESPN says is carrying a game.
+ *
+ * "ESPN" must not match ESPN2 or ESPNU, and "FOX" must not match FOX News or
+ * FOX Sports 1: a sibling channel is a different channel. For an over-the-air
+ * network the channel has to look like an affiliate ("FOX 29 ...", or a call
+ * sign), because ESPN's "FOX" means the local FOX station.
+ */
+export function channelCarriesNetwork(channelName: string, network: string): boolean {
+  const n = channelName.toLowerCase();
+  // Squashed so "ESPN2" and "ESPN 2" compare equal.
+  const net = network.toLowerCase().replace(/[^a-z0-9+]+/g, "");
+  if (!net) return false;
+  const words = n.replace(/[^a-z0-9+]+/g, " ");
+  const local = LOCAL_NETWORKS.has(net);
+  // Try the network name at the start of every word, skipping spaces inside it.
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === " " || (i > 0 && words[i - 1] !== " ")) continue;
+    let j = i;
+    let k = 0;
+    while (k < net.length && j < words.length && (words[j] === " " || words[j] === net[k])) {
+      if (words[j] !== " ") k++;
+      j++;
+    }
+    if (k < net.length) continue;
+    const rest = words.slice(j);
+    if (/^[a-z0-9+]/.test(rest)) continue; // "espnu", "foxnews"
+    if (local) {
+      // An affiliate: a channel number right after ("FOX 29"), or a call sign.
+      if (/^\s*\d/.test(rest) || (CALLSIGN_AFFILIATE.test(n) && !SIBLING_SUFFIX.test(rest))) return true;
+    } else if (/\d$/.test(net) ? !/^\s*\d/.test(rest) : !SIBLING_SUFFIX.test(rest)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Channels plausibly carrying a fixture's league, for when
  * `findChannelForFixture` (and, above it, real EPG confirmation -- see
@@ -474,7 +517,7 @@ export function resolveChannelForFixture<C extends { id: string; name: string }>
  * list tracks.
  */
 export function findCandidateChannels<C extends { id: string; name: string }>(
-  fixture: { league: string; awayTeam?: string | null; homeTeam?: string | null },
+  fixture: { league: string; awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] },
   channels: C[],
   limit = 4
 ): C[] {
@@ -511,8 +554,17 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     // contains it as a substring of a longer word. 0, strictly below every
     // brand match above, so a team's own market always outranks a network --
     // see the comment on that branch for why this isn't just "equally good".
-    if (cities.some((city) => new RegExp(`\\b${city}\\b`, "i").test(channel.name))) {
+    const inMarket = cities.some((city) => new RegExp(`\\b${city}\\b`, "i").test(channel.name));
+    if (inMarket) {
       consider(channel, 0);
+    }
+
+    // ESPN's own word on who is airing the game beats every guess above: the
+    // carrying network's affiliate in the team's market first, then any
+    // channel of the carrying network. Negative, so a market-only match (ABC
+    // Buffalo for a Bills game that is on FOX) can never outrank it.
+    if ((fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channel.name, net))) {
+      consider(channel, inMarket ? -2 : -1);
     }
   }
 

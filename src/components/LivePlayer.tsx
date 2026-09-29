@@ -12,6 +12,12 @@ type Props = {
   channelName: string;
   /** Shown under the title -- what's on now, when the guide knows. */
   nowPlaying?: string | null;
+  /**
+   * Called once the retries are spent and the channel is given up on. A game
+   * page uses it to move on to the next channel that might carry the game,
+   * rather than leave the viewer on an error with other options unused.
+   */
+  onGiveUp?: () => void;
 };
 
 /**
@@ -163,7 +169,12 @@ function Spinner({ label }: { label: string }) {
  * Always HLS: Jellyfin delivers a tuned channel as a transcode, and a
  * transcode is always HLS. There is no direct-play path to fall back to.
  */
-export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
+export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Props) {
+  // Read through a ref so a new callback each render doesn't re-run the tune effect.
+  const onGiveUpRef = useRef(onGiveUp);
+  useEffect(() => {
+    onGiveUpRef.current = onGiveUp;
+  }, [onGiveUp]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -361,6 +372,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying }: Props) {
       if (retryCountRef.current >= MAX_RETRIES) {
         setError(finalError);
         setLoading(false);
+        onGiveUpRef.current?.();
         return;
       }
       retryCountRef.current += 1;
