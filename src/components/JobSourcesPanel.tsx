@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LEVEL_LABELS, LEVEL_ORDER } from "@/lib/jobFilters";
+import { HEALTH_RANK, type SourceHealth, type SourceHealthStatus } from "@/lib/jobSourceHealthRules";
 
 export type JobSourceRow = {
   id: string;
@@ -14,7 +15,29 @@ export type JobSourceRow = {
   tag: string | null;
   /** How many open roles this board is currently contributing. */
   openRoles: number;
+  health: SourceHealth;
 };
+
+export type ScrapedSiteRow = { company: string; count: number | null; health: SourceHealth };
+
+const HEALTH_BADGE: Record<SourceHealthStatus, { label: string; className: string } | null> = {
+  failing: { label: "Can't read", className: "bg-red-500/20 text-red-300" },
+  stale: { label: "Stale", className: "bg-amber-500/20 text-amber-300" },
+  empty: { label: "No roles", className: "bg-amber-500/15 text-amber-200/80" },
+  unchecked: { label: "Not polled yet", className: "bg-white/10 text-white/50" },
+  ok: null,
+  off: null,
+};
+
+function HealthBadge({ health }: { health: SourceHealth }) {
+  const badge = HEALTH_BADGE[health.status];
+  if (!badge) return <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/70" title={health.detail} />;
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.className}`} title={health.detail}>
+      {badge.label}
+    </span>
+  );
+}
 
 /**
  * The boards being polled, and which of them are worth an email.
@@ -28,14 +51,22 @@ export type JobSourceRow = {
  */
 export function JobSourcesPanel({
   sources,
+  scrapedSites,
   alertLevels: initialAlertLevels,
 }: {
   sources: JobSourceRow[];
+  /** Career sites mediabox scrapes; configured in the scraper, so read-only here. */
+  scrapedSites: ScrapedSiteRow[];
   /** Job levels included in alert emails, across every board. */
   alertLevels: string[];
 }) {
   const router = useRouter();
-  const [rows, setRows] = useState(sources);
+  const [rows, setRows] = useState(() =>
+    [...sources].sort((a, b) => HEALTH_RANK[a.health.status] - HEALTH_RANK[b.health.status])
+  );
+  const problems =
+    rows.filter((r) => HEALTH_BADGE[r.health.status] && r.health.status !== "unchecked").length +
+    scrapedSites.filter((s) => HEALTH_BADGE[s.health.status] && s.health.status !== "unchecked").length;
   const [alertLevels, setAlertLevels] = useState<Set<string>>(new Set(initialAlertLevels));
   const [provider, setProvider] = useState("greenhouse");
   const [slug, setSlug] = useState("");
@@ -195,12 +226,19 @@ export function JobSourcesPanel({
 
       {error && <p className="text-xs text-red-300">{error}</p>}
 
+      <p className={`text-xs ${problems > 0 ? "text-amber-300" : "text-white/45"}`}>
+        {problems > 0
+          ? `${problems} source${problems === 1 ? "" : "s"} not being read properly -- listed first. Hover a badge for why.`
+          : "Every source read fine on its last poll."}
+      </p>
+
       <ul className="max-h-[36rem] space-y-1 overflow-y-auto pr-1">
         {rows.map((row) => (
           <li
             key={row.id}
             className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-white/10 bg-black/20 px-3 py-2 text-xs"
           >
+            <HealthBadge health={row.health} />
             <span className={`font-medium ${row.enabled ? "text-white/85" : "text-white/35"}`}>
               {row.company}
             </span>
@@ -208,6 +246,9 @@ export function JobSourcesPanel({
               {row.provider}:{row.slug}
             </span>
             <span className="text-white/35">{row.openRoles} open</span>
+            {(row.health.status === "failing" || row.health.status === "stale" || row.health.status === "empty") && (
+              <span className="basis-full text-[11px] text-white/40">{row.health.detail}</span>
+            )}
             {row.tag && (
               <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/50">
                 {row.tag}
@@ -243,6 +284,28 @@ export function JobSourcesPanel({
       </ul>
       {rows.length === 0 && (
         <p className="text-sm text-white/50">No boards yet. Add one above.</p>
+      )}
+
+      {scrapedSites.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-white/40">Scraped career sites</h3>
+          <ul className="space-y-1">
+            {scrapedSites.map((site) => (
+              <li
+                key={site.company}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-white/10 bg-black/20 px-3 py-2 text-xs"
+              >
+                <HealthBadge health={site.health} />
+                <span className="font-medium text-white/85">{site.company}</span>
+                <span className="text-white/30">scraped</span>
+                <span className="text-white/35">{site.count ?? 0} found</span>
+                {site.health.status !== "ok" && (
+                  <span className="text-white/40">{site.health.detail}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

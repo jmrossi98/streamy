@@ -84,6 +84,10 @@ export type ManagedSource = JobSource & {
   notify: boolean;
   /** Optional grouping, e.g. "startup". */
   tag: string | null;
+  lastCheckedAt: Date | null;
+  lastSuccessAt: Date | null;
+  lastError: string | null;
+  lastCount: number | null;
 };
 
 /**
@@ -107,6 +111,10 @@ export async function jobSources(): Promise<ManagedSource[]> {
       enabled: r.enabled,
       notify: r.notify,
       tag: r.tag,
+      lastCheckedAt: r.lastCheckedAt,
+      lastSuccessAt: r.lastSuccessAt,
+      lastError: r.lastError,
+      lastCount: r.lastCount,
     }));
   } catch {
     rows = [];
@@ -119,6 +127,10 @@ export async function jobSources(): Promise<ManagedSource[]> {
     enabled: true,
     notify: true,
     tag: null,
+    lastCheckedAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    lastCount: null,
   }));
 }
 
@@ -351,6 +363,63 @@ async function fetchScrapedPostings(): Promise<{ postings: JobPosting[]; error: 
   }
 }
 
+/**
+ * Writes each board's poll result, so the panel can flag one that has stopped
+ * being readable. Never fails the poll: health is a report, not the job.
+ */
+async function recordSourceHealth(
+  results: { source: JobSource; postings: JobPosting[]; error?: string }[],
+  now: Date
+): Promise<void> {
+  await Promise.all(
+    results.map((r) =>
+      prisma.jobBoardSource
+        .update({
+          where: { provider_slug: { provider: r.source.provider, slug: r.source.slug } },
+          data: r.error
+            ? { lastCheckedAt: now, lastError: r.error.slice(0, 300) }
+            : { lastCheckedAt: now, lastSuccessAt: now, lastError: null, lastCount: r.postings.length },
+        })
+        .catch(() => undefined)
+    )
+  );
+}
+
+export type ScrapedSiteReport = {
+  generatedAt: Date | null;
+  sites: { company: string; count: number | null; error: string | null }[];
+};
+
+/** The per-site part of mediabox's scrape report, for the health badges. */
+export async function scrapedSiteReport(): Promise<ScrapedSiteReport> {
+  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
+  if (!base) return { generatedAt: null, sites: [] };
+  try {
+    const res = await fetch(`${base}/status/scraped-jobs.json`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+    });
+    if (!res.ok) return { generatedAt: null, sites: [] };
+    const body = (await res.json()) as {
+      generatedAt?: string;
+      sites?: { company?: string; count?: number; error?: string | null }[];
+    };
+    const generatedAt = body.generatedAt ? new Date(body.generatedAt) : null;
+    return {
+      generatedAt: generatedAt && !Number.isNaN(generatedAt.getTime()) ? generatedAt : null,
+      sites: (Array.isArray(body.sites) ? body.sites : [])
+        .filter((site) => site.company)
+        .map((site) => ({
+          company: String(site.company),
+          count: typeof site.count === "number" ? site.count : null,
+          error: site.error ? String(site.error) : null,
+        })),
+    };
+  } catch {
+    return { generatedAt: null, sites: [] };
+  }
+}
+
 export async function refreshJobPostings(): Promise<RefreshOutcome> {
   await seedJobSourcesIfEmpty();
   const all = await jobSources();
@@ -393,6 +462,8 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
 
   // Merged in alongside the boards, so everything downstream -- classifying,
   // metro matching, notifying -- treats them identically.
+  await recordSourceHealth(results, now);
+
   const scraped = await fetchScrapedPostings();
   if (scraped.error) outcome.errors.push(scraped.error);
 
