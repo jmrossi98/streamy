@@ -1,7 +1,7 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { findJellyfinMovieItemId } from "@/lib/jellyfin";
 import { proxyJellyfinHlsResource } from "@/lib/streamProxy";
-import { getLanguagePlan } from "@/lib/playbackLanguage";
+import { chooseAudio, getLanguagePlan } from "@/lib/playbackLanguage";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +23,8 @@ export async function GET(request: Request, { params }: Props) {
   const resource = path.join("/");
   // Only the master picks the audio track; Jellyfin carries it from there.
   const audio =
-    resource === "master.m3u8" ? (await getLanguagePlan(itemId, "movie", tmdbId)).audioStreamIndex : null;
+    resource === "master.m3u8"
+      ? chooseAudio(await getLanguagePlan(itemId, "movie", tmdbId), new URL(request.url).searchParams.get("audio"))
+      : null;
   return proxyJellyfinHlsResource(itemId, resource, `/api/stream/movie/${tmdbId}/hls`, request, undefined, audio);
 }

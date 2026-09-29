@@ -67,6 +67,8 @@ export default async function WatchPlayPage({ params }: Props) {
         subtitleTracks={subtitles?.tracks}
         forceTranscode={forceTranscode}
         defaultSubtitle={language?.defaultSubtitle ?? null}
+        audioTracks={language?.audioTracks ?? []}
+        defaultAudio={language?.defaultAudio ?? null}
       />
     </div>
   );

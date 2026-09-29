@@ -12,7 +12,7 @@
  * handed to the client.
  */
 import { cached } from "./ttlCache";
-import type { AudioTrack } from "./audioLanguageRules";
+import { isAllowedSubtitleLanguage, type AudioTrack } from "./audioLanguageRules";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -316,11 +316,18 @@ export async function getJellyfinAudioTracks(itemId: string): Promise<AudioTrack
       10 * 60_000,
       async () => {
         const result = await jellyfinFetch<{
-          Items: { MediaStreams?: { Type: string; Index: number; Language?: string; IsDefault?: boolean }[] }[];
+          Items: {
+            MediaStreams?: { Type: string; Index: number; Language?: string; IsDefault?: boolean; DisplayTitle?: string }[];
+          }[];
         }>(`/Items?Ids=${itemId}&Fields=MediaStreams`);
         return (result.Items[0]?.MediaStreams ?? [])
           .filter((s) => s.Type === "Audio")
-          .map((s) => ({ index: s.Index, language: s.Language ?? null, isDefault: !!s.IsDefault }));
+          .map((s) => ({
+            index: s.Index,
+            language: s.Language ?? null,
+            isDefault: !!s.IsDefault,
+            label: s.DisplayTitle || s.Language || `Track ${s.Index}`,
+          }));
       },
       { skipCacheIf: (tracks) => tracks.length === 0 }
     );
@@ -389,6 +396,10 @@ export async function getJellyfinSubtitleTracks(
       // "had English subtitles" that never appeared. The subtitle-ocr job on
       // mediabox turns those into .srt sidecars, which show up here as text.
       .filter((s) => s.Type === "Subtitle" && s.IsTextSubtitleStream !== false)
+      // English and Spanish only (Jake, 2026-09-29). Untagged tracks stay: they
+      // are almost always English -- The Wire's only subtitles carry no tag --
+      // and dropping them would leave those titles with none at all.
+      .filter((s) => isAllowedSubtitleLanguage(s.Language))
       .map((s) => ({
         index: s.Index,
         label: s.DisplayTitle || s.Language || `Track ${s.Index}`,

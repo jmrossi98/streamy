@@ -29,7 +29,7 @@ export async function GET(_request: Request, { params }: Props) {
 
   const itemId = await findJellyfinEpisodeItemId(showId, seasonNum, episodeNum);
   if (!itemId) {
-    return Response.json({ tracks: [], forceTranscode: false, defaultSubtitle: null });
+    return Response.json({ tracks: [], forceTranscode: false, defaultSubtitle: null, audioTracks: [], defaultAudio: null });
   }
 
   const [subtitles, codecForcesTranscode] = await Promise.all([
@@ -41,5 +41,7 @@ export async function GET(_request: Request, { params }: Props) {
     tracks: subtitles?.tracks ?? [],
     forceTranscode: codecForcesTranscode || language.needsTranscode,
     defaultSubtitle: language.defaultSubtitle,
+    audioTracks: language.audioTracks,
+    defaultAudio: language.defaultAudio,
   });
 }

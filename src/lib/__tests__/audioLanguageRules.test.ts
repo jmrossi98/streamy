@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultSubtitleIndex, languageCodes, planAudio, type AudioTrack } from "../audioLanguageRules";
+import { chooseAudio, defaultSubtitleIndex, isAllowedSubtitleLanguage, languageCodes, planAudio, type AudioTrack } from "../audioLanguageRules";
 
 const dualAudioDubDefault: AudioTrack[] = [
   { index: 1, language: "eng", isDefault: true },
@@ -101,5 +101,24 @@ describe("defaultSubtitleIndex", () => {
   it("returns null with no English subtitles", () => {
     expect(defaultSubtitleIndex([subs[2]], "jpn")).toBeNull();
     expect(defaultSubtitleIndex(null, "jpn")).toBeNull();
+  });
+});
+
+describe("isAllowedSubtitleLanguage", () => {
+  it("allows English, Spanish and untagged tracks only", () => {
+    for (const l of ["eng", "en", "spa", "es", "ENG", null, "", "und"]) expect(isAllowedSubtitleLanguage(l)).toBe(true);
+    for (const l of ["fre", "jpn", "deu", "por"]) expect(isAllowedSubtitleLanguage(l)).toBe(false);
+  });
+});
+
+describe("chooseAudio", () => {
+  const plan = { audioTracks: [{ index: 1 }, { index: 2 }], audioStreamIndex: 2 };
+  it("honours a real track the viewer picked", () => {
+    expect(chooseAudio(plan, "1")).toBe(1);
+  });
+  it("falls back to the plan for missing, bogus or unknown tracks", () => {
+    expect(chooseAudio(plan, null)).toBe(2);
+    expect(chooseAudio(plan, "abc")).toBe(2);
+    expect(chooseAudio(plan, "7")).toBe(2);
   });
 });

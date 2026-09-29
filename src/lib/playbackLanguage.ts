@@ -6,6 +6,7 @@
 import { getJellyfinAudioTracks, type JellyfinSubtitleTrack } from "./jellyfin";
 import { getOriginalLanguage } from "./tmdb";
 import { defaultSubtitleIndex, planAudio } from "./audioLanguageRules";
+export { chooseAudio } from "./audioLanguageRules";
 
 export type LanguagePlan = {
   /** AudioStreamIndex for the transcode, or null to leave the file's default. */
@@ -14,9 +15,19 @@ export type LanguagePlan = {
   needsTranscode: boolean;
   /** Subtitle track to switch on at start, or null for off. */
   defaultSubtitle: number | null;
+  /** Every audio track, for the player's audio menu. */
+  audioTracks: { index: number; label: string; isDefault: boolean }[];
+  /** The track playing at start: the chosen original-language one, else the file default. */
+  defaultAudio: number | null;
 };
 
-const NO_PLAN: LanguagePlan = { audioStreamIndex: null, needsTranscode: false, defaultSubtitle: null };
+const NO_PLAN: LanguagePlan = {
+  audioStreamIndex: null,
+  needsTranscode: false,
+  defaultSubtitle: null,
+  audioTracks: [],
+  defaultAudio: null,
+};
 
 export async function getLanguagePlan(
   itemId: string,
@@ -34,5 +45,8 @@ export async function getLanguagePlan(
     audioStreamIndex: plan.hasOriginal && plan.track ? plan.track.index : null,
     needsTranscode: plan.needsTranscode,
     defaultSubtitle: defaultSubtitleIndex(subtitles, plan.track?.language),
+    audioTracks: tracks.map((t) => ({ index: t.index, label: t.label ?? `Track ${t.index}`, isDefault: t.isDefault })),
+    defaultAudio: plan.track?.index ?? null,
   };
 }
+
