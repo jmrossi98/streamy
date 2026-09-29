@@ -11,7 +11,10 @@ import { Footer } from "@/components/Footer";
  * screen and put a second scrollbar on the page.
  */
 function isChromeOnlyRoute(pathname: string | null): boolean {
-  return /^\/admin\/chat\/?$/.test(pathname ?? "");
+  // The expanded assistant: one screen, navbar plus a chat that fills the rest.
+  // (/admin/chat left this list when it went back inside the admin layout
+  // with an explicit height of its own.)
+  return /^\/assistant\/?$/.test(pathname ?? "");
 }
 
 function isFullscreenRoute(pathname: string | null): boolean {

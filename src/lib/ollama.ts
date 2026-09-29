@@ -9,10 +9,14 @@
  *
  * Env:
  *   OLLAMA_URL    e.g. http://100.84.77.56:11434 ; the feature is off when unset
- *   OLLAMA_MODEL  defaults to the 3B build that fits in 4GB alongside Jellyfin
+ *   OLLAMA_MODEL  defaults to the 4B build that fits in 4GB alongside Jellyfin
  */
 
-export const DEFAULT_MODEL = "qwen2.5:3b-instruct-q5_K_M";
+// Qwen3-4B-Instruct-2507 since 2026-09-29: measured against the old Qwen2.5 3B
+// on a stack question it answered correctly where the 3B drifted, and with
+// flash attention + an 8-bit KV cache (mediabox-infra #133) it fits entirely
+// on the 1050 Ti beside the transcode reserve -- 3.6 s to first token.
+export const DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M";
 
 /** Generous: a 3B model at ~26 tok/s needs room for a long answer. */
 const REQUEST_TIMEOUT_MS = 120_000;
