@@ -22,8 +22,8 @@
 
 const PROBE_TIMEOUT_MS = 8_000;
 
-type Chunk = { id: string; repo: string; path: string; title: string; text: string };
-type DocsIndex = { generatedAt: string; chunks: Chunk[]; df: Record<string, number> };
+export type Chunk = { id: string; repo: string; path: string; title: string; text: string };
+export type DocsIndex = { generatedAt: string; chunks: Chunk[]; df: Record<string, number> };
 
 const STOP = new Set(
   ("the a an and or but if then than that this these those is are was were be been being to of in " +
@@ -32,7 +32,7 @@ const STOP = new Set(
     .split(" ")
 );
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9_]{2,}/g) ?? []).filter((t) => !STOP.has(t));
 }
 
@@ -113,17 +113,18 @@ export function searchDocs(index: DocsIndex, query: string, limit = 4): Hit[] {
 const MIN_SCORE = 2.0;
 const MAX_EXCERPT_CHARS = 1200;
 
-export function buildDocsContextBlock(hits: Hit[]): string | null {
+const DOCS_HEADER = [
+  "Excerpts from the admin's own documentation, retrieved for this question.",
+  "These are authoritative about this stack -- prefer them over your own",
+  "assumptions, and cite the file when you use one. If they do not answer the",
+  "question, say so rather than filling the gap.",
+];
+
+export function buildDocsContextBlock(hits: Hit[], header: string[] = DOCS_HEADER): string | null {
   const useful = hits.filter((h) => h.score >= MIN_SCORE);
   if (useful.length === 0) return null;
 
-  const lines = [
-    "Excerpts from the admin's own documentation, retrieved for this question.",
-    "These are authoritative about this stack -- prefer them over your own",
-    "assumptions, and cite the file when you use one. If they do not answer the",
-    "question, say so rather than filling the gap.",
-    "",
-  ];
+  const lines = [...header, ""];
   for (const h of useful) {
     lines.push(`--- ${h.chunk.repo}/${h.chunk.path} :: ${h.chunk.title}`);
     lines.push(h.chunk.text.slice(0, MAX_EXCERPT_CHARS));

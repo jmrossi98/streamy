@@ -1,3 +1,4 @@
+import { getVaultIndex, VAULT_CONTEXT_HEADER } from "@/lib/vaultIndex";
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
@@ -142,6 +143,19 @@ export async function POST(request: Request) {
     } catch (err) {
       // Answering without the docs beats failing the turn.
       console.error("[chat] docs retrieval failed:", err);
+    }
+  }
+
+  // The admin's Obsidian vault, retrieved the same way as the docs: notes on
+  // plans, the homelab, ideas -- things written down that no repo holds.
+  if (docsQuery && shouldSearch(docsQuery)) {
+    try {
+      const vault = await getVaultIndex();
+      const block = vault && buildDocsContextBlock(searchDocs(vault, docsQuery, 3), VAULT_CONTEXT_HEADER);
+      if (block) messages = withContext(messages, { role: "system", content: block });
+    } catch (err) {
+      // Answering without the notes beats failing the turn.
+      console.error("[chat] vault retrieval failed:", err);
     }
   }
 
