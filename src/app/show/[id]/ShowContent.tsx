@@ -12,6 +12,7 @@ import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { TVRow } from "@/components/TVRow";
+import { nextEpisode } from "@/lib/nextEpisodeRules";
 import {
   EpisodeDownloadButton,
   useSeasonStatuses,
@@ -30,6 +31,9 @@ type ShowContentProps = {
   resumeSeason: number;
   resumeEpisode: number;
   resumeEpisodeName: string;
+  /** The episode after the Play button's, for the player's next button. */
+  resumeNextHref: string | null;
+  resumeNextLabel: string | null;
   resumeProgressSeconds: number;
   hasVideo?: boolean;
   requestConfigured?: boolean;
@@ -76,6 +80,8 @@ export function ShowContent({
   resumeSeason,
   resumeEpisode,
   resumeEpisodeName,
+  resumeNextHref,
+  resumeNextLabel,
   resumeProgressSeconds,
   hasVideo = true,
   requestConfigured = false,
@@ -191,10 +197,10 @@ export function ShowContent({
       episodeNumber: resumeEpisode,
       episodeName: resumeEpisodeName,
       progressSeconds: resumeProgressSeconds,
-      nextHref: null,
-      nextLabel: null,
+      nextHref: resumeNextHref,
+      nextLabel: resumeNextLabel,
     });
-  }, [resumeSeason, resumeEpisode, resumeEpisodeName, resumeProgressSeconds, pathname, router]);
+  }, [resumeSeason, resumeEpisode, resumeEpisodeName, resumeProgressSeconds, resumeNextHref, resumeNextLabel, pathname, router]);
 
   const showRequestFlow = !hasVideo && requestConfigured;
   // Per-episode download controls are driven by Sonarr's live view of the
@@ -432,7 +438,9 @@ export function ShowContent({
                 ep.episodeNumber
               );
               const pct = progressPct(progressSeconds, ep.runtime);
-              const nextEp = index + 1 < season.episodes.length ? season.episodes[index + 1] : null;
+              const nextEp = nextEpisode(show.id, ep.seasonNumber, ep.episodeNumber, season.episodes, {
+                numberOfSeasons: show.numberOfSeasons,
+              });
               // An episode is only playable once Sonarr reports a file on
               // disk. When downloads aren't wired up at all, fall back to the
               // show-level flag so this doesn't disable playback for
@@ -447,12 +455,8 @@ export function ShowContent({
                   episodeNumber: ep.episodeNumber,
                   episodeName: ep.name,
                   progressSeconds,
-                  nextHref: nextEp
-                    ? `/show/${show.id}/episode/${nextEp.seasonNumber}/${nextEp.episodeNumber}`
-                    : null,
-                  nextLabel: nextEp
-                    ? `S${nextEp.seasonNumber} E${nextEp.episodeNumber} · ${nextEp.name}`
-                    : null,
+                  nextHref: nextEp?.href ?? null,
+                  nextLabel: nextEp?.label ?? null,
                 });
               };
               return (

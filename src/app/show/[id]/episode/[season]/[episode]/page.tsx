@@ -10,6 +10,7 @@ import {
 } from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { getLanguagePlan } from "@/lib/playbackLanguage";
+import { nextEpisode } from "@/lib/nextEpisodeRules";
 
 type Props = {
   params: Promise<{ id: string; season: string; episode: string }>;
@@ -65,19 +66,12 @@ export default async function EpisodeWatchPage({ params }: Props) {
     : null;
   const initialProgressSeconds = Math.max(progressRow?.progressSeconds ?? 0, jellyfinProgressSeconds ?? 0);
 
-  const currentIndex = season.episodes.findIndex((e) => e.episodeNumber === episodeNum);
-  let nextEpisodeHref: string | null = null;
-  let nextEpisodeLabel: string | null = null;
-
-  if (currentIndex >= 0 && currentIndex < season.episodes.length - 1) {
-    const next = season.episodes[currentIndex + 1];
-    nextEpisodeHref = `/show/${showId}/episode/${seasonNum}/${next.episodeNumber}`;
-    nextEpisodeLabel = `S${seasonNum} E${next.episodeNumber} · ${next.name}`;
-  } else if (nextSeason?.episodes.length) {
-    const first = nextSeason.episodes[0];
-    nextEpisodeHref = `/show/${showId}/episode/${seasonNum + 1}/${first.episodeNumber}`;
-    nextEpisodeLabel = `S${seasonNum + 1} E${first.episodeNumber} · ${first.name}`;
-  }
+  const next = nextEpisode(showId, seasonNum, episodeNum, season.episodes, {
+    numberOfSeasons: show.numberOfSeasons,
+    nextSeasonEpisodes: nextSeason?.episodes,
+  });
+  const nextEpisodeHref = next?.href ?? null;
+  const nextEpisodeLabel = next?.label ?? null;
 
   const backHref = `/show/${showId}?season=${seasonNum}`;
 
