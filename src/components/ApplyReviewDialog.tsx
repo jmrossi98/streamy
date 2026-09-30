@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Answer } from "@/lib/applyAnswerRules";
+import { Button, ButtonLink, Select, TextArea } from "@/components/ui";
 
 type Packet = {
   id: string;
@@ -148,10 +149,11 @@ export function ApplyReviewDialog({
                             {a.required && <span className="text-red-300"> *</span>}
                           </p>
                           {(a.kind === "select" || a.kind === "multiselect") && a.options?.length ? (
-                            <select
+                            <Select
+                              fieldSize="sm"
                               value={edits[a.key] ?? (Array.isArray(a.value) ? a.value[0] : typeof a.value === "string" ? a.value : "")}
                               onChange={(e) => setEdits((p) => ({ ...p, [a.key]: e.target.value }))}
-                              className="mt-1 w-full rounded border border-white/15 bg-black/40 px-2 py-1 text-xs"
+                              className="mt-1"
                             >
                               <option value="">—</option>
                               {a.options.map((o) => (
@@ -159,24 +161,26 @@ export function ApplyReviewDialog({
                                   {o.label}
                                 </option>
                               ))}
-                            </select>
+                            </Select>
                           ) : a.kind === "text" || a.kind === "textarea" || a.kind === "location" || (a.kind === "file" && a.source === "ai") ? (
-                            <textarea
+                            <TextArea
+                              fieldSize="sm"
                               value={edits[a.key] ?? (typeof a.value === "string" ? a.value : "")}
                               onChange={(e) => setEdits((p) => ({ ...p, [a.key]: e.target.value }))}
                               rows={a.kind === "textarea" || a.kind === "file" ? 5 : 1}
-                              className="mt-1 w-full rounded border border-white/15 bg-black/40 px-2 py-1 text-xs"
+                              className="mt-1"
                             />
                           ) : a.kind === "boolean" ? (
-                            <select
+                            <Select
+                              fieldSize="sm"
                               value={edits[a.key] ?? (a.value === true ? "true" : a.value === false ? "false" : "")}
                               onChange={(e) => setEdits((p) => ({ ...p, [a.key]: e.target.value }))}
-                              className="mt-1 rounded border border-white/15 bg-black/40 px-2 py-1 text-xs"
+                              className="mt-1 w-auto"
                             >
                               <option value="">—</option>
                               <option value="true">Yes</option>
                               <option value="false">No</option>
-                            </select>
+                            </Select>
                           ) : (
                             <p className="mt-1 text-xs text-white/80">{shown(a) || <span className="text-white/35">—</span>}</p>
                           )}
@@ -190,26 +194,17 @@ export function ApplyReviewDialog({
 
             <div className="mt-5 flex flex-wrap items-center gap-2">
               {Object.keys(edits).length > 0 && (
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void save()}
-                  className="rounded border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
-                >
+                <Button disabled={saving} onClick={() => void save()}>
                   {saving ? "Saving…" : "Save edits"}
-                </button>
+                </Button>
               )}
               {packet.resumeVersionId && (
-                <a
-                  href={`/api/admin/jobs/resume/${packet.resumeVersionId}/pdf`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded border border-white/20 px-3 py-1.5 hover:bg-white/10"
-                >
+                <ButtonLink href={`/api/admin/jobs/resume/${packet.resumeVersionId}/pdf`} target="_blank" rel="noreferrer">
                   Resume PDF
-                </a>
+                </ButtonLink>
               )}
-              <a
+              <ButtonLink
+                variant="primary"
                 href={packet.applyUrl}
                 target="_blank"
                 rel="noreferrer"
@@ -220,21 +215,21 @@ export function ApplyReviewDialog({
                     if (await save()) window.open(packet.applyUrl, "_blank", "noopener");
                   }
                 }}
-                className="rounded bg-netflix-red px-3 py-1.5 font-medium text-white hover:bg-netflix-red/90"
               >
                 Open application ↗
-              </a>
+              </ButtonLink>
               {packet.status === "submitted" ? (
                 <span className="text-xs text-emerald-300">Applied</span>
               ) : (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => void markApplied()}
-                  className="ml-auto text-xs text-white/50 hover:text-white"
+                  className="ml-auto"
                   title="The userscript marks this automatically when it sees the confirmation page"
                 >
                   Mark as applied
-                </button>
+                </Button>
               )}
             </div>
           </>

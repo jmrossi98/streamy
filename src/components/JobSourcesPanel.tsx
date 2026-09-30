@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge, Chip, type BadgeTone } from "@/components/ui";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LEVEL_LABELS, LEVEL_ORDER } from "@/lib/jobFilters";
@@ -20,11 +21,11 @@ export type JobSourceRow = {
 
 export type ScrapedSiteRow = { company: string; count: number | null; health: SourceHealth };
 
-const HEALTH_BADGE: Record<SourceHealthStatus, { label: string; className: string } | null> = {
-  failing: { label: "Can't read", className: "bg-red-500/20 text-red-300" },
-  stale: { label: "Stale", className: "bg-amber-500/20 text-amber-300" },
-  empty: { label: "No roles", className: "bg-amber-500/15 text-amber-200/80" },
-  unchecked: { label: "Not polled yet", className: "bg-white/10 text-white/50" },
+const HEALTH_BADGE: Record<SourceHealthStatus, { label: string; tone: BadgeTone } | null> = {
+  failing: { label: "Can't read", tone: "danger" },
+  stale: { label: "Stale", tone: "warning" },
+  empty: { label: "No roles", tone: "warning" },
+  unchecked: { label: "Not polled yet", tone: "neutral" },
   ok: null,
   off: null,
 };
@@ -33,9 +34,9 @@ function HealthBadge({ health }: { health: SourceHealth }) {
   const badge = HEALTH_BADGE[health.status];
   if (!badge) return <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/70" title={health.detail} />;
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.className}`} title={health.detail}>
+    <Badge tone={badge.tone} title={health.detail}>
       {badge.label}
-    </span>
+    </Badge>
   );
 }
 
@@ -156,19 +157,9 @@ export function JobSourcesPanel({
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
         <span className="text-white/40">Email alerts for</span>
         {LEVEL_ORDER.map((level) => (
-          <button
-            key={level}
-            type="button"
-            onClick={() => void toggleAlertLevel(level)}
-            aria-pressed={alertLevels.has(level)}
-            className={`rounded border px-2 py-0.5 transition-colors ${
-              alertLevels.has(level)
-                ? "border-white/40 bg-white/15 text-white"
-                : "border-white/15 text-white/55 hover:bg-white/10"
-            }`}
-          >
+          <Chip key={level} size="xs" active={alertLevels.has(level)} onClick={() => void toggleAlertLevel(level)}>
             {LEVEL_LABELS[level]}
-          </button>
+          </Chip>
         ))}
         {alertLevels.size === 0 && <span className="text-amber-300/80">no alerts will be sent</span>}
       </div>

@@ -1,4 +1,4 @@
-import { PanelBoundary } from "@/components/PanelBoundary";
+import { AdminSection } from "@/components/ui";
 import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { JobSourcesPanel } from "@/components/JobSourcesPanel";
 import { getJobPostings, isJobBoardConfigured, jobSources, scrapedSiteReport } from "@/lib/jobPostings";
@@ -53,81 +53,61 @@ export default async function AdminJobsPage() {
 
   return (
       <div className="space-y-10">
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Job listings</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PanelBoundary name="Job listings">
-            <JobListingsPanel
-              configured={configured}
-              listings={jobListings.map((job) => ({
-                id: job.id,
-                company: job.company,
-                title: job.title,
-                location: job.location,
-                url: job.url,
-                metros: job.metros,
-                remote: job.remote,
-                category: job.category,
-                level: job.level,
-                opened: job.openedAt !== null,
-                tag: tagByCompany.get(job.company) ?? null,
-                postedAt: job.postedAt?.toISOString() ?? null,
-                firstSeen: job.firstSeen.toISOString(),
-                application: applicationByPosting.get(job.id) ?? null,
-              }))}
-            />
-          </PanelBoundary>
-        </div>
-      </section>
+      <AdminSection title="Job listings">
+        <JobListingsPanel
+          configured={configured}
+          listings={jobListings.map((job) => ({
+            id: job.id,
+            company: job.company,
+            title: job.title,
+            location: job.location,
+            url: job.url,
+            metros: job.metros,
+            remote: job.remote,
+            category: job.category,
+            level: job.level,
+            opened: job.openedAt !== null,
+            tag: tagByCompany.get(job.company) ?? null,
+            postedAt: job.postedAt?.toISOString() ?? null,
+            firstSeen: job.firstSeen.toISOString(),
+            application: applicationByPosting.get(job.id) ?? null,
+          }))}
+        />
+      </AdminSection>
 
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Applicant profile</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PanelBoundary name="Applicant profile">
-            <ApplicantProfilePanel initial={profile} />
-          </PanelBoundary>
-        </div>
-      </section>
+      <AdminSection title="Applicant profile">
+        <ApplicantProfilePanel initial={profile} />
+      </AdminSection>
 
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Tailored resumes</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PanelBoundary name="Tailored resumes">
-            <ResumeVersionsPanel
-              versions={resumes.map((r) => ({
-                id: r.id,
-                company: r.company,
-                title: r.title,
-                model: r.model,
-                createdAt: r.createdAt.toISOString(),
-              }))}
-            />
-          </PanelBoundary>
-        </div>
-      </section>
+      <AdminSection title="Tailored resumes">
+        <ResumeVersionsPanel
+          versions={resumes.map((r) => ({
+            id: r.id,
+            company: r.company,
+            title: r.title,
+            model: r.model,
+            createdAt: r.createdAt.toISOString(),
+          }))}
+        />
+      </AdminSection>
 
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Boards watched</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PanelBoundary name="Boards watched">
-            <JobSourcesPanel
-              alertLevels={alertLevels}
-              scrapedSites={scrapedSites}
-              sources={sources.map((src) => ({
-                id: src.id,
-                provider: src.provider,
-                slug: src.slug,
-                company: src.company,
-                enabled: src.enabled,
-                notify: src.notify,
-                tag: src.tag,
-                openRoles: openByCompany.get(src.company) ?? 0,
-                health: sourceHealth(src, checkedAt),
-              }))}
-            />
-          </PanelBoundary>
-        </div>
-      </section>
+      <AdminSection title="Boards watched">
+        <JobSourcesPanel
+          alertLevels={alertLevels}
+          scrapedSites={scrapedSites}
+          sources={sources.map((src) => ({
+            id: src.id,
+            provider: src.provider,
+            slug: src.slug,
+            company: src.company,
+            enabled: src.enabled,
+            notify: src.notify,
+            tag: src.tag,
+            openRoles: openByCompany.get(src.company) ?? 0,
+            health: sourceHealth(src, checkedAt),
+          }))}
+        />
+      </AdminSection>
       </div>
   );
 }

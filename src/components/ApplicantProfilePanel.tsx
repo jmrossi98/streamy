@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ApplicantProfile } from "@/lib/applyAnswerRules";
+import { Button, ButtonLink, Field, Select, TextArea, TextInput } from "@/components/ui";
 
 type TextKey = Exclude<keyof ApplicantProfile, "declineDemographics">;
 
@@ -54,44 +55,27 @@ export function ApplicantProfilePanel({ initial }: { initial: ApplicantProfile }
     }
   }
 
-  const input = "w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-sm text-white";
-
   return (
     <form onSubmit={save} className="space-y-4 text-sm">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {FIELDS.map((f) => (
-          <label key={f.key} className="block">
-            <span className="mb-1 block text-xs text-white/50">{f.label}</span>
-            <input
-              value={profile[f.key]}
-              placeholder={f.placeholder}
-              onChange={(e) => set(f.key, e.target.value)}
-              className={input}
-            />
-          </label>
+          <Field key={f.key} label={f.label}>
+            <TextInput value={profile[f.key]} placeholder={f.placeholder} onChange={(e) => set(f.key, e.target.value)} />
+          </Field>
         ))}
         {YES_NO.map((f) => (
-          <label key={f.key} className="block">
-            <span className="mb-1 block text-xs text-white/50">{f.label}</span>
-            <select value={profile[f.key]} onChange={(e) => set(f.key, e.target.value)} className={input}>
+          <Field key={f.key} label={f.label}>
+            <Select value={profile[f.key]} onChange={(e) => set(f.key, e.target.value)}>
               <option value="">Ask each time</option>
               <option value="yes">Yes</option>
               <option value="no">No</option>
-            </select>
-          </label>
+            </Select>
+          </Field>
         ))}
       </div>
-      <label className="block">
-        <span className="mb-1 block text-xs text-white/50">
-          Other true facts answers may need (degree, clearance, languages, years with a stack...)
-        </span>
-        <textarea
-          value={profile.extraFacts}
-          onChange={(e) => set("extraFacts", e.target.value)}
-          rows={3}
-          className={input}
-        />
-      </label>
+      <Field label="Other true facts answers may need (degree, clearance, languages, years with a stack...)">
+        <TextArea value={profile.extraFacts} onChange={(e) => set("extraFacts", e.target.value)} rows={3} />
+      </Field>
       <label className="flex items-center gap-2 text-white/70">
         <input
           type="checkbox"
@@ -101,17 +85,17 @@ export function ApplicantProfilePanel({ initial }: { initial: ApplicantProfile }
         Decline voluntary demographic questions (gender, race, veteran, disability)
       </label>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" className="rounded bg-netflix-red px-3 py-1.5 font-medium text-white hover:bg-netflix-red/90">
+        <Button type="submit" variant="primary">
           Save profile
-        </button>
+        </Button>
         {status && <span className="text-xs text-white/50">{status}</span>}
-        <a
+        <ButtonLink
           href="/api/admin/jobs/apply/streamy-apply.user.js"
-          className="ml-auto rounded border border-white/20 px-3 py-1.5 text-white/80 hover:bg-white/10"
+          className="ml-auto"
           title="Needs Tampermonkey or Violentmonkey. Fills Greenhouse and Ashby applications from the prepared packet; never submits."
         >
           Install apply userscript
-        </a>
+        </ButtonLink>
       </div>
       <p className="text-xs text-white/40">
         How it works: <b>apply</b> on a listing tailors the resume and answers every question on that job&rsquo;s form.

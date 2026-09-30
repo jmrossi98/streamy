@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/db";
+import { AdminSection } from "@/components/ui";
 import { SpendPanel } from "@/components/SpendPanel";
 import { computeTotals, daysUntil } from "@/lib/spendRules";
 import { awsSpend, openRouterCredits } from "@/lib/spend";
 import { getAutomaticRenewals } from "@/lib/renewals";
-import { PanelBoundary } from "@/components/PanelBoundary";
 
 export default async function AdminSpendPage() {
   const [subscriptions, aws, openRouter, autoRenewals] = await Promise.all([
@@ -49,22 +49,17 @@ export default async function AdminSpendPage() {
 
   return (
       <div className="space-y-10">
-      <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Spend</h2>
-        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
-          <PanelBoundary name="Spend">
-            <div className="space-y-4">
-              <SpendPanel
-                rows={spendRows}
-                totals={spendTotals}
-                aws={aws}
-                openRouter={openRouter}
-                autoRenewals={autoRenewals}
-              />
-            </div>
-          </PanelBoundary>
+      <AdminSection title="Spend">
+        <div className="space-y-4">
+          <SpendPanel
+            rows={spendRows}
+            totals={spendTotals}
+            aws={aws}
+            openRouter={openRouter}
+            autoRenewals={autoRenewals}
+          />
         </div>
-      </section>
+      </AdminSection>
       </div>
   );
 }
