@@ -6,6 +6,7 @@ import { isJellyfinShowAvailable } from "@/lib/jellyfin";
 import { isSonarrConfigured, getSonarrSeasonStatuses, getEarliestDownloadedEpisode } from "@/lib/sonarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { ShowContent } from "./ShowContent";
+import { nextEpisode } from "@/lib/nextEpisodeRules";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -122,6 +123,21 @@ export default async function ShowPage({ params, searchParams }: Props) {
 
   const initialSeasonData = seasonByNum.get(initialSeasonNum) ?? season1;
 
+  // The Play button's next episode. The following season is only fetched when
+  // the resume point is the last episode of its season.
+  const resumeSeasonEpisodes = seasonByNum.get(resumeSeason)?.episodes ?? [];
+  const isLastOfSeason =
+    resumeSeasonEpisodes.length > 0 &&
+    resumeSeasonEpisodes[resumeSeasonEpisodes.length - 1].episodeNumber === resumeEpisode;
+  const followingSeason =
+    isLastOfSeason && resumeSeason >= 1 && resumeSeason < show.numberOfSeasons
+      ? await getSeason(id, resumeSeason + 1).catch(() => null)
+      : null;
+  const resumeNext = nextEpisode(id, resumeSeason, resumeEpisode, resumeSeasonEpisodes, {
+    numberOfSeasons: show.numberOfSeasons,
+    nextSeasonEpisodes: followingSeason?.episodes,
+  });
+
   return (
     <ShowContent
       show={show}
@@ -136,6 +152,8 @@ export default async function ShowPage({ params, searchParams }: Props) {
       resumeEpisode={resumeEpisode}
       resumeEpisodeName={resumeEpisodeName ?? ""}
       resumeProgressSeconds={resumeProgressSeconds}
+      resumeNextHref={resumeNext?.href ?? null}
+      resumeNextLabel={resumeNext?.label ?? null}
       hasVideo={hasVideo}
       requestConfigured={isSonarrConfigured()}
       initialRequestStatus={requestStatus.status}
