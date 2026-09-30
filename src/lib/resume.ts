@@ -11,7 +11,7 @@ import { isVaultConfigured, listVaultNotes, readVaultNote } from "./vault";
 /** The vault folder holding the master resume and every experience note. */
 export const RESUME_VAULT_DIR = "Resume";
 
-async function listingText(url: string): Promise<string> {
+export async function listingText(url: string): Promise<string> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(15_000),
