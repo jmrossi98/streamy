@@ -6,6 +6,7 @@
  * ID matching, never fuzzy title search.
  */
 
+import { earliestDownloaded } from "./playStartRules";
 import {
   countBlockingSearches,
   planSearches,
@@ -1120,6 +1121,23 @@ export async function getSonarrSeasonEpisodes(
   } catch (err) {
     console.error(`[sonarr] getSonarrSeasonEpisodes failed for ${tmdbId} S${seasonNumber}:`, err);
     return [];
+  }
+}
+
+/** The chronologically earliest downloaded episode of a show, if any. */
+export async function getEarliestDownloadedEpisode(
+  tmdbId: string
+): Promise<{ seasonNumber: number; episodeNumber: number } | null> {
+  if (!isSonarrConfigured()) return null;
+  try {
+    const { tvdbId } = await getTvExternalIds(tmdbId);
+    if (!tvdbId) return null;
+    const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
+    if (!series[0]) return null;
+    return earliestDownloaded(await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${series[0].id}`));
+  } catch (err) {
+    console.error(`[sonarr] getEarliestDownloadedEpisode failed for ${tmdbId}:`, err);
+    return null;
   }
 }
 

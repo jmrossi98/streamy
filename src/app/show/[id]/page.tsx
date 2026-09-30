@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getShowById, getSeason, getSimilarTV } from "@/lib/tmdb";
 import { isJellyfinShowAvailable } from "@/lib/jellyfin";
-import { isSonarrConfigured, getSonarrSeasonStatuses } from "@/lib/sonarr";
+import { isSonarrConfigured, getSonarrSeasonStatuses, getEarliestDownloadedEpisode } from "@/lib/sonarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
 import { ShowContent } from "./ShowContent";
 
@@ -42,6 +42,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
     requestStatus,
     initialEpisodeStatuses,
     similar,
+    earliestOnDisk,
   ] = await Promise.all([
       getSeason(id, 1),
       initialSeasonNum === 1 ? null : getSeason(id, initialSeasonNum),
@@ -71,6 +72,9 @@ export default async function ShowPage({ params, searchParams }: Props) {
       // until the client's first poll lands.
       getSonarrSeasonStatuses(id, initialSeasonNum),
       getSimilarTV(id),
+      // Where Play starts with no progress: the first episode on disk, so a
+      // show with only its latest season downloaded doesn't offer S1E1.
+      getEarliestDownloadedEpisode(id),
     ]);
   if (!season1) notFound();
 
@@ -80,6 +84,9 @@ export default async function ShowPage({ params, searchParams }: Props) {
   if (latestProgress) {
     resumeSeason = latestProgress.seasonNumber;
     resumeEpisode = latestProgress.episodeNumber;
+  } else if (earliestOnDisk) {
+    resumeSeason = earliestOnDisk.seasonNumber;
+    resumeEpisode = earliestOnDisk.episodeNumber;
   }
 
   const seasonByNum = new Map<number, Awaited<ReturnType<typeof getSeason>>>();
@@ -90,7 +97,7 @@ export default async function ShowPage({ params, searchParams }: Props) {
     if (resumeSeasonData) seasonByNum.set(resumeSeason, resumeSeasonData);
   }
 
-  if (latestProgress) {
+  if (latestProgress || earliestOnDisk) {
     if (resumeSeason === 1) {
       resumeEpisodeName = season1.episodes.find((e) => e.episodeNumber === resumeEpisode)?.name;
     } else {
