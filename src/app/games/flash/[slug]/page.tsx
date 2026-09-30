@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { getFlashGame } from "@/lib/flashGames";
 import { FlashPlayer } from "@/components/FlashPlayer";
+import { localFileVersion } from "@/lib/flashStorage";
 import { andkonGameUrl } from "@/lib/andkon";
 import { findCatalogAndkonPath } from "@/lib/flashCatalog";
 import { FlashImportPanel } from "@/components/FlashImportPanel";
@@ -36,6 +37,8 @@ export default async function FlashGamePage({
   // Where the game came from on andkon, if anywhere -- recorded on import, or
   // looked up in the catalogue for rows added by a library sync.
   const andkonPath = game.andkonPath ?? findCatalogAndkonPath(game.flashpointId, game.title);
+  // Changes when the file is replaced, so the immutable-cached SWF refetches.
+  const fileVersion = game.fileName ? await localFileVersion(game.fileName) : null;
 
   const admin = await requireAdmin(session);
   const userId = await getValidSessionUserId(session);
@@ -86,7 +89,7 @@ export default async function FlashGamePage({
 
         {game.playable && game.fileName ? (
           <FlashPlayer
-            src={`/api/flash/${encodeURIComponent(game.fileName)}`}
+            src={`/api/flash/${encodeURIComponent(game.fileName)}${fileVersion ? `?v=${fileVersion}` : ""}`}
             title={game.title}
             slug={game.slug}
             width={game.width}

@@ -45,6 +45,22 @@ export async function localFileExists(fileName: string): Promise<boolean> {
   }
 }
 
+/**
+ * A version tag for a local file -- its modification time -- so the player URL
+ * changes when a file is replaced in place (e.g. a patched sitelock). The
+ * route serves SWFs as immutable, so without this a browser keeps the old
+ * bytes for a week. Null when the file is not local.
+ */
+export async function localFileVersion(fileName: string): Promise<string | null> {
+  const path = pathFor(fileName);
+  if (!path) return null;
+  try {
+    return Math.floor((await stat(path)).mtimeMs).toString(36);
+  } catch {
+    return null;
+  }
+}
+
 export async function readLocalFile(fileName: string): Promise<Buffer | null> {
   const path = pathFor(fileName);
   if (!path) return null;
