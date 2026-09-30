@@ -939,3 +939,31 @@ model ResumeVersion {
   @@index([createdAt])
   @@index([postingId])
 }
+
+/// An application prepared for one job: the form's questions with answers,
+/// and the resume to attach. Filled into the real form by the userscript,
+/// submitted by a person (the providers require a CAPTCHA).
+model JobApplication {
+  id              String    @id @default(cuid())
+  /// The JobPosting it was prepared for. Not a relation, same reason as
+  /// ResumeVersion: postings are pruned, the record of applying is not.
+  postingId       String
+  company         String
+  title           String
+  /// "greenhouse" | "ashby", plus the board slug and job id -- how the
+  /// userscript finds this packet from the page it is on.
+  provider        String
+  boardSlug       String
+  jobId           String
+  applyUrl        String
+  resumeVersionId String?
+  /// Answer[] as JSON (lib/applyAnswerRules.ts).
+  answers         String
+  /// "ready" | "submitted".
+  status          String    @default("ready")
+  createdAt       DateTime  @default(now())
+  submittedAt     DateTime?
+
+  @@index([provider, boardSlug, jobId])
+  @@index([postingId])
+}

@@ -6,20 +6,29 @@ import { HEALTH_RANK, scrapedSiteHealth, sourceHealth } from "@/lib/jobSourceHea
 import { getJobAlertLevels } from "@/lib/appSettings";
 import { listResumeVersions } from "@/lib/resume";
 import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
+import { ApplicantProfilePanel } from "@/components/ApplicantProfilePanel";
+import { getApplicantProfile } from "@/lib/applyPacket";
+import { prisma } from "@/lib/db";
 
 export default async function AdminJobsPage() {
   // Above the whole matched set, not a round number: filtering happens in the
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured, alertLevels, resumes, scrapeReport] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels, resumes, scrapeReport, profile, applications] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
     getJobAlertLevels(),
     listResumeVersions().catch(() => []),
     scrapedSiteReport(),
+    getApplicantProfile(),
+    prisma.jobApplication
+      .findMany({ orderBy: { createdAt: "asc" }, select: { id: true, postingId: true, status: true } })
+      .catch(() => []),
   ]);
+  // Newest wins: ordered oldest first, so later rows overwrite.
+  const applicationByPosting = new Map(applications.map((a) => [a.postingId, { id: a.id, status: a.status }]));
   const checkedAt = new Date();
   const scrapedSites = scrapeReport.sites
     .map((site) => ({
@@ -64,8 +73,18 @@ export default async function AdminJobsPage() {
                 tag: tagByCompany.get(job.company) ?? null,
                 postedAt: job.postedAt?.toISOString() ?? null,
                 firstSeen: job.firstSeen.toISOString(),
+                application: applicationByPosting.get(job.id) ?? null,
               }))}
             />
+          </PanelBoundary>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold text-white mb-4">Applicant profile</h2>
+        <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
+          <PanelBoundary name="Applicant profile">
+            <ApplicantProfilePanel initial={profile} />
           </PanelBoundary>
         </div>
       </section>

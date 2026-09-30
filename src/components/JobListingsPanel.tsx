@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ApplyReviewDialog } from "@/components/ApplyReviewDialog";
 import {
   CATEGORY_LABELS,
   LEVEL_LABELS,
@@ -57,7 +58,12 @@ export type JobListingRow = {
   /** When the provider says it was posted, when it says at all. */
   postedAt: string | null;
   firstSeen: string;
+  /** The newest prepared application for this listing, if any. */
+  application: { id: string; status: string } | null;
 };
+
+/** Auto-apply covers the boards whose forms can be read ahead of time. */
+const canAutoApply = (id: string) => /^(greenhouse|ashby):/.test(id);
 
 const METRO_LABELS: Record<string, string> = {
   nyc: "New York",
@@ -193,6 +199,30 @@ export function JobListingsPanel({
   const [openedNow, setOpenedNow] = useState<Set<string>>(new Set());
   /** Tailored-resume state per listing: working, the new version, or why it failed. */
   const [tailoring, setTailoring] = useState<Record<string, "busy" | { id: string } | { error: string }>>({});
+
+  /** Auto-apply per listing: preparing, the packet to review, or why it failed. */
+  const [applying, setApplying] = useState<Record<string, "busy" | { id: string; status: string } | { error: string }>>({});
+  const [reviewing, setReviewing] = useState<string | null>(null);
+
+  async function prepareApplication(id: string) {
+    setApplying((prev) => ({ ...prev, [id]: "busy" }));
+    try {
+      const res = await fetch("/api/admin/jobs/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postingId: id }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+      if (res.ok && data.id) {
+        setApplying((prev) => ({ ...prev, [id]: { id: data.id!, status: "ready" } }));
+        setReviewing(data.id);
+      } else {
+        setApplying((prev) => ({ ...prev, [id]: { error: data.error ?? `Failed (HTTP ${res.status})` } }));
+      }
+    } catch {
+      setApplying((prev) => ({ ...prev, [id]: { error: "Network error" } }));
+    }
+  }
 
   async function tailorResume(id: string) {
     setTailoring((prev) => ({ ...prev, [id]: "busy" }));
@@ -536,6 +566,41 @@ export function JobListingsPanel({
                       </button>
                     );
                   })()}
+                  {canAutoApply(listing.id) &&
+                    (() => {
+                      const a = applying[listing.id] ?? listing.application;
+                      if (a === "busy") return <span className="text-white/50">preparing application…</span>;
+                      if (a && "id" in a)
+                        return a.status === "submitted" ? (
+                          <button
+                            type="button"
+                            onClick={() => setReviewing(a.id)}
+                            className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-emerald-300 hover:underline"
+                          >
+                            applied
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setReviewing(a.id)}
+                            className="rounded bg-sky-500/20 px-1.5 py-0.5 text-sky-300 hover:underline"
+                          >
+                            review application
+                          </button>
+                        );
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => void prepareApplication(listing.id)}
+                          title={a && "error" in a ? a.error : "Prepare the application: tailored resume plus an answer for every question on the form"}
+                          className={`rounded border px-1.5 py-0.5 hover:bg-white/10 ${
+                            a && "error" in a ? "border-red-400/40 text-red-300" : "border-sky-400/30 text-sky-300/80"
+                          }`}
+                        >
+                          {a && "error" in a ? "retry apply" : "apply"}
+                        </button>
+                      );
+                    })()}
                   {isOpened(listing) && <span className="text-white/25">explored</span>}
                   {/* The provider's own date when there is one, ours when
                       there is not -- and said out loud, because "posted 3d
@@ -581,6 +646,15 @@ export function JobListingsPanel({
             </li>
           ))}
         </ul>
+      )}
+      {reviewing && (
+        <ApplyReviewDialog
+          id={reviewing}
+          onClose={() => setReviewing(null)}
+          onSubmitted={(postingId) =>
+            setApplying((prev) => ({ ...prev, [postingId]: { id: reviewing, status: "submitted" } }))
+          }
+        />
       )}
     </div>
   );
