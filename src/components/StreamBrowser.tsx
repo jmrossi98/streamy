@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Chip } from "@/components/ui";
 import { classifyChannel } from "@/lib/liveTv";
 import { looksLikeEventFeed } from "@/lib/liveTimeline";
 
@@ -227,23 +228,17 @@ export function StreamBrowser() {
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <Chip
+          active={networksOnly}
           onClick={() => {
             const next = !networksOnly;
             setNetworksOnly(next);
             setPage(1);
             void load(query, 1, next, category, provider);
           }}
-          className={`rounded-full px-3 py-1 text-xs transition-colors ${
-            networksOnly
-              ? "bg-white font-semibold text-netflix-black"
-              : "bg-white/10 text-white/70 hover:bg-white/20"
-          }`}
-          aria-pressed={networksOnly}
         >
           Networks only
-        </button>
+        </Chip>
       </div>
 
       {/* Counts are across everything that matched, not the page. They used
@@ -416,16 +411,8 @@ function CategoryChip({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-3 py-1 text-xs transition-colors ${
-        active
-          ? "bg-white text-netflix-black font-semibold"
-          : "bg-white/10 text-white/70 hover:bg-white/20"
-      }`}
-    >
+    <Chip active={active} onClick={onClick}>
       {label}
-    </button>
+    </Chip>
   );
 }

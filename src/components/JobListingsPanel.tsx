@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApplyReviewDialog } from "@/components/ApplyReviewDialog";
+import { Chip } from "@/components/ui";
 import {
   CATEGORY_LABELS,
   LEVEL_LABELS,
@@ -125,31 +126,13 @@ function FilterRow({
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <span className="w-14 shrink-0 text-white/30">{label}</span>
       <div className="flex flex-wrap gap-1">
-        <button
-          type="button"
-          onClick={onClear}
-          className={`rounded border px-2 py-0.5 transition-colors ${
-            selected.size === 0
-              ? "border-white/40 bg-white/15 text-white"
-              : "border-white/15 text-white/55 hover:bg-white/10"
-          }`}
-        >
+        <Chip size="xs" active={selected.size === 0} onClick={onClear}>
           {anyLabel}
-        </button>
+        </Chip>
         {options.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            onClick={() => onToggle(option.key)}
-            aria-pressed={selected.has(option.key)}
-            className={`rounded border px-2 py-0.5 transition-colors ${
-              selected.has(option.key)
-                ? "border-white/40 bg-white/15 text-white"
-                : "border-white/15 text-white/55 hover:bg-white/10"
-            }`}
-          >
+          <Chip key={option.key} size="xs" active={selected.has(option.key)} onClick={() => onToggle(option.key)}>
             {option.label}
-          </button>
+          </Chip>
         ))}
       </div>
     </div>

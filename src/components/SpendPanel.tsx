@@ -235,7 +235,7 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
               placeholder="Cost (0 for metered or free)"
               className={INPUT_CLASS}
             />
-            <select name="cadence" defaultValue="monthly" className={INPUT_CLASS}>
+            <select name="cadence" defaultValue="monthly" className={`streamy-select ${INPUT_CLASS}`}>
               {CADENCES.map((c) => (
                 <option key={c} value={c}>
                   {c}
