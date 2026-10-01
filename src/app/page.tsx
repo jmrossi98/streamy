@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { pullJellyfinProgressForPage } from "@/lib/progressSync";
 import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
 import { HomeFeedHeader } from "@/components/HomeFeedHeader";
@@ -27,6 +28,8 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   unstable_noStore();
   const session = await getSession();
+  // Roku/Jellyfin progress into Streamy's rows before anything reads them.
+  await pullJellyfinProgressForPage(session);
   if (!session?.user?.id) {
     redirect("/login");
   }

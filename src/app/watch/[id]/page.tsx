@@ -1,5 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { pullJellyfinProgressForPage } from "@/lib/progressSync";
 import { findJellyfinMovieItemId } from "@/lib/jellyfin";
 import { isRadarrConfigured } from "@/lib/radarr";
 import { resolveMediaRequestStatus } from "@/lib/mediaRequests";
@@ -11,6 +12,8 @@ type Props = { params: Promise<{ id: string }> };
 export default async function WatchPage({ params }: Props) {
   const { id } = await params;
   const session = await getSession();
+  // Roku/Jellyfin progress into Streamy's rows before anything reads them.
+  await pullJellyfinProgressForPage(session);
   const [watchlistItem, progressRow, jellyfinItemId, requestStatus, similar] = await Promise.all([
     session?.user?.id
       ? prisma.watchlistItem.findUnique({

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { pullJellyfinProgressForPage } from "@/lib/progressSync";
 import { getShowById, getSeason, getSimilarTV } from "@/lib/tmdb";
 import { isJellyfinShowAvailable } from "@/lib/jellyfin";
 import { isSonarrConfigured, getSonarrSeasonStatuses, getEarliestDownloadedEpisode } from "@/lib/sonarr";
@@ -26,6 +27,8 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const requestedSeason = Number.isFinite(parsedSeason) ? parsedSeason : 1;
 
   const session = await getSession();
+  // Roku/Jellyfin progress into Streamy's rows before anything reads them.
+  await pullJellyfinProgressForPage(session);
   const show = await getShowById(id);
   if (!show) notFound();
 

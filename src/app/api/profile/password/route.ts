@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { syncJellyfinAccount } from "@/lib/jellyfinAccounts";
 import bcrypt from "bcryptjs";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -96,6 +97,8 @@ export async function POST(request: Request) {
       passwordChangedAt: new Date(),
     },
   });
+  // Same password on their Jellyfin account (the Roku). Never blocks this.
+  void syncJellyfinAccount(user.id, user.name, newPassword);
 
   return NextResponse.json({
     ok: true,

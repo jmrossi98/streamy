@@ -487,45 +487,131 @@ export async function stopJellyfinTranscode(playSessionId: string): Promise<void
 // shared with .NET's TimeSpan. 10,000,000 ticks per second.
 const TICKS_PER_SECOND = 10_000_000;
 
+export type JellyfinUserData = { seconds: number | null; played: boolean; lastPlayedAt: Date | null };
+
 /**
- * Reads how far the shared Jellyfin account (JELLYFIN_USER_ID -- e.g. the
- * household's Roku app) has gotten into a title, so a Streamy web session
- * can resume from there instead of restarting something already watched
- * further on the Roku app. Null whenever there's nothing to report: sync
- * unconfigured, never played, or the lookup itself fails -- callers just
- * fall back to Streamy's own stored progress in every one of those cases.
+ * The shared account's full state for one item: position, whether it's
+ * finished, and when it was last played -- the timestamp is what lets the two
+ * sides reconcile by recency (progressSyncRules.ts) instead of by position.
  */
-export async function getJellyfinPlaybackPositionSeconds(itemId: string): Promise<number | null> {
-  if (!isJellyfinConfigured() || !JELLYFIN_USER_ID) return null;
+export async function getJellyfinUserData(itemId: string, jellyfinUserId: string | null): Promise<JellyfinUserData | null> {
+  if (!isJellyfinConfigured() || !jellyfinUserId) return null;
   try {
-    const data = await jellyfinFetch<{ PlaybackPositionTicks?: number; Played?: boolean }>(
-      `/UserItems/${itemId}/UserData?userId=${JELLYFIN_USER_ID}`
+    const data = await jellyfinFetch<{ PlaybackPositionTicks?: number; Played?: boolean; LastPlayedDate?: string | null }>(
+      `/UserItems/${itemId}/UserData?userId=${encodeURIComponent(jellyfinUserId)}`
     );
-    // A fully-played item's position ticks are reset to 0 once Played flips
-    // true -- reporting that as "resume at 0" would be worse than not
-    // syncing at all (it would restart something already finished).
-    if (data.Played || !data.PlaybackPositionTicks) return null;
-    return Math.floor(data.PlaybackPositionTicks / TICKS_PER_SECOND);
+    const last = data.LastPlayedDate ? new Date(data.LastPlayedDate) : null;
+    return {
+      seconds: data.PlaybackPositionTicks ? Math.floor(data.PlaybackPositionTicks / TICKS_PER_SECOND) : null,
+      played: Boolean(data.Played),
+      lastPlayedAt: last && !Number.isNaN(last.getTime()) ? last : null,
+    };
   } catch (err) {
-    console.error(`[jellyfin] getJellyfinPlaybackPositionSeconds failed for item ${itemId}:`, err);
+    console.error(`[jellyfin] getJellyfinUserData failed for item ${itemId}:`, err);
     return null;
   }
 }
 
+export type JellyfinActivity = {
+  type: "Movie" | "Episode";
+  /** The movie's TMDB id, or the series' for an episode. */
+  tmdbId: string;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  seconds: number;
+  runtimeSeconds: number | null;
+  played: boolean;
+  lastPlayedAt: Date;
+};
+
 /**
- * Writes Streamy's own saved progress back to the shared Jellyfin account,
- * so a later Roku session picks up where a Streamy web session left off --
- * the other half of the sync getJellyfinPlaybackPositionSeconds reads.
+ * What the shared account has watched lately -- in progress, and finished --
+ * with TMDB ids, for pulling Roku/Jellyfin progress into Streamy.
+ */
+export async function getJellyfinRecentActivity(jellyfinUserId: string, limit = 40): Promise<JellyfinActivity[]> {
+  if (!isJellyfinConfigured() || !jellyfinUserId) return [];
+  const uid = encodeURIComponent(jellyfinUserId);
+  type Item = {
+    Type?: string;
+    SeriesId?: string;
+    ParentIndexNumber?: number;
+    IndexNumber?: number;
+    RunTimeTicks?: number;
+    ProviderIds?: Record<string, string>;
+    UserData?: { PlaybackPositionTicks?: number; Played?: boolean; LastPlayedDate?: string | null };
+  };
+  try {
+    const [resume, played] = await Promise.all([
+      jellyfinFetch<{ Items: Item[] }>(
+        `/UserItems/Resume?userId=${uid}&limit=${limit}&fields=ProviderIds&includeItemTypes=Movie,Episode`
+      ),
+      jellyfinFetch<{ Items: Item[] }>(
+        `/Items?userId=${uid}&Recursive=true&Filters=IsPlayed&SortBy=DatePlayed&SortOrder=Descending&Limit=${limit}&IncludeItemTypes=Movie,Episode&fields=ProviderIds`
+      ),
+    ]);
+    const items = [...resume.Items, ...played.Items];
+    // Episodes carry their series' id, not its TMDB id; one lookup for all of them.
+    const seriesIds = [...new Set(items.map((i) => i.SeriesId).filter((x): x is string => Boolean(x)))];
+    const seriesTmdb = new Map<string, string>();
+    if (seriesIds.length) {
+      const series = await jellyfinFetch<{ Items: { Id: string; ProviderIds?: Record<string, string> }[] }>(
+        `/Items?ids=${seriesIds.join(",")}&fields=ProviderIds`
+      );
+      for (const s of series.Items) {
+        const tmdb = s.ProviderIds?.Tmdb ?? s.ProviderIds?.tmdb;
+        if (tmdb) seriesTmdb.set(s.Id, tmdb);
+      }
+    }
+    const out: JellyfinActivity[] = [];
+    for (const i of items) {
+      const last = i.UserData?.LastPlayedDate ? new Date(i.UserData.LastPlayedDate) : null;
+      if (!last || Number.isNaN(last.getTime())) continue;
+      const isEpisode = i.Type === "Episode";
+      const tmdbId = isEpisode ? (i.SeriesId ? seriesTmdb.get(i.SeriesId) : undefined) : i.ProviderIds?.Tmdb ?? i.ProviderIds?.tmdb;
+      if (!tmdbId || (i.Type !== "Movie" && !isEpisode)) continue;
+      if (isEpisode && (i.ParentIndexNumber == null || i.IndexNumber == null)) continue;
+      out.push({
+        type: isEpisode ? "Episode" : "Movie",
+        tmdbId,
+        seasonNumber: isEpisode ? i.ParentIndexNumber! : null,
+        episodeNumber: isEpisode ? i.IndexNumber! : null,
+        seconds: Math.floor((i.UserData?.PlaybackPositionTicks ?? 0) / TICKS_PER_SECOND),
+        runtimeSeconds: i.RunTimeTicks ? Math.floor(i.RunTimeTicks / TICKS_PER_SECOND) : null,
+        played: Boolean(i.UserData?.Played),
+        lastPlayedAt: last,
+      });
+    }
+    return out;
+  } catch (err) {
+    console.error("[jellyfin] getJellyfinRecentActivity failed:", err);
+    return [];
+  }
+}
+
+
+/**
+ * Writes a Streamy user's saved progress to their own Jellyfin account
+ * (jellyfinAccounts.ts), so a later Roku session picks up where a Streamy web
+ * session left off -- the other half of getJellyfinUserData.
  * Fire-and-forget from callers (saveProgress already is): a failure here
  * shouldn't affect Streamy's own, already-saved progress.
  */
-export async function setJellyfinPlaybackPositionSeconds(itemId: string, seconds: number): Promise<void> {
-  if (!isJellyfinConfigured() || !JELLYFIN_USER_ID || seconds < 0) return;
+export async function setJellyfinPlaybackPositionSeconds(
+  itemId: string,
+  seconds: number,
+  jellyfinUserId: string | null
+): Promise<void> {
+  if (!isJellyfinConfigured() || !jellyfinUserId || seconds < 0) return;
   try {
-    await jellyfinFetch(`/UserItems/${itemId}/UserData?userId=${JELLYFIN_USER_ID}`, {
+    await jellyfinFetch(`/UserItems/${itemId}/UserData?userId=${encodeURIComponent(jellyfinUserId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ PlaybackPositionTicks: Math.floor(seconds * TICKS_PER_SECOND) }),
+      // LastPlayedDate too, so Jellyfin's clock records this save and the two
+      // sides can be reconciled by recency (see progressSyncRules.ts).
+      body: JSON.stringify({
+        PlaybackPositionTicks: Math.floor(seconds * TICKS_PER_SECOND),
+        LastPlayedDate: new Date().toISOString(),
+      }),
     });
   } catch (err) {
     console.error(`[jellyfin] setJellyfinPlaybackPositionSeconds failed for item ${itemId}:`, err);

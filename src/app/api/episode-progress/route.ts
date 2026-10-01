@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { findJellyfinEpisodeItemId, setJellyfinPlaybackPositionSeconds } from "@/lib/jellyfin";
+import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -65,9 +66,9 @@ export async function POST(request: Request) {
   });
   revalidatePath("/");
   // Fire-and-forget -- see the movie progress route for the rationale.
-  findJellyfinEpisodeItemId(showId.trim(), seasonNumber, episodeNumber)
-    .then((itemId) => {
-      if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, sec);
+  Promise.all([findJellyfinEpisodeItemId(showId.trim(), seasonNumber, episodeNumber), jellyfinUserIdFor(userId)])
+    .then(([itemId, jellyfinUserId]) => {
+      if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, sec, jellyfinUserId);
     })
     .catch(() => {});
   return NextResponse.json({ saved: true });
