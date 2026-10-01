@@ -31,6 +31,11 @@ model User {
   // leaves every existing session -- including an attacker's -- valid. The jwt
   // callback compares the two and drops tokens issued before the change.
   passwordChangedAt DateTime?
+  // The matching Jellyfin account. Streamy is the source of truth: approved
+  // users get a Jellyfin account of the same name and password, set on every
+  // login and password change (lib/jellyfinAccounts.ts). Watch progress syncs
+  // per pair, never across people.
+  jellyfinUserId    String?   @unique
 
   watchlist           WatchlistItem[]
   watchlistShows      WatchlistShowItem[]

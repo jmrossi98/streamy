@@ -8,6 +8,7 @@ import { prisma } from "./db";
 import { pickNextAvatarColor } from "./userAvatarColors";
 import { checkPasswordStrength } from "./passwordPolicy";
 import { isSessionStale, passwordStamp } from "./sessionFreshness";
+import { syncJellyfinAccount } from "./jellyfinAccounts";
 import { clientIpFromHeaders, MAX_SIGNUPS_PER_IP } from "./loginAttemptRules";
 import {
   clearFailuresForName,
@@ -183,6 +184,10 @@ export const authOptions: NextAuthOptions = {
         // isn't left one typo from a lockout for the rest of the window.
         await clearFailuresForName(name);
         await bootstrapAdminIfUnclaimed(existing);
+        // The one moment the plaintext is known: mirror it to their Jellyfin
+        // account (created if missing). Fire-and-forget -- mediabox being
+        // asleep must never block a Streamy login.
+        void syncJellyfinAccount(existing.id, existing.name, password);
 
         return { id: existing.id, name: existing.name, avatarColor: existing.avatarColor };
       },

@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { findJellyfinMovieItemId, setJellyfinPlaybackPositionSeconds } from "@/lib/jellyfin";
+import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -48,14 +49,14 @@ export async function POST(request: Request) {
   });
   revalidatePath("/");
   // Fire-and-forget: pushes this position to the shared Jellyfin account too
-  // (see setJellyfinPlaybackPositionSeconds), so the household's Roku app
+  // (see setJellyfinPlaybackPositionSeconds) -- this viewer's own account -- so their Roku
   // picks up where this web session left off. Not awaited -- an extra
   // Jellyfin round trip on every periodic progress save would add real
   // latency to a request the player doesn't otherwise wait on, and this is
   // best-effort by design (see the callee's own doc).
-  findJellyfinMovieItemId(movieId.trim())
-    .then((itemId) => {
-      if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, seconds);
+  Promise.all([findJellyfinMovieItemId(movieId.trim()), jellyfinUserIdFor(userId)])
+    .then(([itemId, jellyfinUserId]) => {
+      if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, seconds, jellyfinUserId);
     })
     .catch(() => {});
   return NextResponse.json({ saved: true });

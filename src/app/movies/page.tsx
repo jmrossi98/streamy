@@ -1,6 +1,7 @@
 import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { pullJellyfinProgressForPage } from "@/lib/progressSync";
 import { getTrending, getGenres, getDiscoverByGenre, type Movie } from "@/lib/tmdb";
 import { getWatchlistMovies } from "@/lib/watchlist";
 import { MoviesContent } from "@/components/MoviesContent";
@@ -14,6 +15,8 @@ const MOVIE_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror,
 export default async function MoviesPage() {
   unstable_noStore();
   const session = await getSession();
+  // Roku/Jellyfin progress into Streamy's rows before anything reads them.
+  await pullJellyfinProgressForPage(session);
 
   // Single wave only: no getMovieById — client fetches runtimes for progress bars
   const [trending, genres, ...discoverAndProgress] = await Promise.all([

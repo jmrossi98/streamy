@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { resumeSeconds } from "@/lib/progressSyncRules";
+import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
 import { getMovieById } from "@/lib/tmdb";
 import {
   findJellyfinMovieItemId,
-  getJellyfinPlaybackPositionSeconds,
+  getJellyfinUserData,
   getJellyfinSubtitleTracks,
   needsForcedTranscode,
 } from "@/lib/jellyfin";
@@ -43,14 +45,15 @@ export default async function WatchPlayPage({ params }: Props) {
     : null;
   const forceTranscode = codecForcesTranscode || !!language?.needsTranscode;
 
-  // Furthest-along wins: a viewer who got further on the household's Roku
-  // app shouldn't be restarted just because this browser's own saved
-  // progress is older. Only worth asking Jellyfin once there's actually a
-  // file to ask about.
-  const jellyfinProgressSeconds = jellyfinItemId
-    ? await getJellyfinPlaybackPositionSeconds(jellyfinItemId)
+  // Newest wins between this browser's saved spot and the Roku's -- see
+  // progressSyncRules.ts for why not furthest-along.
+  const jellyfinState = jellyfinItemId
+    ? await getJellyfinUserData(jellyfinItemId, await jellyfinUserIdFor(session?.user?.id))
     : null;
-  const initialProgressSeconds = Math.max(progressRow?.progressSeconds ?? 0, jellyfinProgressSeconds ?? 0);
+  const initialProgressSeconds = resumeSeconds(
+    progressRow ? { seconds: progressRow.progressSeconds, updatedAt: progressRow.updatedAt } : null,
+    jellyfinState
+  );
 
   return (
     <div className="min-h-screen bg-netflix-black relative">

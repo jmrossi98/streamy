@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { resumeSeconds } from "@/lib/progressSyncRules";
+import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
 import { getShowById, getSeason } from "@/lib/tmdb";
 import {
   findJellyfinEpisodeItemId,
-  getJellyfinPlaybackPositionSeconds,
+  getJellyfinUserData,
   getJellyfinSubtitleTracks,
   needsForcedTranscode,
 } from "@/lib/jellyfin";
@@ -60,11 +62,14 @@ export default async function EpisodeWatchPage({ params }: Props) {
     : null;
   const forceTranscode = codecForcesTranscode || !!language?.needsTranscode;
 
-  // Furthest-along wins -- see the movie watch page for the rationale.
-  const jellyfinProgressSeconds = jellyfinItemId
-    ? await getJellyfinPlaybackPositionSeconds(jellyfinItemId)
+  // Newest wins between Streamy and the Roku -- see progressSyncRules.ts.
+  const jellyfinState = jellyfinItemId
+    ? await getJellyfinUserData(jellyfinItemId, await jellyfinUserIdFor(session?.user?.id))
     : null;
-  const initialProgressSeconds = Math.max(progressRow?.progressSeconds ?? 0, jellyfinProgressSeconds ?? 0);
+  const initialProgressSeconds = resumeSeconds(
+    progressRow ? { seconds: progressRow.progressSeconds, updatedAt: progressRow.updatedAt } : null,
+    jellyfinState
+  );
 
   const next = nextEpisode(showId, seasonNum, episodeNum, season.episodes, {
     numberOfSeasons: show.numberOfSeasons,
