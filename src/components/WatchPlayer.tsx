@@ -65,6 +65,8 @@ export function WatchPlayer({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ movieId, progressSeconds: sec }),
+      // Survives the page going away -- the save on leaving is the one that matters most.
+      keepalive: true,
     }).catch(() => {});
   }, [movieId]);
 
