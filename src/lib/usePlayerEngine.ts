@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, type RefObject } from "react";
+import { useState, useRef, useEffect, useCallback, type RefObject } from "react";
 import Hls from "hls.js";
 import { isMobileViewport } from "./videoFullscreen";
 import { supportsNativeHls } from "./hlsSupport";
@@ -60,7 +60,14 @@ function seekThenRun(v: HTMLVideoElement, target: number, then: () => void) {
   );
 }
 
-const PROGRESS_SAVE_INTERVAL_SEC = 60;
+/**
+ * Saved every this often while playing -- by the clock, not by how far the
+ * position moved, so watching after a rewind is saved too (a position-delta
+ * rule stopped saving entirely until the old high point was passed again).
+ */
+const PROGRESS_SAVE_EVERY_MS = 15_000;
+/** After a seek, save once the viewer has settled rather than on every drag step. */
+const SEEK_SAVE_DELAY_MS = 2_000;
 
 export type PlayerEngineOptions = {
   videoUrl?: string | null;
@@ -582,30 +589,65 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     }
   };
 
-  // Progress tracking -- periodic while playing, and once more on pause.
+  // The last real position, kept apart from the element: releasing the source
+  // on teardown resets currentTime to 0 before the final save can read it,
+  // which is how leaving the player used to save nothing at all.
+  const lastPositionRef = useRef(0);
+  const lastSavedRef = useRef(-1);
+  const saveProgressRef = useRef(saveProgress);
+  useEffect(() => {
+    saveProgressRef.current = saveProgress;
+  }, [saveProgress]);
+  const saveAt = useCallback((sec: number) => {
+    if (sec > 0 && sec !== lastSavedRef.current) {
+      lastSavedRef.current = sec;
+      saveProgressRef.current(sec);
+    }
+  }, []);
+
+  // Progress tracking: on a clock while playing, after a seek settles, on
+  // pause, and when the tab is hidden or closed (React cleanups don't run on
+  // unload, so that last one is the only save a closed tab ever gets).
   useEffect(() => {
     if (!playing) return;
     const v = videoRef.current;
     if (!v) return;
-    let lastSaved = 0;
-    const onTimeUpdate = () => {
+    let seekTimer: ReturnType<typeof setTimeout> | null = null;
+    const remember = () => {
       const sec = Math.floor(v.currentTime);
-      if (sec > 0 && sec - lastSaved >= PROGRESS_SAVE_INTERVAL_SEC) {
-        lastSaved = sec;
-        saveProgress(sec);
-      }
+      if (sec > 0) lastPositionRef.current = sec;
+    };
+    const onSeeked = () => {
+      remember();
+      if (seekTimer) clearTimeout(seekTimer);
+      seekTimer = setTimeout(() => saveAt(lastPositionRef.current), SEEK_SAVE_DELAY_MS);
     };
     const onPause = () => {
-      const sec = Math.floor(v.currentTime);
-      if (sec > 0) saveProgress(sec);
+      remember();
+      saveAt(lastPositionRef.current);
     };
-    v.addEventListener("timeupdate", onTimeUpdate);
+    const onHide = () => {
+      if (document.visibilityState === "hidden") saveAt(lastPositionRef.current);
+    };
+    const onPageHide = () => saveAt(lastPositionRef.current);
+    const clock = setInterval(() => {
+      if (!v.paused) saveAt(lastPositionRef.current);
+    }, PROGRESS_SAVE_EVERY_MS);
+    v.addEventListener("timeupdate", remember);
+    v.addEventListener("seeked", onSeeked);
     v.addEventListener("pause", onPause);
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
-      v.removeEventListener("timeupdate", onTimeUpdate);
+      clearInterval(clock);
+      if (seekTimer) clearTimeout(seekTimer);
+      v.removeEventListener("timeupdate", remember);
+      v.removeEventListener("seeked", onSeeked);
       v.removeEventListener("pause", onPause);
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
     };
-  }, [playing, identityKey, saveProgress]);
+  }, [playing, identityKey, saveAt]);
 
   // The unmount cleanup below only re-creates when identityKey changes, so a
   // closed-over `transcoding` would go stale the moment it changes after
@@ -617,9 +659,12 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   }, [transcoding]);
 
   useEffect(() => {
+    // A new title starts with a clean slate; the cleanup below saves the old one.
+    lastPositionRef.current = 0;
+    lastSavedRef.current = -1;
     return () => {
-      const v = videoRef.current;
-      if (v && v.currentTime > 0) saveProgress(Math.floor(v.currentTime));
+      // The remembered position, not v.currentTime -- see lastPositionRef.
+      saveAt(lastPositionRef.current);
       // Leaving the page mid-transcode would otherwise leave that ffmpeg job
       // running on the mediabox indefinitely -- nothing else ever tells
       // Jellyfin this session is done.

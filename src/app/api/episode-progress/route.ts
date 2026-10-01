@@ -4,6 +4,7 @@ import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { findJellyfinEpisodeItemId, setJellyfinPlaybackPositionSeconds } from "@/lib/jellyfin";
 import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
+import { cachedItemId } from "@/lib/jellyfinItemIdCache";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -66,7 +67,12 @@ export async function POST(request: Request) {
   });
   revalidatePath("/");
   // Fire-and-forget -- see the movie progress route for the rationale.
-  Promise.all([findJellyfinEpisodeItemId(showId.trim(), seasonNumber, episodeNumber), jellyfinUserIdFor(userId)])
+  Promise.all([
+    cachedItemId(`ep:${showId.trim()}:${seasonNumber}:${episodeNumber}`, () =>
+      findJellyfinEpisodeItemId(showId.trim(), seasonNumber, episodeNumber)
+    ),
+    jellyfinUserIdFor(userId),
+  ])
     .then(([itemId, jellyfinUserId]) => {
       if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, sec, jellyfinUserId);
     })

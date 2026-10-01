@@ -4,6 +4,7 @@ import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { findJellyfinMovieItemId, setJellyfinPlaybackPositionSeconds } from "@/lib/jellyfin";
 import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
+import { cachedItemId } from "@/lib/jellyfinItemIdCache";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
   // Jellyfin round trip on every periodic progress save would add real
   // latency to a request the player doesn't otherwise wait on, and this is
   // best-effort by design (see the callee's own doc).
-  Promise.all([findJellyfinMovieItemId(movieId.trim()), jellyfinUserIdFor(userId)])
+  Promise.all([cachedItemId(`movie:${movieId.trim()}`, () => findJellyfinMovieItemId(movieId.trim())), jellyfinUserIdFor(userId)])
     .then(([itemId, jellyfinUserId]) => {
       if (itemId) void setJellyfinPlaybackPositionSeconds(itemId, seconds, jellyfinUserId);
     })
