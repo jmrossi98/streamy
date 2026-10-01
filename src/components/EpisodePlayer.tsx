@@ -1,6 +1,6 @@
 "use client";
 
-import { useFreshResume } from "@/lib/useFreshResume";
+import { useFreshResume, useResumeRecheck } from "@/lib/useFreshResume";
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -68,10 +68,10 @@ export function EpisodePlayer({
 }: EpisodePlayerProps) {
   const router = useRouter();
   // The page's resume point can be minutes old; this re-asks on open.
-  const resumeFrom = useFreshResume(
-    videoUrl ? `showId=${encodeURIComponent(showId)}&season=${seasonNumber}&episode=${episodeNumber}` : null,
-    initialProgressSeconds
-  );
+  const resumeQuery = videoUrl
+    ? `showId=${encodeURIComponent(showId)}&season=${seasonNumber}&episode=${episodeNumber}`
+    : null;
+  const resumeFrom = useFreshResume(resumeQuery, initialProgressSeconds);
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
 
@@ -116,6 +116,8 @@ export function EpisodePlayer({
     identityKey: `${showId}-${seasonNumber}-${episodeNumber}`,
     saveProgress,
   });
+  // Back to a paused player after watching elsewhere: pick up that spot.
+  useResumeRecheck(resumeQuery, videoRef);
 
   useEffect(() => {
     if (!showNextOverlay || !nextEpisodeHref) return;
