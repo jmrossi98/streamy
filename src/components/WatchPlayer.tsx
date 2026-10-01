@@ -1,5 +1,6 @@
 "use client";
 
+import { useFreshResume } from "@/lib/useFreshResume";
 import { useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -54,6 +55,9 @@ export function WatchPlayer({
   defaultAudio = null,
 }: WatchPlayerProps) {
   // Stable across renders (see usePlayerEngine's saveProgress doc) --
+  // The page's resume point can be minutes old; this re-asks on open.
+  const resumeFrom = useFreshResume(videoUrl ? `movieId=${encodeURIComponent(movieId)}` : null, initialProgressSeconds);
+
   // movieId is the only thing this closes over, and that's a prop.
   const saveProgress = useCallback((sec: number) => {
     fetch("/api/progress", {
@@ -84,7 +88,7 @@ export function WatchPlayer({
     onVideoPlay,
   } = usePlayerEngine({
     videoUrl,
-    initialProgressSeconds,
+    initialProgressSeconds: resumeFrom,
     runtimeMinutes,
     autoPlay,
     forceTranscode,

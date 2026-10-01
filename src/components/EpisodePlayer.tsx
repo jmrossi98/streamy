@@ -1,5 +1,6 @@
 "use client";
 
+import { useFreshResume } from "@/lib/useFreshResume";
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -66,6 +67,11 @@ export function EpisodePlayer({
   defaultAudio = null,
 }: EpisodePlayerProps) {
   const router = useRouter();
+  // The page's resume point can be minutes old; this re-asks on open.
+  const resumeFrom = useFreshResume(
+    videoUrl ? `showId=${encodeURIComponent(showId)}&season=${seasonNumber}&episode=${episodeNumber}` : null,
+    initialProgressSeconds
+  );
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
 
@@ -99,7 +105,7 @@ export function EpisodePlayer({
     onVideoPlay,
   } = usePlayerEngine({
     videoUrl,
-    initialProgressSeconds,
+    initialProgressSeconds: resumeFrom,
     runtimeMinutes,
     autoPlay,
     forceTranscode,
