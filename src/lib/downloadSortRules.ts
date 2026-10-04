@@ -27,9 +27,12 @@ function addedTime(row: SortableDownload): number {
   // startedAt first: every kind of row now has one (enqueued, requested,
   // grabbed, landed), where addedAt only ever existed for finished files.
   const raw = row.startedAt ?? row.addedAt;
-  if (!raw) return Number.NEGATIVE_INFINITY;
+  // No date on something still in flight means "too new to have one", not
+  // "oldest": it sorts first. Only a finished file with no date sorts last.
+  const undated = row.completed ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+  if (!raw) return undated;
   const t = new Date(raw).getTime();
-  return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  return Number.isFinite(t) ? t : undated;
 }
 
 /**
@@ -60,7 +63,13 @@ export function sortDownloads<T extends SortableDownload>(rows: T[], sort: Downl
   // now that a queued or searching row carries the moment it was asked for,
   // newest-first already puts a fresh request at the top -- which is the
   // reason to open this panel at all.
-  return [...rows].sort((a, b) => addedTime(b) - addedTime(a));
+  return [...rows].sort((a, b) => {
+    const ta = addedTime(a);
+    const tb = addedTime(b);
+    // Compared, not subtracted: two undated rows are both infinite, and
+    // Infinity - Infinity is NaN, which leaves the order undefined.
+    return ta === tb ? 0 : tb > ta ? 1 : -1;
+  });
 }
 
 /** Only the fields deduplication reads. */

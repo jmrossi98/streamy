@@ -337,6 +337,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
         title: string;
         size: number;
         sizeleft: number;
+        added?: string;
         protocol?: string;
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
@@ -346,6 +347,9 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
       const unsafe = classifyBadRelease(r);
       return {
         queueId: r.id,
+        // When it was grabbed -- the Sonarr side always set this; without it
+        // an in-flight movie had no date and sorted below the whole library.
+        startedAt: r.added ?? null,
         externalId: r.movieId,
         title: r.title,
         progress: computeProgress(r.size, r.sizeleft),
