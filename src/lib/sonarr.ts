@@ -1923,7 +1923,24 @@ export async function manageSonarrEpisodes(
     if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
     const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
     if (!series[0]) return { ok: false, error: "Show is not in Sonarr" };
-    const seriesId = series[0].id;
+    return await removeSonarrEpisodes(series[0].id, seasonNumber, episodeNumber);
+  } catch (err) {
+    console.error(`[sonarr] manageSonarrEpisodes failed for ${tmdbId} S${seasonNumber}:`, err);
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
+/**
+ * The same, by Sonarr's own series id -- what the admin downloads panel has
+ * in hand. A whole season when `episodeNumber` is null.
+ */
+export async function removeSonarrEpisodes(
+  seriesId: number,
+  seasonNumber: number,
+  episodeNumber: number | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
+  try {
 
     const allEpisodes = await sonarrFetch<(SonarrEpisode & { episodeFileId?: number })[]>(
       `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
@@ -2001,9 +2018,77 @@ export async function manageSonarrEpisodes(
 
     return { ok: true };
   } catch (err) {
-    console.error(`[sonarr] manageSonarrEpisodes failed for ${tmdbId} S${seasonNumber}:`, err);
+    console.error(`[sonarr] removeSonarrEpisodes failed for series ${seriesId} S${seasonNumber}:`, err);
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
   }
+}
+
+/**
+ * Removes a whole show: everything queued for search, everything
+ * downloading, every file, and the series itself.
+ *
+ * In that order. Deleting the series first leaves its downloads running in
+ * the client with nothing left to claim them, and its queued searches
+ * pointing at episodes that no longer exist.
+ */
+export async function removeSonarrSeries(seriesId: number): Promise<boolean> {
+  if (!isSonarrConfigured()) return false;
+  try {
+    const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+    await (await searchQueue()).clearPendingSearches(episodes.map((e) => e.id));
+    if (!(await cancelSonarrDownload(seriesId))) return false;
+    seriesPlaces.delete(seriesId);
+    return await deleteSonarrSeries(seriesId);
+  } catch (err) {
+    console.error(`[sonarr] removeSonarrSeries failed for ${seriesId}:`, err);
+    return false;
+  }
+}
+
+export type SeriesPlaces = {
+  title: string;
+  /** Episode id -> where it sits in the show. */
+  episodes: Map<number, { seasonNumber: number; episodeNumber: number }>;
+};
+
+/** A show's episode list barely changes; the panel asking for it polls every 2.5s. */
+const SERIES_PLACES_TTL_MS = 5 * 60_000;
+const seriesPlaces = new Map<number, { at: number; places: SeriesPlaces }>();
+
+/**
+ * Each series' title and which season and episode each of its episode ids is,
+ * so the downloads panel can fold per-episode rows into shows and seasons.
+ * A series that cannot be read is simply absent.
+ */
+export async function getSonarrSeriesPlaces(seriesIds: number[]): Promise<Map<number, SeriesPlaces>> {
+  const out = new Map<number, SeriesPlaces>();
+  if (!isSonarrConfigured()) return out;
+  await Promise.all(
+    [...new Set(seriesIds)].map(async (id) => {
+      const cached = seriesPlaces.get(id);
+      if (cached && Date.now() - cached.at < SERIES_PLACES_TTL_MS) {
+        out.set(id, cached.places);
+        return;
+      }
+      try {
+        const [series, episodes] = await Promise.all([
+          sonarrFetch<{ title: string }>(`/api/v3/series/${id}`),
+          sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${id}`),
+        ]);
+        const places: SeriesPlaces = {
+          title: series.title,
+          episodes: new Map(
+            episodes.map((e) => [e.id, { seasonNumber: e.seasonNumber, episodeNumber: e.episodeNumber }])
+          ),
+        };
+        seriesPlaces.set(id, { at: Date.now(), places });
+        out.set(id, places);
+      } catch (err) {
+        console.error(`[sonarr] could not read series ${id} for the downloads panel:`, err);
+      }
+    })
+  );
+  return out;
 }
 
 export type SonarrRequestResult =

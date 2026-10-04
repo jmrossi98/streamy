@@ -11,6 +11,13 @@ import {
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { DownloadProtocol } from "@/lib/radarr";
 import { formatFileSize } from "@/lib/formatBytes";
+import {
+  groupActionLabel,
+  groupDownloads,
+  groupProgress,
+  groupSummary,
+  seasonLabel,
+} from "@/lib/downloadGroupRules";
 
 export type DownloadRow = {
   /** Unique per row. A show can have several episodes downloading at once,
@@ -58,6 +65,11 @@ export type DownloadRow = {
   /** When this landed in the library. Only completed rows have one -- nothing
    *  has been added yet for a row that is still searching or downloading. */
   addedAt?: string | null;
+  /** TV only: the show's name and where this row sits in it, so the panel can
+   *  fold a show's rows into one entry with its seasons inside. */
+  seriesTitle?: string | null;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
 };
 
 /**
@@ -153,6 +165,10 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // cancel, so waiting for the *real* state to reflect it before hiding the
   // row read as broken ("I need to refresh"). Rolled back on failure.
   const [removedKeys, setRemovedKeys] = useState<Set<string>>(new Set());
+  // Which shows and seasons are unfolded, and which group button has been
+  // clicked once and is waiting for its confirming second click.
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   // Last real (non-bridged) snapshot seen for each key, so a download that
   // drops out of both the active-queue and completed lists for a moment
@@ -197,9 +213,15 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
       // Title only: it is the one field a viewer can see and type. Matching
       // the status text as well would make "downloaded" select most of the
       // list, which is not a filter.
-      .filter((d) => !needle || d.title.toLowerCase().includes(needle)),
+      // A show's name matches all of its rows, whatever the files are called.
+      .filter(
+        (d) =>
+          !needle || d.title.toLowerCase().includes(needle) || (d.seriesTitle ?? "").toLowerCase().includes(needle)
+      ),
     sort
   );
+  // Movies as rows, each show as one entry, in the order the sort produced.
+  const items = groupDownloads(visibleDownloads);
 
   // Once the server's own list no longer contains a key, there's nothing
   // left to hide -- prune it so the set doesn't grow across a long session.
@@ -302,6 +324,198 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     }
   }
 
+  function renderRow(d: DownloadRow) {
+    const key = rowKey(d);
+    const isManaging = managingKey === key;
+    return (
+      <li key={key} className="flex flex-col gap-1.5">
+        {/* Stacked on a phone, one line from sm up.
+            Side by side, the status and the action need about half a
+            small screen between them, and the badge and size take a
+            fixed slice of what is left -- so the title, the only part
+            that is actually variable, absorbed the whole shortfall and
+            rendered as "Videodr...". Giving it its own row costs a line
+            of height and makes the row readable. */}
+        <div className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate text-white/90">{d.title}</span>
+            {d.protocol && d.protocol !== "unknown" && (
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  d.protocol === "usenet"
+                    ? "bg-sky-500/15 text-sky-300"
+                    : "bg-emerald-500/15 text-emerald-300"
+                }`}
+              >
+                {d.protocol === "usenet" ? "Usenet" : "Torrent"}
+              </span>
+            )}
+            {formatFileSize(d.sizeBytes) && (
+              <span className="shrink-0 text-xs tabular-nums text-white/40">
+                {formatFileSize(d.sizeBytes)}
+              </span>
+            )}
+            {formatStarted(d.startedAt) && (
+              <span
+                className="shrink-0 text-xs tabular-nums text-white/30"
+                title={new Date(d.startedAt as string).toLocaleString()}
+              >
+                {formatStarted(d.startedAt)}
+              </span>
+            )}
+          </span>
+          <div className="flex shrink-0 items-center justify-end gap-3">
+            <span
+              className={`tabular-nums ${
+                d.noRelease || d.unsafe ? "font-medium text-netflix-red" : "text-white/50"
+              }`}
+            >
+              {d.completed
+                ? "Downloaded"
+                : d.noRelease
+                  ? "No release found"
+                  : d.unsafe
+                    ? "Unsafe release"
+                    : d.queued
+                      ? "Queued"
+                      : d.searching
+                      ? "Searching…"
+                      : d.importing
+                        ? "Importing…"
+                        : d.progress != null
+                          ? `${d.progress}%`
+                          : "metadata…"}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleManage(d)}
+              disabled={isManaging}
+              className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
+            >
+              {isManaging ? "…" : d.completed ? "Delete" : "Cancel"}
+            </button>
+          </div>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          {d.noRelease ? (
+            // Empty on purpose: there is nothing in flight to show.
+            null
+          ) : d.unsafe ? (
+            <div className="h-full w-full animate-pulse rounded-full bg-netflix-red" />
+          ) : d.completed ? (
+            <div className="h-full w-full rounded-full bg-netflix-red" />
+          ) : d.importing ? (
+            // A full but pulsing bar, not the same solid fill as
+            // `completed` -- the transfer really is done (that part
+            // isn't a lie), but a static 100% bar next to
+            // "Importing..." still reads as stalled without some
+            // sign that something is still happening.
+            <div className="h-full w-full animate-pulse rounded-full bg-netflix-red" />
+          ) : d.progress != null ? (
+            <div
+              className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
+              style={{ width: `${d.progress}%` }}
+            />
+          ) : (
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
+          )}
+        </div>
+        {d.notice && (
+          <p
+            className={`text-xs ${
+              d.noRelease || d.unsafe ? "text-netflix-red" : "text-amber-300"
+            }`}
+          >
+            {d.notice}
+          </p>
+        )}
+      </li>
+    );
+  }
+
+  function toggle(key: string) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  /**
+   * Removes a whole show or one season: cancels what is in flight for it and
+   * deletes what is on disk. Asked for twice -- the per-row buttons need no
+   * confirmation because one click costs one episode, and this one can cost
+   * a whole library's worth of a show.
+   */
+  async function handleGroup(
+    key: string,
+    rows: DownloadRow[],
+    scope: "series" | "season",
+    show: { externalId: number; title: string },
+    seasonNumber: number | null
+  ) {
+    if (confirming !== key) {
+      setConfirming(key);
+      return;
+    }
+    setConfirming(null);
+    setManagingKey(key);
+    const keys = rows.map(rowKey);
+    setRemovedKeys((prev) => new Set([...prev, ...keys]));
+    const restore = () =>
+      setRemovedKeys((prev) => {
+        const next = new Set(prev);
+        for (const k of keys) next.delete(k);
+        return next;
+      });
+    try {
+      const res = await fetch("/api/admin/downloads/manage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          externalId: show.externalId,
+          mediaType: "show",
+          scope,
+          seasonNumber,
+          // The route requires one; a group removal does both regardless.
+          action: "delete",
+          title: scope === "season" ? `${show.title} - ${seasonLabel(seasonNumber)}` : show.title,
+        }),
+      });
+      if (!res.ok) restore();
+      else router.refresh();
+    } catch {
+      restore();
+    } finally {
+      setManagingKey(null);
+    }
+  }
+
+  function groupButton(
+    key: string,
+    rows: DownloadRow[],
+    scope: "series" | "season",
+    show: { externalId: number; title: string },
+    seasonNumber: number | null
+  ) {
+    const label = groupActionLabel(rows);
+    const what = scope === "series" ? "series" : "season";
+    return (
+      <button
+        type="button"
+        onClick={() => handleGroup(key, rows, scope, show, seasonNumber)}
+        onBlur={() => setConfirming((c) => (c === key ? null : c))}
+        disabled={managingKey === key}
+        className={`shrink-0 text-xs font-medium disabled:opacity-50 ${
+          confirming === key ? "text-netflix-red" : "text-white/50 hover:text-netflix-red"
+        }`}
+      >
+        {managingKey === key ? "…" : confirming === key ? `Confirm: ${label.toLowerCase()} ${what}?` : `${label} ${what}`}
+      </button>
+    );
+  }
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -359,112 +573,87 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
       ) : (
         <ul
           className="space-y-3 overflow-y-auto pr-1"
-          style={{ maxHeight: visibleDownloads.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
+          style={{ maxHeight: `${MAX_HEIGHT_PX}px` }}
         >
-          {visibleDownloads.map((d) => {
-            const key = rowKey(d);
-            const isManaging = managingKey === key;
+          {items.map((item) => {
+            if (item.kind === "row") return renderRow(item.row);
+            const showKey = `show-${item.externalId}`;
+            // Typing a filter opens what it matched: the rows it found are
+            // the point, and they would otherwise be one click away.
+            const expanded = open.has(showKey) || needle !== "";
+            const progress = groupProgress(item.rows);
             return (
-              <li key={key} className="flex flex-col gap-1.5">
-                {/* Stacked on a phone, one line from sm up.
-                    Side by side, the status and the action need about half a
-                    small screen between them, and the badge and size take a
-                    fixed slice of what is left -- so the title, the only part
-                    that is actually variable, absorbed the whole shortfall and
-                    rendered as "Videodr...". Giving it its own row costs a line
-                    of height and makes the row readable. */}
-                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                  <span className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="min-w-0 truncate text-white/90">{d.title}</span>
-                    {d.protocol && d.protocol !== "unknown" && (
-                      <span
-                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                          d.protocol === "usenet"
-                            ? "bg-sky-500/15 text-sky-300"
-                            : "bg-emerald-500/15 text-emerald-300"
-                        }`}
-                      >
-                        {d.protocol === "usenet" ? "Usenet" : "Torrent"}
-                      </span>
-                    )}
-                    {formatFileSize(d.sizeBytes) && (
-                      <span className="shrink-0 text-xs tabular-nums text-white/40">
-                        {formatFileSize(d.sizeBytes)}
-                      </span>
-                    )}
-                    {formatStarted(d.startedAt) && (
-                      <span
-                        className="shrink-0 text-xs tabular-nums text-white/30"
-                        title={new Date(d.startedAt as string).toLocaleString()}
-                      >
-                        {formatStarted(d.startedAt)}
-                      </span>
-                    )}
-                  </span>
-                  <div className="flex shrink-0 items-center justify-end gap-3">
-                    <span
-                      className={`tabular-nums ${
-                        d.noRelease || d.unsafe ? "font-medium text-netflix-red" : "text-white/50"
-                      }`}
+              <li key={showKey} className="rounded border border-white/10 bg-black/20">
+                <div className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                  <button
+                    type="button"
+                    onClick={() => toggle(showKey)}
+                    aria-expanded={expanded}
+                    className="flex min-w-0 items-center gap-2 text-left"
+                  >
+                    <svg
+                      className={`h-3 w-3 shrink-0 text-white/40 transition-transform ${expanded ? "rotate-90" : ""}`}
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden
                     >
-                      {d.completed
-                        ? "Downloaded"
-                        : d.noRelease
-                          ? "No release found"
-                          : d.unsafe
-                            ? "Unsafe release"
-                            : d.queued
-                              ? "Queued"
-                              : d.searching
-                              ? "Searching…"
-                              : d.importing
-                                ? "Importing…"
-                                : d.progress != null
-                                  ? `${d.progress}%`
-                                  : "metadata…"}
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    <span className="min-w-0 truncate font-medium text-white/90">{item.title}</span>
+                    <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
+                      TV
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleManage(d)}
-                      disabled={isManaging}
-                      className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
-                    >
-                      {isManaging ? "…" : d.completed ? "Delete" : "Cancel"}
-                    </button>
+                  </button>
+                  <div className="flex shrink-0 items-center justify-end gap-3">
+                    <span className="text-xs tabular-nums text-white/40">
+                      {groupSummary(item.rows)}
+                      {progress != null ? ` · ${progress}%` : ""}
+                    </span>
+                    {groupButton(showKey, item.rows, "series", item, null)}
                   </div>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  {d.noRelease ? (
-                    // Empty on purpose: there is nothing in flight to show.
-                    null
-                  ) : d.unsafe ? (
-                    <div className="h-full w-full animate-pulse rounded-full bg-netflix-red" />
-                  ) : d.completed ? (
-                    <div className="h-full w-full rounded-full bg-netflix-red" />
-                  ) : d.importing ? (
-                    // A full but pulsing bar, not the same solid fill as
-                    // `completed` -- the transfer really is done (that part
-                    // isn't a lie), but a static 100% bar next to
-                    // "Importing..." still reads as stalled without some
-                    // sign that something is still happening.
-                    <div className="h-full w-full animate-pulse rounded-full bg-netflix-red" />
-                  ) : d.progress != null ? (
-                    <div
-                      className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
-                      style={{ width: `${d.progress}%` }}
-                    />
-                  ) : (
-                    <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
-                  )}
-                </div>
-                {d.notice && (
-                  <p
-                    className={`text-xs ${
-                      d.noRelease || d.unsafe ? "text-netflix-red" : "text-amber-300"
-                    }`}
-                  >
-                    {d.notice}
-                  </p>
+                {expanded && (
+                  <div className="space-y-3 border-t border-white/10 px-3 py-3">
+                    {item.seasons.map((season) => {
+                      const seasonKey = `${showKey}-s${season.seasonNumber ?? "x"}`;
+                      // A single season needs no second fold; more than one
+                      // starts closed so a long show opens to its seasons.
+                      const seasonOpen = item.seasons.length === 1 || open.has(seasonKey) || needle !== "";
+                      return (
+                        <div key={seasonKey}>
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => toggle(seasonKey)}
+                              aria-expanded={seasonOpen}
+                              disabled={item.seasons.length === 1}
+                              className="flex min-w-0 items-center gap-2 text-left font-semibold uppercase tracking-wide text-white/60 disabled:cursor-default"
+                            >
+                              {item.seasons.length > 1 && (
+                                <svg
+                                  className={`h-2.5 w-2.5 shrink-0 text-white/40 transition-transform ${seasonOpen ? "rotate-90" : ""}`}
+                                  fill="currentColor"
+                                  viewBox="0 0 24 24"
+                                  aria-hidden
+                                >
+                                  <path d="M8 5v14l11-7z" />
+                                </svg>
+                              )}
+                              <span>{seasonLabel(season.seasonNumber)}</span>
+                              <span className="font-normal normal-case tracking-normal text-white/35">
+                                {groupSummary(season.rows)}
+                              </span>
+                            </button>
+                            {/* Rows with no season have nothing a season
+                                removal could name; they keep their own buttons. */}
+                            {season.seasonNumber != null &&
+                              groupButton(seasonKey, season.rows, "season", item, season.seasonNumber)}
+                          </div>
+                          {seasonOpen && <ul className="mt-2 space-y-3 pl-4">{season.rows.map(renderRow)}</ul>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </li>
             );
