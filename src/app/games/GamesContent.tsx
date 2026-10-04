@@ -1,5 +1,6 @@
 "use client";
 
+import { compareRecent } from "@/lib/gameSortRules";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ScrollableRow } from "@/components/ScrollableRow";
@@ -95,11 +96,9 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
       return (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0);
     }
     if (sortBy === "recent") {
-      // Anything without a recorded date sorts last rather than jumping to
-      // the top -- an unknown date is not a recent one.
-      const ta = a.addedAt ? Date.parse(a.addedAt) : -Infinity;
-      const tb = b.addedAt ? Date.parse(b.addedAt) : -Infinity;
-      return tb - ta || a.displayTitle.localeCompare(b.displayTitle);
+      // In-flight and just-finished games first, then newest -- see
+      // gameSortRules.ts for why an undated download is not an old one.
+      return compareRecent(a, b) || a.displayTitle.localeCompare(b.displayTitle);
     }
     return a.displayTitle.localeCompare(b.displayTitle);
   });
