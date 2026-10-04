@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isDeadSwarm, isMetadataDead, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isRedundantImport, isDeadSwarm, isMetadataDead, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -189,5 +189,59 @@ describe("torrent metadata and waiting states", () => {
 
   it("still leaves a torrent genuinely queued in qBittorrent alone", () => {
     expect(isUnhealthy({ errorMessage: null, ageMinutes: 60, hasProgress: false, clientStatus: "queued", torrentState: "queuedDL" })).toBe(false);
+  });
+});
+
+describe("usenet jobs waiting in the SABnzbd queue", () => {
+  // Regression, 2026-10-04: SABnzbd reports every queued job as "downloading",
+  // so a job at 0% behind 40 GB of others looked stalled and was cancelled,
+  // re-grabbed to the back of the queue, then blocklisted.
+  it("leaves a usenet job at 0% alone however long it has waited", () => {
+    expect(
+      isUnhealthy(entry({ protocol: "usenet", clientStatus: "downloading", ageMinutes: 90, hasProgress: false }))
+    ).toBe(false);
+  });
+
+  it("still heals a usenet job that reports an error", () => {
+    expect(
+      isUnhealthy(
+        entry({ protocol: "usenet", ageMinutes: 20, hasProgress: false, errorMessage: "Aborted, cannot be completed" })
+      )
+    ).toBe(true);
+  });
+
+  it("still heals a torrent that has never moved", () => {
+    expect(
+      isUnhealthy(entry({ protocol: "torrent", clientStatus: "downloading", ageMinutes: 20, hasProgress: false }))
+    ).toBe(true);
+  });
+});
+
+describe("isRedundantImport", () => {
+  const notAnUpgrade =
+    "Not an upgrade for existing movie file. Existing quality: Bluray-2160p. New Quality Bluray-1080p.";
+
+  it("recognises a finished download the library already has a better copy of", () => {
+    expect(isRedundantImport({ clientStatus: "completed", statusMessages: [notAnUpgrade] })).toBe(true);
+    expect(
+      isRedundantImport({
+        clientStatus: "completed",
+        statusMessages: ["Not a Custom Format upgrade for existing movie file(s)"],
+      })
+    ).toBe(true);
+  });
+
+  it("does not claim a download with any other import problem", () => {
+    expect(
+      isRedundantImport({
+        clientStatus: "completed",
+        statusMessages: [notAnUpgrade, "Unable to determine if file is a sample"],
+      })
+    ).toBe(false);
+    expect(isRedundantImport({ clientStatus: "completed", statusMessages: [] })).toBe(false);
+  });
+
+  it("does not claim one that is still downloading", () => {
+    expect(isRedundantImport({ clientStatus: "downloading", statusMessages: [notAnUpgrade] })).toBe(false);
   });
 });

@@ -267,6 +267,8 @@ describe("healStalledDownloads: waiting and stuck imports", () => {
     trackedDownloadState: "downloading",
     trackedDownloadStatus: "ok",
     importProblem: null,
+    statusMessages: [] as string[],
+    protocol: "usenet",
     ...over,
   });
 
@@ -276,10 +278,40 @@ describe("healStalledDownloads: waiting and stuck imports", () => {
     expect(m.cancelSonarrQueueItem).not.toHaveBeenCalled();
   });
 
-  it("still re-grabs a started download that has made no progress, keeping the episode wanted", async () => {
-    m.getSonarrQueueHealth.mockResolvedValue([queued({ queueId: 5101, episodeId: 1552, clientStatus: "downloading" })]);
+  it("leaves a usenet job at 0% alone even when the client calls it downloading", async () => {
+    // SABnzbd reports every job in its queue that way, not only the active one.
+    m.getSonarrQueueHealth.mockResolvedValue([queued({ queueId: 5103, episodeId: 1553, clientStatus: "downloading" })]);
+    await healStalledDownloads();
+    expect(m.cancelSonarrQueueItem).not.toHaveBeenCalled();
+  });
+
+  it("still re-grabs a started torrent that has made no progress, keeping the episode wanted", async () => {
+    m.getSonarrQueueHealth.mockResolvedValue([
+      queued({ queueId: 5101, episodeId: 1552, clientStatus: "downloading", protocol: "torrent", downloadId: "ABC123" }),
+    ]);
     await healStalledDownloads();
     expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(5101, { blocklist: false, keepWanted: true });
+  });
+
+  it("removes a finished download the library already has a better copy of, without blocklisting or searching", async () => {
+    const surplus = {
+      ...queued({
+        queueId: 5104,
+        hasProgress: true,
+        clientStatus: "completed",
+        trackedDownloadState: "importPending",
+        trackedDownloadStatus: "warning",
+        statusMessages: [
+          "Not an upgrade for existing movie file. Existing quality: Bluray-2160p. New Quality Bluray-1080p.",
+        ],
+      }),
+      episodeId: undefined,
+    };
+    m.getRadarrQueueHealth.mockResolvedValue([surplus]);
+    const healed = await healStalledDownloads();
+    expect(m.cancelRadarrQueueItem).toHaveBeenCalledWith(5104, { blocklist: false });
+    expect(m.searchRadarrMovie).not.toHaveBeenCalled();
+    expect(healed.some((h) => h.reason.includes("not needed"))).toBe(true);
   });
 
   it("replaces a finished download that cannot import, but only after it has stayed stuck", async () => {
