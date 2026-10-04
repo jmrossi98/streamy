@@ -13,9 +13,11 @@ import {
   shouldSearchImmediately,
   type BadReleaseReason,
 } from "./downloadHealthRules";
+import { FAST_COPY_MAX_TRIES, wantsFastCopy } from "./fastCopyRules";
 import {
   getRadarrQueueHealth,
   deepSearchRadarrMovie,
+  fastCopyRadarrMovie,
   getIdleWantedMovies,
   cancelRadarrDownload,
   cancelRadarrQueueItem,
@@ -61,6 +63,37 @@ import {
 // downloadHealthRules.ts so it can be tested without this file's clients.
 const lastHealedAt = new Map<string, number>();
 const idleTries = new Map<string, number>();
+/** Usenet copies already tried per movie, and when, so each pass tries the next one. */
+const fastCopyTried = new Map<number, { titles: Set<string>; lastAt: number }>();
+/** Long enough for a usenet copy to finish or fail before the next is tried. */
+const FAST_COPY_RETRY_MS = 5 * 60_000;
+
+/**
+ * Starts a usenet copy alongside any movie torrent that has been the only
+ * download for a while. Never awaited: the release search behind it takes up
+ * to a couple of minutes, and the heal pass must not.
+ */
+function startFastCopies(radarrQueue: QueueHealth[]): void {
+  const movies = new Set<number>();
+  for (const entry of radarrQueue) {
+    if (!wantsFastCopy(entry) || movies.has(entry.externalId)) continue;
+    // A usenet download already in flight for it is the fast copy.
+    if (radarrQueue.some((e) => e.externalId === entry.externalId && e.protocol === "usenet")) continue;
+    movies.add(entry.externalId);
+    const state = fastCopyTried.get(entry.externalId) ?? { titles: new Set<string>(), lastAt: 0 };
+    if (state.titles.size >= FAST_COPY_MAX_TRIES || Date.now() - state.lastAt < FAST_COPY_RETRY_MS) continue;
+    state.lastAt = Date.now();
+    fastCopyTried.set(entry.externalId, state);
+    void fastCopyRadarrMovie(entry.externalId, state.titles)
+      .then((grabbed) => {
+        if (!grabbed) return;
+        state.titles.add(grabbed);
+        console.log(`[healer] fast copy: grabbed "${grabbed}" alongside slow torrent "${entry.title}"`);
+      })
+      .catch((err) => console.error(`[healer] fast copy failed for "${entry.title}":`, err));
+  }
+}
+
 /** Which idle retry starts using the deep search (the first is the ordinary search alone). */
 const DEEP_SEARCH_FROM_TRY = 2;
 /** Consecutive stall-heals per episode, for the escalation in healOne. */
@@ -496,6 +529,9 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
       replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
     ),
   ]);
+  // A movie waiting on a slow torrent gets a quick usenet copy as well.
+  startFastCopies(radarrQueue);
+
   // Episodes no longer in either queue have finished or been removed, so their
   // stall count is history. Without this the map grows for the life of the
   // process and a release that recovered would still be blocklisted on its
