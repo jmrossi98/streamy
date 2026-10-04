@@ -16,7 +16,7 @@
  * NFL, NBA or NHL game in progress anywhere -- so the picture cannot tell you
  * it is filler. And the schedule cannot tell you a channel is dead.
  */
-import { channelVerdict, liveAliases, type ChannelVerdict, type StreamHealth } from "./liveChannelRules";
+import { channelVerdict, liveAliases, streamQualityRank, type ChannelVerdict, type StreamHealth } from "./liveChannelRules";
 import { getTodaysFixtures } from "./sportsSchedule";
 
 const PROBE_TIMEOUT_MS = 8_000;
@@ -28,6 +28,8 @@ type PublishedChannel = {
   frozen?: boolean | null;
   silent?: boolean | null;
   detail?: string;
+  speed?: number | null;
+  speedAt?: string | null;
 };
 
 type Published = { generatedAt?: string; channels?: PublishedChannel[] };
@@ -60,6 +62,8 @@ export async function fetchPublishedChannelHealth(): Promise<{
         frozen: c.frozen ?? undefined,
         silent: c.silent ?? undefined,
         detail: c.detail,
+        speed: typeof c.speed === "number" ? c.speed : undefined,
+        speedAt: c.speedAt ?? undefined,
       });
     }
     return { generatedAt: body.generatedAt ?? null, health };
@@ -76,6 +80,36 @@ const HEALTH_TRUST_MS = 90 * 60_000;
  * -- empty when there is no recent scan, so an old "down" can never bury a
  * channel that has since come back. Never throws.
  */
+export async function channelHealthForRanking(now: number = Date.now()): Promise<{
+  notResponding: Set<string>;
+  /** Normalised name -> streamQualityRank. A channel not in it is unknown (1). */
+  quality: Map<string, number>;
+  /** Normalised name -> measured speed, for the ones measured recently. */
+  speeds: Map<string, number>;
+}> {
+  const empty = { notResponding: new Set<string>(), quality: new Map<string, number>(), speeds: new Map<string, number>() };
+  try {
+    const published = await fetchPublishedChannelHealth();
+    const at = published?.generatedAt ? Date.parse(published.generatedAt) : NaN;
+    if (!published || !Number.isFinite(at) || now - at > HEALTH_TRUST_MS) return empty;
+    const quality = new Map<string, number>();
+    const speeds = new Map<string, number>();
+    for (const [name, h] of published.health) {
+      const rank = streamQualityRank(h, now);
+      quality.set(name, rank);
+      // Only a reading that counted towards the rank is worth showing.
+      if (h.speed != null && rank !== 1 && !(h.playable && h.frozen)) speeds.set(name, h.speed);
+    }
+    return {
+      notResponding: new Set([...published.health].filter(([, h]) => !h.playable).map(([name]) => name)),
+      quality,
+      speeds,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export async function notRespondingChannels(now: number = Date.now()): Promise<Set<string>> {
   try {
     const published = await fetchPublishedChannelHealth();

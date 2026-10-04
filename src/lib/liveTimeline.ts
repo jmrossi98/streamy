@@ -483,16 +483,37 @@ export function matchFixturesToEpgProgrammes(
   return result;
 }
 
-/** The first channel in `channels` named in `confirmedNames`, or null. */
-export function findEpgConfirmedChannel<C extends { id: string; name: string }>(
+/**
+ * Every channel in `channels` named in `confirmedNames`, best stream first.
+ *
+ * They are all equally certain to be showing the game, so which one to open
+ * is purely a question of which is the better stream -- `quality` (lower is
+ * better, see streamQualityRank) decides, and the guide's own order breaks
+ * ties.
+ */
+export function findEpgConfirmedChannels<C extends { id: string; name: string }>(
   confirmedNames: string[],
-  channels: C[]
-): C | null {
+  channels: C[],
+  quality: (name: string) => number = () => 1
+): C[] {
+  const found: C[] = [];
   for (const name of confirmedNames) {
     const match = channels.find((c) => c.name === name);
-    if (match) return match;
+    if (match && !found.includes(match)) found.push(match);
   }
-  return null;
+  return found
+    .map((channel, i) => ({ channel, i, q: quality(channel.name) }))
+    .sort((a, b) => a.q - b.q || a.i - b.i)
+    .map((m) => m.channel);
+}
+
+/** The best channel in `channels` named in `confirmedNames`, or null. */
+export function findEpgConfirmedChannel<C extends { id: string; name: string }>(
+  confirmedNames: string[],
+  channels: C[],
+  quality?: (name: string) => number
+): C | null {
+  return findEpgConfirmedChannels(confirmedNames, channels, quality)[0] ?? null;
 }
 
 /**
@@ -504,9 +525,12 @@ export function findEpgConfirmedChannel<C extends { id: string; name: string }>(
 export function resolveChannelForFixture<C extends { id: string; name: string }>(
   fixture: { awayTeam: string | null; homeTeam: string | null },
   channels: C[],
-  epgConfirmedNames: string[] = []
+  epgConfirmedNames: string[] = [],
+  quality?: (name: string) => number
 ): C | null {
-  return findEpgConfirmedChannel(epgConfirmedNames, channels) ?? findChannelForFixture(fixture, channels);
+  return (
+    findEpgConfirmedChannel(epgConfirmedNames, channels, quality) ?? findChannelForFixture(fixture, channels)
+  );
 }
 
 /**
@@ -592,17 +616,23 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
   fixture: { league: string; awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] },
   channels: C[],
   limit = 4,
-  homeMarkets: readonly string[] = HOME_MARKETS
+  homeMarkets: readonly string[] = HOME_MARKETS,
+  /**
+   * How good each channel's stream is, lower is better (streamQualityRank).
+   * Strictly a tiebreak: the schedule decides first, and only between
+   * channels it rates the same does the smoother stream go ahead.
+   */
+  quality: (name: string) => number = () => 1
 ): C[] {
   const cities = [teamCity(fixture.awayTeam ?? null), teamCity(fixture.homeTeam ?? null)].filter(
     (c): c is string => c != null
   );
 
-  const matches = new Map<string, { channel: C; specificity: number }>();
+  const matches = new Map<string, { channel: C; specificity: number; order: number }>();
   const consider = (channel: C, specificity: number) => {
     const existing = matches.get(channel.id);
     if (!existing || specificity < existing.specificity) {
-      matches.set(channel.id, { channel, specificity });
+      matches.set(channel.id, { channel, specificity, order: existing?.order ?? matches.size });
     }
   };
 
@@ -647,7 +677,12 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
   }
 
   return [...matches.values()]
-    .sort((a, b) => a.specificity - b.specificity)
+    .sort(
+      (a, b) =>
+        a.specificity - b.specificity ||
+        quality(a.channel.name) - quality(b.channel.name) ||
+        a.order - b.order
+    )
     .slice(0, limit)
     .map((m) => m.channel);
 }

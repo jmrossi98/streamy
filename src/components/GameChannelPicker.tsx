@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
+import { KEEPING_UP_SPEED } from "@/lib/liveChannelRules";
 import { resolveStoredChoice, type StoredChoice } from "@/lib/gameChannelChoice";
 
 type Props = {
@@ -15,6 +16,8 @@ type Props = {
   candidates: LiveChannel[];
   /** Channel name -> provider and dead-stream state, best effort. */
   infoByChannel: Record<string, ChannelInfo>;
+  /** Channel name -> how fast its stream was last measured arriving (1 = real time). */
+  speedByChannel?: Record<string, number>;
   /** This game's id, so a pick can be remembered against it. */
   fixtureId: string;
   /** What this user picked last time, if anything. Null for signed-out viewers. */
@@ -51,6 +54,7 @@ export function GameChannelPicker({
   channelConfirmed,
   candidates,
   infoByChannel,
+  speedByChannel = {},
   fixtureId,
   storedChoice,
 }: Props) {
@@ -158,6 +162,25 @@ export function GameChannelPicker({
                         provider has marked it dead. Still clickable -- the
                         flag can lag a stream that came back, and a dead
                         option beats no option when it is the only one. */}
+                    {/* Only said when it was measured: a stream that cannot
+                        deliver a second of picture per second buffers and
+                        drifts behind live. */}
+                    {speedByChannel[c.name] != null &&
+                      (speedByChannel[c.name] >= KEEPING_UP_SPEED ? (
+                        <span
+                          className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400/80"
+                          title="Arriving in real time when last measured"
+                        >
+                          Smooth
+                        </span>
+                      ) : (
+                        <span
+                          className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300"
+                          title="Arriving slower than real time when last measured, so it buffers and falls behind live"
+                        >
+                          Slow {speedByChannel[c.name].toFixed(2)}×
+                        </span>
+                      ))}
                     {infoByChannel[c.name]?.stale && (
                       <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
                         Dead

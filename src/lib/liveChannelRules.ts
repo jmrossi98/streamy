@@ -109,7 +109,37 @@ export type StreamHealth = {
   /** No audio above the noise floor for the whole sample. */
   silent?: boolean;
   detail?: string;
+  /**
+   * Seconds of programme arriving per second of wall clock, as last measured.
+   * Above 1 means little (a provider hands over its buffer in a burst); below
+   * 1 is a stream that cannot keep up, which a viewer sees as buffering and a
+   * picture that drifts further behind live the longer it plays.
+   */
+  speed?: number;
+  speedAt?: string;
 };
+
+/** Below this a stream is not keeping up. Measured 2026-10-04: 0.68 was unwatchable, 1.03 fine. */
+export const KEEPING_UP_SPEED = 0.95;
+/** How long a speed reading stays worth ranking by. A feed's bad hour is not its bad day. */
+export const SPEED_TRUST_MS = 3 * 60 * 60_000;
+
+/**
+ * How good a stream is to watch, lower is better: 0 keeping up, 1 unknown,
+ * above 2 falling behind (the further behind, the higher).
+ *
+ * Only ever a tiebreak between channels the schedule rates equally -- a smooth
+ * stream of the wrong game is not an improvement on a rough one of the right
+ * game. Unknown sits in the middle on purpose: unmeasured is better than
+ * measured-bad and worse than measured-good.
+ */
+export function streamQualityRank(health: StreamHealth | null | undefined, now: number): number {
+  if (!health) return 1;
+  if (health.playable && health.frozen) return 3;
+  const at = health.speedAt ? Date.parse(health.speedAt) : NaN;
+  if (health.speed == null || !Number.isFinite(at) || now - at > SPEED_TRUST_MS) return 1;
+  return health.speed >= KEEPING_UP_SPEED ? 0 : 2 + (KEEPING_UP_SPEED - health.speed);
+}
 
 export type ChannelState = "live" | "no-event" | "filler" | "down" | "unknown";
 
