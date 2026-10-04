@@ -144,3 +144,20 @@ describe("countGrabEvents", () => {
     expect(countGrabEvents(loop)).toEqual({ "Movie.2020.1080p": 3 });
   });
 });
+
+describe("pickAutomaticIndexers", () => {
+  it("keeps enabled indexers in automatic-search profiles that are not benched", async () => {
+    const { pickAutomaticIndexers } = await import("../healthProbeRules");
+    const indexers = [
+      { id: 1, enable: true, appProfileId: 1 },
+      { id: 2, enable: true, appProfileId: 2 }, // interactive only (deep search)
+      { id: 3, enable: false, appProfileId: 1 },
+      { id: 4, enable: true, appProfileId: 1 }, // benched by Prowlarr
+    ];
+    const profiles = [
+      { id: 1, enableAutomaticSearch: true },
+      { id: 2, enableAutomaticSearch: false },
+    ];
+    expect(pickAutomaticIndexers(indexers, profiles, [{ indexerId: 4 }])).toEqual([1]);
+  });
+});

@@ -202,6 +202,19 @@ export function regrabVerdict(counts: Record<string, number>): ProbeResult {
  */
 export const MIN_SEARCH_RESULTS = 1;
 
+/** Which indexers an ordinary automatic search asks. Pure, for the search probe. */
+export function pickAutomaticIndexers(
+  indexers: { id: number; enable?: boolean; appProfileId?: number }[],
+  profiles: { id: number; enableAutomaticSearch?: boolean }[],
+  benched: { indexerId: number }[]
+): number[] {
+  const auto = new Set(profiles.filter((p) => p.enableAutomaticSearch).map((p) => p.id));
+  const out = new Set(benched.map((b) => b.indexerId));
+  return indexers
+    .filter((i) => i.enable && i.appProfileId != null && auto.has(i.appProfileId) && !out.has(i.id))
+    .map((i) => i.id);
+}
+
 export function searchVerdict(title: string, resultCount: number | null): ProbeResult {
   const id = "search.yields_results";
   const name = "Search returns usable releases";
