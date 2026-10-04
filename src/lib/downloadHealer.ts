@@ -33,6 +33,7 @@ import {
   cancelSonarrDownload,
   cancelSonarrQueueItem,
   searchSonarrSeries,
+  deepSearchSonarrSeason,
   expireSonarrBlocklist,
   outstandingSearches,
 } from "./sonarr";
@@ -481,6 +482,20 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
       );
       for (const e of dueEpisodes) {
         healed.push({ title: e.title, reason: "wanted but nothing in flight" });
+      }
+      // From the second try on, also look for a season pack Sonarr found but
+      // could not place -- see seasonDeepSearchRules.ts. Once per season, and
+      // not awaited: it runs Sonarr's full search.
+      const seasons = new Map<string, { seriesId: number; seasonNumber: number }>();
+      for (const e of dueEpisodes) {
+        if ((idleTries.get(`idle:episode:${e.episodeId}`) ?? 0) < DEEP_SEARCH_FROM_TRY) continue;
+        if (e.seriesId == null || e.seasonNumber == null) continue;
+        seasons.set(`${e.seriesId}:${e.seasonNumber}`, { seriesId: e.seriesId, seasonNumber: e.seasonNumber });
+      }
+      for (const s of seasons.values()) {
+        void deepSearchSonarrSeason(s.seriesId, s.seasonNumber).catch((err) =>
+          console.error(`[healer] season deep search failed for series ${s.seriesId} S${s.seasonNumber}:`, err)
+        );
       }
     } catch (err) {
       console.error("[healer] idle episode re-search failed:", err);
