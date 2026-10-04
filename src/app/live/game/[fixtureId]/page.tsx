@@ -8,7 +8,12 @@ import type { StoredChoice } from "@/lib/gameChannelChoice";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
-import { findCandidateChannels, findEpgConfirmedChannelNames, resolveChannelForFixture } from "@/lib/liveTimeline";
+import {
+  findCandidateChannels,
+  findEpgConfirmedChannelNames,
+  findEpgElsewhereChannelNames,
+  resolveChannelForFixture,
+} from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -68,9 +73,14 @@ export default async function GamePage({
   // must not take the page down, only cost it the (already best-effort)
   // upgrade from a name-based guess to a real confirmed channel.
   let epgConfirmedNames: string[] = [];
+  let epgElsewhere = new Set<string>();
   try {
     const programs = await getMappedChannelPrograms();
-    if (programs) epgConfirmedNames = findEpgConfirmedChannelNames(fixture, programs);
+    if (programs) {
+      epgConfirmedNames = findEpgConfirmedChannelNames(fixture, programs);
+      // The guide says these are showing something else at game time.
+      epgElsewhere = new Set(findEpgElsewhereChannelNames(fixture, programs));
+    }
   } catch (err) {
     console.error("[live/game] EPG match failed:", err);
   }
@@ -92,8 +102,11 @@ export default async function GamePage({
   // 2026-10-04: the default for a Bills game was a channel on a provider that
   // had been unreachable for an hour, shown as "Not responding" on /live.
   const notResponding = await notRespondingChannels();
+  // "Stale" here means "do not default to this": the provider gave up on it,
+  // it would not open at the last scan, or its own guide has something other
+  // than this sport in the slot.
   const isStale = (name: string) =>
-    infoByChannel[name]?.stale === true || notResponding.has(normaliseName(name));
+    infoByChannel[name]?.stale === true || notResponding.has(normaliseName(name)) || epgElsewhere.has(name);
 
   const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);

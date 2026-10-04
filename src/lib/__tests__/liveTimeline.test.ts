@@ -7,6 +7,8 @@ import {
   looksLikePlaceholder,
   channelCarriesNetwork,
   findCandidateChannels,
+  findEpgElsewhereChannelNames,
+  gameReferenceTime,
   findChannelForFixture,
   findEpgConfirmedChannel,
   findEpgConfirmedChannelNames,
@@ -572,5 +574,27 @@ describe("findCandidateChannels: home market", () => {
     ];
     const fixture = { league: "NFL", awayTeam: "Kansas City Chiefs", homeTeam: "Baltimore Ravens", broadcasts: ["CBS"] };
     expect(findCandidateChannels(fixture, lineup).map((c) => c.id)).toEqual(["balt", "roc"]);
+  });
+});
+
+describe("guide lookups at game time", () => {
+  const prog = (title: string, start: string, end: string, description = "") => ({ title, description, startUtc: start, endUtc: end });
+  const guide = new Map([
+    ["CBS ROCHESTER", [prog("The NFL Today", "2026-10-04T16:00:00Z", "2026-10-04T17:00:00Z"), prog("Live: NFL Football", "2026-10-04T17:00:00Z", "2026-10-04T20:25:00Z", "Football action from around the National Football League.")]],
+    ["CBS ELSEWHERE", [prog("Paid Programming", "2026-10-04T17:00:00Z", "2026-10-04T18:00:00Z")]],
+    ["CBS NAMED", [prog("NFL Football", "2026-10-04T17:00:00Z", "2026-10-04T20:25:00Z", "The New England Patriots at the Buffalo Bills.")]],
+  ]);
+  const fixture = { league: "NFL", awayTeam: "New England Patriots", homeTeam: "Buffalo Bills", startUtc: "2026-10-04T17:00:00Z" };
+
+  it("reads the guide at kickoff for a game that has not started", () => {
+    expect(gameReferenceTime("2026-10-04T17:00:00Z", "2026-10-04T16:30:00Z")).toBe(Date.parse("2026-10-04T17:10:00Z"));
+    expect(gameReferenceTime("2026-10-04T17:00:00Z", "2026-10-04T18:00:00Z")).toBe(Date.parse("2026-10-04T18:00:00Z"));
+    // Before kickoff the pregame show is on, but the game slot names the teams.
+    expect(findEpgConfirmedChannelNames(fixture, guide, "2026-10-04T16:30:00Z")).toEqual(["CBS NAMED"]);
+  });
+
+  it("flags a station showing something else at game time, and nothing without guide data", () => {
+    expect(findEpgElsewhereChannelNames(fixture, guide, "2026-10-04T16:30:00Z")).toEqual(["CBS ELSEWHERE"]);
+    expect(findEpgElsewhereChannelNames(fixture, new Map(), "2026-10-04T16:30:00Z")).toEqual([]);
   });
 });
