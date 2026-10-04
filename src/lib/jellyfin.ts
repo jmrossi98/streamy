@@ -66,6 +66,11 @@ async function jellyfinFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/** A plain read of a Jellyfin endpoint, for modules that only ever look. */
+export function jellyfinGet<T>(path: string): Promise<T> {
+  return jellyfinFetch<T>(path);
+}
+
 export type JellyfinItem = {
   Id: string;
   ProviderIds?: Record<string, string>;

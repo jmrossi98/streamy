@@ -9,6 +9,7 @@
 
 import { prisma } from "./db";
 import { locateMany } from "./geoip";
+import { getJellyfinPlays } from "./jellyfinPlayback";
 import { getJellyfinLoginSummary } from "./jellyfinLogins";
 
 /** Allowed `site` values. An unknown site is rejected rather than stored. */
@@ -99,12 +100,13 @@ export type VisitorSummary = {
      * "jellyfin" for a sign-in attempt to the Jellyfin server, "assistant"
      * for a turn taken with the admin assistant.
      */
-    kind: "visit" | "login" | "jellyfin" | "assistant";
+    kind: "visit" | "login" | "jellyfin" | "jellyfin-play" | "assistant";
     /** "portfolio" | "streamy" for a visit; the kind's own label otherwise. */
     site: string;
     /**
      * The page path for a visit; "name: outcome" for either kind of sign-in;
-     * the (truncated) prompt for an assistant turn.
+     * the (truncated) prompt for an assistant turn; "name: what was played"
+     * for something watched on Jellyfin.
      */
     path: string;
     /**
@@ -115,6 +117,7 @@ export type VisitorSummary = {
     ip: string;
     /** "City, Country" from GeoLite2, or null when it can't be placed. */
     location: string | null;
+    /** The device, for something watched on Jellyfin. */
     referrer: string | null;
     /** Sign-in rows only (either kind): whether the attempt succeeded. */
     success?: boolean;
@@ -145,6 +148,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     allAssistant,
     assistantTotal,
     jellyfinLogins,
+    jellyfinPlays,
   ] = await Promise.all([
     prisma.siteVisit.count({ where: { site, at: { gte: dayAgo } } }),
     prisma.siteVisit.count({ where: { site, at: { gte: weekAgo } } }),
@@ -185,10 +189,15 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     // as a snapshot by the guard script on mediabox. Cached in
     // jellyfinLogins.ts, so the map and this log share one outbound read.
     getJellyfinLoginSummary(),
+    // Jellyfin's activity log, read directly: what was watched there (live TV,
+    // movies, episodes), which never passes through this app's own pages.
+    getJellyfinPlays(),
   ]);
 
   // One merged, newest-first timeline of everything.
-  type Row = VisitorSummary["recent"][number] & { _at: Date };
+  // _locateIp: the address to place a row by when that isn't the one shown --
+  // a play on the house's LAN is placed by the house's public address.
+  type Row = VisitorSummary["recent"][number] & { _at: Date; _locateIp?: string };
   const rows: Row[] = [
     ...allVisits.map((v) => ({
       id: v.id,
@@ -243,6 +252,18 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       at: j.at,
       _at: new Date(j.at),
     })),
+    ...jellyfinPlays.map((p) => ({
+      id: p.id,
+      kind: "jellyfin-play" as const,
+      site: "jellyfin",
+      path: `${p.user}: ${p.label}`,
+      ip: p.ip,
+      location: null,
+      referrer: p.device,
+      at: p.at,
+      _at: new Date(p.at),
+      _locateIp: p.locateIp,
+    })),
   ]
     // A snapshot line with an unparseable timestamp would sort as NaN and
     // scramble the whole timeline, so drop those rather than trust them.
@@ -250,7 +271,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     .sort((a, b) => b._at.getTime() - a._at.getTime())
     .slice(0, LOG_CAP);
 
-  const located = await locateMany(rows.map((r) => r.ip));
+  const located = await locateMany(rows.map((r) => r._locateIp ?? r.ip));
   const locationOf = (ip: string): string | null => {
     const loc = located.get(ip);
     if (!loc) return null;
@@ -267,7 +288,8 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       referrer: r.referrer ?? "(direct)",
       count: r._count.referrer,
     })),
-    recent: rows.map(({ _at, ...r }) => ({ ...r, location: locationOf(r.ip) })),
-    totalActivity: visitTotal + loginTotal + assistantTotal + jellyfinLogins.attempts.length,
+    recent: rows.map(({ _at, _locateIp, ...r }) => ({ ...r, location: locationOf(_locateIp ?? r.ip) })),
+    totalActivity:
+      visitTotal + loginTotal + assistantTotal + jellyfinLogins.attempts.length + jellyfinPlays.length,
   };
 }

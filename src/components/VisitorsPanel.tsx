@@ -47,6 +47,8 @@ function badgeClass(v: VisitorRow): string {
       return v.success
         ? "bg-purple-500/15 text-purple-300"
         : "bg-purple-500/25 text-purple-200";
+    case "jellyfin-play":
+      return "bg-pink-500/15 text-pink-300";
     case "assistant":
       return "bg-orange-500/15 text-orange-300";
     default:
@@ -62,6 +64,8 @@ function badgeLabel(v: VisitorRow): string {
       return v.success ? "sign-in" : "sign-in ✗";
     case "jellyfin":
       return v.success ? "jellyfin" : "jellyfin ✗";
+    case "jellyfin-play":
+      return "watched";
     case "assistant":
       return "assistant";
     default:
@@ -175,7 +179,10 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                         {v.path}
                       </td>
                     ) : (
-                      <td className="max-w-[12rem] truncate px-3 py-2 text-white/80" title={v.path}>
+                      <td
+                        className={`${v.kind === "jellyfin-play" ? "max-w-[20rem]" : "max-w-[12rem]"} truncate px-3 py-2 text-white/80`}
+                        title={v.path}
+                      >
                         {v.path}
                       </td>
                     )}
@@ -188,7 +195,12 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                       {v.ip || <span className="text-white/25">-</span>}
                     </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/50">
-                      {v.referrer ? hostOf(v.referrer) : "direct"}
+                      {/* For something watched, this column is the device. */}
+                      {v.kind === "jellyfin-play"
+                        ? v.referrer
+                        : v.referrer
+                          ? hostOf(v.referrer)
+                          : "direct"}
                     </td>
                   </tr>
                 ))}

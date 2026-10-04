@@ -26,6 +26,7 @@ export type VisitSource =
   | "login-success"
   | "login-fail"
   | "jellyfin"
+  | "jellyfin-play"
   | "assistant";
 
 export const VISIT_SOURCES: readonly VisitSource[] = [
@@ -34,6 +35,7 @@ export const VISIT_SOURCES: readonly VisitSource[] = [
   "login-success",
   "login-fail",
   "jellyfin",
+  "jellyfin-play",
   "assistant",
 ];
 
@@ -79,6 +81,7 @@ function emptyBySource(): Record<VisitSource, number> {
     "login-success": 0,
     "login-fail": 0,
     jellyfin: 0,
+    "jellyfin-play": 0,
     assistant: 0,
   };
 }
