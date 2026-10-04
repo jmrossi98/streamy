@@ -28,7 +28,12 @@
  * something -- not whether a port answers.
  */
 
-export type ProbeStatus = "pass" | "fail" | "skip";
+/**
+ * "warn" is shown with the rest but is not a failure: it does not turn the
+ * run red, send the alert, or trigger remediation. For conditions worth
+ * seeing that are normal to have some of -- a few dead IPTV channels.
+ */
+export type ProbeStatus = "pass" | "warn" | "fail" | "skip";
 
 export type ProbeResult = {
   /** Stable identifier. Remediation keys off this, so it must not embed values. */
@@ -204,8 +209,8 @@ export const MIN_SEARCH_RESULTS = 1;
 
 // ------------------------------------------------------------------ live TV
 
-/** Below this share of channels responding, live TV is treated as broken, not patchy. */
-export const LIVE_CHANNELS_MIN_SHARE = 0.6;
+/** How many down channels are named in the detail line before "+N more". */
+const DOWN_CHANNELS_NAMED = 6;
 
 export type LiveChannelsReport = {
   generatedAt?: string;
@@ -215,20 +220,22 @@ export type LiveChannelsReport = {
 };
 
 /**
- * Whether most live channels answered at the checker's last full scan.
+ * Which live channels answered at the checker's last full scan.
  *
- * A few dead channels is normal for IPTV; most of them dead at once is an
- * outage with one cause upstream -- a provider down, or cut off from the VPN
- * exit. Before this, the only thing watching the checker was "its file is
- * fresh", so on 2026-10-04 fifteen of twenty-two channels went dark and the
- * first notice was a tile grid of "Not responding".
+ * Fails -- and so alerts -- only when not one channel responds. Some channels
+ * being down is ordinary for IPTV (event channels between events, a station
+ * a provider has dropped), and a threshold on the share that were up sent an
+ * alert on every patchy afternoon; decided 2026-10-04 that those are to be
+ * shown, not mailed. Anything short of all-up is a warning that names what is
+ * down. A wide outage with one upstream cause still alerts through the
+ * provider reachability probe below.
  *
  * A scan that yielded to a viewer is skipped, not failed: it did not look at
  * most channels, so it cannot say they are down.
  */
 export function liveChannelsVerdict(report: LiveChannelsReport | null): ProbeResult {
   const id = "live.channels_responding";
-  const name = "Most live channels respond";
+  const name = "Live channels respond";
   if (report === null || !Array.isArray(report.channels)) {
     return { id, name, status: "skip", detail: "live-channels.json unreadable" };
   }
@@ -237,9 +244,18 @@ export function liveChannelsVerdict(report: LiveChannelsReport | null): ProbeRes
   }
   const total = report.channels.length;
   if (total === 0) return { id, name, status: "skip", detail: "no channels in the lineup" };
-  const ok = report.channels.filter((c) => c.playable === true).length;
-  const detail = `${ok} of ${total} channels responding`;
-  return { id, name, status: ok / total >= LIVE_CHANNELS_MIN_SHARE ? "pass" : "fail", detail };
+  const down = report.channels.filter((c) => c.playable !== true);
+  const ok = total - down.length;
+  if (ok === 0) return { id, name, status: "fail", detail: `none of ${total} channels responding` };
+  if (down.length === 0) return { id, name, status: "pass", detail: `all ${total} channels responding` };
+  const named = down.slice(0, DOWN_CHANNELS_NAMED).map((c) => (c.name ?? "(unnamed)").trim());
+  const more = down.length > named.length ? ` +${down.length - named.length} more` : "";
+  return {
+    id,
+    name,
+    status: "warn",
+    detail: `${ok} of ${total} channels responding; down: ${named.join(", ")}${more}`,
+  };
 }
 
 export type ProviderReachability = {
@@ -353,8 +369,13 @@ export function searchVerdict(title: string, resultCount: number | null): ProbeR
 export function summarise(results: ProbeResult[]): { success: boolean; summary: string } {
   const failed = results.filter((r) => r.status === "fail");
   const ran = results.filter((r) => r.status !== "skip");
+  const warned = results.filter((r) => r.status === "warn");
   if (failed.length === 0) {
-    return { success: true, summary: `${ran.length}/${ran.length} probes passed` };
+    // Warnings are counted in the summary so they are seen, but the run is a
+    // success: nothing is sent and nothing is restarted for them.
+    const passed = ran.length - warned.length;
+    const warnings = warned.length > 0 ? `, ${warned.length} warning${warned.length === 1 ? "" : "s"}` : "";
+    return { success: true, summary: `${passed}/${ran.length} probes passed${warnings}` };
   }
   return {
     success: false,
