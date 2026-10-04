@@ -9,6 +9,8 @@ import {
   deleteSonarrSeries,
   deleteSonarrEpisode,
   getSonarrQueueHealth,
+  removeSonarrEpisodes,
+  removeSonarrSeries,
 } from "@/lib/sonarr";
 import { getRadarrQueueHealth } from "@/lib/radarr";
 import { logAudit } from "@/lib/auditLog";
@@ -37,6 +39,36 @@ export async function POST(request: Request) {
   }
 
   const id = externalId;
+
+  // A whole show, or one season of it, from the panel's grouped rows: stop
+  // everything in flight for it and delete what is on disk, in one go. The
+  // single-row paths below each do only one of those, for one entry.
+  const scope = body?.scope === "series" || body?.scope === "season" ? body.scope : null;
+  if (scope && mediaType === "show") {
+    const seasonNumber = typeof body?.seasonNumber === "number" ? body.seasonNumber : null;
+    if (scope === "season" && seasonNumber === null) {
+      return NextResponse.json({ error: "seasonNumber required" }, { status: 400 });
+    }
+    const removed =
+      scope === "series"
+        ? await removeSonarrSeries(id)
+        : (await removeSonarrEpisodes(id, seasonNumber!, null)).ok;
+    if (!removed) {
+      return NextResponse.json({ error: "Couldn't remove" }, { status: 404 });
+    }
+    // The show's own request row goes with the whole show only: after one
+    // season is removed the rest of it is still wanted.
+    if (scope === "series") {
+      await prisma.mediaRequest.deleteMany({ where: { mediaType, externalId: id } });
+    }
+    logAudit(
+      admin.name,
+      `show.admin.remove`,
+      title,
+      scope === "series" ? "whole series" : `season ${seasonNumber}`
+    );
+    return NextResponse.json({ ok: true });
+  }
 
   // A queued episode has been asked for but never searched, so there is no
   // queue entry to remove and nothing to blocklist -- the whole job is to stop

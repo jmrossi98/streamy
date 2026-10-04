@@ -6,6 +6,7 @@ import {
   getSonarrActiveDownloads,
   getSonarrCompletedEpisodes,
   maybeDrainEpisodeSearches,
+  getSonarrSeriesPlaces,
 } from "@/lib/sonarr";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
@@ -289,6 +290,23 @@ export async function AdminDownloadsSections() {
     notice: q.attempts > 0 ? `Retrying (attempt ${q.attempts + 1})` : null,
   }));
   downloads.unshift(...queuedRows);
+
+  // Where each TV row sits in its show, so the panel can fold them into
+  // shows and seasons. Unplaced rows still render, under the show's "Other".
+  const places = await withDeadline(
+    getSonarrSeriesPlaces(downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId)),
+    new Map(),
+    PANEL_DEADLINE_MS
+  );
+  for (const d of downloads) {
+    if (d.mediaType !== "show") continue;
+    const series = places.get(d.externalId);
+    if (!series) continue;
+    d.seriesTitle = series.title;
+    const place = d.episodeId != null ? series.episodes.get(d.episodeId) : undefined;
+    d.seasonNumber = place?.seasonNumber ?? null;
+    d.episodeNumber = place?.episodeNumber ?? null;
+  }
 
   return (
       <div className="space-y-10">
