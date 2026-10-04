@@ -20,6 +20,7 @@ import {
   stuckJobVerdict,
   regrabVerdict,
   countGrabEvents,
+  pickAutomaticIndexers,
   searchVerdict,
   stuckImportVerdict,
   summarise,
@@ -209,12 +210,38 @@ async function probeSearch(): Promise<ProbeResult> {
   }
   // Prowlarr rather than Radarr/Sonarr: this must not add a movie, monitor
   // anything, or grab. It asks the indexers a question and counts answers.
+  //
+  // Only the indexers an ordinary search uses. With no ids Prowlarr asks every
+  // enabled indexer, including the "interactive only" ones kept for the deep
+  // search (Internet Archive alone takes ~37s) -- so adding those on
+  // 2026-10-03 pushed this probe past its budget, and it failed, and restarted
+  // FlareSolverr, while search itself was fine. Measured 2026-10-04: all
+  // indexers 48.6s, the automatic set 1-6s.
+  const ids = await automaticSearchIndexerIds(base, key);
+  const scope = ids.map((id) => `&indexerIds=${id}`).join("");
   const results = await getJson<unknown[]>(
-    `${base}/api/v1/search?query=${encodeURIComponent(title)}&type=search&limit=50`,
+    `${base}/api/v1/search?query=${encodeURIComponent(title)}&type=search&limit=50${scope}`,
     { "X-Api-Key": key },
     SEARCH_TIMEOUT_MS
   );
   return searchVerdict(title, Array.isArray(results) ? results.length : null);
+}
+
+/**
+ * The indexers a real, automatic search would ask: enabled, in an app profile
+ * with automatic search on, and not currently benched by Prowlarr for
+ * failing. Empty on any read failure, which searches everything -- the old
+ * behaviour, and still a valid test.
+ */
+async function automaticSearchIndexerIds(base: string, key: string): Promise<number[]> {
+  const headers = { "X-Api-Key": key };
+  const [indexers, profiles, benched] = await Promise.all([
+    getJson<{ id: number; enable?: boolean; appProfileId?: number }[]>(`${base}/api/v1/indexer`, headers),
+    getJson<{ id: number; enableAutomaticSearch?: boolean }[]>(`${base}/api/v1/appprofile`, headers),
+    getJson<{ indexerId: number }[]>(`${base}/api/v1/indexerstatus`, headers),
+  ]);
+  if (!indexers || !profiles) return [];
+  return pickAutomaticIndexers(indexers, profiles, benched ?? []);
 }
 
 export type HealthProbeReport = {
