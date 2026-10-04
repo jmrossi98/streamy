@@ -21,6 +21,8 @@ import {
   regrabVerdict,
   countGrabEvents,
   exitNodeVerdict,
+  downloadClientsVerdicts,
+  type DownloadClientsReport,
   liveChannelsVerdict,
   providerReachabilityVerdict,
   type LiveChannelsReport,
@@ -150,6 +152,13 @@ async function probeExitNodes(): Promise<ProbeResult> {
   const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
   if (!base) return { ...exitNodeVerdict(null), detail: "FLASH_LIBRARY_URL not set" };
   return exitNodeVerdict(await getJson<ExitNodeReport>(`${base}/status/exit-nodes.json`));
+}
+
+/** The forwarded torrent port and usenet logins, as mediabox's own check last found them. */
+async function probeDownloadClients(): Promise<ProbeResult[]> {
+  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
+  if (!base) return downloadClientsVerdicts(null).map((r) => ({ ...r, detail: "FLASH_LIBRARY_URL not set" }));
+  return downloadClientsVerdicts(await getJson<DownloadClientsReport>(`${base}/status/download-clients.json`));
 }
 
 /** Live TV as a whole: are most channels up, and can the providers be reached. */
@@ -289,7 +298,7 @@ export async function runHealthProbes(
 
   // In parallel: these touch different systems and one slow indexer should
   // not delay the freshness read that costs 30ms.
-  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes, liveTv] = await Promise.all([
+  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes, liveTv, downloadClients] = await Promise.all([
     probeFreshness(),
     probeStuckImports(),
     probeRegrabLoop(),
@@ -297,9 +306,10 @@ export async function runHealthProbes(
     probeBatchJobs(),
     probeExitNodes(),
     probeLiveTv(),
+    probeDownloadClients(),
   ]);
 
-  const results = [...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes, ...liveTv];
+  const results = [...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes, ...liveTv, ...downloadClients];
   const { success, summary } = summarise(results);
   const detail = results
     .map((r) => `${r.status.toUpperCase().padEnd(4)}  ${r.name}: ${r.detail}`)

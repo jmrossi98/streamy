@@ -450,3 +450,55 @@ export function quarantineVerdict(files: QuarantinedFile[] | null): ProbeResult 
       "Re-dump, delete, or leave uncompressed -- nothing will retry them.",
   };
 }
+
+// ------------------------------------------------------- download clients
+
+/** The check runs every 10 minutes; this long without one means it has stopped. */
+export const DOWNLOAD_CLIENTS_STALE_MINUTES = 45;
+
+export type DownloadClientsReport = {
+  generatedAt?: string;
+  torrentPort?: { ok?: boolean; detail?: string };
+  usenet?: { name?: string; ok?: boolean; error?: string | null }[];
+};
+
+/**
+ * The two download-client faults that the clients themselves report as fine,
+ * from mediabox's own check (scripts/download-clients-health.py).
+ *
+ * qBittorrent off the forwarded port still downloads, over the few peers it
+ * can dial out to: from 2026-09-30 to 10-04 the port push failed on a wrong
+ * password and the only symptom was 4K torrents with two-day ETAs. A usenet
+ * provider refusing its login leaves SABnzbd running on the others, so older
+ * posts fail as incomplete and read as bad releases: Newshosting was refused
+ * for six hours on 2026-10-04, and the healer blocklisted what failed.
+ */
+export function downloadClientsVerdicts(report: DownloadClientsReport | null, now = new Date()): ProbeResult[] {
+  const port = { id: "downloads.torrent_port", name: "qBittorrent listens on the forwarded port" };
+  const usenet = { id: "downloads.usenet_logins", name: "Usenet providers accept their logins" };
+  if (report === null) {
+    return [port, usenet].map((p) => ({ ...p, status: "skip" as const, detail: "download-clients.json unreadable" }));
+  }
+  const at = report.generatedAt ? Date.parse(report.generatedAt) : NaN;
+  const age = Number.isFinite(at) ? (now.getTime() - at) / 60_000 : Infinity;
+  if (age > DOWNLOAD_CLIENTS_STALE_MINUTES) {
+    const detail = `the download-client check last ran ${Number.isFinite(age) ? `${Math.round(age)}m` : "never"} ago`;
+    return [port, usenet].map((p) => ({ ...p, status: "fail" as const, detail }));
+  }
+  const refused = (report.usenet ?? []).filter((s) => !s.ok);
+  const servers = report.usenet?.length ?? 0;
+  return [
+    report.torrentPort?.ok
+      ? { ...port, status: "pass", detail: report.torrentPort.detail ?? "ports match" }
+      : { ...port, status: "fail", detail: report.torrentPort?.detail ?? "port state missing from the report" },
+    refused.length > 0
+      ? {
+          ...usenet,
+          status: "fail",
+          detail: refused.map((s) => `${s.name ?? "a provider"}: ${s.error ?? "refused"}`).join("; "),
+        }
+      : servers === 0
+        ? { ...usenet, status: "fail", detail: "no usenet provider is configured in SABnzbd" }
+        : { ...usenet, status: "pass", detail: `${servers} provider${servers === 1 ? "" : "s"} logged in` },
+  ];
+}

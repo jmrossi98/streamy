@@ -210,3 +210,50 @@ describe("live TV probes", () => {
     expect(providerReachabilityVerdict({}, now).status).toBe("skip");
   });
 });
+
+describe("downloadClientsVerdicts", () => {
+  const now = new Date("2026-10-04T21:00:00Z");
+  const fresh = { generatedAt: "2026-10-04T20:55:00Z" };
+
+  it("passes both when the port matches and every provider logs in", async () => {
+    const { downloadClientsVerdicts } = await import("../healthProbeRules");
+    const r = downloadClientsVerdicts(
+      {
+        ...fresh,
+        torrentPort: { ok: true, detail: "qBittorrent listens on the forwarded port 53765" },
+        usenet: [{ name: "Newshosting", ok: true }, { name: "news.usenet.farm", ok: true }],
+      },
+      now
+    );
+    expect(r.map((x) => x.status)).toEqual(["pass", "pass"]);
+  });
+
+  it("fails each on its own, with the reason", async () => {
+    const { downloadClientsVerdicts } = await import("../healthProbeRules");
+    const [port, usenet] = downloadClientsVerdicts(
+      {
+        ...fresh,
+        torrentPort: { ok: false, detail: "qBittorrent listens on 55305 but PIA forwards 53765" },
+        usenet: [
+          { name: "Newshosting", ok: false, error: "Failed login [502 Authentication Failed]" },
+          { name: "news.usenet.farm", ok: true },
+        ],
+      },
+      now
+    );
+    expect(port).toMatchObject({ id: "downloads.torrent_port", status: "fail" });
+    expect(port.detail).toMatch(/55305/);
+    expect(usenet).toMatchObject({ id: "downloads.usenet_logins", status: "fail" });
+    expect(usenet.detail).toMatch(/Newshosting: .*502/);
+  });
+
+  it("fails when the check itself has stopped, and skips when unreadable", async () => {
+    const { downloadClientsVerdicts } = await import("../healthProbeRules");
+    const stale = downloadClientsVerdicts(
+      { generatedAt: "2026-10-04T19:00:00Z", torrentPort: { ok: true }, usenet: [{ name: "x", ok: true }] },
+      now
+    );
+    expect(stale.map((x) => x.status)).toEqual(["fail", "fail"]);
+    expect(downloadClientsVerdicts(null, now).map((x) => x.status)).toEqual(["skip", "skip"]);
+  });
+});
