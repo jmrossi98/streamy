@@ -570,24 +570,59 @@ export function classifyChannel(name: string): ChannelCategory {
 export async function refreshGuide(): Promise<boolean> {
   if (!isJellyfinConfiguredForLiveTv()) return false;
   try {
-    const tasks = await liveTvFetch<{ Id?: string; Name?: string; Key?: string }[]>(
-      "/ScheduledTasks"
-    );
-    const task = (tasks ?? []).find((t) =>
-      `${t.Name ?? ""}${t.Key ?? ""}`.toLowerCase().includes("guide")
-    );
+    const task = await guideTask();
     if (!task?.Id) return false;
 
-    const res = await fetch(
-      `${JELLYFIN_URL}/ScheduledTasks/Running/${encodeURIComponent(task.Id)}`,
-      {
-        method: "POST",
-        headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
-        signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
-      }
-    );
-    return res.ok;
+    // Jellyfin ignores a start request for a task that is already running, and
+    // a refresh already under way read the lineup before this change existed.
+    // That is how the second of two back-to-back promotes went missing
+    // (2026-10-04: 2245 appeared, 2246 did not, until a refresh by hand). So
+    // when one is running, wait for it and then run another.
+    if (task.State && task.State !== "Idle") {
+      void refreshGuideAfterCurrent(task.Id);
+      return true;
+    }
+    return await startGuideTask(task.Id);
   } catch {
     return false;
+  }
+}
+
+type GuideTask = { Id?: string; Name?: string; Key?: string; State?: string };
+
+async function guideTask(): Promise<GuideTask | undefined> {
+  const tasks = await liveTvFetch<GuideTask[]>("/ScheduledTasks");
+  return (tasks ?? []).find((t) => `${t.Name ?? ""}${t.Key ?? ""}`.toLowerCase().includes("guide"));
+}
+
+async function startGuideTask(id: string): Promise<boolean> {
+  const res = await fetch(`${JELLYFIN_URL}/ScheduledTasks/Running/${encodeURIComponent(id)}`, {
+    method: "POST",
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+  });
+  return res.ok;
+}
+
+/** How long to wait for a running guide refresh before giving up on the follow-up. */
+const GUIDE_WAIT_MS = 90_000;
+let followUpQueued = false;
+
+/** Waits for the running refresh to finish, then starts one more. At most one queued. */
+async function refreshGuideAfterCurrent(id: string): Promise<void> {
+  if (followUpQueued) return;
+  followUpQueued = true;
+  try {
+    const deadline = Date.now() + GUIDE_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const task = await guideTask().catch(() => undefined);
+      if (!task || task.State === "Idle") break;
+    }
+    await startGuideTask(id);
+  } catch (err) {
+    console.error("[live-tv] follow-up guide refresh failed:", err);
+  } finally {
+    followUpQueued = false;
   }
 }
