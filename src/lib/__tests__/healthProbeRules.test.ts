@@ -183,13 +183,18 @@ describe("exitNodeVerdict", () => {
 });
 
 describe("live TV probes", () => {
-  it("fails when most channels are down, passes when most are up, skips a yielded scan", async () => {
+  it("fails only when every channel is down, warns when some are, skips a yielded scan", async () => {
     const { liveChannelsVerdict } = await import("../healthProbeRules");
     const mk = (up: number, total: number) => ({
       channels: Array.from({ length: total }, (_, i) => ({ name: `c${i}`, playable: i < up })),
     });
-    expect(liveChannelsVerdict(mk(7, 27))).toMatchObject({ status: "fail", detail: "7 of 27 channels responding" });
-    expect(liveChannelsVerdict(mk(22, 27)).status).toBe("pass");
+    expect(liveChannelsVerdict(mk(0, 27))).toMatchObject({ status: "fail", detail: "none of 27 channels responding" });
+    // Most of them down is still not an alert: it is shown, with names.
+    const patchy = liveChannelsVerdict(mk(7, 27));
+    expect(patchy.status).toBe("warn");
+    expect(patchy.detail).toBe("7 of 27 channels responding; down: c7, c8, c9, c10, c11, c12 +14 more");
+    expect(liveChannelsVerdict(mk(26, 27))).toMatchObject({ status: "warn", detail: "26 of 27 channels responding; down: c26" });
+    expect(liveChannelsVerdict(mk(27, 27))).toMatchObject({ status: "pass", detail: "all 27 channels responding" });
     expect(liveChannelsVerdict({ ...mk(2, 27), skippedReason: "a viewer started watching mid-scan" }).status).toBe("skip");
     expect(liveChannelsVerdict(null).status).toBe("skip");
   });
@@ -255,5 +260,24 @@ describe("downloadClientsVerdicts", () => {
     );
     expect(stale.map((x) => x.status)).toEqual(["fail", "fail"]);
     expect(downloadClientsVerdicts(null, now).map((x) => x.status)).toEqual(["skip", "skip"]);
+  });
+});
+
+describe("summarise with warnings", () => {
+  const r = (status: "pass" | "warn" | "fail" | "skip", name = "x") => ({ id: name, name, status, detail: "" });
+
+  it("counts a warning without failing the run", async () => {
+    const { summarise } = await import("../healthProbeRules");
+    expect(summarise([r("pass"), r("pass"), r("warn"), r("skip")])).toEqual({
+      success: true,
+      summary: "2/3 probes passed, 1 warning",
+    });
+  });
+
+  it("still fails on a real failure, and names only the failures", async () => {
+    const { summarise } = await import("../healthProbeRules");
+    const out = summarise([r("pass"), r("warn", "Live channels respond"), r("fail", "Search returns usable releases")]);
+    expect(out.success).toBe(false);
+    expect(out.summary).toBe("1 of 3 probes failed: Search returns usable releases");
   });
 });
