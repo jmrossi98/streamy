@@ -6,6 +6,7 @@
  */
 
 import { pickDeepRelease, type DeepRelease } from "./deepSearchRules";
+import { pickFastCopies, type FastCopyRelease } from "./fastCopyRules";
 import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
@@ -689,6 +690,31 @@ export async function deepSearchRadarrMovie(radarrId: number): Promise<string | 
     const pick = pickDeepRelease(releases);
     if (!pick) return null;
     // Grabbing by guid is Radarr's manual grab: it takes the release as chosen.
+    await radarrFetch(`/api/v3/release`, {
+      method: "POST",
+      body: JSON.stringify({ guid: pick.guid, indexerId: pick.indexerId }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    return pick.title;
+  } finally {
+    deepSearching.delete(radarrId);
+  }
+}
+
+/**
+ * Grabs a usenet copy for a movie whose only download is a slow torrent --
+ * see fastCopyRules.ts. Returns the release grabbed, or null. Shares the deep
+ * search's one-at-a-time guard: both run the same slow release search.
+ */
+export async function fastCopyRadarrMovie(radarrId: number, alreadyTried: ReadonlySet<string>): Promise<string | null> {
+  if (!isRadarrConfigured() || deepSearching.has(radarrId)) return null;
+  deepSearching.add(radarrId);
+  try {
+    const releases = await radarrFetch<FastCopyRelease[]>(`/api/v3/release?movieId=${radarrId}`, {
+      signal: AbortSignal.timeout(DEEP_SEARCH_TIMEOUT_MS),
+    });
+    const pick = pickFastCopies(releases, alreadyTried)[0];
+    if (!pick) return null;
     await radarrFetch(`/api/v3/release`, {
       method: "POST",
       body: JSON.stringify({ guid: pick.guid, indexerId: pick.indexerId }),
