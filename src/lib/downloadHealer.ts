@@ -10,7 +10,6 @@ import {
   pickIdleEpisodeBatch,
   REHEAL_COOLDOWN_MS,
   shouldBlocklist,
-  shouldBlocklistStalled,
   shouldSearchImmediately,
   type BadReleaseReason,
 } from "./downloadHealthRules";
@@ -34,6 +33,7 @@ import {
   cancelSonarrQueueItem,
   searchSonarrSeries,
   deepSearchSonarrSeason,
+  deepSearchSonarrEpisode,
   expireSonarrBlocklist,
   outstandingSearches,
 } from "./sonarr";
@@ -42,8 +42,11 @@ import {
   forgetCancelBlocks,
   getCancelBlocks,
   getPermanentBlocks,
+  getReplacements,
   recordRejection,
+  recordReplacement,
 } from "./rejectedReleases";
+import { decideHeal, healScope, repeatOffenders, replacementsToday, type Replacement } from "./healLoopRules";
 
 /**
  * Auto-recovery for downloads that will never finish on their own.
@@ -98,8 +101,8 @@ function startFastCopies(radarrQueue: QueueHealth[]): void {
 
 /** Which idle retry starts using the deep search (the first is the ordinary search alone). */
 const DEEP_SEARCH_FROM_TRY = 2;
-/** Consecutive stall-heals per release of an episode, for the escalation in healOne. */
-const stallTries = new Map<string, number>();
+/** Idle tries a title is set to once over its daily limit: about eight hours of backoff. */
+const CAPPED_IDLE_TRIES = 6;
 // Consecutive passes a title has been missing from the idle lists. Prevents
 // one transient empty read from resetting a title's escalation.
 const absentPasses = new Map<string, number>();
@@ -131,7 +134,8 @@ function onIdleCooldown(key: string): boolean {
 async function healOne(
   mediaType: "movie" | "show",
   entry: QueueHealth & { torrentState?: string | null },
-  swarm: Map<string, { swarmSeeds: number; connectedSeeds: number }> = new Map()
+  swarm: Map<string, { swarmSeeds: number; connectedSeeds: number }> = new Map(),
+  replacements: readonly Replacement[] = []
 ): Promise<HealedDownload | null> {
   // Keyed per episode (or movie), not per queue entry.
   //
@@ -148,30 +152,22 @@ async function healOne(
   if (onCooldown(key)) return null;
   lastHealedAt.set(key, Date.now());
 
-  // How many times this same release has been healed for a stall. A single
-  // stall is usually conditions -- a VPN reconnect, a brief peer drought -- and
-  // blocklisting for that poisons good releases. Repeated stalls of the same
-  // thing are the release itself, and cancelling without blocklisting just
-  // hands Sonarr the same dead torrent to pick again.
-  //
-  // Counted per release, not per title: counted per title, the release that
-  // replaced a twice-stalled one inherited its count and was blocklisted on
-  // its own first stall ("blocklisted after 3 stalls" for something grabbed
-  // minutes earlier), so one bad release cost the title every one after it.
-  const stallKey = `${key}|${entry.title}`;
-  const stalls = (stallTries.get(stallKey) ?? 0) + 1;
-  stallTries.set(stallKey, stalls);
-
   const reason = entry.errorMessage ?? "no progress";
-  // Blocklisting is permanent, so reserve it for releases that genuinely
-  // failed -- a corrupt or unusable download the client rejected. A stall is
-  // usually about conditions, not the release: a VPN reconnect or a brief
-  // peer drought. Blocklisting those poisoned the best-seeded releases and
-  // pushed later searches onto steadily worse ones.
   const deadSwarm =
     isMetadataDead(entry) ||
     isDeadSwarm(entry.downloadId ? swarm.get(entry.downloadId.toLowerCase()) : undefined);
-  const failed = shouldBlocklistStalled(entry.errorMessage, stalls, deadSwarm);
+  // Whether to replace it at all -- see healLoopRules.ts. A title already
+  // through its releases for the day keeps a merely stalled download (it may
+  // yet finish) and is not fed another.
+  const scope = healScope(mediaType, entry);
+  const replacedToday = replacementsToday(replacements, scope);
+  const decision = decideHeal(replacedToday, deadSwarm || shouldBlocklist(entry.errorMessage));
+  if (decision === "leave") {
+    console.log(
+      `[healer] leaving "${entry.title}" (${reason}): ${replacedToday} releases already replaced for this title today`
+    );
+    return null;
+  }
   try {
     // Cancel this entry, never the title's whole queue.
     //
@@ -185,9 +181,27 @@ async function healOne(
     // rejectUnsafe already did this correctly per entry; healOne did not.
     const cancelled =
       mediaType === "movie"
-        ? await cancelRadarrQueueItem(entry.queueId, { blocklist: failed })
-        : await cancelSonarrQueueItem(entry.queueId, { blocklist: failed, keepWanted: true });
+        ? await cancelRadarrQueueItem(entry.queueId, { blocklist: true })
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: true, keepWanted: true });
     if (!cancelled) return null;
+
+    // Written down, not remembered: this is what the daily limit and the
+    // week-long block for repeat offenders are counted from, and it has to
+    // survive a restart. A failed write costs the count, never the heal.
+    await recordReplacement({ ...scope, releaseTitle: entry.title, downloadId: entry.downloadId }).catch((err) =>
+      console.error("[healer] could not record replacement:", err)
+    );
+
+    if (decision === "dropOnly") {
+      // No new search now, and none from the idle pass for a good while.
+      const idleKey = mediaType === "movie" ? `idle:movie:${entry.externalId}` : `idle:episode:${entry.episodeId}`;
+      lastHealedAt.set(idleKey, Date.now());
+      idleTries.set(idleKey, Math.max(idleTries.get(idleKey) ?? 0, CAPPED_IDLE_TRIES));
+      console.warn(
+        `[healer] removed "${entry.title}" (${reason}) and paused searching: ${replacedToday} releases replaced for this title today`
+      );
+      return { title: entry.title, reason: `${reason}; too many failed releases today, pausing` };
+    }
 
     // Re-search only what was just cancelled. A SeriesSearch re-grabs every
     // missing episode, which on a series with 21 monitored specials means 21
@@ -203,10 +217,7 @@ async function healOne(
       // the only option left, and is correct there.
       await searchSonarrSeries(entry.externalId);
     }
-    console.log(
-      `[healer] re-grabbing "${entry.title}" (${reason})` +
-        (failed ? ` -- blocklisted after ${stalls} stalls` : ` -- stall ${stalls}`)
-    );
+    console.log(`[healer] replacing "${entry.title}" (${reason}) -- blocklisted, release ${replacedToday + 1} today`);
     return { title: entry.title, reason };
   } catch (err) {
     console.error(`[healer] failed to heal "${entry.title}":`, err);
@@ -492,11 +503,21 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
         if (e.seriesId == null || e.seasonNumber == null) continue;
         seasons.set(`${e.seriesId}:${e.seasonNumber}`, { seriesId: e.seriesId, seasonNumber: e.seasonNumber });
       }
-      for (const s of seasons.values()) {
-        void deepSearchSonarrSeason(s.seriesId, s.seasonNumber).catch((err) =>
-          console.error(`[healer] season deep search failed for series ${s.seriesId} S${s.seasonNumber}:`, err)
-        );
-      }
+      // The season pack first; where there is none, each episode by itself.
+      // One after another: each is a full indexer search.
+      const retried = dueEpisodes.filter(
+        (e) => (idleTries.get(`idle:episode:${e.episodeId}`) ?? 0) >= DEEP_SEARCH_FROM_TRY && e.seriesId != null
+      );
+      void (async () => {
+        const packed = new Set<string>();
+        for (const [key, s] of seasons) {
+          if (await deepSearchSonarrSeason(s.seriesId, s.seasonNumber)) packed.add(key);
+        }
+        for (const e of retried) {
+          if (packed.has(`${e.seriesId}:${e.seasonNumber}`)) continue;
+          await deepSearchSonarrEpisode(e.seriesId, e.episodeId);
+        }
+      })().catch((err) => console.error("[healer] episode deep search failed:", err));
     } catch (err) {
       console.error("[healer] idle episode re-search failed:", err);
     }
@@ -517,10 +538,19 @@ async function healPass(): Promise<HealedDownload[]> {
   // rejected as unsafe are exempt: they were never blocked by conditions, and
   // expiring them would just let the same fake be grabbed again. If the list of
   // those can't be read, skip the expiry entirely rather than risk that.
+  // Every release the healer has dropped in the last week. Unreadable means
+  // no history, which only costs the limits that are counted from it.
+  const replacements = await getReplacements().catch((err) => {
+    console.error("[healer] could not read replacement history:", err);
+    return [] as Replacement[];
+  });
   try {
     const [rejected, cancelled] = await Promise.all([getPermanentBlocks(), getCancelBlocks()]);
+    // A release dropped twice in a week stays blocked for that week: letting
+    // it expire is how the same dead torrent came back every six hours.
+    const stayBlocked = [...rejected, ...repeatOffenders(replacements)];
     const keep = (record: Parameters<typeof isPermanentlyBlocked>[0]) =>
-      isPermanentlyBlocked(record, rejected);
+      isPermanentlyBlocked(record, stayBlocked);
     // Releases blocked only because someone once cancelled them come back at
     // once, whatever their age: they were never bad, and they are often the
     // best option for the title. Matched the same way the permanent ones are.
@@ -545,7 +575,10 @@ async function healPass(): Promise<HealedDownload[]> {
   // Swarm seed counts by info hash, so a stalled torrent nobody can seed is
   // blocklisted on its first stall. Unreadable qBittorrent just means no
   // extra knowledge -- the usual stall rules still apply.
-  const swarm = new Map<string, { swarmSeeds: number; connectedSeeds: number; state: string }>();
+  const swarm = new Map<
+    string,
+    { swarmSeeds: number; connectedSeeds: number; state: string; lastActivityAt?: number | null }
+  >();
   try {
     const { getTorrentHealth } = await import("./qbittorrent");
     for (const t of (await getTorrentHealth()) ?? []) if (t.hash) swarm.set(t.hash, t);
@@ -555,11 +588,15 @@ async function healPass(): Promise<HealedDownload[]> {
 
   // qBittorrent's own state on each torrent entry, so "queued" in Sonarr can
   // be told apart from "still fetching metadata" (see isWaitingItsTurn).
-  const withTorrentState = (e: QueueHealth) => ({
-    ...e,
-    torrentState:
-      e.protocol === "torrent" && e.downloadId ? swarm.get(e.downloadId.toLowerCase())?.state ?? null : null,
-  });
+  const withTorrentState = (e: QueueHealth) => {
+    const torrent = e.protocol === "torrent" && e.downloadId ? swarm.get(e.downloadId.toLowerCase()) : undefined;
+    return {
+      ...e,
+      torrentState: torrent?.state ?? null,
+      // How long since the torrent last moved a piece, for the stall patience.
+      idleMinutes: torrent?.lastActivityAt ? (Date.now() / 1000 - torrent.lastActivityAt) / 60 : null,
+    };
+  };
 
   const isUnsafe = (e: QueueHealth): e is UnsafeEntry => e.unsafe != null;
   // An unsafe entry is dealt with on its own path and kept out of the stall
@@ -568,8 +605,8 @@ async function healPass(): Promise<HealedDownload[]> {
   const healed = await Promise.all([
     ...radarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("movie", e)),
     ...sonarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("show", e)),
-    ...radarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm)),
-    ...sonarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm)),
+    ...radarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm, replacements)),
+    ...sonarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm, replacements)),
     ...dueStuckImports([...radarrQueue, ...sonarrQueue]).map((e) =>
       replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
     ),
@@ -578,20 +615,6 @@ async function healPass(): Promise<HealedDownload[]> {
   ]);
   // A movie waiting on a slow torrent gets a quick usenet copy as well.
   startFastCopies(radarrQueue);
-
-  // Episodes no longer in either queue have finished or been removed, so their
-  // stall count is history. Without this the map grows for the life of the
-  // process and a release that recovered would still be blocklisted on its
-  // next single stall.
-  const live = new Set(
-    [...radarrQueue, ...sonarrQueue].map(
-      (e) => `${e.episodeId == null ? "movie" : "show"}:${e.externalId}:${e.episodeId ?? "series"}`
-    )
-  );
-  for (const key of [...stallTries.keys()]) {
-    // Keys are "<title key>|<release>"; the title key is what the queue shows.
-    if (!live.has(key.slice(0, key.indexOf("|")))) stallTries.delete(key);
-  }
 
   // New content ahead of upgrades in SABnzbd -- see sabPriorityRules.ts.
   // Best-effort: a failure here must not cost the rest of the pass.

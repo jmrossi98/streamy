@@ -6,6 +6,7 @@ import {
   type RejectedReleaseKey,
 } from "./downloadHealthRules";
 import type { RejectionSummary } from "./requestNotice";
+import { REPEAT_WINDOW_MS, REPLACED_REASON, type HealScope, type Replacement } from "./healLoopRules";
 
 type MediaType = "movie" | "show";
 
@@ -27,7 +28,9 @@ export async function recordRejection(input: {
   reason: BadReleaseReason;
 }): Promise<void> {
   const existing = await prisma.rejectedRelease.findMany({
-    where: { mediaType: input.mediaType, externalId: input.externalId },
+    // Not the healer's own replacement log: a release it once dropped for
+    // stalling can still turn out to be unsafe, and must be recorded as such.
+    where: { mediaType: input.mediaType, externalId: input.externalId, reason: { not: REPLACED_REASON } },
     select: { releaseTitle: true, downloadId: true },
   });
   const seen = existing.some(
@@ -111,4 +114,42 @@ export async function getRejectionSummary(
   });
   if (rows.length === 0) return null;
   return { count: rows.length, reason: rows[0].reason as BadReleaseReason };
+}
+
+/**
+ * Notes a release the healer dropped and replaced -- see healLoopRules.ts.
+ * One row per drop, deliberately not idempotent: the count is the point.
+ */
+export async function recordReplacement(input: {
+  mediaType: HealScope;
+  externalId: number;
+  releaseTitle: string;
+  downloadId: string | null;
+}): Promise<void> {
+  await prisma.rejectedRelease.create({ data: { ...input, reason: REPLACED_REASON } });
+}
+
+/** Every release dropped and replaced in the last week. */
+export async function getReplacements(): Promise<Replacement[]> {
+  return prisma.rejectedRelease.findMany({
+    where: { reason: REPLACED_REASON, createdAt: { gte: new Date(Date.now() - REPEAT_WINDOW_MS) } },
+    select: { mediaType: true, externalId: true, releaseTitle: true, downloadId: true, createdAt: true },
+  });
+}
+
+/** How many releases were dropped and replaced for each of these titles in the last day. */
+export async function countReplacements(mediaType: HealScope, externalIds: number[]): Promise<Map<number, number>> {
+  const counts = new Map<number, number>();
+  if (externalIds.length === 0) return counts;
+  const rows = await prisma.rejectedRelease.findMany({
+    where: {
+      mediaType,
+      externalId: { in: externalIds },
+      reason: REPLACED_REASON,
+      createdAt: { gte: new Date(Date.now() - NOTICE_WINDOW_MS) },
+    },
+    select: { externalId: true },
+  });
+  for (const r of rows) counts.set(r.externalId, (counts.get(r.externalId) ?? 0) + 1);
+  return counts;
 }

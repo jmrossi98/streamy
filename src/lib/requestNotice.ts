@@ -43,18 +43,38 @@ export function describeRequestNotice(input: {
   status: string | null;
   replacing: BadReleaseReason | null;
   rejections: RejectionSummary | null;
+  /** Releases that stalled or failed and were replaced, in the last day. */
+  replaced?: number;
 }): string | null {
   const { status, replacing, rejections } = input;
+  const replaced = input.replaced ?? 0;
 
   if (replacing) {
     return `Unsafe release found - ${REASON_TEXT[replacing]}. Removing it and searching for another…`;
   }
-  if (!rejections || rejections.count === 0) return null;
+  if (!rejections || rejections.count === 0) return describeReplacements(status, replaced);
 
   const what = `${releases(rejections.count)} rejected as unsafe (${REASON_TEXT[rejections.reason]})`;
   if (status === "requested") {
     return `${what}. Searching for another…`;
   }
+  if (status === "noReleaseFound") {
+    return `${what}, and no other release is available yet. It will keep looking; you can also search again.`;
+  }
+  return null;
+}
+
+/**
+ * The line for releases that stalled or failed and were swapped out. Said for
+ * the same reason as the unsafe one: a download that keeps starting over with
+ * no explanation reads as broken, when it is the system working through the
+ * copies that exist.
+ */
+function describeReplacements(status: string | null, count: number): string | null {
+  if (count <= 0) return null;
+  const what = `${releases(count)} stalled or failed and ${count === 1 ? "was" : "were"} replaced`;
+  if (status === "requested") return `${what}. Searching for another…`;
+  if (status === "downloading") return `${what}. This is the next one.`;
   if (status === "noReleaseFound") {
     return `${what}, and no other release is available yet. It will keep looking; you can also search again.`;
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRedundantImport, isDeadSwarm, isMetadataDead, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, shouldBlocklistStalled, STALL_BLOCKLIST_AFTER, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isRedundantImport, isDeadSwarm, isMetadataDead, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -102,33 +102,6 @@ describe("permanent blocks from an admin cancel", () => {
   });
 });
 
-describe("shouldBlocklistStalled", () => {
-  it("does not blame the release for a first stall", () => {
-    // One stall is usually conditions -- a VPN reconnect, a peer drought --
-    // and blocklisting for that poisons well-seeded releases.
-    expect(shouldBlocklistStalled("The download is stalled with no connections", 1)).toBe(false);
-  });
-
-  it("blames the release once the same episode keeps stalling", () => {
-    // The loop this exists for: cancelling without blocklisting leaves the
-    // release top-scoring, so the next search picks it straight back up. The
-    // Wire S01E12 was grabbed five times in minutes.
-    expect(shouldBlocklistStalled("The download is stalled with no connections", 2)).toBe(true);
-    expect(shouldBlocklistStalled("stalled", STALL_BLOCKLIST_AFTER + 3)).toBe(true);
-  });
-
-  it("still blocklists a failed payload on the first go", () => {
-    // Nothing transient about a client refusing the download.
-    expect(shouldBlocklistStalled("The download client failed to import", 1)).toBe(
-      shouldBlocklist("The download client failed to import")
-    );
-  });
-
-  it("treats a missing message the same as shouldBlocklist does", () => {
-    expect(shouldBlocklistStalled(null, 1)).toBe(shouldBlocklist(null));
-  });
-});
-
 describe("pickIdleEpisodeBatch", () => {
   const eps = [1, 2, 3, 4, 5, 6, 7].map((episodeId) => ({ episodeId }));
   const tries: Record<number, number> = { 1: 4, 2: 0, 3: 1, 4: 0, 5: 2, 6: 0, 7: 0 };
@@ -162,11 +135,6 @@ describe("waiting and stuck-import rules", () => {
 });
 
 describe("dead swarms", () => {
-  it("blocklists a stalled torrent with no seeder anywhere on its first stall", () => {
-    expect(shouldBlocklistStalled("The download is stalled with no connections", 1, true)).toBe(true);
-    expect(shouldBlocklistStalled("The download is stalled with no connections", 1, false)).toBe(false);
-  });
-
   it("calls a swarm dead only when no seeder is connected or known", () => {
     expect(isDeadSwarm({ swarmSeeds: 0, connectedSeeds: 0 })).toBe(true);
     expect(isDeadSwarm({ swarmSeeds: 3, connectedSeeds: 0 })).toBe(false);
@@ -243,5 +211,22 @@ describe("isRedundantImport", () => {
 
   it("does not claim one that is still downloading", () => {
     expect(isRedundantImport({ clientStatus: "downloading", statusMessages: [notAnUpgrade] })).toBe(false);
+  });
+});
+
+describe("stall patience", () => {
+  const stalled = { errorMessage: "The download is stalled with no connections", protocol: "torrent", ageMinutes: 60 };
+
+  it("gives a torrent with data time to find a peer again", () => {
+    expect(isUnhealthy(entry({ ...stalled, hasProgress: true, idleMinutes: 5 }))).toBe(false);
+  });
+
+  it("gives up once it has not moved for long enough", () => {
+    expect(isUnhealthy(entry({ ...stalled, hasProgress: true, idleMinutes: 45 }))).toBe(true);
+  });
+
+  it("does not wait on one that never got a byte, or when the client gave no reading", () => {
+    expect(isUnhealthy(entry({ ...stalled, hasProgress: false, idleMinutes: 5 }))).toBe(true);
+    expect(isUnhealthy(entry({ ...stalled, hasProgress: true }))).toBe(true);
   });
 });

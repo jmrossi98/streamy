@@ -29,7 +29,17 @@ export function pollIntervalMs(bursting: boolean, anyDownloading: boolean): numb
 // spinner -- a title that would never come in without a config change read
 // exactly like one about to succeed any second.
 export type EpisodeStatus = "requested" | "noReleaseFound" | "downloading" | "available";
-export type EpisodeState = { status: EpisodeStatus; progress: number | null };
+export type EpisodeState = {
+  status: EpisodeStatus;
+  progress: number | null;
+  /** Releases that stalled or failed and were replaced in the last day. */
+  tried?: number;
+};
+
+/** "2 releases stalled or failed and were replaced", for a tooltip. */
+function triedText(tried: number): string {
+  return `${tried} release${tried === 1 ? "" : "s"} stalled or failed and ${tried === 1 ? "was" : "were"} replaced`;
+}
 
 /**
  * Shared status poller for one season's episodes. Sonarr is the source of
@@ -341,8 +351,15 @@ export function EpisodeDownloadButton({
       // than silently spinning, in case a better release has shown up since.
       return (
         <div className={`flex shrink-0 items-center gap-3 ${className}`}>
-          <span className="text-xs font-medium text-white/40" title="No release met the quality/seeder bar">
-            No release found
+          <span
+            className="text-xs font-medium text-white/40"
+            title={
+              state.tried
+                ? `${triedText(state.tried)}, and no other release is available yet. It will keep looking.`
+                : "No release met the quality/seeder bar"
+            }
+          >
+            {state.tried ? `${state.tried} release${state.tried === 1 ? "" : "s"} failed` : "No release found"}
           </span>
           {authStatus === "authenticated" && (
             <button
@@ -361,12 +378,20 @@ export function EpisodeDownloadButton({
     return (
       <div className={`flex w-28 shrink-0 flex-col gap-1 ${className}`}>
         <div className="flex items-center justify-end gap-2">
-          <span className="text-xs font-medium tabular-nums text-white/70">
+          <span
+            className="text-xs font-medium tabular-nums text-white/70"
+            title={state.tried ? `${triedText(state.tried)}.` : undefined}
+          >
             {/* Anything pending reads as "Starting…": once a season is
                 requested every episode is queued for search, so an episode
                 that hasn't reached the download client yet is still on its
-                way, not idle. */}
-            {downloading && state.progress != null ? `${state.progress}%` : "Starting…"}
+                way, not idle. After a replacement it says so instead, or a
+                download that starts over looks like one that is broken. */}
+            {downloading && state.progress != null
+              ? `${state.progress}%`
+              : state.tried
+                ? "Trying another…"
+                : "Starting…"}
           </span>
           {authStatus === "authenticated" && manageButton}
         </div>

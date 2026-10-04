@@ -25,6 +25,8 @@ export type SeasonRelease = {
   seriesTitle?: string;
   seasonNumber?: number;
   fullSeason?: boolean;
+  /** Episode numbers the release name carries; empty for a full season pack. */
+  episodeNumbers?: number[];
   quality?: unknown;
   languages?: { id: number; name?: string }[];
   qualityWeight?: number;
@@ -81,6 +83,38 @@ export function pickUnmatchedSeasonPack<R extends SeasonRelease>(releases: R[], 
     return (
       r.fullSeason === true &&
       r.seasonNumber === target.seasonNumber &&
+      why.length > 0 &&
+      why.every((x) => UNKNOWN_SERIES.test(x.trim())) &&
+      (r.protocol === "usenet" || (r.seeders ?? 0) >= 1) &&
+      isSameSeries(r.seriesTitle ?? "", target)
+    );
+  });
+  candidates.sort(
+    (a, b) =>
+      (b.qualityWeight ?? 0) - (a.qualityWeight ?? 0) ||
+      Number(b.protocol === "usenet") - Number(a.protocol === "usenet") ||
+      (b.seeders ?? 0) - (a.seeders ?? 0)
+  );
+  return candidates[0] ?? null;
+}
+
+/**
+ * The same for one episode: a release of exactly that episode, rejected only
+ * as "Unknown Series", whose parsed title is this series. Multi-episode files
+ * are left out -- they would be grabbed for one episode and imported as two.
+ */
+export function pickUnmatchedEpisode<R extends SeasonRelease>(
+  releases: R[],
+  target: SeasonTarget & { episodeNumber: number }
+): R | null {
+  const candidates = releases.filter((r) => {
+    const why = r.rejections ?? [];
+    const numbers = r.episodeNumbers ?? [];
+    return (
+      r.fullSeason !== true &&
+      r.seasonNumber === target.seasonNumber &&
+      numbers.length === 1 &&
+      numbers[0] === target.episodeNumber &&
       why.length > 0 &&
       why.every((x) => UNKNOWN_SERIES.test(x.trim())) &&
       (r.protocol === "usenet" || (r.seeders ?? 0) >= 1) &&

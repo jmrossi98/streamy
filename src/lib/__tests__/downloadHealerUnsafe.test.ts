@@ -18,6 +18,9 @@ const m = vi.hoisted(() => ({
   cancelSonarrQueueItem: vi.fn(),
   searchSonarrSeries: vi.fn(),
   deepSearchSonarrSeason: vi.fn(async () => null),
+  deepSearchSonarrEpisode: vi.fn(async () => null),
+  getReplacements: vi.fn(),
+  recordReplacement: vi.fn(),
   expireSonarrBlocklist: vi.fn(),
   outstandingSearches: vi.fn(),
   recordRejection: vi.fn(),
@@ -43,6 +46,7 @@ vi.mock("../sonarr", () => ({
   cancelSonarrQueueItem: m.cancelSonarrQueueItem,
   searchSonarrSeries: m.searchSonarrSeries,
   deepSearchSonarrSeason: m.deepSearchSonarrSeason,
+  deepSearchSonarrEpisode: m.deepSearchSonarrEpisode,
   expireSonarrBlocklist: m.expireSonarrBlocklist,
   outstandingSearches: m.outstandingSearches,
 }));
@@ -60,6 +64,8 @@ vi.mock("../rejectedReleases", () => ({
   getCancelBlocks: m.getCancelBlocks,
   forgetCancelBlocks: m.forgetCancelBlocks,
   countRecentRejections: m.countRecentRejections,
+  getReplacements: m.getReplacements,
+  recordReplacement: m.recordReplacement,
 }));
 
 import { healStalledDownloads } from "../downloadHealer";
@@ -95,6 +101,8 @@ beforeEach(() => {
   m.getCancelBlocks.mockResolvedValue([]);
   m.forgetCancelBlocks.mockResolvedValue(undefined);
   m.countRecentRejections.mockResolvedValue(1);
+  m.getReplacements.mockResolvedValue([]);
+  m.recordReplacement.mockResolvedValue(undefined);
   m.cancelRadarrQueueItem.mockImplementation(async () => (calls.push("remove"), true));
   m.cancelSonarrQueueItem.mockImplementation(async () => (calls.push("remove"), true));
   m.recordRejection.mockImplementation(async () => void calls.push("record"));
@@ -292,7 +300,12 @@ describe("healStalledDownloads: waiting and stuck imports", () => {
       queued({ queueId: 5101, episodeId: 1552, clientStatus: "downloading", protocol: "torrent", downloadId: "ABC123" }),
     ]);
     await healStalledDownloads();
-    expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(5101, { blocklist: false, keepWanted: true });
+    // Blocklisted, so the search that follows cannot hand the same one back.
+    expect(m.cancelSonarrQueueItem).toHaveBeenCalledWith(5101, { blocklist: true, keepWanted: true });
+    expect(m.recordReplacement).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaType: "episode", externalId: 1552, downloadId: "ABC123" })
+    );
+    expect(m.searchSonarrEpisodes).toHaveBeenCalledWith([1552]);
   });
 
   it("removes a finished download the library already has a better copy of, without blocklisting or searching", async () => {
@@ -341,5 +354,80 @@ describe("healStalledDownloads: waiting and stuck imports", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("healStalledDownloads: no loops", () => {
+  const stalledMovie = (over: object = {}) => ({
+    queueId: 7001,
+    externalId: 85,
+    downloadId: "489B73E195CB6EF8E013E452812DA5891715C275",
+    title: "Dances.with.Wolves.1990.DC.Kevin.Costner.2160p.HDR.DTS.mkv",
+    errorMessage: "The download is stalled with no connections",
+    ageMinutes: 90,
+    hasProgress: true,
+    unsafe: null,
+    clientStatus: "warning",
+    trackedDownloadState: "downloading",
+    trackedDownloadStatus: "warning",
+    importProblem: null,
+    statusMessages: [] as string[],
+    protocol: "torrent",
+    isUpgrade: true,
+    ...over,
+  });
+  // A different movie per test: the healer keeps a per-title cooldown.
+  const dropped = (n: number, externalId: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      mediaType: "movie",
+      externalId,
+      releaseTitle: `release ${i}`,
+      downloadId: `hash${i}`,
+      createdAt: new Date(),
+    }));
+
+  it("blocklists a stalled release on its first drop, so it cannot be re-grabbed from zero", async () => {
+    // Regression, 2026-10-04: dropped without blocklisting, the same torrent
+    // was picked again and restarted -- 52%, then 3%, then 0%.
+    m.getRadarrQueueHealth.mockResolvedValue([stalledMovie()]);
+    await healStalledDownloads();
+    expect(m.cancelRadarrQueueItem).toHaveBeenCalledWith(7001, { blocklist: true });
+    expect(m.recordReplacement).toHaveBeenCalledWith(expect.objectContaining({ mediaType: "movie", externalId: 85 }));
+    expect(m.searchRadarrMovie).toHaveBeenCalledWith(85);
+  });
+
+  it("past the daily limit, leaves a stalled download in place rather than fetching another", async () => {
+    m.getReplacements.mockResolvedValue(dropped(4, 86));
+    m.getRadarrQueueHealth.mockResolvedValue([stalledMovie({ externalId: 86, queueId: 7002 })]);
+    await healStalledDownloads();
+    expect(m.cancelRadarrQueueItem).not.toHaveBeenCalled();
+    expect(m.searchRadarrMovie).not.toHaveBeenCalled();
+    // One release short of the limit, the same download is replaced.
+    m.getReplacements.mockResolvedValue(dropped(3, 88));
+    m.getRadarrQueueHealth.mockResolvedValue([stalledMovie({ externalId: 88, queueId: 7004 })]);
+    await healStalledDownloads();
+    expect(m.cancelRadarrQueueItem).toHaveBeenCalledWith(7004, { blocklist: true });
+  });
+
+  it("past the daily limit, clears a failed download but starts no new search", async () => {
+    m.getReplacements.mockResolvedValue(dropped(4, 87));
+    m.getRadarrQueueHealth.mockResolvedValue([
+      stalledMovie({ externalId: 87, queueId: 7003, errorMessage: "qBittorrent is reporting an error", hasProgress: false }),
+    ]);
+    await healStalledDownloads();
+    expect(m.cancelRadarrQueueItem).toHaveBeenCalledWith(7003, { blocklist: true });
+    expect(m.searchRadarrMovie).not.toHaveBeenCalled();
+  });
+
+  it("keeps a release dropped twice this week out of the blocklist expiry", async () => {
+    const twice = [
+      { mediaType: "movie", externalId: 85, releaseTitle: "Dead.Release.2160p", downloadId: "AAA", createdAt: new Date() },
+      { mediaType: "movie", externalId: 85, releaseTitle: "Dead.Release.2160p", downloadId: "AAA", createdAt: new Date() },
+    ];
+    m.getReplacements.mockResolvedValue(twice);
+    await healStalledDownloads();
+    const keep = m.expireRadarrBlocklist.mock.calls[0][1] as (r: object) => boolean;
+    expect(keep({ sourceTitle: "Dead Release 2160p", torrentInfoHash: "aaa" })).toBe(true);
+    expect(keep({ sourceTitle: "Some.Other.Release", torrentInfoHash: "bbb" })).toBe(false);
   });
 });
