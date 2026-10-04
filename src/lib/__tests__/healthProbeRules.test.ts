@@ -161,3 +161,23 @@ describe("pickAutomaticIndexers", () => {
     expect(pickAutomaticIndexers(indexers, profiles, [{ indexerId: 4 }])).toEqual([1]);
   });
 });
+
+describe("exitNodeVerdict", () => {
+  const now = new Date("2026-10-04T14:00:00Z");
+  it("passes when both nodes are healthy and the check is current", async () => {
+    const { exitNodeVerdict } = await import("../healthProbeRules");
+    expect(exitNodeVerdict({ generatedAt: "2026-10-04T13:59:00Z", ok: true, usable: true }, now).status).toBe("pass");
+  });
+  it("fails with the reason, and says whether the other node still works", async () => {
+    const { exitNodeVerdict } = await import("../healthProbeRules");
+    const one = exitNodeVerdict({ generatedAt: "2026-10-04T13:59:00Z", ok: false, usable: true, summary: "mediabox-pia: DNS does not resolve inside gluetun" }, now);
+    expect(one.status).toBe("fail");
+    expect(one.detail).toMatch(/DNS does not resolve.*other node still works/);
+    expect(exitNodeVerdict({ generatedAt: "2026-10-04T13:59:00Z", ok: false, usable: false, summary: "x" }, now).detail).toMatch(/no exit node is usable/);
+  });
+  it("fails when the check itself has stopped, and skips when unreadable", async () => {
+    const { exitNodeVerdict } = await import("../healthProbeRules");
+    expect(exitNodeVerdict({ generatedAt: "2026-10-04T12:00:00Z", ok: true }, now).status).toBe("fail");
+    expect(exitNodeVerdict(null, now).status).toBe("skip");
+  });
+});

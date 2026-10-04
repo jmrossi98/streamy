@@ -20,7 +20,9 @@ import {
   stuckJobVerdict,
   regrabVerdict,
   countGrabEvents,
+  exitNodeVerdict,
   pickAutomaticIndexers,
+  type ExitNodeReport,
   searchVerdict,
   stuckImportVerdict,
   summarise,
@@ -137,6 +139,13 @@ async function probeBatchJobs(): Promise<ProbeResult[]> {
     stuckJobVerdict((watchdog?.kills as Parameters<typeof stuckJobVerdict>[0]) ?? null),
     quarantineVerdict((rom?.quarantined as Parameters<typeof quarantineVerdict>[0]) ?? null),
   ];
+}
+
+/** The exit nodes, as mediabox's own end-to-end check last found them. */
+async function probeExitNodes(): Promise<ProbeResult> {
+  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
+  if (!base) return { ...exitNodeVerdict(null), detail: "FLASH_LIBRARY_URL not set" };
+  return exitNodeVerdict(await getJson<ExitNodeReport>(`${base}/status/exit-nodes.json`));
 }
 
 type QueueRecord = {
@@ -260,15 +269,16 @@ export async function runHealthProbes(
 
   // In parallel: these touch different systems and one slow indexer should
   // not delay the freshness read that costs 30ms.
-  const [freshness, stuckImports, regrab, search, batchJobs] = await Promise.all([
+  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes] = await Promise.all([
     probeFreshness(),
     probeStuckImports(),
     probeRegrabLoop(),
     probeSearch(),
     probeBatchJobs(),
+    probeExitNodes(),
   ]);
 
-  const results = [...freshness, stuckImports, regrab, search, ...batchJobs];
+  const results = [...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes];
   const { success, summary } = summarise(results);
   const detail = results
     .map((r) => `${r.status.toUpperCase().padEnd(4)}  ${r.name}: ${r.detail}`)
