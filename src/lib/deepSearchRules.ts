@@ -23,16 +23,24 @@ export type DeepRelease = {
 };
 
 /**
- * The one rejection a deep search may overlook: the release name carries no
- * quality tag, so Radarr files it as "Unknown", which no profile wants.
- * Archive-style releases are named after the work, not the encode. Everything
- * else -- no seeders, unparseable, wrong movie, blocklisted -- stands.
+ * The rejections a deep search may overlook, as a last resort:
+ *
+ *  - the release name carries no quality tag, so Radarr files it as "Unknown",
+ *    which no profile wants -- archive-style releases are named after the
+ *    work, not the encode;
+ *  - it has fewer seeders than ordinary searches require (5, set 2026-10-04
+ *    so automatic grabs stop landing on near-dead swarms). A slow copy of
+ *    something that exists nowhere else still beats no copy, provided at
+ *    least one seeder is there -- checked separately below.
+ *
+ * Everything else -- unparseable, wrong movie, blocklisted, wrong language,
+ * too big -- stands.
  */
-const QUALITY_UNKNOWN = /^unknown is not wanted in profile/i;
+const OVERLOOKABLE = [/^unknown is not wanted in profile/i, /^not enough seeders/i];
 
-function onlyUnknownQuality(r: DeepRelease): boolean {
+function onlyOverlookable(r: DeepRelease): boolean {
   const why = r.rejections ?? [];
-  return why.length > 0 && why.every((x) => QUALITY_UNKNOWN.test(x.trim()));
+  return why.length > 0 && why.every((x) => OVERLOOKABLE.some((re) => re.test(x.trim())));
 }
 
 function better(a: DeepRelease, b: DeepRelease): number {
@@ -50,7 +58,7 @@ export function pickDeepRelease(releases: DeepRelease[]): DeepRelease | null {
   const accepted = releases.filter((r) => !r.rejected).sort(better);
   if (accepted.length > 0) return accepted[0];
   const fallback = releases
-    .filter((r) => onlyUnknownQuality(r) && (r.protocol === "usenet" || (r.seeders ?? 0) >= 1))
+    .filter((r) => onlyOverlookable(r) && (r.protocol === "usenet" || (r.seeders ?? 0) >= 1))
     .sort(better);
   return fallback[0] ?? null;
 }

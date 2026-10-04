@@ -34,6 +34,15 @@ describe("pickDeepRelease", () => {
     expect(pick?.title).toBe("archive copy");
   });
 
+  it("takes a thinly seeded release as a last resort, best-seeded first", () => {
+    const pick = pickDeepRelease([
+      rel("two seeds", { seeders: 2, rejected: true, rejections: ["Not enough seeders: 2. Minimum seeders: 5"] }),
+      rel("four seeds", { seeders: 4, rejected: true, rejections: ["Not enough seeders: 4. Minimum seeders: 5"] }),
+      rel("none", { seeders: 0, rejected: true, rejections: ["Not enough seeders: 0. Minimum seeders: 5"] }),
+    ]);
+    expect(pick?.title).toBe("four seeds");
+  });
+
   it("never takes an unseeded, unparseable or otherwise rejected release", () => {
     expect(
       pickDeepRelease([
