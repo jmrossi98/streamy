@@ -41,9 +41,9 @@ describe("sortDownloads", () => {
     ]);
   });
 
-  it("sorts a row with no timestamp last rather than dropping it", () => {
+  it("sorts a finished file with no timestamp last rather than dropping it", () => {
     const rows = [
-      started("undated", false, null),
+      started("undated", true, null),
       started("dated", true, "2026-09-01T00:00:00Z"),
     ];
     expect(sortDownloads(rows, "recent").map((r) => r.title)).toEqual([
@@ -166,6 +166,26 @@ describe("sortDownloads by name", () => {
       "Show - S2 E1",
       "Show - S2 E9",
       "Show - S2 E10",
+    ]);
+  });
+});
+
+describe("sortDownloads: in-flight rows with no date", () => {
+  it("puts an undated download in progress above the whole library", () => {
+    // Reported 2026-10-04: Monster House at 50% sat under every finished file.
+    const rows = [
+      { title: "old file", completed: true, startedAt: "2026-08-30T00:00:00Z" },
+      { title: "in progress", completed: false, startedAt: null },
+      { title: "new file", completed: true, startedAt: "2026-10-03T00:00:00Z" },
+      { title: "undated file", completed: true, startedAt: null },
+      { title: "also in progress", completed: false, startedAt: null },
+    ];
+    expect(sortDownloads(rows, "recent").map((r) => r.title)).toEqual([
+      "in progress",
+      "also in progress",
+      "new file",
+      "old file",
+      "undated file",
     ]);
   });
 });

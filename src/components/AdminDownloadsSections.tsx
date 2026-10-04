@@ -57,6 +57,7 @@ export async function AdminDownloadsSections() {
     sonarrCompleted,
     queuedSearches,
     pendingRequests,
+    requestTimes,
     gameJobs,
     gameWishlist,
     ownedGames,
@@ -72,6 +73,11 @@ export async function AdminDownloadsSections() {
     // Requested but not yet picked up by Radarr/Sonarr's own queue -- still
     // searching for a release, and otherwise invisible until it is grabbed.
     prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } }),
+    // When each title was asked for, for stamping in-flight rows the download
+    // client gives no grab time for.
+    prisma.mediaRequest
+      .findMany({ where: { externalId: { not: null } }, select: { mediaType: true, externalId: true, requestedAt: true } })
+      .catch(() => []),
     withDeadline(getGameDownloads(), [], PANEL_DEADLINE_MS),
     withDeadline(getWishlist(), [], PANEL_DEADLINE_MS),
     withDeadline(getGamesList(), [], PANEL_DEADLINE_MS),
@@ -148,9 +154,25 @@ export async function AdminDownloadsSections() {
       ? describeRequestNotice({ status: "downloading", replacing: d.unsafe, rejections: null })
       : null,
   });
+  // When Streamy kicked the download off. The queue's own grab time wins when
+  // it has one; this covers the rows it leaves blank.
+  const requestedAt = new Map<string, string>();
+  for (const r of requestTimes) {
+    if (r.externalId != null && r.requestedAt) {
+      requestedAt.set(`${r.mediaType}:${r.externalId}`, new Date(r.requestedAt).toISOString());
+    }
+  }
   const downloads: DownloadRow[] = [
-    ...radarrDownloads.map((d) => ({ ...withNotice(d), mediaType: "movie" as const })),
-    ...sonarrDownloads.map((d) => ({ ...withNotice(d), mediaType: "show" as const })),
+    ...radarrDownloads.map((d) => ({
+      ...withNotice(d),
+      mediaType: "movie" as const,
+      startedAt: d.startedAt ?? requestedAt.get(`movie:${d.externalId}`) ?? null,
+    })),
+    ...sonarrDownloads.map((d) => ({
+      ...withNotice(d),
+      mediaType: "show" as const,
+      startedAt: d.startedAt ?? requestedAt.get(`show:${d.externalId}`) ?? null,
+    })),
   ].sort((a, b) => (b.progress ?? -1) - (a.progress ?? -1));
 
   downloads.push(
