@@ -53,6 +53,7 @@ describe("aggregatePins", () => {
       streamy: 1,
       "login-success": 0,
       jellyfin: 0,
+      "jellyfin-play": 0,
       assistant: 0,
     });
     expect(pins[0].label).toBe("New York, United States");
@@ -124,6 +125,7 @@ describe("totals", () => {
         "login-success": 0,
         "login-fail": 1,
         jellyfin: 0,
+        "jellyfin-play": 0,
         assistant: 0,
       },
     });

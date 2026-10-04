@@ -48,9 +48,15 @@ export type JellyfinLoginSummary = {
   /** Most recent first. */
   attempts: JellyfinLoginAttempt[];
   blocked: JellyfinBlockedIp[];
+  /**
+   * The house's public address, as mediabox last saw it. Lets something that
+   * happened on the LAN be placed on the map -- a 192.168 address has no
+   * location of its own, but the server it reached is in that house.
+   */
+  homeIp: string | null;
 };
 
-const EMPTY: JellyfinLoginSummary = { checkedUtc: null, attempts: [], blocked: [] };
+const EMPTY: JellyfinLoginSummary = { checkedUtc: null, attempts: [], blocked: [], homeIp: null };
 
 export async function getJellyfinLoginSummary(): Promise<JellyfinLoginSummary> {
   return cached("jellyfin:logins", CACHE_TTL_MS, fetchJellyfinLoginSummary, {
@@ -75,6 +81,7 @@ async function fetchJellyfinLoginSummary(): Promise<JellyfinLoginSummary> {
 
     const body = (await res.json()) as {
       checked_utc?: string;
+      home_ip?: string | null;
       attempts?: {
         at?: string;
         outcome?: string;
@@ -105,7 +112,8 @@ async function fetchJellyfinLoginSummary(): Promise<JellyfinLoginSummary> {
       .filter((b): b is { ip: string; since_utc: string } => typeof b.ip === "string" && typeof b.since_utc === "string")
       .map((b) => ({ ip: b.ip, sinceUtc: b.since_utc }));
 
-    return { checkedUtc: body?.checked_utc ?? null, attempts, blocked };
+    const homeIp = typeof body?.home_ip === "string" && body.home_ip ? body.home_ip : null;
+    return { checkedUtc: body?.checked_utc ?? null, attempts, blocked, homeIp };
   } catch {
     return EMPTY;
   }

@@ -25,6 +25,7 @@ describe("getJellyfinLoginSummary", () => {
       checkedUtc: null,
       attempts: [],
       blocked: [],
+      homeIp: null,
     });
   });
 
@@ -32,7 +33,7 @@ describe("getJellyfinLoginSummary", () => {
     vi.stubEnv("FLASH_LIBRARY_URL", "http://100.84.77.56:8099");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ checked_utc: "2026-09-21T12:00:00Z", attempts: [], blocked: [] }),
+      json: async () => ({ checked_utc: "2026-09-21T12:00:00Z", attempts: [], blocked: [], homeIp: null }),
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
@@ -55,6 +56,7 @@ describe("getJellyfinLoginSummary", () => {
           { at: "2026-09-21T11:05:00Z", outcome: "failed", user: "admin", ip: "1.2.3.4" },
         ],
         blocked: [],
+        homeIp: null,
       }),
     }) as unknown as typeof fetch;
 
@@ -73,6 +75,7 @@ describe("getJellyfinLoginSummary", () => {
         checked_utc: "2026-09-21T12:00:00Z",
         attempts: [{ at: "2026-09-21T11:00:00Z", outcome: "succeeded", user: "jake", ip: null }],
         blocked: [],
+        homeIp: null,
       }),
     }) as unknown as typeof fetch;
 
@@ -107,6 +110,7 @@ describe("getJellyfinLoginSummary", () => {
           { at: "2026-09-21T11:01:00Z", outcome: "sideways", user: "x", ip: null }, // bad outcome
         ],
         blocked: [],
+        homeIp: null,
       }),
     }) as unknown as typeof fetch;
 
@@ -121,6 +125,7 @@ describe("getJellyfinLoginSummary", () => {
       checkedUtc: null,
       attempts: [],
       blocked: [],
+      homeIp: null,
     });
   });
 
@@ -131,6 +136,7 @@ describe("getJellyfinLoginSummary", () => {
       checkedUtc: null,
       attempts: [],
       blocked: [],
+      homeIp: null,
     });
   });
 });

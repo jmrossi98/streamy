@@ -6,6 +6,7 @@
  *  - streamy:   page views inside this app (authenticated users)
  *  - login:     sign-in attempts to this app, from LoginAttempt
  *  - jellyfin:  sign-in attempts to the Jellyfin server, from its own log
+ *  - jellyfin-play: things watched on Jellyfin (live TV, movies, episodes)
  *  - assistant: turns taken with the admin assistant, from AssistantUsage
  *
  * Login attempts matter precisely because they include access that never got
@@ -23,6 +24,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { getJellyfinPlays } from "@/lib/jellyfinPlayback";
 import { getJellyfinLoginSummary } from "@/lib/jellyfinLogins";
 import { isDatabaseReady, isGeoipConfigured, locateMany } from "@/lib/geoip";
 import {
@@ -39,6 +41,12 @@ import {
 const WINDOW_DAYS = 90;
 
 type RawVisit = { ip: string; city?: null; source: LocatedVisit["source"] };
+
+/** Oldest play worth a pin, matching the window the tables are read over. */
+function withinWindow(at: string, since: Date): boolean {
+  const t = new Date(at).getTime();
+  return !Number.isNaN(t) && t >= since.getTime();
+}
 
 export type VisitorMap = {
   configured: boolean;
@@ -90,7 +98,7 @@ export async function getVisitorMap(): Promise<VisitorMap> {
 
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
-  const [siteVisits, logins, assistant, jellyfin] = await Promise.all([
+  const [siteVisits, logins, assistant, jellyfin, plays] = await Promise.all([
     prisma.siteVisit.findMany({
       where: { at: { gte: since } },
       select: { ip: true, site: true },
@@ -108,6 +116,7 @@ export async function getVisitorMap(): Promise<VisitorMap> {
     // guard script on mediabox and read through a short cache, so this and the
     // visitors log share one outbound fetch per render.
     getJellyfinLoginSummary(),
+    getJellyfinPlays(),
   ]);
 
   // Classify each IP by the outcome of its MOST RECENT attempt, not per attempt.
@@ -143,6 +152,13 @@ export async function getVisitorMap(): Promise<VisitorMap> {
     ...jellyfin.attempts
       .filter((j): j is typeof j & { ip: string } => !!j.ip)
       .map((j) => ({ ip: j.ip, source: "jellyfin" as LocatedVisit["source"] })),
+    // Placed by locateIp, not the address Jellyfin saw: most of these are the
+    // TV in the house, whose 192.168 address has no location but whose house
+    // does. A play from the tailnet or with no known session stays unplaced
+    // and is counted as such.
+    ...plays
+      .filter((p) => withinWindow(p.at, since))
+      .map((p) => ({ ip: p.locateIp, source: "jellyfin-play" as LocatedVisit["source"] })),
   ];
 
   const located = await locateMany(raw.map((r) => r.ip));
@@ -185,6 +201,7 @@ function emptyBySource(): Record<VisitSource, number> {
     "login-success": 0,
     "login-fail": 0,
     jellyfin: 0,
+    "jellyfin-play": 0,
     assistant: 0,
   };
 }
@@ -199,6 +216,7 @@ function emptyTotals(): MapTotals {
       "login-success": 0,
       "login-fail": 0,
       jellyfin: 0,
+      "jellyfin-play": 0,
       assistant: 0,
     },
   };
