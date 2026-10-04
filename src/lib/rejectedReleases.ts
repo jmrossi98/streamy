@@ -40,14 +40,37 @@ export async function recordRejection(input: {
 }
 
 /**
- * Every release we have ever rejected, for the blocklist expiry to skip.
+ * Releases that must never come back, for the blocklist expiry to skip:
+ * the ones rejected because the payload itself was bad.
  *
- * Deliberately every reason, admin cancels included: this is the list of
- * releases that must not come back, and a hand cancel is the most deliberate
- * entry on it.
+ * Not admin cancels. They used to be kept here on the theory that a hand
+ * cancel is the most deliberate rejection there is -- but cancelling means
+ * "I don't want this title right now", not "this release is bad", and the
+ * permanent block followed the title into later, deliberate requests, leaving
+ * them with worse releases or none (decided 2026-10-02).
  */
 export async function getPermanentBlocks(): Promise<RejectedReleaseKey[]> {
-  return prisma.rejectedRelease.findMany({ select: { releaseTitle: true, downloadId: true } });
+  return prisma.rejectedRelease.findMany({
+    where: { reason: { in: [...UNSAFE_REASONS] } },
+    select: { releaseTitle: true, downloadId: true },
+  });
+}
+
+/**
+ * Releases blocklisted only because someone cancelled them, from before
+ * cancels stopped blocklisting. The healer unblocks these at once -- whatever
+ * their age -- and then forgets them.
+ */
+export async function getCancelBlocks(): Promise<(RejectedReleaseKey & { id: number })[]> {
+  return prisma.rejectedRelease.findMany({
+    where: { reason: "cancelledByAdmin" },
+    select: { id: true, releaseTitle: true, downloadId: true },
+  });
+}
+
+export async function forgetCancelBlocks(ids: number[]): Promise<void> {
+  if (ids.length === 0) return;
+  await prisma.rejectedRelease.deleteMany({ where: { id: { in: ids } } });
 }
 
 /**

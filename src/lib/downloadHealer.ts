@@ -32,7 +32,13 @@ import {
   expireSonarrBlocklist,
   outstandingSearches,
 } from "./sonarr";
-import { countRecentRejections, getPermanentBlocks, recordRejection } from "./rejectedReleases";
+import {
+  countRecentRejections,
+  forgetCancelBlocks,
+  getCancelBlocks,
+  getPermanentBlocks,
+  recordRejection,
+} from "./rejectedReleases";
 
 /**
  * Auto-recovery for downloads that will never finish on their own.
@@ -421,13 +427,21 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
   // expiring them would just let the same fake be grabbed again. If the list of
   // those can't be read, skip the expiry entirely rather than risk that.
   try {
-    const rejected = await getPermanentBlocks();
+    const [rejected, cancelled] = await Promise.all([getPermanentBlocks(), getCancelBlocks()]);
     const keep = (record: Parameters<typeof isPermanentlyBlocked>[0]) =>
       isPermanentlyBlocked(record, rejected);
+    // Releases blocked only because someone once cancelled them come back at
+    // once, whatever their age: they were never bad, and they are often the
+    // best option for the title. Matched the same way the permanent ones are.
+    const releaseNow = (record: Parameters<typeof isPermanentlyBlocked>[0]) =>
+      isPermanentlyBlocked(record, cancelled);
     await Promise.all([
-      expireRadarrBlocklist(BLOCKLIST_TTL_HOURS, keep),
-      expireSonarrBlocklist(BLOCKLIST_TTL_HOURS, keep),
+      expireRadarrBlocklist(BLOCKLIST_TTL_HOURS, keep, releaseNow),
+      expireSonarrBlocklist(BLOCKLIST_TTL_HOURS, keep, releaseNow),
     ]);
+    // Only after both expiries ran: forgetting them first would leave their
+    // blocklist entries to the ordinary TTL if an expiry then failed.
+    await forgetCancelBlocks(cancelled.map((c) => c.id));
   } catch (err) {
     console.error("[healer] skipped blocklist expiry (could not read rejected releases):", err);
   }

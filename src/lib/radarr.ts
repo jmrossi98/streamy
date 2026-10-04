@@ -5,6 +5,7 @@
  * no title matching involved.
  */
 
+import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
@@ -361,13 +362,30 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   }
 }
 
-/** Cancels one specific queued download, leaving a series' other episodes alone. */
+/**
+ * Cancels one specific queued download.
+ *
+ * `unmonitor` is a person's cancel: the movie stops being wanted first, so
+ * Radarr does not simply grab it again. The healer leaves it off, because it
+ * is replacing a bad download and wants the retry.
+ */
 export async function cancelRadarrQueueItem(
   queueId: number,
-  { blocklist = false }: { blocklist?: boolean } = {}
+  { blocklist = false, unmonitor = false }: { blocklist?: boolean; unmonitor?: boolean } = {}
 ): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
+    if (unmonitor) {
+      try {
+        const queue = await radarrFetch<{ records: { id: number; movieId?: number }[] }>(
+          `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
+        );
+        const movieId = queue.records.find((r) => r.id === queueId)?.movieId;
+        if (movieId != null) await stopWantingMovie(movieId);
+      } catch (err) {
+        console.error(`[radarr] could not unmonitor the movie for queue ${queueId}:`, err);
+      }
+    }
     await radarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=${blocklist}`, {
       method: "DELETE",
     });
@@ -493,18 +511,28 @@ export async function cancelRadarrDownload(
 ): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
-    const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
-    const entry = queue.records.find((r) => r.movieId === radarrId);
-    if (entry) {
-      await radarrFetch(
-        `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
-        { method: "DELETE" }
+    const emptyQueue = async () => {
+      const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(
+        `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
       );
+      // Every entry, not the first: a movie can have a stuck and a fresh one.
+      for (const entry of queue.records.filter((r) => r.movieId === radarrId)) {
+        await radarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`, {
+          method: "DELETE",
+        });
+      }
+    };
+    // A user-initiated cancel must first stop Radarr wanting the movie --
+    // otherwise it stays monitored and is grabbed again -- and stop a search
+    // already running. The healer's own cancels deliberately stay monitored
+    // so they re-search.
+    if (unmonitor) await stopWantingMovie(radarrId);
+    await emptyQueue();
+    if (unmonitor) {
+      // A grab that was already in flight lands a moment after the first pass.
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      await emptyQueue();
     }
-    // A user-initiated cancel must also stop Radarr wanting the movie,
-    // otherwise it stays monitored and the idle-title healer re-grabs it.
-    // The healer's own cancels deliberately stay monitored so they re-search.
-    if (unmonitor) await setRadarrMovieMonitored(radarrId, false);
     // Idempotent: nothing queued means the movie already isn't downloading,
     // which is exactly what a cancel is asking for. Reporting failure there
     // surfaced a bogus "couldn't cancel" for downloads that had just
@@ -513,6 +541,23 @@ export async function cancelRadarrDownload(
   } catch (err) {
     console.error(`[radarr] cancelRadarrDownload failed for ${radarrId}:`, err);
     return false;
+  }
+}
+
+/** Unmonitors a movie and cancels any live search for it. Best-effort per step. */
+async function stopWantingMovie(radarrId: number): Promise<void> {
+  try {
+    await setRadarrMovieMonitored(radarrId, false);
+  } catch (err) {
+    console.error(`[radarr] could not unmonitor movie ${radarrId}:`, err);
+  }
+  try {
+    const commands = await radarrFetch<ArrCommand[]>("/api/v3/command");
+    for (const id of movieSearchesToCancel(commands, radarrId)) {
+      await radarrFetch(`/api/v3/command/${id}`, { method: "DELETE" }).catch(() => undefined);
+    }
+  } catch (err) {
+    console.error(`[radarr] could not stop running searches for movie ${radarrId}:`, err);
   }
 }
 
@@ -542,10 +587,11 @@ export async function setRadarrMovieMonitored(
  */
 export async function expireRadarrBlocklist(
   maxAgeHours: number,
-  keep?: (record: BlocklistRecord) => boolean
+  keep?: (record: BlocklistRecord) => boolean,
+  releaseNow?: (record: BlocklistRecord) => boolean
 ): Promise<number> {
   if (!isRadarrConfigured()) return 0;
-  return expireBlocklist(radarrFetch, maxAgeHours, "radarr", keep);
+  return expireBlocklist(radarrFetch, maxAgeHours, "radarr", keep, releaseNow);
 }
 
 type Fetcher = <T>(path: string, init?: RequestInit) => Promise<T>;
@@ -556,7 +602,10 @@ export async function expireBlocklist(
   label: string,
   // Entries that must outlive the TTL -- a release rejected as unsafe was never
   // "blocked by a transient stall", so letting it expire would just re-grab it.
-  keep: (record: BlocklistRecord) => boolean = () => false
+  keep: (record: BlocklistRecord) => boolean = () => false,
+  // Entries to unblock whatever their age -- releases that were only ever
+  // blocked because a person cancelled them.
+  releaseNow: (record: BlocklistRecord) => boolean = () => false
 ): Promise<number> {
   try {
     const list = await fetcher<{ records: ({ id: number; date?: string } & BlocklistRecord)[] }>(
@@ -564,7 +613,7 @@ export async function expireBlocklist(
     );
     const cutoff = Date.now() - maxAgeHours * 3600_000;
     const stale = list.records
-      .filter((r) => (!r.date || Date.parse(r.date) < cutoff) && !keep(r))
+      .filter((r) => !keep(r) && (releaseNow(r) || !r.date || Date.parse(r.date) < cutoff))
       .map((r) => r.id);
     if (stale.length === 0) return 0;
     await fetcher(`/api/v3/blocklist/bulk`, {

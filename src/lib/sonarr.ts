@@ -6,6 +6,7 @@
  * ID matching, never fuzzy title search.
  */
 
+import { episodeSearchesToCancel, seriesSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { earliestDownloaded } from "./playStartRules";
 import {
   countBlockingSearches,
@@ -442,22 +443,45 @@ export async function deleteSonarrEpisode(episodeId: number): Promise<boolean> {
 }
 
 /**
- * Cancels a series' active download in Sonarr and removes it (and any partial
- * data) from the client. `blocklist` marks the specific release as bad so
- * Sonarr won't immediately re-grab it -- used when auto-healing a stalled or
- * errored download, but not for a plain user-initiated cancel.
+ * Cancels every download for a series.
+ *
+ * `keepWanted` is for the healer, which replaces a bad download and wants the
+ * episodes searched again. Without it this is a *person's* cancel, and that
+ * has to be final: the show stops being wanted (episodes and seasons
+ * unmonitored, queued searches dropped), searches already running are
+ * stopped -- they would grab for unmonitored episodes too -- and only then is
+ * the queue emptied, with a second sweep for anything grabbed in between.
+ * Emptying the queue alone left Beetlejuice downloading all 107 episodes.
+ *
+ * Never blocklists on a person's cancel: cancelling says "I don't want this",
+ * not "this release is bad", and a blocklist entry would follow the title into
+ * any later, deliberate request.
  */
-export async function cancelSonarrDownload(sonarrId: number, blocklist = false): Promise<boolean> {
+export async function cancelSonarrDownload(
+  sonarrId: number,
+  { blocklist = false, keepWanted = false }: { blocklist?: boolean; keepWanted?: boolean } = {}
+): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
-  try {
-    const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
+  const emptyQueue = async (): Promise<number> => {
+    const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(
+      `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
+    );
     // A series can legitimately have several episodes in flight at once.
     const entries = queue.records.filter((r) => r.seriesId === sonarrId);
     for (const entry of entries) {
-      await sonarrFetch(
-        `/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`,
-        { method: "DELETE" }
-      );
+      await sonarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`, {
+        method: "DELETE",
+      });
+    }
+    return entries.length;
+  };
+  try {
+    if (!keepWanted) await stopWantingSeries(sonarrId);
+    await emptyQueue();
+    if (!keepWanted) {
+      // A grab that was already in flight lands a moment after the first pass.
+      await new Promise((resolve) => setTimeout(resolve, CANCEL_SWEEP_DELAY_MS));
+      await emptyQueue();
     }
     // Idempotent: nothing queued means it already isn't downloading, which is
     // what a cancel is asking for -- reporting failure there produced a bogus
@@ -466,6 +490,74 @@ export async function cancelSonarrDownload(sonarrId: number, blocklist = false):
   } catch (err) {
     console.error(`[sonarr] cancelSonarrDownload failed for ${sonarrId}:`, err);
     return false;
+  }
+}
+
+/** Cancels live search commands that would grab for these episodes. Never throws. */
+async function stopEpisodeSearches(
+  episodeIds: number[],
+  wholeSeason: { seriesId: number; seasonNumber: number } | null
+): Promise<void> {
+  try {
+    const commands = await sonarrFetch<ArrCommand[]>("/api/v3/command");
+    for (const id of episodeSearchesToCancel(commands, episodeIds, wholeSeason)) {
+      await sonarrFetch(`/api/v3/command/${id}`, { method: "DELETE" }).catch(() => undefined);
+    }
+  } catch (err) {
+    console.error("[sonarr] could not stop running episode searches:", err);
+  }
+}
+
+/** How long after a cancel to look for a grab that was already under way. */
+const CANCEL_SWEEP_DELAY_MS = 4_000;
+
+/**
+ * Makes Sonarr stop wanting a series without touching what is already on
+ * disk: every episode and season unmonitored, Streamy's own queued searches
+ * for it dropped, and live search commands for it cancelled. Each step is
+ * best-effort -- a failure in one must not skip the rest.
+ */
+async function stopWantingSeries(sonarrId: number): Promise<void> {
+  let episodeIds: number[] = [];
+  try {
+    const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${sonarrId}`);
+    episodeIds = episodes.map((e) => e.id);
+    const monitored = episodes.filter((e) => e.monitored).map((e) => e.id);
+    if (monitored.length > 0) {
+      await sonarrFetch(`/api/v3/episode/monitor`, {
+        method: "PUT",
+        body: JSON.stringify({ episodeIds: monitored, monitored: false }),
+      });
+    }
+  } catch (err) {
+    console.error(`[sonarr] could not unmonitor episodes of series ${sonarrId}:`, err);
+  }
+  try {
+    // Seasons too, or a metadata refresh re-monitors newly listed episodes.
+    const series = await sonarrFetch<{ seasons?: { seasonNumber: number; monitored: boolean }[] } & Record<string, unknown>>(
+      `/api/v3/series/${sonarrId}`
+    );
+    if ((series.seasons ?? []).some((s) => s.monitored)) {
+      await sonarrFetch(`/api/v3/series/${sonarrId}`, {
+        method: "PUT",
+        body: JSON.stringify({ ...series, seasons: (series.seasons ?? []).map((s) => ({ ...s, monitored: false })) }),
+      });
+    }
+  } catch (err) {
+    console.error(`[sonarr] could not unmonitor seasons of series ${sonarrId}:`, err);
+  }
+  try {
+    await (await searchQueue()).clearPendingSearches(episodeIds);
+  } catch (err) {
+    console.error(`[sonarr] could not clear pending searches for series ${sonarrId}:`, err);
+  }
+  try {
+    const commands = await sonarrFetch<ArrCommand[]>("/api/v3/command");
+    for (const id of seriesSearchesToCancel(commands, sonarrId, episodeIds)) {
+      await sonarrFetch(`/api/v3/command/${id}`, { method: "DELETE" }).catch(() => undefined);
+    }
+  } catch (err) {
+    console.error(`[sonarr] could not stop running searches for series ${sonarrId}:`, err);
   }
 }
 
@@ -665,10 +757,11 @@ export async function getSonarrDownloadIds(episodeIds: number[]): Promise<string
 /** Sonarr twin of expireRadarrBlocklist -- see that function for why this exists. */
 export async function expireSonarrBlocklist(
   maxAgeHours: number,
-  keep?: (record: BlocklistRecord) => boolean
+  keep?: (record: BlocklistRecord) => boolean,
+  releaseNow?: (record: BlocklistRecord) => boolean
 ): Promise<number> {
   if (!isSonarrConfigured()) return 0;
-  return expireBlocklist(sonarrFetch, maxAgeHours, "sonarr", keep);
+  return expireBlocklist(sonarrFetch, maxAgeHours, "sonarr", keep, releaseNow);
 }
 
 /** Cancels one specific queued download, leaving the series' other episodes alone. */
@@ -728,6 +821,7 @@ export async function cancelSonarrQueueItem(
       } catch (err) {
         console.error(`[sonarr] could not clear the pending search for ${episodeId}:`, err);
       }
+      await stopEpisodeSearches([episodeId], null);
     }
     return true;
   } catch (err) {
@@ -1666,18 +1760,33 @@ export async function manageSonarrEpisodes(
     // we need to find the still-seeding torrent.
     const downloadIds = await getSonarrDownloadIds(targets.map((e) => e.id));
 
-    // Drop anything currently downloading for these episodes.
-    const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
-      `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
+    // Stop wanting them *before* touching the queue, so nothing removed below
+    // is simply grabbed again: unmonitor, drop queued searches, and stop any
+    // search already running for them (it would grab regardless of monitoring).
+    await sonarrFetch(`/api/v3/episode/monitor`, {
+      method: "PUT",
+      body: JSON.stringify({ episodeIds: targets.map((e) => e.id), monitored: false }),
+    });
+    await (await searchQueue()).clearPendingSearches(targets.map((e) => e.id));
+    await stopEpisodeSearches(
+      targets.map((e) => e.id),
+      episodeNumber == null ? { seriesId, seasonNumber } : null
     );
-    for (const record of queue.records) {
-      if (record.episodeId != null && targetIds.has(record.episodeId)) {
-        await sonarrFetch(
-          `/api/v3/queue/${record.id}?removeFromClient=true&blocklist=false`,
-          { method: "DELETE" }
-        );
+
+    // Drop anything currently downloading for these episodes.
+    const dropQueued = async () => {
+      const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
+        `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
+      );
+      for (const record of queue.records) {
+        if (record.episodeId != null && targetIds.has(record.episodeId)) {
+          await sonarrFetch(`/api/v3/queue/${record.id}?removeFromClient=true&blocklist=false`, {
+            method: "DELETE",
+          });
+        }
       }
-    }
+    };
+    await dropQueued();
 
     // Remove any already-imported files.
     for (const ep of targets) {
@@ -1686,15 +1795,9 @@ export async function manageSonarrEpisodes(
       }
     }
 
-    await sonarrFetch(`/api/v3/episode/monitor`, {
-      method: "PUT",
-      body: JSON.stringify({ episodeIds: targets.map((e) => e.id), monitored: false }),
-    });
-
-    // Drop anything still queued for an ordered search. The drain would skip
-    // these anyway now they are unmonitored, but leaving them in would hold a
-    // cancelled season ahead of whatever is asked for next.
-    await (await searchQueue()).clearPendingSearches(targets.map((e) => e.id));
+    // A grab that was already in flight lands a moment after the first pass.
+    await new Promise((resolve) => setTimeout(resolve, CANCEL_SWEEP_DELAY_MS));
+    await dropQueued();
 
     // Unmonitor the season too, otherwise Sonarr treats it as still wanted.
     if (episodeNumber == null) {
