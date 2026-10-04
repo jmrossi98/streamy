@@ -550,3 +550,27 @@ describe("findCandidateChannels with broadcasts", () => {
     expect(findCandidateChannels(fixture, lineup).map((c) => c.id)).toEqual(["foxbuf", "foxroc", "abc", "nfln"]);
   });
 });
+
+describe("findCandidateChannels: home market", () => {
+  it("puts the household's affiliate of the carrying network ahead of another city's", () => {
+    // Patriots at Bills on CBS, 2026-10-04: no Buffalo CBS in the lineup, and
+    // Baltimore's was offered ahead of Rochester's.
+    const lineup = [
+      { id: "balt", name: "USA - CBS 13 BALTIMORE MD (WJZ)" },
+      { id: "roc", name: "US: CBS 8 (WROC) ROCHESTER HD" },
+      { id: "foxbuf", name: "USA - FOX 29 BUFFALO NY (WUTV)" },
+    ];
+    const fixture = { league: "NFL", awayTeam: "New England Patriots", homeTeam: "Buffalo Bills", broadcasts: ["CBS"] };
+    const ids = findCandidateChannels(fixture, lineup).map((c) => c.id);
+    expect(ids.slice(0, 2)).toEqual(["roc", "balt"]);
+  });
+
+  it("still puts a team's own market first when it is not the household's", () => {
+    const lineup = [
+      { id: "roc", name: "US: CBS 8 (WROC) ROCHESTER HD" },
+      { id: "balt", name: "USA - CBS 13 BALTIMORE MD (WJZ)" },
+    ];
+    const fixture = { league: "NFL", awayTeam: "Kansas City Chiefs", homeTeam: "Baltimore Ravens", broadcasts: ["CBS"] };
+    expect(findCandidateChannels(fixture, lineup).map((c) => c.id)).toEqual(["balt", "roc"]);
+  });
+});

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { fetchPublishedChannelHealth, normaliseName } from "@/lib/liveChannelHealth";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
@@ -24,6 +25,9 @@ import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
  * it a reason to).
  */
 export const dynamic = "force-dynamic";
+
+/** How old the channel checker's results may be and still reorder the list (it runs half-hourly). */
+const CHANNEL_HEALTH_TRUST_MS = 90 * 60_000;
 
 export default async function GamePage({
   params,
@@ -85,7 +89,23 @@ export default async function GamePage({
   } catch (err) {
     console.error("[live/game] getChannelInfo failed:", err);
   }
-  const isStale = (name: string) => infoByChannel[name]?.stale === true;
+  // The channel checker's own verdict, when it has a recent one: a channel
+  // that would not open at its last scan. Trusted only while fresh -- an old
+  // "down" must not bury a channel that has since come back. Reported
+  // 2026-10-04: the default for a Bills game was a channel on a provider that
+  // had been unreachable for an hour, shown as "Not responding" on /live.
+  let notResponding = new Set<string>();
+  try {
+    const published = await fetchPublishedChannelHealth();
+    const age = published?.generatedAt ? Date.now() - Date.parse(published.generatedAt) : Infinity;
+    if (published && age < CHANNEL_HEALTH_TRUST_MS) {
+      notResponding = new Set([...published.health].filter(([, h]) => !h.playable).map(([name]) => name));
+    }
+  } catch (err) {
+    console.error("[live/game] channel health read failed:", err);
+  }
+  const isStale = (name: string) =>
+    infoByChannel[name]?.stale === true || notResponding.has(normaliseName(name));
 
   const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);
