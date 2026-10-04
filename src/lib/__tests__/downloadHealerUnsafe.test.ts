@@ -21,6 +21,8 @@ const m = vi.hoisted(() => ({
   outstandingSearches: vi.fn(),
   recordRejection: vi.fn(),
   getPermanentBlocks: vi.fn(),
+  getCancelBlocks: vi.fn(),
+  forgetCancelBlocks: vi.fn(),
   countRecentRejections: vi.fn(),
 }));
 
@@ -53,6 +55,8 @@ vi.mock("../pendingEpisodeSearch", () => ({
 vi.mock("../rejectedReleases", () => ({
   recordRejection: m.recordRejection,
   getPermanentBlocks: m.getPermanentBlocks,
+  getCancelBlocks: m.getCancelBlocks,
+  forgetCancelBlocks: m.forgetCancelBlocks,
   countRecentRejections: m.countRecentRejections,
 }));
 
@@ -86,6 +90,8 @@ beforeEach(() => {
   m.expireSonarrBlocklist.mockResolvedValue(0);
   m.outstandingSearches.mockResolvedValue(0);
   m.getPermanentBlocks.mockResolvedValue([]);
+  m.getCancelBlocks.mockResolvedValue([]);
+  m.forgetCancelBlocks.mockResolvedValue(undefined);
   m.countRecentRejections.mockResolvedValue(1);
   m.cancelRadarrQueueItem.mockImplementation(async () => (calls.push("remove"), true));
   m.cancelSonarrQueueItem.mockImplementation(async () => (calls.push("remove"), true));
@@ -195,6 +201,18 @@ describe("healStalledDownloads: blocklist expiry", () => {
     expect(keep({ sourceTitle: "Grizzly Man 2005 1080p BluRay" })).toBe(false);
     // Sonarr gets the same protection.
     expect(m.expireSonarrBlocklist.mock.calls[0][1]).toBe(m.expireRadarrBlocklist.mock.calls[0][1]);
+  });
+
+  it("releases cancel-blocked releases at once, then forgets them", async () => {
+    // Blocked only because an admin once cancelled it: never a bad release.
+    m.getCancelBlocks.mockResolvedValue([{ id: 7, releaseTitle: "Grizzly Man 2005 1080p BluRay", downloadId: null }]);
+
+    await healStalledDownloads();
+
+    const releaseNow = m.expireSonarrBlocklist.mock.calls[0][2] as (r: object) => boolean;
+    expect(releaseNow({ sourceTitle: "Grizzly Man 2005 1080p BluRay" })).toBe(true);
+    expect(releaseNow({ sourceTitle: "Something Else 2020 1080p" })).toBe(false);
+    expect(m.forgetCancelBlocks).toHaveBeenCalledWith([7]);
   });
 
   it("skips the expiry entirely when the rejected list can't be read", async () => {
