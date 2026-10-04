@@ -48,7 +48,7 @@ export function investigationPrompt(catalogue: string): string {
     `Up to ${MAX_COMMANDS_PER_STEP} per reply. You will get the output back and can run more, or answer.`,
     "",
     "Use this whenever the question is about something being down, slow, failing or behaving oddly. Do not answer from the status snapshot or the docs alone, and do not list possible causes you have not checked: look, then say what you found. Follow the evidence -- when a log points somewhere, go there next. Check timestamps against when the problem happened.",
-    "Useful starting points: /data/status/*.json (exit-nodes.json for the Tailscale exit nodes and each device's connection), docker ps -a, docker logs <container> --since <time>, journalctl -u <unit> --since <time>, tailscale status.",
+    "Useful starting points: `streamy probes` (what the health checks last found), /data/status/*.json (exit-nodes.json for the Tailscale exit nodes and each device's connection; vpn-failover-state.json for whether each IPTV provider is reachable through the VPN; live-channels.json), docker ps -a, docker logs <container> --since <time>, journalctl -u <unit> --since <time>, tailscale status. For downloads: api radarr|sonarr /queue, /history, /release?movieId= (rejection reasons), api sabnzbd mode=warnings, api qbittorrent torrents/info. For live TV: api dispatcharr proxy/ts/status, docker logs dispatcharr.",
     "",
     catalogue,
     "",
