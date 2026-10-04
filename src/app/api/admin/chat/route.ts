@@ -32,7 +32,6 @@ import {
   searchDocs,
 } from "@/lib/docsRetrieval";
 import { getSnapshot } from "@/lib/chatStatus";
-import { isDiagConfigured } from "@/lib/diag";
 import { investigateThenAnswer } from "@/lib/diagInvestigation";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
@@ -207,7 +206,6 @@ export async function POST(request: Request) {
     // a plain answer when the diagnostics service can't be reached.
     const investigated =
       remote &&
-      isDiagConfigured() &&
       body.stackStatus !== false &&
       statusQuery != null &&
       shouldIncludeStatus(statusQuery)

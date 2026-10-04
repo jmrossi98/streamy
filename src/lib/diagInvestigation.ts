@@ -9,7 +9,9 @@
  * by hand.
  */
 import { logAudit } from "./auditLog";
-import { getDiagCatalogue, runDiagCommand } from "./diag";
+import { getDiagCatalogue, isDiagConfigured, runDiagCommand } from "./diag";
+import { LOCAL_HELP } from "./diagApiRules";
+import { isLocalCommand, runLocalCommand } from "./diagLocal";
 import {
   formatResults,
   investigationPrompt,
@@ -31,8 +33,11 @@ const encoder = new TextEncoder();
 const line = (text: string) => encoder.encode(JSON.stringify({ message: { content: text } }) + "\n");
 
 /**
- * Null when diagnostics can't be used right now (service unreachable), so the
- * caller falls back to an ordinary answer rather than failing the turn.
+ * Never null in practice: Streamy's own read-only commands (service APIs, its
+ * own records) need nothing from mediabox, so there is always something to
+ * look at. Mediabox's commands are offered only when its diagnostics service
+ * is configured and answering -- which also means the assistant can still
+ * investigate, and say so, when mediabox itself is the thing that is down.
  */
 export async function investigateThenAnswer(
   messages: ChatMessage[],
@@ -40,8 +45,10 @@ export async function investigateThenAnswer(
   actorName: string,
   signal: AbortSignal
 ): Promise<ReadableStream<Uint8Array> | null> {
-  const catalogue = await getDiagCatalogue();
-  if (!catalogue) return null;
+  const mediabox = isDiagConfigured() ? await getDiagCatalogue() : null;
+  const catalogue = mediabox
+    ? `${mediabox}\n\n${LOCAL_HELP}`
+    : `${LOCAL_HELP}\n\n(Commands on the mediabox server itself -- docker logs, journalctl, tailscale -- are unavailable right now: its diagnostics service is not configured or not answering. If mediabox being unreachable fits the problem, say so.)`;
 
   let convo = withContext(messages, { role: "system", content: investigationPrompt(catalogue) });
 
@@ -63,7 +70,7 @@ export async function investigateThenAnswer(
           const results: CommandResult[] = [];
           for (const command of commands) {
             if (signal.aborted) break;
-            const result = await runDiagCommand(command);
+            const result = isLocalCommand(command) ? await runLocalCommand(command) : await runDiagCommand(command);
             results.push(result);
             controller.enqueue(line(progressLine(result)));
             void logAudit(actorName, "assistant.diag", command, result.ok ? "ok" : result.output.slice(0, 120));
