@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { normaliseName, notRespondingChannels } from "@/lib/liveChannelHealth";
+import { channelHealthForRanking, normaliseName } from "@/lib/liveChannelHealth";
 import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
@@ -10,7 +10,9 @@ import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
 import {
   findCandidateChannels,
+  findEpgConfirmedChannels,
   findEpgConfirmedChannelNames,
+  HOME_MARKETS,
   findEpgElsewhereChannelNames,
   resolveChannelForFixture,
 } from "@/lib/liveTimeline";
@@ -101,14 +103,19 @@ export default async function GamePage({
   // "down" must not bury a channel that has since come back. Reported
   // 2026-10-04: the default for a Bills game was a channel on a provider that
   // had been unreachable for an hour, shown as "Not responding" on /live.
-  const notResponding = await notRespondingChannels();
+  //
+  // The same snapshot says how fast each stream is arriving. That orders
+  // channels the schedule rates equally -- never across them: the right game
+  // on a rough stream still beats the wrong game on a smooth one.
+  const { notResponding, quality, speeds } = await channelHealthForRanking();
+  const qualityOf = (name: string) => quality.get(normaliseName(name)) ?? 1;
   // "Stale" here means "do not default to this": the provider gave up on it,
   // it would not open at the last scan, or its own guide has something other
   // than this sport in the slot.
   const isStale = (name: string) =>
     infoByChannel[name]?.stale === true || notResponding.has(normaliseName(name)) || epgElsewhere.has(name);
 
-  const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames);
+  const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames, qualityOf);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);
   /*
     Only a real EPG fact suppresses the rest -- a confirmed channel needs no
@@ -126,9 +133,14 @@ export default async function GamePage({
     city matching), so without this it would appear twice -- once as the
     primary pick, once again inside the candidate list.
   */
+  // When the guide confirms more than one channel, the others are offered
+  // too: all of them are certainly this game, so they are the right things to
+  // switch to when the best stream of the moment stops being the best.
   const networkOrMarketCandidates = channelConfirmed
-    ? []
-    : findCandidateChannels(fixture, channels, 8).filter((c) => c.id !== resolved?.id);
+    ? findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf).filter((c) => c.id !== resolved?.id)
+    : findCandidateChannels(fixture, channels, 8, HOME_MARKETS, qualityOf).filter(
+        (c) => c.id !== resolved?.id
+      );
 
   /*
     An unconfirmed `resolved` is, by construction, exactly the category
@@ -213,6 +225,14 @@ export default async function GamePage({
           channelConfirmed={channelConfirmed}
           candidates={candidates}
           infoByChannel={infoByChannel}
+          speedByChannel={Object.fromEntries(
+            [channel, ...candidates]
+              .filter((c): c is NonNullable<typeof c> => c != null)
+              .flatMap((c) => {
+                const speed = speeds.get(normaliseName(c.name));
+                return speed == null ? [] : [[c.name, speed] as const];
+              })
+          )}
           fixtureId={fixtureId}
           storedChoice={storedChoice}
         />
