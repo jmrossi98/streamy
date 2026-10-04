@@ -24,6 +24,8 @@ export type DownloadHealth = {
   /** How long the entry has been sitting in the queue. */
   ageMinutes: number;
   hasProgress: boolean;
+  /** "usenet" or "torrent", when known. */
+  protocol?: string | null;
 };
 
 // Messages Radarr/Sonarr put in the same field as real errors that are
@@ -121,9 +123,46 @@ export function isUnhealthy(entry: DownloadHealth): boolean {
   // An explicit error from Radarr/Sonarr ("stalled with no connections",
   // "qBittorrent is reporting an error") is reason enough.
   if (entry.errorMessage) return true;
+  // A usenet job at 0% with no error is waiting behind the jobs ahead of it,
+  // and its status cannot say so: SABnzbd reports every job in its queue as
+  // "Downloading", not only the one it is working on. Fifteen movies requested
+  // together on 2026-10-04 put ~40 GB in front of the last of them, and each
+  // one still at 0% after the grace period was cancelled, re-grabbed onto the
+  // back of the queue, and blocklisted on its second turn -- good releases,
+  // lost for nothing, with the movie no nearer to done. Usenet does not stall
+  // the way a swarm does: SABnzbd finishes a job or fails it, and a failure
+  // arrives as an error, handled above.
+  if ((entry.protocol ?? "").toLowerCase() === "usenet") return false;
   // No error reported, but still hasn't moved a single byte well past the
   // grace period -- effectively dead too.
   return !entry.hasProgress;
+}
+
+// Radarr/Sonarr's wording when a finished download is no better than the file
+// already in the library ("Not an upgrade for existing movie file. Existing
+// quality: Bluray-2160p. New Quality Bluray-1080p.", and the custom-format
+// variant).
+const NOT_AN_UPGRADE = /^not an? (?:custom format )?upgrade for existing/i;
+
+/**
+ * Whether a finished download is simply surplus: the title already has a file
+ * at least as good, so this one will never import.
+ *
+ * This is how a fast usenet copy ends when the torrent it was started
+ * alongside finishes first. Nothing is wrong with the release, so it is
+ * removed without blocklisting and without a new search -- waiting out
+ * IMPORT_STUCK_MINUTES and then replacing it, as for a corrupt file, would
+ * blocklist a good release and search for a title that is already there.
+ */
+export function isRedundantImport(entry: {
+  clientStatus?: string | null;
+  statusMessages: string[];
+}): boolean {
+  return (
+    (entry.clientStatus ?? "").toLowerCase() === "completed" &&
+    entry.statusMessages.length > 0 &&
+    entry.statusMessages.every((m) => NOT_AN_UPGRADE.test(m.trim()))
+  );
 }
 
 /**
@@ -217,7 +256,7 @@ export function isPermanentlyBlocked(
 }
 
 /**
- * Stalls of the same episode before the release itself is blamed.
+ * Stalls of the same release before the release itself is blamed.
  *
  * Two, so one genuine transient -- a VPN reconnect, a brief peer drought --
  * costs nothing, while a release that simply cannot be fetched stops being
@@ -229,7 +268,7 @@ export const STALL_BLOCKLIST_AFTER = 2;
  * Whether cancelling this entry should also blocklist the release.
  *
  * Two separate reasons to blocklist. The payload failed outright -- the client
- * rejected it, so it will fail again. Or the same episode has now stalled
+ * rejected it, so it will fail again. Or the same release has now stalled
  * repeatedly, which stops being about conditions and starts being about the
  * release: cancelling without blocklisting leaves it the top-scoring candidate,
  * so the next search picks it straight back up. That loop grabbed The Wire
@@ -237,7 +276,7 @@ export const STALL_BLOCKLIST_AFTER = 2;
  */
 export function shouldBlocklistStalled(
   errorMessage: string | null,
-  stallsForThisEpisode: number,
+  stallsOfThisRelease: number,
   // The torrent's whole swarm has no seeder -- not "none connected right
   // now", but none known to the tracker. That is the release, not
   // conditions: the first stall of The Sopranos S05E05 re-grabbed the same
@@ -245,7 +284,7 @@ export function shouldBlocklistStalled(
   // Sonarr had no reason to pick anything else.
   deadSwarm = false
 ): boolean {
-  return deadSwarm || shouldBlocklist(errorMessage) || stallsForThisEpisode >= STALL_BLOCKLIST_AFTER;
+  return deadSwarm || shouldBlocklist(errorMessage) || stallsOfThisRelease >= STALL_BLOCKLIST_AFTER;
 }
 
 /** A torrent no seeder anywhere can finish: none connected and none in the swarm. */

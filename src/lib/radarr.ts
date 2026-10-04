@@ -750,6 +750,8 @@ export type QueueHealth = {
   trackedDownloadStatus: string | null;
   /** Radarr/Sonarr's own words for an import problem, for the log. */
   importProblem: string | null;
+  /** The same, one message each, for rules that judge them individually. */
+  statusMessages: string[];
   /** "usenet" or "torrent". */
   protocol: string | null;
   /** The episode/movie already has a file, so this download is an upgrade. */
@@ -774,6 +776,7 @@ export function toQueueHealth(r: {
   hasFile?: boolean;
 }, externalId: number): QueueHealth {
   const added = r.added ? Date.parse(r.added) : Date.now();
+  const statusMessages = (r.statusMessages ?? []).flatMap((m) => m.messages ?? []);
   return {
     queueId: r.id,
     episodeId: r.episodeId,
@@ -787,7 +790,8 @@ export function toQueueHealth(r: {
     clientStatus: r.status ?? null,
     trackedDownloadState: r.trackedDownloadState ?? null,
     trackedDownloadStatus: r.trackedDownloadStatus ?? null,
-    importProblem: (r.statusMessages ?? []).flatMap((m) => m.messages ?? []).join("; ") || null,
+    importProblem: statusMessages.join("; ") || null,
+    statusMessages,
     protocol: r.protocol ?? null,
     isUpgrade: !!r.hasFile,
   };

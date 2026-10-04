@@ -3,6 +3,7 @@ import {
   isPermanentlyBlocked,
   isUnhealthy,
   isImportStuck,
+  isRedundantImport,
   isDeadSwarm,
   isMetadataDead,
   IMPORT_STUCK_MINUTES,
@@ -96,7 +97,7 @@ function startFastCopies(radarrQueue: QueueHealth[]): void {
 
 /** Which idle retry starts using the deep search (the first is the ordinary search alone). */
 const DEEP_SEARCH_FROM_TRY = 2;
-/** Consecutive stall-heals per episode, for the escalation in healOne. */
+/** Consecutive stall-heals per release of an episode, for the escalation in healOne. */
 const stallTries = new Map<string, number>();
 // Consecutive passes a title has been missing from the idle lists. Prevents
 // one transient empty read from resetting a title's escalation.
@@ -146,13 +147,19 @@ async function healOne(
   if (onCooldown(key)) return null;
   lastHealedAt.set(key, Date.now());
 
-  // How many times this same episode has been healed for a stall. A single
+  // How many times this same release has been healed for a stall. A single
   // stall is usually conditions -- a VPN reconnect, a brief peer drought -- and
   // blocklisting for that poisons good releases. Repeated stalls of the same
   // thing are the release itself, and cancelling without blocklisting just
   // hands Sonarr the same dead torrent to pick again.
-  const stalls = (stallTries.get(key) ?? 0) + 1;
-  stallTries.set(key, stalls);
+  //
+  // Counted per release, not per title: counted per title, the release that
+  // replaced a twice-stalled one inherited its count and was blocklisted on
+  // its own first stall ("blocklisted after 3 stalls" for something grabbed
+  // minutes earlier), so one bad release cost the title every one after it.
+  const stallKey = `${key}|${entry.title}`;
+  const stalls = (stallTries.get(stallKey) ?? 0) + 1;
+  stallTries.set(stallKey, stalls);
 
   const reason = entry.errorMessage ?? "no progress";
   // Blocklisting is permanent, so reserve it for releases that genuinely
@@ -303,12 +310,35 @@ async function replaceStuckImport(
   }
 }
 
+/**
+ * Removes a finished download the library has no use for -- see
+ * isRedundantImport. Not blocklisted and not searched again: the release is
+ * fine and the title already has its file.
+ */
+async function dropRedundantImport(
+  mediaType: "movie" | "show",
+  entry: QueueHealth
+): Promise<HealedDownload | null> {
+  try {
+    const removed =
+      mediaType === "movie"
+        ? await cancelRadarrQueueItem(entry.queueId, { blocklist: false })
+        : await cancelSonarrQueueItem(entry.queueId, { blocklist: false, keepWanted: true });
+    if (!removed) return null;
+    console.log(`[healer] removed "${entry.title}": finished, but the library already has a copy at least as good`);
+    return { title: entry.title, reason: "finished but not needed: a better copy is already in the library" };
+  } catch (err) {
+    console.error(`[healer] failed to remove redundant "${entry.title}":`, err);
+    return null;
+  }
+}
+
 /** Entries stuck importing for long enough to act on; updates the clock. */
 function dueStuckImports(entries: QueueHealth[], now = Date.now()): QueueHealth[] {
   const seen = new Set<number>();
   const due: QueueHealth[] = [];
   for (const e of entries) {
-    if (e.unsafe || !isImportStuck(e)) continue;
+    if (e.unsafe || isRedundantImport(e) || !isImportStuck(e)) continue;
     seen.add(e.queueId);
     const since = importStuckSince.get(e.queueId) ?? now;
     importStuckSince.set(e.queueId, since);
@@ -465,8 +495,8 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
 // blocked by a transient stall becomes eligible again on its own.
 const BLOCKLIST_TTL_HOURS = 6;
 
-/** Re-grabs anything stalled or errored, and re-searches anything wanted but idle. */
-export async function healStalledDownloads(): Promise<HealedDownload[]> {
+/** One heal pass. Only ever run through healStalledDownloads, which keeps it to one at a time. */
+async function healPass(): Promise<HealedDownload[]> {
   // Do this first so the searches below can see releases whose block has aged
   // out, rather than settling for a worse-seeded alternative. Releases we
   // rejected as unsafe are exempt: they were never blocked by conditions, and
@@ -528,6 +558,8 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     ...dueStuckImports([...radarrQueue, ...sonarrQueue]).map((e) =>
       replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
     ),
+    ...radarrQueue.filter((e) => !e.unsafe && isRedundantImport(e)).map((e) => dropRedundantImport("movie", e)),
+    ...sonarrQueue.filter((e) => !e.unsafe && isRedundantImport(e)).map((e) => dropRedundantImport("show", e)),
   ]);
   // A movie waiting on a slow torrent gets a quick usenet copy as well.
   startFastCopies(radarrQueue);
@@ -542,7 +574,8 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
     )
   );
   for (const key of [...stallTries.keys()]) {
-    if (!live.has(key)) stallTries.delete(key);
+    // Keys are "<title key>|<release>"; the title key is what the queue shows.
+    if (!live.has(key.slice(0, key.indexOf("|")))) stallTries.delete(key);
   }
 
   // New content ahead of upgrades in SABnzbd -- see sabPriorityRules.ts.
@@ -563,11 +596,28 @@ export async function healStalledDownloads(): Promise<HealedDownload[]> {
   return [...healed.filter((h): h is HealedDownload => h !== null), ...idleHealed];
 }
 
+let inFlight: Promise<HealedDownload[]> | null = null;
+
+/**
+ * Re-grabs anything stalled or errored, and re-searches anything wanted but idle.
+ *
+ * One pass at a time: a caller arriving while a pass is running gets that
+ * pass's result. The scheduled warden and the page-load kick used to run their
+ * own passes side by side, each reading the same queue -- so one stall was
+ * counted twice (reaching the blocklist threshold in a single round) and the
+ * same fast copy was grabbed twice.
+ */
+export function healStalledDownloads(): Promise<HealedDownload[]> {
+  inFlight ??= healPass().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
 // The status endpoint is polled by every viewer on every open title, so the
 // scan is rate-limited globally rather than run per request.
 const SCAN_INTERVAL_MS = 2 * 60 * 1000;
 let lastScanAt = 0;
-let inFlight: Promise<HealedDownload[]> | null = null;
 
 /**
  * Opportunistic heal, safe to call from hot paths. Runs at most once every
@@ -577,12 +627,5 @@ let inFlight: Promise<HealedDownload[]> | null = null;
 export function maybeHealStalledDownloads(): void {
   if (inFlight || Date.now() - lastScanAt < SCAN_INTERVAL_MS) return;
   lastScanAt = Date.now();
-  inFlight = healStalledDownloads()
-    .catch((err) => {
-      console.error("[healer] scan failed:", err);
-      return [];
-    })
-    .finally(() => {
-      inFlight = null;
-    }) as Promise<HealedDownload[]>;
+  void healStalledDownloads().catch((err) => console.error("[healer] scan failed:", err));
 }
