@@ -21,6 +21,10 @@ import {
   regrabVerdict,
   countGrabEvents,
   exitNodeVerdict,
+  liveChannelsVerdict,
+  providerReachabilityVerdict,
+  type LiveChannelsReport,
+  type VpnFailoverReport,
   pickAutomaticIndexers,
   type ExitNodeReport,
   searchVerdict,
@@ -148,6 +152,22 @@ async function probeExitNodes(): Promise<ProbeResult> {
   return exitNodeVerdict(await getJson<ExitNodeReport>(`${base}/status/exit-nodes.json`));
 }
 
+/** Live TV as a whole: are most channels up, and can the providers be reached. */
+async function probeLiveTv(): Promise<ProbeResult[]> {
+  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
+  if (!base) {
+    return [liveChannelsVerdict(null), providerReachabilityVerdict(null)].map((r) => ({
+      ...r,
+      detail: "FLASH_LIBRARY_URL not set",
+    }));
+  }
+  const [channels, failover] = await Promise.all([
+    getJson<LiveChannelsReport>(`${base}/status/live-channels.json`),
+    getJson<VpnFailoverReport>(`${base}/status/vpn-failover-state.json`),
+  ]);
+  return [liveChannelsVerdict(channels), providerReachabilityVerdict(failover)];
+}
+
 type QueueRecord = {
   title?: string;
   added?: string;
@@ -269,16 +289,17 @@ export async function runHealthProbes(
 
   // In parallel: these touch different systems and one slow indexer should
   // not delay the freshness read that costs 30ms.
-  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes] = await Promise.all([
+  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes, liveTv] = await Promise.all([
     probeFreshness(),
     probeStuckImports(),
     probeRegrabLoop(),
     probeSearch(),
     probeBatchJobs(),
     probeExitNodes(),
+    probeLiveTv(),
   ]);
 
-  const results = [...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes];
+  const results = [...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes, ...liveTv];
   const { success, summary } = summarise(results);
   const detail = results
     .map((r) => `${r.status.toUpperCase().padEnd(4)}  ${r.name}: ${r.detail}`)

@@ -89,5 +89,14 @@ function whyNotFixable(id: string): string {
   if (id === "stuck.regrab_loop") {
     return "this is a code bug; blocklisting the release would hide it and poison a good release";
   }
+  if (id === "live.providers_reachable") {
+    return "mediabox's VPN failover rotates the exit region itself, once nobody is watching";
+  }
+  if (id === "live.channels_responding") {
+    return "the cause is upstream; see the provider reachability probe";
+  }
+  if (id === "exit_nodes.healthy") {
+    return "the tunnel and exit-node containers are deliberately not restartable from here";
+  }
   return "no action is defined for this probe";
 }

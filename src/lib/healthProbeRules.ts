@@ -202,6 +202,87 @@ export function regrabVerdict(counts: Record<string, number>): ProbeResult {
  */
 export const MIN_SEARCH_RESULTS = 1;
 
+// ------------------------------------------------------------------ live TV
+
+/** Below this share of channels responding, live TV is treated as broken, not patchy. */
+export const LIVE_CHANNELS_MIN_SHARE = 0.6;
+
+export type LiveChannelsReport = {
+  generatedAt?: string;
+  scanned?: number;
+  skippedReason?: string | null;
+  channels?: { name?: string; playable?: boolean }[];
+};
+
+/**
+ * Whether most live channels answered at the checker's last full scan.
+ *
+ * A few dead channels is normal for IPTV; most of them dead at once is an
+ * outage with one cause upstream -- a provider down, or cut off from the VPN
+ * exit. Before this, the only thing watching the checker was "its file is
+ * fresh", so on 2026-10-04 fifteen of twenty-two channels went dark and the
+ * first notice was a tile grid of "Not responding".
+ *
+ * A scan that yielded to a viewer is skipped, not failed: it did not look at
+ * most channels, so it cannot say they are down.
+ */
+export function liveChannelsVerdict(report: LiveChannelsReport | null): ProbeResult {
+  const id = "live.channels_responding";
+  const name = "Most live channels respond";
+  if (report === null || !Array.isArray(report.channels)) {
+    return { id, name, status: "skip", detail: "live-channels.json unreadable" };
+  }
+  if (report.skippedReason) {
+    return { id, name, status: "skip", detail: `last scan yielded to live TV (${report.skippedReason})` };
+  }
+  const total = report.channels.length;
+  if (total === 0) return { id, name, status: "skip", detail: "no channels in the lineup" };
+  const ok = report.channels.filter((c) => c.playable === true).length;
+  const detail = `${ok} of ${total} channels responding`;
+  return { id, name, status: ok / total >= LIVE_CHANNELS_MIN_SHARE ? "pass" : "fail", detail };
+}
+
+export type ProviderReachability = {
+  provider?: string;
+  primaryReachable?: boolean;
+  standbyReachable?: boolean;
+};
+
+export type VpnFailoverReport = {
+  checked_at?: string;
+  providers?: ProviderReachability[];
+  pending?: string;
+};
+
+/**
+ * Whether each IPTV provider can be reached through the VPN tunnel live TV
+ * uses -- the usual cause when many channels die together. Says which case it
+ * is: cut off from this exit only (the standby still connects, a rotation
+ * fixes it), or unreachable from everywhere (the provider itself is down).
+ */
+export function providerReachabilityVerdict(report: VpnFailoverReport | null, now = new Date()): ProbeResult {
+  const id = "live.providers_reachable";
+  const name = "IPTV providers reachable through the VPN";
+  if (report === null || !Array.isArray(report.providers)) {
+    return { id, name, status: "skip", detail: "provider reachability not published" };
+  }
+  const at = report.checked_at ? Date.parse(report.checked_at) : NaN;
+  const age = Number.isFinite(at) ? (now.getTime() - at) / 60_000 : Infinity;
+  if (age > 20) {
+    return { id, name, status: "fail", detail: `the reachability check last ran ${Number.isFinite(age) ? `${Math.round(age)}m` : "never"} ago` };
+  }
+  const down = report.providers.filter((p) => p.primaryReachable === false);
+  if (down.length === 0) return { id, name, status: "pass", detail: `${report.providers.length} providers reachable` };
+  const detail = down
+    .map((p) =>
+      p.standbyReachable
+        ? `${p.provider} is unreachable from the current VPN exit but reachable from the standby tunnel (the exit address is blocked; a region rotation fixes it)`
+        : `${p.provider} is unreachable from both tunnels (the provider itself looks down)`
+    )
+    .join("; ");
+  return { id, name, status: "fail", detail: report.pending ? `${detail}. ${report.pending}` : detail };
+}
+
 /** The exit-node check runs every 2 minutes; this long without one means it has stopped. */
 export const EXIT_NODE_STALE_MINUTES = 15;
 
