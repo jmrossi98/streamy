@@ -11,6 +11,10 @@
 // download that was about to start moving.
 export const STALL_GRACE_MINUTES = 12;
 
+// How long a torrent that already has data may sit without moving a piece
+// before it is given up on.
+export const STALL_PATIENCE_MINUTES = 20;
+
 // Longer clock for entries that are merely still starting up.
 export const TRANSIENT_GRACE_MINUTES = 30;
 
@@ -26,6 +30,8 @@ export type DownloadHealth = {
   hasProgress: boolean;
   /** "usenet" or "torrent", when known. */
   protocol?: string | null;
+  /** Minutes since a torrent last moved a piece, when the client said. */
+  idleMinutes?: number | null;
 };
 
 // Messages Radarr/Sonarr put in the same field as real errors that are
@@ -119,6 +125,19 @@ export function isUnhealthy(entry: DownloadHealth): boolean {
   // metadata in half an hour is not going to.
   if (entry.errorMessage && isTransient(entry.errorMessage)) {
     return entry.ageMinutes >= TRANSIENT_GRACE_MINUTES;
+  }
+  // A torrent that has data and moved a piece recently is between peers, not
+  // dead. "Stalled" is reported the moment the last peer drops, and dropping
+  // the release then throws away what it has: every drop is blocklisted now
+  // (healLoopRules.ts), so it would not be picked up again where it left off.
+  if (
+    entry.errorMessage &&
+    /stalled/i.test(entry.errorMessage) &&
+    entry.hasProgress &&
+    entry.idleMinutes != null &&
+    entry.idleMinutes < STALL_PATIENCE_MINUTES
+  ) {
+    return false;
   }
   // An explicit error from Radarr/Sonarr ("stalled with no connections",
   // "qBittorrent is reporting an error") is reason enough.
@@ -253,38 +272,6 @@ export function isPermanentlyBlocked(
       (hash != null && r.downloadId != null && r.downloadId.toLowerCase() === hash) ||
       (record.sourceTitle != null && sameRelease(record.sourceTitle, r.releaseTitle))
   );
-}
-
-/**
- * Stalls of the same release before the release itself is blamed.
- *
- * Two, so one genuine transient -- a VPN reconnect, a brief peer drought --
- * costs nothing, while a release that simply cannot be fetched stops being
- * handed back to Sonarr as its best-scoring choice.
- */
-export const STALL_BLOCKLIST_AFTER = 2;
-
-/**
- * Whether cancelling this entry should also blocklist the release.
- *
- * Two separate reasons to blocklist. The payload failed outright -- the client
- * rejected it, so it will fail again. Or the same release has now stalled
- * repeatedly, which stops being about conditions and starts being about the
- * release: cancelling without blocklisting leaves it the top-scoring candidate,
- * so the next search picks it straight back up. That loop grabbed The Wire
- * S01E12 five times and S01E06 four times within minutes on 2026-09-26.
- */
-export function shouldBlocklistStalled(
-  errorMessage: string | null,
-  stallsOfThisRelease: number,
-  // The torrent's whole swarm has no seeder -- not "none connected right
-  // now", but none known to the tracker. That is the release, not
-  // conditions: the first stall of The Sopranos S05E05 re-grabbed the same
-  // 0-seed torrent twice because a first stall is never blocklisted, and
-  // Sonarr had no reason to pick anything else.
-  deadSwarm = false
-): boolean {
-  return deadSwarm || shouldBlocklist(errorMessage) || stallsOfThisRelease >= STALL_BLOCKLIST_AFTER;
 }
 
 /** A torrent no seeder anywhere can finish: none connected and none in the swarm. */

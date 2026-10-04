@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isSameSeries,
   overrideLanguages,
+  pickUnmatchedEpisode,
   pickUnmatchedSeasonPack,
   rollUpSeason,
   type SeasonRelease,
@@ -55,6 +56,29 @@ describe("pickUnmatchedSeasonPack", () => {
     expect(pickUnmatchedSeasonPack([pack({ fullSeason: false })], fanny)).toBeNull();
     expect(pickUnmatchedSeasonPack([pack({ seeders: 0 })], fanny)).toBeNull();
     expect(pickUnmatchedSeasonPack([pack({ seriesTitle: "Fanny and Alexander Revisited" })], fanny)).toBeNull();
+  });
+});
+
+describe("pickUnmatchedEpisode", () => {
+  const ep = (over: Partial<SeasonRelease> = {}) =>
+    pack({
+      title: "Fanny and Alexander (1983) Criterion S01E02 1080p BluRay x265",
+      fullSeason: false,
+      episodeNumbers: [2],
+      ...over,
+    });
+  const target = { ...fanny, episodeNumber: 2 };
+
+  it("takes a release of exactly that episode", () => {
+    expect(pickUnmatchedEpisode([ep({ guid: "a", seeders: 2 }), ep({ guid: "b", seeders: 8 })], target)?.guid).toBe("b");
+  });
+
+  it("leaves other episodes, multi-episode files, packs and other rejections alone", () => {
+    expect(pickUnmatchedEpisode([ep({ episodeNumbers: [3] })], target)).toBeNull();
+    expect(pickUnmatchedEpisode([ep({ episodeNumbers: [2, 3] })], target)).toBeNull();
+    expect(pickUnmatchedEpisode([pack()], target)).toBeNull();
+    expect(pickUnmatchedEpisode([ep({ rejections: ["Unknown Series", "Not enough seeders"] })], target)).toBeNull();
+    expect(pickUnmatchedEpisode([ep({ seriesTitle: "Fanny and Alexander Revisited" })], target)).toBeNull();
   });
 });
 

@@ -8,6 +8,7 @@ import {
   getSonarrSeasonStatuses,
   manageSonarrEpisodes,
 } from "@/lib/sonarr";
+import { countReplacements } from "@/lib/rejectedReleases";
 
 /**
  * Never cached. This is live state that changes the moment a download starts,
@@ -27,6 +28,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ statuses: {} });
   }
   const statuses = await getSonarrSeasonStatuses(tmdbId, seasonNumber);
+  // How many releases each unfinished episode has been through today, so the
+  // row can say a download was replaced rather than silently starting over.
+  // Best-effort: the statuses stand without it.
+  try {
+    const unfinished = Object.values(statuses).filter((s) => s.status !== "available" && s.episodeId != null);
+    const tried = await countReplacements(
+      "episode",
+      unfinished.map((s) => s.episodeId!)
+    );
+    for (const s of unfinished) {
+      const n = tried.get(s.episodeId!);
+      if (n) s.tried = n;
+    }
+  } catch (err) {
+    console.error("[requests/tv] could not read replacement counts:", err);
+  }
   return NextResponse.json({ statuses });
 }
 

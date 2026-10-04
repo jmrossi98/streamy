@@ -25,7 +25,12 @@ import { normalizeProtocol, type DownloadProtocol } from "./radarr";
 import { IMPORTING_STATES } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
-import { overrideLanguages, pickUnmatchedSeasonPack, type SeasonRelease } from "./seasonDeepSearchRules";
+import {
+  overrideLanguages,
+  pickUnmatchedEpisode,
+  pickUnmatchedSeasonPack,
+  type SeasonRelease,
+} from "./seasonDeepSearchRules";
 import { fileBaseName } from "./radarr";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 import { readDownloadRouting, type DownloadRouting } from "./radarr";
@@ -1242,6 +1247,10 @@ export type EpisodeState = {
   status: MediaRequestStatus;
   /** 0-100 while downloading; null when not started or metadata unresolved. */
   progress: number | null;
+  /** Sonarr's id for the episode, so a caller can look up its history. */
+  episodeId?: number;
+  /** Releases that stalled or failed and were replaced in the last day. */
+  tried?: number;
 };
 export type EpisodeStatusMap = Record<number, EpisodeState>;
 
@@ -1271,11 +1280,12 @@ export async function getSonarrSeasonStatuses(
     for (const ep of episodes) {
       const q = queued.get(ep.id);
       if (ep.hasFile) {
-        statuses[ep.episodeNumber] = { status: "available", progress: null };
+        statuses[ep.episodeNumber] = { status: "available", progress: null, episodeId: ep.id };
       } else if (q) {
         statuses[ep.episodeNumber] = {
           status: "downloading",
           progress: q.size > 0 ? Math.round(((q.size - q.sizeleft) / q.size) * 100) : null,
+          episodeId: ep.id,
         };
       } else if (ep.monitored) {
         // "requested" (still searching) vs "noReleaseFound" (searched, came
@@ -1290,6 +1300,7 @@ export async function getSonarrSeasonStatuses(
               ? "noReleaseFound"
               : "requested",
           progress: null,
+          episodeId: ep.id,
         };
       }
     }
@@ -1331,6 +1342,11 @@ export async function requestEpisode(
     // forever. Queuing it records the request first, and the drain this kicks
     // off searches it immediately anyway, so nothing gets slower.
     await searchEpisodesInOrder(series.sonarrId, [episode.id]);
+    // Alongside the ordinary search, for a release Sonarr finds but cannot
+    // place -- see deepSearchSonarrEpisode. Never awaited.
+    void deepSearchSonarrEpisode(series.sonarrId, episode.id).catch((err) =>
+      console.error(`[sonarr] episode deep search failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err)
+    );
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestEpisode failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err);
@@ -1707,6 +1723,83 @@ export async function deepSearchSonarrSeason(seriesId: number, seasonNumber: num
     });
     console.log(
       `[sonarr] deep search grabbed "${pick.title}" for series ${seriesId} S${seasonNumber} (Sonarr had it as Unknown Series)`
+    );
+    return pick.title;
+  } finally {
+    seasonDeepSearching.delete(key);
+  }
+}
+
+/**
+ * The same second chance for one episode: a release of that episode Sonarr
+ * rejected only as "Unknown Series" -- or, when the only copy anywhere is a
+ * season pack named that way, the pack, for every episode of the season
+ * still missing. A larger download than was asked for beats none at all.
+ * Returns the title grabbed, or null.
+ */
+export async function deepSearchSonarrEpisode(seriesId: number, episodeId: number): Promise<string | null> {
+  if (!isSonarrConfigured()) return null;
+  const key = `episode:${episodeId}`;
+  if (seasonDeepSearching.has(key)) return null;
+  seasonDeepSearching.add(key);
+  try {
+    const stillMissing = async (): Promise<(SonarrEpisode & { seriesId?: number }) | null> => {
+      const [episode, queued] = await Promise.all([
+        sonarrFetch<SonarrEpisode>(`/api/v3/episode/${episodeId}`),
+        episodesInQueue(),
+      ]);
+      return !episode.hasFile && !queued.has(episode.id) ? episode : null;
+    };
+    const episode = await stillMissing();
+    if (!episode) return null;
+
+    const [series, releases] = await Promise.all([
+      sonarrFetch<{
+        title: string;
+        year: number;
+        alternateTitles?: { title?: string }[];
+        originalLanguage?: { id: number; name?: string };
+      }>(`/api/v3/series/${seriesId}`),
+      sonarrFetch<SeasonRelease[]>(`/api/v3/release?episodeId=${episodeId}`, {
+        signal: AbortSignal.timeout(SEASON_DEEP_SEARCH_TIMEOUT_MS),
+      }),
+    ]);
+    if (releases.some((r) => !r.rejected)) return null;
+    const target = {
+      titles: [series.title, ...(series.alternateTitles ?? []).map((a) => a.title ?? "")].filter(Boolean),
+      year: series.year,
+      seasonNumber: episode.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+    };
+    const single = pickUnmatchedEpisode(releases, target);
+    const pick = single ?? pickUnmatchedSeasonPack(releases, target);
+    if (!pick) return null;
+    if (!(await stillMissing())) return null;
+
+    let episodeIds = [episodeId];
+    if (!single) {
+      const [season, queued] = await Promise.all([
+        sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}&seasonNumber=${episode.seasonNumber}`),
+        episodesInQueue(),
+      ]);
+      episodeIds = season.filter((e) => !e.hasFile && !queued.has(e.id)).map((e) => e.id);
+      if (!episodeIds.includes(episodeId)) return null;
+    }
+    await sonarrFetch(`/api/v3/release`, {
+      method: "POST",
+      body: JSON.stringify({
+        guid: pick.guid,
+        indexerId: pick.indexerId,
+        shouldOverride: true,
+        seriesId,
+        episodeIds,
+        quality: pick.quality,
+        languages: overrideLanguages(pick, series.originalLanguage),
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    console.log(
+      `[sonarr] deep search grabbed "${pick.title}" for episode ${episodeId} (Sonarr had it as Unknown Series)`
     );
     return pick.title;
   } finally {

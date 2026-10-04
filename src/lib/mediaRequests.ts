@@ -7,7 +7,7 @@ import {
   type RadarrQueueDetail,
 } from "./radarr";
 import { getSonarrLiveStatus, getSonarrDownloadProgress } from "./sonarr";
-import { getRejectionSummary } from "./rejectedReleases";
+import { countReplacements, getRejectionSummary } from "./rejectedReleases";
 import { describeRequestNotice, NO_DETAIL, type RequestDetail } from "./requestNotice";
 
 export type ResolvedRequestStatus = {
@@ -42,9 +42,17 @@ async function buildDetail(
   const rejections = wantsHistory
     ? await getRejectionSummary(mediaType, externalId).catch(() => null)
     : null;
+  // Replacements are counted per movie; a show's are per episode and are
+  // shown on the episode rows instead.
+  const replaced =
+    mediaType === "movie" && (wantsHistory || status === "downloading")
+      ? await countReplacements("movie", [externalId])
+          .then((m) => m.get(externalId) ?? 0)
+          .catch(() => 0)
+      : 0;
   return {
     importing: queue?.importing ?? false,
-    notice: describeRequestNotice({ status, replacing: queue?.unsafe ?? null, rejections }),
+    notice: describeRequestNotice({ status, replacing: queue?.unsafe ?? null, rejections, replaced }),
   };
 }
 
