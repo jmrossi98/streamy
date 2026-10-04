@@ -32,6 +32,8 @@ import {
   searchDocs,
 } from "@/lib/docsRetrieval";
 import { getSnapshot } from "@/lib/chatStatus";
+import { isDiagConfigured } from "@/lib/diag";
+import { investigateThenAnswer } from "@/lib/diagInvestigation";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
 /**
@@ -199,9 +201,24 @@ export async function POST(request: Request) {
     // request.signal so navigating away actually stops generation -- on the
     // local card that frees the GPU, and on a metered backend it stops paying
     // for tokens nobody will read.
-    const stream = remote
-      ? await streamOpenRouterChat(messages, modelChain(backend), request.signal)
-      : await streamOllamaChat(messages, request.signal);
+    // A question about the stack, on a cloud model: let it look for itself
+    // (read-only commands on mediabox) rather than answer from the snapshot.
+    // Same gate as the status block -- a greeting needs neither. Falls back to
+    // a plain answer when the diagnostics service can't be reached.
+    const investigated =
+      remote &&
+      isDiagConfigured() &&
+      body.stackStatus !== false &&
+      statusQuery != null &&
+      shouldIncludeStatus(statusQuery)
+        ? await investigateThenAnswer(messages, modelChain(backend), admin.name, request.signal)
+        : null;
+
+    const stream =
+      investigated ??
+      (remote
+        ? await streamOpenRouterChat(messages, modelChain(backend), request.signal)
+        : await streamOllamaChat(messages, request.signal));
 
     return new Response(stream, {
       headers: {

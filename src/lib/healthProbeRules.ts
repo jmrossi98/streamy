@@ -202,6 +202,41 @@ export function regrabVerdict(counts: Record<string, number>): ProbeResult {
  */
 export const MIN_SEARCH_RESULTS = 1;
 
+/** The exit-node check runs every 2 minutes; this long without one means it has stopped. */
+export const EXIT_NODE_STALE_MINUTES = 15;
+
+export type ExitNodeReport = {
+  generatedAt?: string;
+  ok?: boolean;
+  usable?: boolean;
+  summary?: string;
+};
+
+/**
+ * Whether the Tailscale exit nodes can carry traffic, from mediabox's own
+ * end-to-end check (scripts/exit-node-health.py): tunnel egress, DNS,
+ * return-path rules, forwarding, approval. Nothing watched them before, so an
+ * outage could only be noticed by someone away from home with no internet.
+ */
+export function exitNodeVerdict(report: ExitNodeReport | null, now = new Date()): ProbeResult {
+  const id = "exit_nodes.healthy";
+  const name = "Tailscale exit nodes pass traffic";
+  if (report === null) return { id, name, status: "skip", detail: "exit-nodes.json unreadable" };
+  const at = report.generatedAt ? Date.parse(report.generatedAt) : NaN;
+  const age = Number.isFinite(at) ? (now.getTime() - at) / 60_000 : Infinity;
+  if (age > EXIT_NODE_STALE_MINUTES) {
+    return { id, name, status: "fail", detail: `the exit-node check last ran ${Number.isFinite(age) ? `${Math.round(age)}m` : "never"} ago` };
+  }
+  if (report.ok) return { id, name, status: "pass", detail: "both exit nodes healthy" };
+  const what = report.summary || "an exit node is unhealthy";
+  return {
+    id,
+    name,
+    status: "fail",
+    detail: report.usable ? `${what} (the other node still works)` : `${what} -- no exit node is usable`,
+  };
+}
+
 /** Which indexers an ordinary automatic search asks. Pure, for the search probe. */
 export function pickAutomaticIndexers(
   indexers: { id: number; enable?: boolean; appProfileId?: number }[],
