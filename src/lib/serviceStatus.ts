@@ -35,6 +35,7 @@ import { getMetricsHistory, isMetricsHistoryConfigured } from "./metricsHistory"
 import { isOpenRouterConfigured } from "./openrouter";
 import { openRouterCredits } from "./spend";
 import { getLastVpnRotation, isVpnRotationConfigured } from "./vpnRotation";
+import { usenetProviderRows } from "./usenetProviderRules";
 
 const PROBE_TIMEOUT_MS = 5_000;
 
@@ -986,6 +987,43 @@ async function piholeStatus(): Promise<ServiceStatus> {
 }
 
 /**
+ * One row per usenet provider, from SABnzbd's own view of each server.
+ *
+ * SABnzbd being up says nothing about whether the providers behind it are:
+ * it keeps downloading on whichever still accept its login, and a refused
+ * one shows up only as older posts failing "incomplete". Newshosting was
+ * refused for six hours on 2026-10-04 with the SABnzbd row green throughout.
+ */
+async function usenetProviderStatuses(): Promise<ServiceStatus[]> {
+  const group = "Downloads" as const;
+  const address = env("SABNZBD_URL");
+  const key = process.env.SABNZBD_API_KEY ?? "";
+  if (!address || !key) return [];
+  const res = await probe(
+    `${address}/api?mode=status&skip_dashboard=1&output=json&apikey=${encodeURIComponent(key)}`
+  );
+  const servers = (
+    res.json as
+      | {
+          status?: {
+            servers?: {
+              servername?: string;
+              serveractive?: boolean;
+              serveractiveconn?: number;
+              servertotalconn?: number;
+              servererror?: string;
+            }[];
+          };
+        }
+      | undefined
+  )?.status?.servers;
+  if (!res.ok || !servers) {
+    return [{ name: "Usenet providers", group, state: "unknown", detail: "SABnzbd did not report its servers" }];
+  }
+  return usenetProviderRows(servers).map((row) => ({ ...row, group }));
+}
+
+/**
  * SABnzbd. Reports the queue when a key is available, because "reachable" is
  * the least interesting thing about a download client -- a paused queue is the
  * failure that actually loses you downloads, and it looks perfectly healthy
@@ -1355,6 +1393,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     backup,
     dispatcharr,
     sabnzbd,
+    usenetProviders,
     pihole,
     flaresolverr,
     syncthing,
@@ -1400,6 +1439,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     backupStatus(),
     dispatcharrStatus(),
     sabnzbdStatus(),
+    usenetProviderStatuses(),
     piholeStatus(),
     flaresolverrStatus(),
     syncthingStatus(),
@@ -1432,6 +1472,7 @@ export async function getServiceStatuses(): Promise<ServiceStatus[]> {
     ...downloads,
     stalledDownloads_,
     sabnzbd,
+    ...usenetProviders,
     radarrIntegrations,
     sonarrIntegrations,
     prowlarr,

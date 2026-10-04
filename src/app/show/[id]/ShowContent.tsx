@@ -13,6 +13,7 @@ import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { TVRow } from "@/components/TVRow";
 import { nextEpisode } from "@/lib/nextEpisodeRules";
+import { rollUpSeason } from "@/lib/seasonDeepSearchRules";
 import {
   EpisodeDownloadButton,
   useSeasonStatuses,
@@ -241,26 +242,7 @@ export function ShowContent({
   ];
 
   const seasonEpisodeNumbers = season?.episodes.map((e) => e.episodeNumber) ?? [];
-  const everyEpisodeQueued =
-    seasonEpisodeNumbers.length > 0 &&
-    seasonEpisodeNumbers.every((n) => episodeStatuses[n] != null);
-  const seasonState = (() => {
-    if (!everyEpisodeQueued) return undefined;
-    const values = Object.values(episodeStatuses);
-    const downloading = values.filter((v) => v.status === "downloading");
-    if (downloading.length > 0) {
-      const known = downloading.filter((v) => v.progress != null);
-      const progress =
-        known.length > 0
-          ? Math.round(known.reduce((sum, v) => sum + (v.progress ?? 0), 0) / known.length)
-          : null;
-      return { status: "downloading" as const, progress };
-    }
-    if (values.some((v) => v.status === "requested")) {
-      return { status: "requested" as const, progress: null };
-    }
-    return { status: "available" as const, progress: null };
-  })();
+  const seasonState = rollUpSeason(seasonEpisodeNumbers, episodeStatuses);
 
   useEffect(() => {
     if (seasonNum === 1) {

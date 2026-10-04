@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
   cancelSonarrDownload: vi.fn(),
   cancelSonarrQueueItem: vi.fn(),
   searchSonarrSeries: vi.fn(),
+  deepSearchSonarrSeason: vi.fn(async () => null),
   expireSonarrBlocklist: vi.fn(),
   outstandingSearches: vi.fn(),
   recordRejection: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../sonarr", () => ({
   cancelSonarrDownload: m.cancelSonarrDownload,
   cancelSonarrQueueItem: m.cancelSonarrQueueItem,
   searchSonarrSeries: m.searchSonarrSeries,
+  deepSearchSonarrSeason: m.deepSearchSonarrSeason,
   expireSonarrBlocklist: m.expireSonarrBlocklist,
   outstandingSearches: m.outstandingSearches,
 }));

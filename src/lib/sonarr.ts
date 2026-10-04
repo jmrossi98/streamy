@@ -25,6 +25,7 @@ import { normalizeProtocol, type DownloadProtocol } from "./radarr";
 import { IMPORTING_STATES } from "./radarr";
 import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./radarr";
 import { isSearchStale } from "./radarr";
+import { overrideLanguages, pickUnmatchedSeasonPack, type SeasonRelease } from "./seasonDeepSearchRules";
 import { fileBaseName } from "./radarr";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 import { readDownloadRouting, type DownloadRouting } from "./radarr";
@@ -700,7 +701,9 @@ async function waitForSonarrCommand(commandId: number): Promise<boolean> {
  * side -- a search that found nothing leaves the episode sitting in
  * "searching" forever with no search actually running.
  */
-export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; title: string }[]> {
+export async function getIdleWantedEpisodes(): Promise<
+  { episodeId: number; title: string; seriesId: number; seasonNumber: number }[]
+> {
   if (!isSonarrConfigured()) return [];
   try {
     const [wanted, queue] = await Promise.all([
@@ -719,7 +722,7 @@ export async function getIdleWantedEpisodes(): Promise<{ episodeId: number; titl
       // ahead of real requests. A special someone explicitly asks for still
       // goes through the ordered queue, which retries it on its own.
       .filter((e) => e.monitored && e.seasonNumber !== 0 && !queued.has(e.id))
-      .map((e) => ({ episodeId: e.id, title: e.title }));
+      .map((e) => ({ episodeId: e.id, title: e.title, seriesId: e.seriesId, seasonNumber: e.seasonNumber }));
   } catch (err) {
     console.error("[sonarr] getIdleWantedEpisodes failed:", err);
     return [];
@@ -1634,6 +1637,83 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
   }
 }
 
+/** Sonarr's full release search asks every indexer; it takes a minute or two. */
+const SEASON_DEEP_SEARCH_TIMEOUT_MS = 180_000;
+const seasonDeepSearching = new Set<string>();
+
+/**
+ * The second chance for a season no search can find anything for: grabs a
+ * season pack Sonarr found but rejected only as "Unknown Series", telling it
+ * which series the pack is -- see seasonDeepSearchRules.ts. Returns the title
+ * grabbed, or null. One at a time per season.
+ *
+ * Only for a season with nothing on disk and nothing in flight, and only when
+ * the search turned up nothing Sonarr would take by itself: a pack fetched
+ * beside episodes already arriving would download the season twice.
+ */
+export async function deepSearchSonarrSeason(seriesId: number, seasonNumber: number): Promise<string | null> {
+  if (!isSonarrConfigured()) return null;
+  const key = `${seriesId}:${seasonNumber}`;
+  if (seasonDeepSearching.has(key)) return null;
+  seasonDeepSearching.add(key);
+  try {
+    const nothingYet = async (): Promise<number[] | null> => {
+      const [episodes, queued] = await Promise.all([
+        sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`),
+        episodesInQueue(),
+      ]);
+      const idle = episodes.every((e) => !e.hasFile && !queued.has(e.id));
+      return episodes.length > 0 && idle ? episodes.map((e) => e.id) : null;
+    };
+    if (!(await nothingYet())) return null;
+
+    const [series, releases] = await Promise.all([
+      sonarrFetch<{
+        title: string;
+        year: number;
+        alternateTitles?: { title?: string }[];
+        originalLanguage?: { id: number; name?: string };
+      }>(`/api/v3/series/${seriesId}`),
+      sonarrFetch<SeasonRelease[]>(`/api/v3/release?seriesId=${seriesId}&seasonNumber=${seasonNumber}`, {
+        signal: AbortSignal.timeout(SEASON_DEEP_SEARCH_TIMEOUT_MS),
+      }),
+    ]);
+    // Something Sonarr accepts is the ordinary search's to grab.
+    if (releases.some((r) => !r.rejected)) return null;
+    const pick = pickUnmatchedSeasonPack(releases, {
+      titles: [series.title, ...(series.alternateTitles ?? []).map((a) => a.title ?? "")].filter(Boolean),
+      year: series.year,
+      seasonNumber,
+    });
+    if (!pick) return null;
+
+    // Read again: the search above took a minute, and a grab may have landed.
+    const episodeIds = await nothingYet();
+    if (!episodeIds) return null;
+    // Sonarr's "Override and Grab": the release as found, with the series,
+    // episodes, quality and languages stated rather than parsed.
+    await sonarrFetch(`/api/v3/release`, {
+      method: "POST",
+      body: JSON.stringify({
+        guid: pick.guid,
+        indexerId: pick.indexerId,
+        shouldOverride: true,
+        seriesId,
+        episodeIds,
+        quality: pick.quality,
+        languages: overrideLanguages(pick, series.originalLanguage),
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    console.log(
+      `[sonarr] deep search grabbed "${pick.title}" for series ${seriesId} S${seasonNumber} (Sonarr had it as Unknown Series)`
+    );
+    return pick.title;
+  } finally {
+    seasonDeepSearching.delete(key);
+  }
+}
+
 /** Monitors and searches every episode in one season. */
 export async function requestSeason(
   tmdbId: string,
@@ -1720,6 +1800,12 @@ export async function requestSeason(
         console.error(`[sonarr] SeasonSearch failed for ${seasonNumber}:`, err);
       });
     }
+    // Alongside, not after: the ordinary search can only report "nothing" for
+    // a pack Sonarr cannot place, and a viewer who just asked should not wait
+    // on the healer's second idle retry to find that out. Never awaited.
+    void deepSearchSonarrSeason(series.sonarrId, seasonNumber).catch((err) =>
+      console.error(`[sonarr] season deep search failed for ${tmdbId} S${seasonNumber}:`, err)
+    );
     return { ok: true };
   } catch (err) {
     console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
