@@ -5,6 +5,7 @@
  * no title matching involved.
  */
 
+import { pickDeepRelease, type DeepRelease } from "./deepSearchRules";
 import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
@@ -667,6 +668,36 @@ export async function searchRadarrMovie(radarrId: number): Promise<void> {
     method: "POST",
     body: JSON.stringify({ name: "MoviesSearch", movieIds: [radarrId] }),
   });
+}
+
+/** A deep search asks every indexer, slow ones included; allow for it. */
+const DEEP_SEARCH_TIMEOUT_MS = 180_000;
+const deepSearching = new Set<number>();
+
+/**
+ * The second-chance search for a movie the ordinary search found nothing for
+ * -- see deepSearchRules.ts. Returns the title grabbed, or null. One at a time
+ * per movie: it takes a minute or more, and the healer comes round faster.
+ */
+export async function deepSearchRadarrMovie(radarrId: number): Promise<string | null> {
+  if (!isRadarrConfigured() || deepSearching.has(radarrId)) return null;
+  deepSearching.add(radarrId);
+  try {
+    const releases = await radarrFetch<DeepRelease[]>(`/api/v3/release?movieId=${radarrId}`, {
+      signal: AbortSignal.timeout(DEEP_SEARCH_TIMEOUT_MS),
+    });
+    const pick = pickDeepRelease(releases);
+    if (!pick) return null;
+    // Grabbing by guid is Radarr's manual grab: it takes the release as chosen.
+    await radarrFetch(`/api/v3/release`, {
+      method: "POST",
+      body: JSON.stringify({ guid: pick.guid, indexerId: pick.indexerId }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    return pick.title;
+  } finally {
+    deepSearching.delete(radarrId);
+  }
 }
 
 export type QueueHealth = {
