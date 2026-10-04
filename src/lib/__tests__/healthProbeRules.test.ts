@@ -181,3 +181,32 @@ describe("exitNodeVerdict", () => {
     expect(exitNodeVerdict(null, now).status).toBe("skip");
   });
 });
+
+describe("live TV probes", () => {
+  it("fails when most channels are down, passes when most are up, skips a yielded scan", async () => {
+    const { liveChannelsVerdict } = await import("../healthProbeRules");
+    const mk = (up: number, total: number) => ({
+      channels: Array.from({ length: total }, (_, i) => ({ name: `c${i}`, playable: i < up })),
+    });
+    expect(liveChannelsVerdict(mk(7, 27))).toMatchObject({ status: "fail", detail: "7 of 27 channels responding" });
+    expect(liveChannelsVerdict(mk(22, 27)).status).toBe("pass");
+    expect(liveChannelsVerdict({ ...mk(2, 27), skippedReason: "a viewer started watching mid-scan" }).status).toBe("skip");
+    expect(liveChannelsVerdict(null).status).toBe("skip");
+  });
+
+  it("names the provider and tells an exit block from a provider outage", async () => {
+    const { providerReachabilityVerdict } = await import("../healthProbeRules");
+    const now = new Date("2026-10-04T17:00:00Z");
+    const base = { checked_at: "2026-10-04T16:59:00Z" };
+    const blocked = providerReachabilityVerdict(
+      { ...base, pending: "rotation waiting for 1 viewer(s) to finish", providers: [{ provider: "a.example", primaryReachable: true, standbyReachable: true }, { provider: "line.example", primaryReachable: false, standbyReachable: true }] },
+      now
+    );
+    expect(blocked.status).toBe("fail");
+    expect(blocked.detail).toMatch(/line\.example is unreachable from the current VPN exit.*rotation waiting/);
+    expect(providerReachabilityVerdict({ ...base, providers: [{ provider: "x", primaryReachable: false, standbyReachable: false }] }, now).detail).toMatch(/provider itself looks down/);
+    expect(providerReachabilityVerdict({ ...base, providers: [{ provider: "x", primaryReachable: true, standbyReachable: true }] }, now).status).toBe("pass");
+    expect(providerReachabilityVerdict({ checked_at: "2026-10-04T15:00:00Z", providers: [] }, now).status).toBe("fail");
+    expect(providerReachabilityVerdict({}, now).status).toBe("skip");
+  });
+});
