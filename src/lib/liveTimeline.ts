@@ -448,6 +448,17 @@ export function resolveChannelForFixture<C extends { id: string; name: string }>
   return findEpgConfirmedChannel(epgConfirmedNames, channels) ?? findChannelForFixture(fixture, channels);
 }
 
+/**
+ * The household's own TV markets. A network game goes out on different
+ * affiliates by region, so "a CBS station" is not enough: for a game on CBS
+ * the lineup's Baltimore CBS and Rochester CBS may be showing different
+ * games, and the local one is the one that shows what this household would
+ * get over the air -- including every Bills game, since Rochester and Buffalo
+ * are both Bills markets. Reported 2026-10-04: Patriots at Bills defaulted to
+ * CBS 13 Baltimore with CBS 8 Rochester sitting below it.
+ */
+export const HOME_MARKETS = ["Rochester", "Buffalo"];
+
 /** Over-the-air networks: carried by a local affiliate, not one national feed. */
 const LOCAL_NETWORKS = new Set(["abc", "cbs", "nbc", "fox", "cw"]);
 
@@ -519,7 +530,8 @@ export function channelCarriesNetwork(channelName: string, network: string): boo
 export function findCandidateChannels<C extends { id: string; name: string }>(
   fixture: { league: string; awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] },
   channels: C[],
-  limit = 4
+  limit = 4,
+  homeMarkets: readonly string[] = HOME_MARKETS
 ): C[] {
   const cities = [teamCity(fixture.awayTeam ?? null), teamCity(fixture.homeTeam ?? null)].filter(
     (c): c is string => c != null
@@ -563,8 +575,13 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     // carrying network's affiliate in the team's market first, then any
     // channel of the carrying network. Negative, so a market-only match (ABC
     // Buffalo for a Bills game that is on FOX) can never outrank it.
+    //
+    // Between those two sits the household's own market: its affiliate of the
+    // carrying network shows what this household would get over the air, which
+    // an affiliate in some unrelated city does not.
     if ((fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channel.name, net))) {
-      consider(channel, inMarket ? -2 : -1);
+      const atHome = homeMarkets.some((m) => new RegExp(`\\b${m}\\b`, "i").test(channel.name));
+      consider(channel, inMarket ? -3 : atHome ? -2 : -1);
     }
   }
 
