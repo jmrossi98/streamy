@@ -15,6 +15,7 @@ import {
 } from "./downloadHealthRules";
 import {
   getRadarrQueueHealth,
+  deepSearchRadarrMovie,
   getIdleWantedMovies,
   cancelRadarrDownload,
   cancelRadarrQueueItem,
@@ -60,6 +61,8 @@ import {
 // downloadHealthRules.ts so it can be tested without this file's clients.
 const lastHealedAt = new Map<string, number>();
 const idleTries = new Map<string, number>();
+/** Which idle retry starts using the deep search (the first is the ordinary search alone). */
+const DEEP_SEARCH_FROM_TRY = 2;
 /** Consecutive stall-heals per episode, for the escalation in healOne. */
 const stallTries = new Map<string, number>();
 // Consecutive passes a title has been missing from the idle lists. Prevents
@@ -337,6 +340,16 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
       healed.push({ title: movie.title, reason: "wanted but nothing in flight" });
     } catch (err) {
       console.error(`[healer] idle re-search failed for "${movie.title}":`, err);
+    }
+    // From the second try on, the ordinary search has already come up empty
+    // at least once: also run the deep search, which asks the slow indexers.
+    // Not awaited -- it takes a minute or more, and this pass must not.
+    if ((idleTries.get(key) ?? 0) >= DEEP_SEARCH_FROM_TRY) {
+      void deepSearchRadarrMovie(movie.externalId)
+        .then((grabbed) => {
+          if (grabbed) console.log(`[healer] deep search grabbed "${grabbed}" for "${movie.title}"`);
+        })
+        .catch((err) => console.error(`[healer] deep search failed for "${movie.title}":`, err));
     }
   }
 
