@@ -377,14 +377,14 @@ export type ChannelProgramme = {
  * any one league or channel, so it applies to whatever gets mapped next.
  */
 export function findEpgConfirmedChannelNames(
-  fixture: { awayTeam: string | null; homeTeam: string | null },
+  fixture: { awayTeam: string | null; homeTeam: string | null; startUtc?: string | null },
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): string[] {
   const away = fixture.awayTeam?.trim().toLowerCase() || null;
   const home = fixture.homeTeam?.trim().toLowerCase() || null;
   if (!away && !home) return [];
-  const now = Date.parse(nowUtc);
+  const now = gameReferenceTime(fixture.startUtc, nowUtc);
   if (!Number.isFinite(now)) return [];
 
   const confirmed: string[] = [];
@@ -409,8 +409,69 @@ export function findEpgConfirmedChannelNames(
  * with several fixtures (the schedule route, effectively every caller)
  * fetches Dispatcharr's programme data once rather than once per fixture.
  */
+/** Minutes after kickoff at which the guide is read for a game that has not started. */
+const AFTER_KICKOFF_MS = 10 * 60_000;
+
+/**
+ * The moment to read the guide at: now for a game under way, a little after
+ * kickoff for one that has not started. Reading "now" before kickoff finds the
+ * pregame show, which names nobody, so a game could only ever be confirmed
+ * once it had begun -- after the viewer had already been sent somewhere.
+ */
+export function gameReferenceTime(startUtc: string | null | undefined, nowUtc: string): number {
+  const now = Date.parse(nowUtc);
+  const start = startUtc ? Date.parse(startUtc) : NaN;
+  if (!Number.isFinite(start)) return now;
+  return Math.max(now, start + AFTER_KICKOFF_MS);
+}
+
+/** What a guide calls each league's games, for telling "a game" from "not a game". */
+const LEAGUE_GUIDE_WORDS: Record<string, RegExp> = {
+  NFL: /\bnfl\b|\bfootball\b/i,
+  "College Football": /\bfootball\b/i,
+  NBA: /\bnba\b|\bbasketball\b/i,
+  "College Basketball": /\bbasketball\b/i,
+  NHL: /\bnhl\b|\bhockey\b/i,
+  MLS: /\bmls\b|\bsoccer\b/i,
+  "Premier League": /\bpremier league\b|\bsoccer\b/i,
+  "La Liga": /\bla ?liga\b|\bsoccer\b/i,
+  "Champions League": /\bchampions league\b|\bsoccer\b/i,
+  UFC: /\bufc\b|\bmma\b/i,
+  "Formula 1": /\bformula ?(1|one)\b|\bf1\b|\bgrand prix\b/i,
+};
+
+/**
+ * Channels whose guide says they are showing something that is *not* this
+ * league's sport at game time -- a CBS affiliate with an infomercial in the
+ * slot is not carrying the game, whatever its network.
+ *
+ * Only channels with a programme listed for that moment are judged: no guide
+ * data is not evidence of anything. And a guide entry that mentions the sport
+ * is not proof of *this* game (local listings read "Live: NFL Football" with
+ * no teams), which is why this only ever demotes.
+ */
+export function findEpgElsewhereChannelNames(
+  fixture: { league: string; startUtc?: string | null },
+  programsByChannelName: Map<string, ChannelProgramme[]>,
+  nowUtc: string = new Date().toISOString()
+): string[] {
+  const words = LEAGUE_GUIDE_WORDS[fixture.league];
+  const at = gameReferenceTime(fixture.startUtc, nowUtc);
+  if (!words || !Number.isFinite(at)) return [];
+  const elsewhere: string[] = [];
+  for (const [channelName, programmes] of programsByChannelName) {
+    const airing = programmes.find((p) => {
+      const start = Date.parse(p.startUtc);
+      const end = Date.parse(p.endUtc);
+      return Number.isFinite(start) && Number.isFinite(end) && at >= start && at < end;
+    });
+    if (airing && !words.test(`${airing.title} ${airing.description}`)) elsewhere.push(channelName);
+  }
+  return elsewhere;
+}
+
 export function matchFixturesToEpgProgrammes(
-  fixtures: { id: string; awayTeam: string | null; homeTeam: string | null }[],
+  fixtures: { id: string; awayTeam: string | null; homeTeam: string | null; startUtc?: string | null }[],
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): Map<string, string[]> {
