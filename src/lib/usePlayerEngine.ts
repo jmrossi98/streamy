@@ -66,6 +66,24 @@ function seekThenRun(v: HTMLVideoElement, target: number, then: () => void) {
  * rule stopped saving entirely until the old high point was passed again).
  */
 const PROGRESS_SAVE_EVERY_MS = 15_000;
+
+/**
+ * How far ahead a transcoded title buffers.
+ *
+ * hls.js defaults to 30 seconds, which is all the cushion there is against a
+ * dip anywhere between mediabox, the Streamy server and the viewer. The
+ * transcode itself runs several times faster than playback (7.9x measured on a
+ * 4K HDR source), so the segments exist long before they are needed -- the
+ * player just was not asking for them. 90 seconds ahead at the 8 Mbps the
+ * transcode is capped to is about 90 MB, hence the byte limit; 30 seconds are
+ * kept behind for a quick skip back without refetching.
+ */
+const HLS_BUFFER_CONFIG = {
+  maxBufferLength: 90,
+  maxMaxBufferLength: 180,
+  maxBufferSize: 150 * 1000 * 1000,
+  backBufferLength: 30,
+};
 /** After a seek, save once the viewer has settled rather than on every drag step. */
 const SEEK_SAVE_DELAY_MS = 2_000;
 
@@ -188,6 +206,12 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // Absolute (real-timeline) position to resume at after a source swap --
   // Auto's codec fallback, or a transcode-seek restart.
   const resumeAtRef = useRef<number | null>(null);
+  // The page's resume point, readable from the hls.js setup without making
+  // that effect re-run (and rebuild the player) when the value is refreshed.
+  const initialProgressRef = useRef(initialProgressSeconds);
+  useEffect(() => {
+    initialProgressRef.current = initialProgressSeconds;
+  }, [initialProgressSeconds]);
   // Guards the reload effect from firing on first mount, where the initial
   // source and the saved-progress seek are handled elsewhere.
   const didSwapRef = useRef(false);
@@ -316,8 +340,18 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       setPlaybackError(true);
       return;
     }
+    // Where playback will begin, known before the first segment is asked for.
+    const startAt = resumeAtRef.current ?? initialProgressRef.current;
     const hls = new Hls({
       ...HLS_LOAD_CONFIG,
+      ...HLS_BUFFER_CONFIG,
+      // Load from the resume point, not from 0. Without this hls.js fetched
+      // the first segments, Jellyfin started a transcode at 0:00, and the
+      // resume seek a moment later made it throw that away and start a second
+      // one -- two cold starts for every resumed title, and on a 4K HDR
+      // source each is several seconds of spinner (measured on Coraline,
+      // 2026-10-03: ffmpeg at 20:29:38, killed, again at 20:29:42 with -ss).
+      ...(startAt > 0 ? { startPosition: startAt } : {}),
       // Subtitles are ours, not hls.js's: separate WebVTT files attached as
       // <track> elements. hls.js's subtitle and caption controllers treat
       // every subtitle text track on the element as theirs -- with none of
