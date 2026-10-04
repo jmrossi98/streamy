@@ -68,6 +68,25 @@ export async function fetchPublishedChannelHealth(): Promise<{
   }
 }
 
+/** How old the checker's results may be and still be acted on (it runs half-hourly). */
+const HEALTH_TRUST_MS = 90 * 60_000;
+
+/**
+ * Normalised names of channels that would not open at the checker's last scan
+ * -- empty when there is no recent scan, so an old "down" can never bury a
+ * channel that has since come back. Never throws.
+ */
+export async function notRespondingChannels(now: number = Date.now()): Promise<Set<string>> {
+  try {
+    const published = await fetchPublishedChannelHealth();
+    const at = published?.generatedAt ? Date.parse(published.generatedAt) : NaN;
+    if (!published || !Number.isFinite(at) || now - at > HEALTH_TRUST_MS) return new Set();
+    return new Set([...published.health].filter(([, h]) => !h.playable).map(([name]) => name));
+  } catch {
+    return new Set();
+  }
+}
+
 /**
  * Channel names arrive with provider decoration -- superscript HD marks,
  * punctuation, doubled spaces -- and the same channel is not always spelled
