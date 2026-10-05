@@ -6,6 +6,7 @@
  * In production uses the real API.
  */
 
+import { dedupeById, SHELF_PAGE_SIZE } from "./browseShelfRules";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { cached } from "./ttlCache";
@@ -885,3 +886,74 @@ export const getPersonCredits = cache(async (id: string): Promise<{ movies: Movi
       )()
   )
 );
+
+// ------------------------------------------------------------ full shelves
+
+/**
+ * The first `pages` pages of a TMDB list, in order, for the full-shelf grids.
+ *
+ * Cached a page at a time rather than as one list: "Load more" asks for one
+ * more page than last time, and keying on the count would refetch every page
+ * already shown each time it grew.
+ */
+async function tmdbPages<R>(key: string, path: string, params: Record<string, string>, pages: number): Promise<R[]> {
+  const all = await Promise.all(
+    Array.from({ length: pages }, (_, i) => {
+      const page = String(i + 1);
+      return withMemoryCache([key, page], ONE_DAY_MS, () =>
+        unstable_cache(
+          async () => (await fetchTmdb<{ results: R[] }>(path, { ...params, page })).results ?? [],
+          [key, page],
+          { revalidate: CACHE_REVALIDATE }
+        )()
+      );
+    })
+  );
+  return all.flat();
+}
+
+export async function getTrendingPages(pages: number): Promise<Movie[]> {
+  if (USE_MOCK) return (await getMock()).mockGetTrending(pages * SHELF_PAGE_SIZE);
+  const [results, genres] = await Promise.all([
+    tmdbPages<TmdbMovieResult>("tmdb-trending-pages", "trending/movie/week", {}, pages),
+    getGenres(),
+  ]);
+  return dedupeById(results.map((r) => toMovie(r, genres)));
+}
+
+export async function getDiscoverByGenrePages(genreId: number, pages: number): Promise<Movie[]> {
+  if (USE_MOCK) return (await getMock()).mockGetDiscoverByGenre(genreId, pages * SHELF_PAGE_SIZE);
+  const [results, genres] = await Promise.all([
+    tmdbPages<TmdbMovieResult>(
+      `tmdb-discover-movie-pages-${genreId}`,
+      "discover/movie",
+      { with_genres: String(genreId), sort_by: "popularity.desc" },
+      pages
+    ),
+    getGenres(),
+  ]);
+  return dedupeById(results.map((r) => toMovie(r, genres)));
+}
+
+export async function getTrendingTVPages(pages: number): Promise<TVShow[]> {
+  if (USE_MOCK) return (await getMock()).mockGetTrendingTV(pages * SHELF_PAGE_SIZE);
+  const [results, genres] = await Promise.all([
+    tmdbPages<TmdbTVResult>("tmdb-trending-tv-pages", "trending/tv/week", {}, pages),
+    getTVGenres(),
+  ]);
+  return dedupeById(results.map((r) => toTVShow(r, genres)));
+}
+
+export async function getDiscoverTVByGenrePages(genreId: number, pages: number): Promise<TVShow[]> {
+  if (USE_MOCK) return (await getMock()).mockGetDiscoverTVByGenre(genreId, pages * SHELF_PAGE_SIZE);
+  const [results, genres] = await Promise.all([
+    tmdbPages<TmdbTVResult>(
+      `tmdb-discover-tv-pages-${genreId}`,
+      "discover/tv",
+      { with_genres: String(genreId), sort_by: "popularity.desc" },
+      pages
+    ),
+    getTVGenres(),
+  ]);
+  return dedupeById(results.map((r) => toTVShow(r, genres)));
+}

@@ -8,8 +8,9 @@ import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterWatchlistButton } from "@/components/PosterWatchlistButton";
 import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie, TVShow } from "@/lib/tmdb";
+import { shelfHref } from "@/lib/browseShelfRules";
 
-type GenreRow = { title: string; movies: Movie[] };
+type GenreRow = { title: string; movies: Movie[]; href?: string };
 type ProgressItem = { movieId: number; progressSeconds: number };
 
 type Props = {
@@ -43,9 +44,14 @@ export function HomeMoviesSection({ trending, genreRows, trendingTV, progressLis
 
   return (
     <>
-      <MovieRow title="Trending Now" movies={trending} progressMap={progressMap} />
+      <MovieRow
+        title="Trending Now"
+        movies={trending}
+        progressMap={progressMap}
+        href={shelfHref("movies", { kind: "trending" })}
+      />
       {trendingTV.length > 0 && (
-        <ScrollableRow title="Trending TV">
+        <ScrollableRow title="Trending TV" href={shelfHref("tv", { kind: "trending" })}>
           {trendingTV.map((show) => (
             <div
               key={show.id}
@@ -78,7 +84,13 @@ export function HomeMoviesSection({ trending, genreRows, trendingTV, progressLis
       {genreRows.map(
         (row) =>
           row.movies.length > 0 && (
-            <MovieRow key={row.title} title={row.title} movies={row.movies} progressMap={progressMap} />
+            <MovieRow
+              key={row.title}
+              title={row.title}
+              movies={row.movies}
+              progressMap={progressMap}
+              href={row.href}
+            />
           )
       )}
     </>

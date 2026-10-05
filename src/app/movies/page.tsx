@@ -7,6 +7,7 @@ import { getWatchlistMovies } from "@/lib/watchlist";
 import { MoviesContent } from "@/components/MoviesContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 import { getDownloadedMovies } from "@/lib/downloadedLibrary";
+import { shelfHref } from "@/lib/browseShelfRules";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,7 @@ export default async function MoviesPage() {
   const downloaded = discoverAndProgress[7] as Movie[];
   const genreRows = MOVIE_GENRE_IDS.map((id, i) => ({
     title: genres.find((g) => g.id === id)?.name ?? "Genre",
+    href: shelfHref("movies", { kind: "genre", genreId: id }),
     movies: (discoverAndProgress[i] as Awaited<ReturnType<typeof getDiscoverByGenre>>) ?? [],
   }));
 
