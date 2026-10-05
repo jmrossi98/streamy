@@ -7,14 +7,11 @@ import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
 import { HomeFeedHeader } from "@/components/HomeFeedHeader";
 import { HomeMoviesSection } from "@/components/HomeMoviesSection";
-import { shelfHref } from "@/lib/browseShelfRules";
 import { HomePrefetch } from "@/components/HomePrefetch";
 import { RecentlyWatchedSection, RecentlyWatchedSkeleton } from "./RecentlyWatchedSection";
 import { MyListSection, MyListSkeleton } from "./MyListSection";
-import { DownloadedSection, DownloadedSkeleton } from "./DownloadedSection";
-import { getTrending, getGenres, getDiscoverByGenre, getTrendingTV } from "@/lib/tmdb";
+import { getMovieBrowse, getShowBrowse } from "@/lib/browseRows";
 
-const HERO_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror, Sci-Fi
 const RECENT_LIMIT = 3; // cap to keep server fast; progress bars for rows fetched client-side
 const RECENT_SHOWS_LIMIT = 3;
 // TV_CACHE_WARM_GENRES is gone along with the call it guarded. It was already
@@ -35,37 +32,26 @@ export default async function HomePage() {
     redirect("/login");
   }
 
-  // Single wave: everything the shell, the hero and every row needs.
-  //
-  // The genre lists are one nested Promise.all rather than spread into this
-  // one. Spread, the results landed in a rest array that the three values
-  // after them had to be dug back out of by index -- `heroDiscoverResults[6]`
-  // with an `as` cast, because TypeScript cannot know what is at position six
-  // of a spread. Adding a single genre to HERO_GENRE_IDS shifted all three by
-  // one and the casts would have kept it compiling: watch progress read as
-  // trending TV, silently, at runtime only.
-  const [trending, genres, genreMovieLists, trendingTV, allWatchProgress, recentEpisodeProgress] =
-    await Promise.all([
-      getTrending(10),
-      getGenres(),
-      Promise.all(HERO_GENRE_IDS.map((id) => getDiscoverByGenre(id, 8))),
-      getTrendingTV(10),
-      prisma.watchProgress.findMany({
-        where: { userId: session.user.id },
-        orderBy: { updatedAt: "desc" },
-      }),
-      prisma.episodeProgress.findMany({
-        where: { userId: session.user.id },
-        orderBy: { updatedAt: "desc" },
-        take: EPISODE_PROGRESS_TAKE,
-      }),
-    ]);
-
-  const genreRows = HERO_GENRE_IDS.map((id, i) => ({
-    title: genres.find((g) => g.id === id)?.name ?? "Genre",
-    href: shelfHref("movies", { kind: "genre", genreId: id }),
-    movies: genreMovieLists[i] ?? [],
-  }));
+  // Single wave: everything the shell, the hero and every row needs. The
+  // rows come from the downloaded library (see browseRows.ts), so the hero
+  // below is always something that plays.
+  const [movieBrowse, showBrowse, allWatchProgress, recentEpisodeProgress] = await Promise.all([
+    // Home shares the page between movies and TV, so it keeps to the lead
+    // genres and leaves the rest, and TV's genre rows, to the tabs.
+    getMovieBrowse({ leadOnly: true }),
+    getShowBrowse({ genreRows: false }),
+    prisma.watchProgress.findMany({
+      where: { userId: session.user.id },
+      orderBy: { updatedAt: "desc" },
+    }),
+    prisma.episodeProgress.findMany({
+      where: { userId: session.user.id },
+      orderBy: { updatedAt: "desc" },
+      take: EPISODE_PROGRESS_TAKE,
+    }),
+  ]);
+  const { trending, genreRows } = movieBrowse;
+  const trendingTV = showBrowse.trending;
 
   const recentProgress = allWatchProgress.slice(0, RECENT_LIMIT);
   const recentShowIds = Array.from(new Map(recentEpisodeProgress.map((p) => [p.showId, p])).keys()).slice(0, RECENT_SHOWS_LIMIT);
@@ -77,6 +63,7 @@ export default async function HomePage() {
 
   const movieIdsOnPage = new Set([
     ...trending.map((m) => m.id),
+    ...(movieBrowse.holiday?.movies.map((m) => m.id) ?? []),
     ...genreRows.flatMap((r) => r.movies.map((m) => m.id)),
   ]);
   const progressList = allWatchProgress
@@ -137,17 +124,13 @@ export default async function HomePage() {
         <Suspense fallback={<MyListSkeleton />}>
           <MyListSection userId={session.user.id} />
         </Suspense>
-        {/* Below My List: what the viewer chose to save outranks what happens
-            to be on disk, and the downloaded library only grows -- above, it
-            would push their own picks further down every week. */}
-        <Suspense fallback={<DownloadedSkeleton />}>
-          <DownloadedSection />
-        </Suspense>
         <HomeMoviesSection
           trending={trending}
           genreRows={genreRows}
           trendingTV={trendingTV}
           progressList={progressList}
+          holidayMovies={movieBrowse.holiday}
+          holidayShows={showBrowse.holiday}
         />
       </div>
     </>

@@ -15,7 +15,8 @@ type Props = {
   progressList: ProgressItem[];
   /** The viewer's saved movies. Empty for a signed-out viewer, or an empty list. */
   myList?: Movie[];
-  downloaded?: Movie[];
+  /** The holiday in season, when the library has anything for it. */
+  holiday?: GenreRow | null;
 };
 
 export function MoviesContent({
@@ -23,7 +24,7 @@ export function MoviesContent({
   genreRows,
   progressList,
   myList = [],
-  downloaded = [],
+  holiday = null,
 }: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
 
@@ -57,16 +58,10 @@ export function MoviesContent({
           href={shelfHref("movies", { kind: "my-list" })}
         />
       )}
-      {/* Below My List: a saved list is what the viewer chose, and the
-          downloaded library only grows -- above, it would push their own
-          picks further down every week. */}
-      {downloaded.length > 0 && (
-        <MovieRow
-          title="Downloaded"
-          movies={downloaded}
-          progressMap={progressMap}
-          href={shelfHref("movies", { kind: "downloaded" })}
-        />
+      {/* Directly under My List: the one row that changes with the calendar,
+          so it goes where it will be seen while it is in season. */}
+      {holiday && holiday.movies.length > 0 && (
+        <MovieRow title={holiday.title} movies={holiday.movies} progressMap={progressMap} href={holiday.href} />
       )}
       <MovieRow
         title="Trending Now"

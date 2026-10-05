@@ -2,16 +2,12 @@ import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { pullJellyfinProgressForPage } from "@/lib/progressSync";
-import { getTrending, getGenres, getDiscoverByGenre, type Movie } from "@/lib/tmdb";
 import { getWatchlistMovies } from "@/lib/watchlist";
 import { MoviesContent } from "@/components/MoviesContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
-import { getDownloadedMovies } from "@/lib/downloadedLibrary";
-import { shelfHref } from "@/lib/browseShelfRules";
+import { getMovieBrowse } from "@/lib/browseRows";
 
 export const dynamic = "force-dynamic";
-
-const MOVIE_GENRE_IDS = [28, 35, 18, 27, 878]; // Action, Comedy, Drama, Horror, Sci-Fi
 
 export default async function MoviesPage() {
   unstable_noStore();
@@ -20,35 +16,21 @@ export default async function MoviesPage() {
   await pullJellyfinProgressForPage(session);
 
   // Single wave only: no getMovieById — client fetches runtimes for progress bars
-  const [trending, genres, ...discoverAndProgress] = await Promise.all([
-    getTrending(10),
-    getGenres(),
-    ...MOVIE_GENRE_IDS.map((id) => getDiscoverByGenre(id, 8)),
+  const [browse, allProgress, myList] = await Promise.all([
+    getMovieBrowse(),
     session?.user?.id
       ? prisma.watchProgress.findMany({ where: { userId: session.user.id } })
       : Promise.resolve([]),
     // In the same wave rather than after it: the My List row renders above
-    // everything else, so making it wait on the genre fan-out would delay the
+    // everything else, so making it wait on the rows below would delay the
     // top of the page behind the bottom of it.
     session?.user?.id ? getWatchlistMovies(session.user.id) : Promise.resolve([]),
-    // Same wave as the rest: this row sits near the top, so resolving it
-    // after the genre fan-out would delay the top of the page behind the
-    // bottom of it.
-    getDownloadedMovies(),
   ]);
 
-  const allProgress = discoverAndProgress[5] as Awaited<ReturnType<typeof prisma.watchProgress.findMany>>;
-  const myList = discoverAndProgress[6] as Movie[];
-  const downloaded = discoverAndProgress[7] as Movie[];
-  const genreRows = MOVIE_GENRE_IDS.map((id, i) => ({
-    title: genres.find((g) => g.id === id)?.name ?? "Genre",
-    href: shelfHref("movies", { kind: "genre", genreId: id }),
-    movies: (discoverAndProgress[i] as Awaited<ReturnType<typeof getDiscoverByGenre>>) ?? [],
-  }));
-
   const movieIdsOnPage = new Set([
-    ...trending.map((m) => m.id),
-    ...genreRows.flatMap((r) => r.movies.map((m) => m.id)),
+    ...browse.trending.map((m) => m.id),
+    ...(browse.holiday?.movies.map((m) => m.id) ?? []),
+    ...browse.genreRows.flatMap((r) => r.movies.map((m) => m.id)),
     // My List too, or a half-watched title shows a progress bar in a genre row
     // and none in the row the viewer actually saved it to.
     ...myList.map((m) => m.id),
@@ -61,11 +43,11 @@ export default async function MoviesPage() {
   return (
     <div className={BROWSE_PAGE_CLASS}>
       <MoviesContent
-        trending={trending}
-        genreRows={genreRows}
+        trending={browse.trending}
+        holiday={browse.holiday}
+        genreRows={browse.genreRows}
         progressList={progressList}
         myList={myList}
-        downloaded={downloaded}
       />
     </div>
   );

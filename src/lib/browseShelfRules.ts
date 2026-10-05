@@ -10,7 +10,7 @@
 
 export type Shelf =
   | { kind: "trending" }
-  | { kind: "downloaded" }
+  | { kind: "holiday" }
   | { kind: "my-list" }
   | { kind: "genre"; genreId: number };
 
@@ -22,7 +22,7 @@ export function shelfSlug(shelf: Shelf): string {
 
 /** The shelf a URL segment names, or null for anything that is not one. */
 export function parseShelf(slug: string): Shelf | null {
-  if (slug === "trending" || slug === "downloaded" || slug === "my-list") return { kind: slug };
+  if (slug === "trending" || slug === "holiday" || slug === "my-list") return { kind: slug };
   const genre = /^genre-(\d{1,6})$/.exec(slug);
   return genre ? { kind: "genre", genreId: Number(genre[1]) } : null;
 }
@@ -46,7 +46,7 @@ export function clampPages(raw: string | undefined): number {
 /**
  * Whether there is likely more to load: every page asked for came back full,
  * and the cap has not been reached. Shelves that are not paged (the viewer's
- * own list, the downloaded library) pass `paged: false`.
+ * own list, anything drawn from the downloaded library) pass `paged: false`.
  */
 export function hasMore(shown: number, pages: number, paged: boolean): boolean {
   return paged && pages < MAX_SHELF_PAGES && shown >= pages * SHELF_PAGE_SIZE;

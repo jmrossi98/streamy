@@ -507,6 +507,38 @@ export async function getOriginalLanguage(kind: "tv" | "movie", id: string): Pro
   );
 }
 
+/**
+ * What the browse rows need to know about a show beyond its card: the
+ * keywords that place it in a holiday row, and how popular it is.
+ *
+ * Movies get both from Radarr, which already carries them. Sonarr carries
+ * neither, so shows ask TMDB. Its own lookup for the same reason as
+ * getOriginalLanguage: ShowDetail is persisted for a day, and a new field on
+ * it would read as missing on every show already cached.
+ */
+export async function getShowBrowseMeta(id: string): Promise<{ keywords: string[]; popularity: number } | null> {
+  if (USE_MOCK) return null;
+  return cached(
+    `tmdb-tv-browse:${id}`,
+    ONE_DAY_MS,
+    async () => {
+      try {
+        const data = await fetchTmdb<{ popularity?: number; keywords?: { results?: { name: string }[] } }>(
+          `tv/${id}`,
+          { append_to_response: "keywords" }
+        );
+        return {
+          keywords: (data.keywords?.results ?? []).map((k) => k.name),
+          popularity: data.popularity ?? 0,
+        };
+      } catch {
+        return null;
+      }
+    },
+    { skipCacheIf: (v) => v === null }
+  );
+}
+
 /** Resolves a TMDB TV show id to its TVDB id (Sonarr is keyed by TVDB, not TMDB). */
 export async function getTvExternalIds(tmdbId: string): Promise<{ tvdbId: number | null }> {
   const data = await fetchTmdb<{ tvdb_id: number | null }>(`tv/${tmdbId}/external_ids`);

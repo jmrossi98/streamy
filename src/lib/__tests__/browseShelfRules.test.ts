@@ -15,7 +15,7 @@ import {
 describe("shelf addresses", () => {
   const shelves: Shelf[] = [
     { kind: "trending" },
-    { kind: "downloaded" },
+    { kind: "holiday" },
     { kind: "my-list" },
     { kind: "genre", genreId: 878 },
   ];
@@ -30,7 +30,7 @@ describe("shelf addresses", () => {
   });
 
   it("refuses anything that is not a shelf", () => {
-    for (const bad of ["", "genre-", "genre-abc", "genre-28/extra", "popular", "genre--1"]) {
+    for (const bad of ["", "genre-", "genre-abc", "genre-28/extra", "popular", "downloaded", "genre--1"]) {
       expect(parseShelf(bad)).toBeNull();
     }
   });
