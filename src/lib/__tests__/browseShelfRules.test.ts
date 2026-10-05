@@ -7,6 +7,8 @@ import {
   parseShelf,
   shelfHref,
   shelfSlug,
+  WATCHLIST_SHELVES,
+  watchlistShelfHref,
   type Shelf,
 } from "../browseShelfRules";
 
@@ -52,5 +54,16 @@ describe("paging", () => {
 
   it("drops a title TMDB repeated on a later page", () => {
     expect(dedupeById([{ id: 1 }, { id: "2" }, { id: "1" }, { id: 2 }, { id: 3 }])).toEqual([{ id: 1 }, { id: "2" }, { id: 3 }]);
+  });
+});
+
+describe("My List shelves", () => {
+  it("gives each saved kind its own page under /watchlist", () => {
+    expect(WATCHLIST_SHELVES.map(watchlistShelfHref)).toEqual([
+      "/watchlist/movies",
+      "/watchlist/shows",
+      "/watchlist/games",
+      "/watchlist/flash",
+    ]);
   });
 });
