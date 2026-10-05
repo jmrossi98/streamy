@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { MovieRow } from "@/components/MovieRow";
+import { TVRow } from "@/components/TVRow";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterWatchlistButton } from "@/components/PosterWatchlistButton";
 import type { MovieProgress } from "@/components/MovieRow";
@@ -18,9 +19,19 @@ type Props = {
   genreRows: GenreRow[];
   trendingTV: TVShow[];
   progressList: ProgressItem[];
+  /** The holiday in season, by kind; either may be missing. */
+  holidayMovies?: GenreRow | null;
+  holidayShows?: { title: string; shows: TVShow[]; href?: string } | null;
 };
 
-export function HomeMoviesSection({ trending, genreRows, trendingTV, progressList }: Props) {
+export function HomeMoviesSection({
+  trending,
+  genreRows,
+  trendingTV,
+  progressList,
+  holidayMovies = null,
+  holidayShows = null,
+}: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
 
   const progressKey = progressList.length ? progressList.map((p) => p.movieId).sort((a, b) => a - b).join(",") : "";
@@ -44,6 +55,20 @@ export function HomeMoviesSection({ trending, genreRows, trendingTV, progressLis
 
   return (
     <>
+      {/* First, so directly under My List: the one row that changes with the
+          calendar. Titled by kind for the reason My List is on this page --
+          two rows both called "Halloween" read as one row that broke. */}
+      {holidayMovies && holidayMovies.movies.length > 0 && (
+        <MovieRow
+          title={`${holidayMovies.title} - Movies`}
+          movies={holidayMovies.movies}
+          progressMap={progressMap}
+          href={holidayMovies.href}
+        />
+      )}
+      {holidayShows && holidayShows.shows.length > 0 && (
+        <TVRow title={`${holidayShows.title} - Shows`} shows={holidayShows.shows} href={holidayShows.href} />
+      )}
       <MovieRow
         title="Trending Now"
         movies={trending}

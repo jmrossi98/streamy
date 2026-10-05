@@ -1,18 +1,17 @@
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { getGenres, getTrendingPages, getDiscoverByGenrePages, type Movie } from "@/lib/tmdb";
 import { getWatchlistMovies } from "@/lib/watchlist";
-import { getDownloadedMovies } from "@/lib/downloadedLibrary";
-import { clampPages, hasMore, parseShelf, shelfHref, shelfSlug, type Shelf } from "@/lib/browseShelfRules";
+import { getMovieShelf, getMovieShelfLinks } from "@/lib/browseRows";
+import { clampPages, hasMore, parseShelf, shelfHref, shelfSlug } from "@/lib/browseShelfRules";
 import { ShelfPage } from "@/components/ShelfPage";
 import { MovieShelfGrid } from "@/components/ShelfGrid";
 
 /**
  * Every movie on one shelf, as a grid.
  *
- * A row on /movies shows eight or ten of a genre; its heading leads here for
- * the rest. Trending and genres come from TMDB a page at a time and grow with
- * "Load more"; the viewer's list and the downloaded library are whole.
+ * A row on /movies shows the first twenty of a genre; its heading leads here
+ * for the rest. What a shelf holds is decided in browseRows.ts, alongside the
+ * row, so the two cannot disagree.
  */
 export const dynamic = "force-dynamic";
 
@@ -28,37 +27,20 @@ export default async function MovieShelfPage({
   if (!shelf) notFound();
   const pages = clampPages((await searchParams)?.pages);
 
-  const genres = await getGenres();
-  let title: string;
-  let movies: Movie[];
-  let paged = false;
-
-  if (shelf.kind === "genre") {
-    const genre = genres.find((g) => g.id === shelf.genreId);
-    if (!genre) notFound();
-    title = genre.name;
-    movies = await getDiscoverByGenrePages(shelf.genreId, pages);
-    paged = true;
-  } else if (shelf.kind === "trending") {
-    title = "Trending Now";
-    movies = await getTrendingPages(pages);
-    paged = true;
-  } else if (shelf.kind === "downloaded") {
-    title = "Downloaded";
-    movies = await getDownloadedMovies();
-  } else {
+  let contents;
+  if (shelf.kind === "my-list") {
     const session = await getSession();
     if (!session?.user?.id) redirect(`/login?callbackUrl=${shelfHref("movies", shelf)}`);
-    title = "My List";
-    movies = await getWatchlistMovies(session.user.id);
+    contents = { title: "My List", items: await getWatchlistMovies(session.user.id), paged: false };
+  } else {
+    contents = await getMovieShelf(shelf, pages);
+    // A genre TMDB does not have, or the holiday shelf out of season.
+    if (!contents) notFound();
   }
+  const { title, items: movies, paged } = contents;
 
   const here = shelfSlug(shelf);
-  const neighbours: { shelf: Shelf; label: string }[] = [
-    { shelf: { kind: "trending" }, label: "Trending Now" },
-    { shelf: { kind: "downloaded" }, label: "Downloaded" },
-    ...genres.map((g) => ({ shelf: { kind: "genre" as const, genreId: g.id }, label: g.name })),
-  ];
+  const neighbours = await getMovieShelfLinks();
 
   return (
     <ShelfPage

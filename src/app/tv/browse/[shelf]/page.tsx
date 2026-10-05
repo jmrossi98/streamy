@@ -1,9 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { getTVGenres, getTrendingTVPages, getDiscoverTVByGenrePages, type TVShow } from "@/lib/tmdb";
 import { getWatchlistShows } from "@/lib/watchlist";
-import { getDownloadedShows } from "@/lib/downloadedLibrary";
-import { clampPages, hasMore, parseShelf, shelfHref, shelfSlug, type Shelf } from "@/lib/browseShelfRules";
+import { getShowShelf, getShowShelfLinks } from "@/lib/browseRows";
+import { clampPages, hasMore, parseShelf, shelfHref, shelfSlug } from "@/lib/browseShelfRules";
 import { ShelfPage } from "@/components/ShelfPage";
 import { ShowShelfGrid } from "@/components/ShelfGrid";
 
@@ -22,37 +21,20 @@ export default async function ShowShelfPage({
   if (!shelf) notFound();
   const pages = clampPages((await searchParams)?.pages);
 
-  const genres = await getTVGenres();
-  let title: string;
-  let shows: TVShow[];
-  let paged = false;
-
-  if (shelf.kind === "genre") {
-    const genre = genres.find((g) => g.id === shelf.genreId);
-    if (!genre) notFound();
-    title = genre.name;
-    shows = await getDiscoverTVByGenrePages(shelf.genreId, pages);
-    paged = true;
-  } else if (shelf.kind === "trending") {
-    title = "Trending TV";
-    shows = await getTrendingTVPages(pages);
-    paged = true;
-  } else if (shelf.kind === "downloaded") {
-    title = "Downloaded";
-    shows = await getDownloadedShows();
-  } else {
+  let contents;
+  if (shelf.kind === "my-list") {
     const session = await getSession();
     if (!session?.user?.id) redirect(`/login?callbackUrl=${shelfHref("tv", shelf)}`);
-    title = "My List";
-    shows = await getWatchlistShows(session.user.id);
+    contents = { title: "My List", items: await getWatchlistShows(session.user.id), paged: false };
+  } else {
+    contents = await getShowShelf(shelf, pages);
+    // A genre TMDB does not have, or the holiday shelf out of season.
+    if (!contents) notFound();
   }
+  const { title, items: shows, paged } = contents;
 
   const here = shelfSlug(shelf);
-  const neighbours: { shelf: Shelf; label: string }[] = [
-    { shelf: { kind: "trending" }, label: "Trending TV" },
-    { shelf: { kind: "downloaded" }, label: "Downloaded" },
-    ...genres.map((g) => ({ shelf: { kind: "genre" as const, genreId: g.id }, label: g.name })),
-  ];
+  const neighbours = await getShowShelfLinks();
 
   return (
     <ShelfPage
