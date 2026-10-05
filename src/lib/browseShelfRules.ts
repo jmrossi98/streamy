@@ -62,3 +62,11 @@ export function dedupeById<T extends { id: string | number }>(items: T[]): T[] {
     return true;
   });
 }
+
+/** The kinds of saved title that have a full-grid page under My List. */
+export const WATCHLIST_SHELVES = ["movies", "shows", "games", "flash"] as const;
+export type WatchlistShelf = (typeof WATCHLIST_SHELVES)[number];
+
+export function watchlistShelfHref(kind: WatchlistShelf): string {
+  return `/watchlist/${kind}`;
+}

@@ -27,9 +27,12 @@ import { WatchlistToggle } from "@/components/WatchlistToggle";
 export function FlashCard({
   game,
   inList,
+  fill = false,
 }: {
   game: FlashGameSummary;
   inList: boolean;
+  /** Fill the parent instead of the fixed row width -- for a grid cell. */
+  fill?: boolean;
 }) {
   const [artFailed, setArtFailed] = useState(false);
   // Either identity is enough to ask with: a game with no Flashpoint entry
@@ -44,7 +47,7 @@ export function FlashCard({
   const showArt = !artFailed && artUrl;
 
   return (
-    <div className="w-40 shrink-0 sm:w-48">
+    <div className={fill ? "w-full" : "w-40 shrink-0 sm:w-48"}>
       <Link
         href={`/games/flash/${game.slug}`}
         className="group relative block aspect-video w-full overflow-hidden rounded bg-netflix-dark/80 ring-1 ring-white/10 transition-all hover:ring-white/40"

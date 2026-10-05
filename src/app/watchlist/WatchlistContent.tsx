@@ -11,6 +11,7 @@ import type { Movie, TVShow } from "@/lib/tmdb";
 import type { GameListItem } from "@/lib/games";
 import type { LiveChannel } from "@/lib/liveTv";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
+import { watchlistShelfHref } from "@/lib/browseShelfRules";
 
 type WatchlistData = {
   movies: Movie[];
@@ -45,9 +46,14 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
   return (
     <div className="space-y-2">
       {data.movies.length > 0 && (
-        <MovieRow title="Movies" movies={data.movies} progressMap={data.progressMap} />
+        <MovieRow
+          title="Movies"
+          movies={data.movies}
+          progressMap={data.progressMap}
+          href={watchlistShelfHref("movies")}
+        />
       )}
-      {data.shows.length > 0 && <TVRow title="TV Shows" shows={data.shows} />}
+      {data.shows.length > 0 && <TVRow title="TV Shows" shows={data.shows} href={watchlistShelfHref("shows")} />}
       {data.channels.length > 0 && (
         // A vertical list, like /live's own "My Stations" section, rather
         // than a horizontal poster row -- a channel card is a wide list item
@@ -63,7 +69,7 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
         </section>
       )}
       {data.games.length > 0 && (
-        <ScrollableRow title="Games">
+        <ScrollableRow title="Games" href={watchlistShelfHref("games")}>
           {/* Every game here is, by definition, already in this list -- the
               overlay toggle only ever removes, matching how the equivalent
               movie/show poster button behaves specifically on this page. */}
@@ -73,7 +79,7 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
         </ScrollableRow>
       )}
       {data.flashGames.length > 0 && (
-        <ScrollableRow title="Flash Games">
+        <ScrollableRow title="Flash Games" href={watchlistShelfHref("flash")}>
           {data.flashGames.map((game) => (
             <FlashCard key={game.slug} game={game} inList />
           ))}
