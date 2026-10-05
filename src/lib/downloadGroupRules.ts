@@ -20,6 +20,8 @@ export type GroupableRow = {
   seriesTitle?: string | null;
   seasonNumber?: number | null;
   episodeNumber?: number | null;
+  sizeBytes?: number | null;
+  startedAt?: string | null;
 };
 
 export type SeasonGroup<T> = {
@@ -120,4 +122,39 @@ export function groupProgress(rows: GroupableRow[]): number | null {
   const moving = rows.filter((r) => !r.completed && !r.queued && !r.searching && !r.noRelease && r.progress != null);
   if (moving.length === 0) return null;
   return Math.round(moving.reduce((sum, r) => sum + (r.progress ?? 0), 0) / moving.length);
+}
+
+/**
+ * The show's status in the words a movie row uses: "Downloaded" when all of
+ * it is, otherwise what is still happening (the summary without its count,
+ * which the row shows separately) and how far along it is.
+ */
+export function groupStatus(rows: GroupableRow[]): string {
+  if (rows.length > 0 && rows.every((r) => r.completed)) return "Downloaded";
+  const parts = groupSummary(rows).split(" · ").slice(1);
+  const progress = groupProgress(rows);
+  if (progress != null) parts.push(`${progress}%`);
+  return parts.join(" · ");
+}
+
+/** Everything in the show added up, or null when no row has a size. */
+export function groupSize(rows: GroupableRow[]): number | null {
+  const sizes = rows.map((r) => r.sizeBytes).filter((n): n is number => typeof n === "number" && n > 0);
+  return sizes.length > 0 ? sizes.reduce((a, b) => a + b, 0) : null;
+}
+
+/** When the show last had something start or land: its newest row's time. */
+export function groupStarted(rows: GroupableRow[]): string | null {
+  let newest: string | null = null;
+  for (const r of rows) {
+    if (!r.startedAt) continue;
+    if (newest == null || new Date(r.startedAt).getTime() > new Date(newest).getTime()) newest = r.startedAt;
+  }
+  return newest;
+}
+
+/** Share of the show that is on disk, 0-100, for the bar when nothing is transferring. */
+export function groupShare(rows: GroupableRow[]): number {
+  if (rows.length === 0) return 0;
+  return Math.round((rows.filter((r) => r.completed).length / rows.length) * 100);
 }

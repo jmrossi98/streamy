@@ -3,6 +3,10 @@ import {
   groupActionLabel,
   groupDownloads,
   groupProgress,
+  groupShare,
+  groupSize,
+  groupStarted,
+  groupStatus,
   groupSummary,
   seasonLabel,
   type GroupableRow,
@@ -86,5 +90,26 @@ describe("labels", () => {
     expect(groupSummary([ep()])).toBe("1 episode · 1 downloaded");
     expect(groupProgress(rows)).toBe(50);
     expect(groupProgress([ep(), ep({ completed: false, queued: true })])).toBeNull();
+  });
+});
+
+describe("a show's header, in a movie row's terms", () => {
+  it("reads Downloaded when all of it is, otherwise what is still happening", () => {
+    expect(groupStatus([ep(), ep()])).toBe("Downloaded");
+    expect(groupStatus([ep(), ep({ completed: false, progress: 30 }), ep({ completed: false, queued: true })])).toBe(
+      "1 downloading · 1 queued · 1 downloaded · 30%"
+    );
+  });
+
+  it("adds up size, takes the newest time, and gives the share on disk", () => {
+    const rows = [
+      ep({ sizeBytes: 1000, startedAt: "2026-09-27T10:00:00Z" }),
+      ep({ sizeBytes: 500, startedAt: "2026-09-28T10:00:00Z" }),
+      ep({ completed: false, sizeBytes: null, startedAt: null }),
+    ];
+    expect(groupSize(rows)).toBe(1500);
+    expect(groupSize([ep()])).toBeNull();
+    expect(groupStarted(rows)).toBe("2026-09-28T10:00:00Z");
+    expect(groupShare(rows)).toBe(67);
   });
 });

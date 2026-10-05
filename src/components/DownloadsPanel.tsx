@@ -15,6 +15,10 @@ import {
   groupActionLabel,
   groupDownloads,
   groupProgress,
+  groupShare,
+  groupSize,
+  groupStarted,
+  groupStatus,
   groupSummary,
   seasonLabel,
 } from "@/lib/downloadGroupRules";
@@ -583,14 +587,35 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
             const expanded = open.has(showKey) || needle !== "";
             const progress = groupProgress(item.rows);
             return (
-              <li key={showKey} className="rounded border border-white/10 bg-black/20">
-                <div className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              // Laid out exactly as a movie row -- title, badge, size and date on
+              // the left, status and action on the right, bar underneath -- so
+              // the list reads as one list. The first version boxed each show,
+              // which next to the unboxed movie rows looked like two panels.
+              <li key={showKey} className="flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                   <button
                     type="button"
                     onClick={() => toggle(showKey)}
                     aria-expanded={expanded}
-                    className="flex min-w-0 items-center gap-2 text-left"
+                    className="flex min-w-0 flex-wrap items-center gap-2 text-left"
                   >
+                    <span className="min-w-0 truncate text-white/90">{item.title}</span>
+                    <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-300">
+                      TV
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-white/40">
+                      {item.rows.length} {item.rows.length === 1 ? "episode" : "episodes"}
+                    </span>
+                    {formatFileSize(groupSize(item.rows)) && (
+                      <span className="shrink-0 text-xs tabular-nums text-white/40">
+                        {formatFileSize(groupSize(item.rows))}
+                      </span>
+                    )}
+                    {formatStarted(groupStarted(item.rows)) && (
+                      <span className="shrink-0 text-xs tabular-nums text-white/30">
+                        {formatStarted(groupStarted(item.rows))}
+                      </span>
+                    )}
                     <svg
                       className={`h-3 w-3 shrink-0 text-white/40 transition-transform ${expanded ? "rotate-90" : ""}`}
                       fill="currentColor"
@@ -599,21 +624,26 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                     >
                       <path d="M8 5v14l11-7z" />
                     </svg>
-                    <span className="min-w-0 truncate font-medium text-white/90">{item.title}</span>
-                    <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
-                      TV
-                    </span>
                   </button>
                   <div className="flex shrink-0 items-center justify-end gap-3">
-                    <span className="text-xs tabular-nums text-white/40">
-                      {groupSummary(item.rows)}
-                      {progress != null ? ` · ${progress}%` : ""}
-                    </span>
+                    <span className="tabular-nums text-white/50">{groupStatus(item.rows)}</span>
                     {groupButton(showKey, item.rows, "series", item, null)}
                   </div>
                 </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  {progress != null ? (
+                    <div
+                      className="h-full rounded-full bg-netflix-red transition-[width] duration-500"
+                      style={{ width: `${progress}%` }}
+                    />
+                  ) : groupShare(item.rows) > 0 ? (
+                    <div className="h-full rounded-full bg-netflix-red" style={{ width: `${groupShare(item.rows)}%` }} />
+                  ) : (
+                    <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
+                  )}
+                </div>
                 {expanded && (
-                  <div className="space-y-3 border-t border-white/10 px-3 py-3">
+                  <div className="ml-1 space-y-3 border-l border-white/10 pb-1 pl-4 pt-1">
                     {item.seasons.map((season) => {
                       const seasonKey = `${showKey}-s${season.seasonNumber ?? "x"}`;
                       // A single season needs no second fold; more than one
@@ -627,7 +657,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                               onClick={() => toggle(seasonKey)}
                               aria-expanded={seasonOpen}
                               disabled={item.seasons.length === 1}
-                              className="flex min-w-0 items-center gap-2 text-left font-semibold uppercase tracking-wide text-white/60 disabled:cursor-default"
+                              className="flex min-w-0 items-center gap-2 text-left text-sm text-white/70 disabled:cursor-default"
                             >
                               {item.seasons.length > 1 && (
                                 <svg
@@ -640,16 +670,14 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                                 </svg>
                               )}
                               <span>{seasonLabel(season.seasonNumber)}</span>
-                              <span className="font-normal normal-case tracking-normal text-white/35">
-                                {groupSummary(season.rows)}
-                              </span>
+                              <span className="text-xs tabular-nums text-white/40">{groupSummary(season.rows)}</span>
                             </button>
                             {/* Rows with no season have nothing a season
                                 removal could name; they keep their own buttons. */}
                             {season.seasonNumber != null &&
                               groupButton(seasonKey, season.rows, "season", item, season.seasonNumber)}
                           </div>
-                          {seasonOpen && <ul className="mt-2 space-y-3 pl-4">{season.rows.map(renderRow)}</ul>}
+                          {seasonOpen && <ul className="mt-3 space-y-3">{season.rows.map(renderRow)}</ul>}
                         </div>
                       );
                     })}
