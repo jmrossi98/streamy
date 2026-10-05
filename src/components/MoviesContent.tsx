@@ -4,8 +4,9 @@ import { useState, useEffect } from "react";
 import { MovieRow } from "@/components/MovieRow";
 import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie } from "@/lib/tmdb";
+import { shelfHref } from "@/lib/browseShelfRules";
 
-type GenreRow = { title: string; movies: Movie[] };
+type GenreRow = { title: string; movies: Movie[]; href?: string };
 type ProgressItem = { movieId: number; progressSeconds: number };
 
 type Props = {
@@ -49,19 +50,40 @@ export function MoviesContent({
           is merely popular. Hidden entirely when empty rather than shown as an
           empty row. */}
       {myList.length > 0 && (
-        <MovieRow title="My List" movies={myList} progressMap={progressMap} />
+        <MovieRow
+          title="My List"
+          movies={myList}
+          progressMap={progressMap}
+          href={shelfHref("movies", { kind: "my-list" })}
+        />
       )}
       {/* Below My List: a saved list is what the viewer chose, and the
           downloaded library only grows -- above, it would push their own
           picks further down every week. */}
       {downloaded.length > 0 && (
-        <MovieRow title="Downloaded" movies={downloaded} progressMap={progressMap} />
+        <MovieRow
+          title="Downloaded"
+          movies={downloaded}
+          progressMap={progressMap}
+          href={shelfHref("movies", { kind: "downloaded" })}
+        />
       )}
-      <MovieRow title="Trending Now" movies={trending} progressMap={progressMap} />
+      <MovieRow
+        title="Trending Now"
+        movies={trending}
+        progressMap={progressMap}
+        href={shelfHref("movies", { kind: "trending" })}
+      />
       {genreRows.map(
         (row) =>
           row.movies.length > 0 && (
-            <MovieRow key={row.title} title={row.title} movies={row.movies} progressMap={progressMap} />
+            <MovieRow
+              key={row.title}
+              title={row.title}
+              movies={row.movies}
+              progressMap={progressMap}
+              href={row.href}
+            />
           )
       )}
     </div>

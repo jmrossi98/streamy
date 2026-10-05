@@ -1,6 +1,7 @@
 import { getDownloadedMovies, getDownloadedShows } from "@/lib/downloadedLibrary";
 import { MovieRow } from "@/components/MovieRow";
 import { TVRow } from "@/components/TVRow";
+import { shelfHref } from "@/lib/browseShelfRules";
 
 /**
  * What is on disk right now, as rows.
@@ -33,8 +34,10 @@ export async function DownloadedSection({ kind = "both" }: { kind?: "movies" | "
 
   return (
     <>
-      {movies.length > 0 && <MovieRow title={movieTitle} movies={movies} />}
-      {shows.length > 0 && <TVRow title={showTitle} shows={shows} />}
+      {movies.length > 0 && (
+        <MovieRow title={movieTitle} movies={movies} href={shelfHref("movies", { kind: "downloaded" })} />
+      )}
+      {shows.length > 0 && <TVRow title={showTitle} shows={shows} href={shelfHref("tv", { kind: "downloaded" })} />}
     </>
   );
 }

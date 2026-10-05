@@ -4,6 +4,7 @@ import { getWatchlistShows } from "@/lib/watchlist";
 import { TVRow } from "@/components/TVRow";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 import { Suspense } from "react";
+import { shelfHref } from "@/lib/browseShelfRules";
 import { DownloadedSection, DownloadedSkeleton } from "../DownloadedSection";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export default async function TVPage() {
     genresForRows.map((genre) =>
       getDiscoverTVByGenre(genre.id, SHOWS_PER_ROW).then((shows) => ({
         title: genre.name,
+        href: shelfHref("tv", { kind: "genre", genreId: genre.id }),
         shows,
       }))
     )
@@ -34,15 +36,15 @@ export default async function TVPage() {
       <div className="space-y-2">
         {/* Above Trending: what the viewer chose for themselves outranks what
             is merely popular. Hidden entirely when empty. */}
-        {myList.length > 0 && <TVRow title="My List" shows={myList} />}
+        {myList.length > 0 && <TVRow title="My List" shows={myList} href={shelfHref("tv", { kind: "my-list" })} />}
         {/* Own boundary: this is a TMDB lookup per downloaded show, and the
             rows below it should not wait on the library. */}
         <Suspense fallback={<DownloadedSkeleton />}>
           <DownloadedSection kind="shows" />
         </Suspense>
-        <TVRow title="Trending TV" shows={trending} />
+        <TVRow title="Trending TV" shows={trending} href={shelfHref("tv", { kind: "trending" })} />
         {genreRows.map((row) => (
-          <TVRow key={row.title} title={row.title} shows={row.shows} />
+          <TVRow key={row.title} title={row.title} shows={row.shows} href={row.href} />
         ))}
       </div>
     </div>

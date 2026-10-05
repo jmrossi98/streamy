@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { Hero } from "@/components/Hero";
 import { HomeFeedHeader } from "@/components/HomeFeedHeader";
 import { HomeMoviesSection } from "@/components/HomeMoviesSection";
+import { shelfHref } from "@/lib/browseShelfRules";
 import { HomePrefetch } from "@/components/HomePrefetch";
 import { RecentlyWatchedSection, RecentlyWatchedSkeleton } from "./RecentlyWatchedSection";
 import { MyListSection, MyListSkeleton } from "./MyListSection";
@@ -62,6 +63,7 @@ export default async function HomePage() {
 
   const genreRows = HERO_GENRE_IDS.map((id, i) => ({
     title: genres.find((g) => g.id === id)?.name ?? "Genre",
+    href: shelfHref("movies", { kind: "genre", genreId: id }),
     movies: genreMovieLists[i] ?? [],
   }));
 

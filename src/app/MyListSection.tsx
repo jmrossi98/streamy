@@ -1,6 +1,7 @@
 import { getWatchlistMovies, getWatchlistShows } from "@/lib/watchlist";
 import { MovieRow } from "@/components/MovieRow";
 import { TVRow } from "@/components/TVRow";
+import { shelfHref } from "@/lib/browseShelfRules";
 
 /**
  * The viewer's saved titles, below Continue Watching on Home.
@@ -30,8 +31,10 @@ export async function MyListSection({ userId }: { userId: string }) {
       {/* Titled by kind, unlike the tabs where "My List" alone is unambiguous:
           on Home both strips are visible at once, and two rows both called
           "My List" read as one row that broke rather than two kinds. */}
-      {movies.length > 0 && <MovieRow title="My List - Movies" movies={movies} />}
-      {shows.length > 0 && <TVRow title="My List - Shows" shows={shows} />}
+      {movies.length > 0 && (
+        <MovieRow title="My List - Movies" movies={movies} href={shelfHref("movies", { kind: "my-list" })} />
+      )}
+      {shows.length > 0 && <TVRow title="My List - Shows" shows={shows} href={shelfHref("tv", { kind: "my-list" })} />}
     </>
   );
 }
