@@ -121,6 +121,8 @@ export type VisitorSummary = {
     referrer: string | null;
     /** Sign-in rows only (either kind): whether the attempt succeeded. */
     success?: boolean;
+    /** Assistant rows only: what it answered, when that was recorded. */
+    reply?: string | null;
     at: string;
   }[];
   /** Total rows across both tables, so the panel can say if the log is capped. */
@@ -182,7 +184,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     prisma.assistantUsage.findMany({
       orderBy: { at: "desc" },
       take: LOG_CAP,
-      select: { id: true, actorName: true, backend: true, prompt: true, ip: true, at: true },
+      select: { id: true, actorName: true, backend: true, prompt: true, reply: true, ip: true, at: true },
     }),
     prisma.assistantUsage.count(),
     // Live-fetched rather than stored: these are Jellyfin's own log, published
@@ -229,6 +231,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       // Who asked and on which model, then what they asked -- the prompt is
       // already truncated at write time, so this is bounded.
       path: `${a.actorName} (${a.backend}): ${a.prompt}`,
+      reply: a.reply,
       ip: a.ip,
       location: null,
       referrer: null,

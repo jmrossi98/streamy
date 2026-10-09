@@ -25,10 +25,9 @@ import { clientIpFromHeaders } from "./loginAttemptRules";
  * prompt cut mid-question is the one field in that table where the content
  * *is* the point.
  *
- * Still bounded, because this is a log rather than a transcript store: the
- * assistant's replies are never recorded here at all, only what was asked,
- * and 2000 characters is past any realistic ops question while keeping a
- * pathological paste from becoming a database problem.
+ * Still bounded: 2000 characters is past any realistic ops question while
+ * keeping a pathological paste from becoming a database problem. The reply is
+ * recorded beside it once the stream ends -- see recordAssistantReply.
  */
 export const PROMPT_LOG_MAX = 2000;
 
@@ -42,14 +41,15 @@ export async function recordAssistantUsage(params: {
   backend: string;
   prompt: string;
   headers: Headers;
-}): Promise<void> {
+}): Promise<string | null> {
   const headerBag: Record<string, string> = {};
   params.headers.forEach((v, k) => {
     headerBag[k] = v;
   });
 
   try {
-    await prisma.assistantUsage.create({
+    const row = await prisma.assistantUsage.create({
+      select: { id: true },
       data: {
         actorName: params.actorName,
         backend: params.backend,
@@ -58,10 +58,29 @@ export async function recordAssistantUsage(params: {
         country: headerBag["cf-ipcountry"] || null,
       },
     });
+    return row.id;
   } catch (err) {
     // Logging a turn must never cost the admin the answer to it. The chat
     // route calls this before streaming, so a database hiccup here would
     // otherwise take down the assistant entirely.
     console.error("[assistantUsage] failed to record:", err);
+    return null;
+  }
+}
+
+/**
+ * Saves what the assistant said against the turn that asked for it.
+ *
+ * Called when the response stream ends, is abandoned, or never starts, so it
+ * runs after the admin already has their answer and must not throw. `usageId`
+ * is null when the turn itself could not be logged; then there is nothing to
+ * attach to.
+ */
+export async function recordAssistantReply(usageId: string | null, reply: string): Promise<void> {
+  if (!usageId || !reply) return;
+  try {
+    await prisma.assistantUsage.update({ where: { id: usageId }, data: { reply } });
+  } catch (err) {
+    console.error("[assistantUsage] failed to record reply:", err);
   }
 }

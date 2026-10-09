@@ -19,7 +19,8 @@ import {
   withContext,
 } from "@/lib/chatLimits";
 import { buildStatusContext } from "@/lib/chatContext";
-import { recordAssistantUsage } from "@/lib/assistantUsage";
+import { recordAssistantReply, recordAssistantUsage } from "@/lib/assistantUsage";
+import { createReplyCollector, failureNote } from "@/lib/chatTranscriptRules";
 import {
   buildSharedContextBlock,
   getSharedContext,
@@ -54,6 +55,47 @@ import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 export const dynamic = "force-dynamic";
 // Node runtime, not edge: requireAdmin needs Prisma.
 export const runtime = "nodejs";
+
+/**
+ * The same stream, with everything that passes through it kept and saved
+ * against the turn when it finishes.
+ *
+ * Pulled by hand rather than `tee()`d: a tee buffers whatever its slower
+ * branch has not read, and this must never hold the browser's copy back. The
+ * save also runs when the admin navigates away mid-answer, so a half-read
+ * reply is recorded as the half that was generated.
+ */
+function recordingStream(source: ReadableStream<Uint8Array>, usageId: string | null): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  const collector = createReplyCollector();
+  let saved = false;
+  const save = () => {
+    if (saved) return;
+    saved = true;
+    void recordAssistantReply(usageId, collector.text());
+  };
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          save();
+          controller.close();
+          return;
+        }
+        collector.push(value);
+        controller.enqueue(value);
+      } catch (err) {
+        save();
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      save();
+      return reader.cancel(reason);
+    },
+  });
+}
 
 export async function POST(request: Request) {
   // Kept rather than discarded: the admin's own name is what the usage log
@@ -103,7 +145,7 @@ export async function POST(request: Request) {
   // *used*, which is true whether or not the model then answers successfully.
   // Awaited rather than fired and forgotten so a turn can't outlive its own
   // log row on a process that exits mid-stream.
-  await recordAssistantUsage({
+  const usageId = await recordAssistantUsage({
     actorName: admin.name,
     backend,
     prompt: latestUserQuery(messages) ?? "",
@@ -218,7 +260,7 @@ export async function POST(request: Request) {
         ? await streamOpenRouterChat(messages, modelChain(backend), request.signal)
         : await streamOllamaChat(messages, request.signal));
 
-    return new Response(stream, {
+    return new Response(recordingStream(stream, usageId), {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",
         "Cache-Control": "no-store",
@@ -230,6 +272,8 @@ export async function POST(request: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[chat] ${backend} request failed:`, message);
+    // The transcript should say the turn got no answer, and why.
+    await recordAssistantReply(usageId, failureNote(message));
     return NextResponse.json(
       { error: `Couldn't reach the model: ${message}` },
       { status: 502 }

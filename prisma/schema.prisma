@@ -879,6 +879,11 @@ model AssistantUsage {
   /// without turning this table into an unbounded transcript store.
   prompt String
 
+  /// What the assistant answered, capped (see chatTranscriptRules.ts). Null
+  /// for turns from before 2026-10-09, when only the asking was recorded, and
+  /// for a turn whose stream never got as far as ending.
+  reply String?
+
   ip      String
   country String?
 
