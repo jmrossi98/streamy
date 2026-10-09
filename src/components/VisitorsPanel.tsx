@@ -177,6 +177,14 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                     {v.kind === "assistant" ? (
                       <td className="max-w-[28rem] whitespace-pre-wrap break-words px-3 py-2 align-top text-white/80">
                         {v.path}
+                        {/* The answer, folded away: it can run to a screen
+                            or more, and the table is scanned by prompt. */}
+                        {v.reply && (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer text-xs text-white/40 hover:text-white/70">Reply</summary>
+                            <p className="mt-1 text-white/60">{v.reply}</p>
+                          </details>
+                        )}
                       </td>
                     ) : (
                       <td
