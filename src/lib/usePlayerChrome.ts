@@ -127,10 +127,21 @@ export function usePlayerChrome(
         targetInPlayer: !!target && !!containerRef.current?.contains(target),
       });
     };
+    // Whether the focused control got its focus from a click rather than Tab.
+    // A clicked button keeps focus without showing it; the first key press
+    // then makes the browser draw its focus ring, so space lit up whatever was
+    // clicked last. That focus is let go. Focus someone tabbed to is theirs.
+    let focusFromPointer = false;
+    const onPointerDown = (e: PointerEvent) => {
+      focusFromPointer = e.target instanceof Node && !!containerRef.current?.contains(e.target);
+    };
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Tab") focusFromPointer = false;
       if (!wanted(e)) return;
       // Otherwise the page scrolls, or a focused control is pressed as well.
       e.preventDefault();
+      const focused = document.activeElement;
+      if (focusFromPointer && focused instanceof HTMLElement && containerRef.current?.contains(focused)) focused.blur();
       togglePlay();
     };
     // A focused button fires its click on key *up* in some browsers, which
@@ -138,9 +149,11 @@ export function usePlayerChrome(
     const onKeyUp = (e: KeyboardEvent) => {
       if (wanted(e)) e.preventDefault();
     };
+    window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
