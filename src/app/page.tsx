@@ -63,6 +63,7 @@ export default async function HomePage() {
 
   const movieIdsOnPage = new Set([
     ...trending.map((m) => m.id),
+    ...(movieBrowse.all?.movies.map((m) => m.id) ?? []),
     ...(movieBrowse.holiday?.movies.map((m) => m.id) ?? []),
     ...genreRows.flatMap((r) => r.movies.map((m) => m.id)),
   ]);
@@ -130,6 +131,8 @@ export default async function HomePage() {
           trendingTV={trendingTV}
           progressList={progressList}
           holidayMovies={movieBrowse.holiday}
+          allMovies={movieBrowse.all}
+          allShows={showBrowse.all}
           holidayShows={showBrowse.holiday}
         />
       </div>

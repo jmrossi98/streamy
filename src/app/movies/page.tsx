@@ -29,6 +29,7 @@ export default async function MoviesPage() {
 
   const movieIdsOnPage = new Set([
     ...browse.trending.map((m) => m.id),
+    ...(browse.all?.movies.map((m) => m.id) ?? []),
     ...(browse.holiday?.movies.map((m) => m.id) ?? []),
     ...browse.genreRows.flatMap((r) => r.movies.map((m) => m.id)),
     // My List too, or a half-watched title shows a progress bar in a genre row
@@ -45,6 +46,7 @@ export default async function MoviesPage() {
       <MoviesContent
         trending={browse.trending}
         holiday={browse.holiday}
+        all={browse.all}
         genreRows={browse.genreRows}
         progressList={progressList}
         myList={myList}

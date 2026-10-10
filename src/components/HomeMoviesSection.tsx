@@ -22,6 +22,9 @@ type Props = {
   /** The holiday in season, by kind; either may be missing. */
   holidayMovies?: GenreRow | null;
   holidayShows?: { title: string; shows: TVShow[]; href?: string } | null;
+  /** Everything downloaded, A to Z, by kind; each heading opens the full grid. */
+  allMovies?: GenreRow | null;
+  allShows?: { title: string; shows: TVShow[]; href?: string } | null;
 };
 
 export function HomeMoviesSection({
@@ -31,6 +34,8 @@ export function HomeMoviesSection({
   progressList,
   holidayMovies = null,
   holidayShows = null,
+  allMovies = null,
+  allShows = null,
 }: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
 
@@ -55,7 +60,12 @@ export function HomeMoviesSection({
 
   return (
     <>
-      {/* First, so directly under My List: the one row that changes with the
+      {/* First, so directly under My List: the way into the whole library. */}
+      {allMovies && allMovies.movies.length > 0 && (
+        <MovieRow title={allMovies.title} movies={allMovies.movies} progressMap={progressMap} href={allMovies.href} />
+      )}
+      {allShows && allShows.shows.length > 0 && <TVRow title={allShows.title} shows={allShows.shows} href={allShows.href} />}
+      {/* Then the one row that changes with the
           calendar. Titled by kind for the reason My List is on this page --
           two rows both called "Halloween" read as one row that broke. */}
       {holidayMovies && holidayMovies.movies.length > 0 && (

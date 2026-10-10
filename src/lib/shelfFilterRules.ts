@@ -46,7 +46,7 @@ function fold(text: string): string {
 }
 
 /** A leading article is not what anyone files a title under. */
-function sortKey(title: string): string {
+export function sortKey(title: string): string {
   return fold(title).replace(/^(the|a|an) /, "");
 }
 

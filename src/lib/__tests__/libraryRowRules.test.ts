@@ -68,3 +68,12 @@ describe("helpers", () => {
     expect(inGenre(LIBRARY, "Dram")).toEqual([]);
   });
 });
+
+describe("the whole library, A to Z", () => {
+  it("files a title under its name without the article, and leaves the input alone", async () => {
+    const { alphabetical } = await import("../libraryRowRules");
+    const titles = [{ t: "The Matrix" }, { t: "Amélie" }, { t: "A Quiet Place" }, { t: "Zodiac" }];
+    expect(alphabetical(titles, (x) => x.t).map((x) => x.t)).toEqual(["Amélie", "The Matrix", "A Quiet Place", "Zodiac"]);
+    expect(titles[0].t).toBe("The Matrix");
+  });
+});
