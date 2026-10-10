@@ -1,6 +1,6 @@
 "use client";
 
-import type { Movie, TVShow } from "@/lib/tmdb";
+import type { Movie, PersonTitle, TVShow } from "@/lib/tmdb";
 import type { GameListItem } from "@/lib/games";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
 import { MovieCard, type MovieProgress } from "@/components/MovieRow";
@@ -87,6 +87,21 @@ export function ShowShelfGrid({ shows }: { shows: TVShow[] }) {
         ))}
       </div>
     </>
+  );
+}
+
+/** Movies and shows in one grid, in the order given: a person's credits hold both. */
+export function TitleGrid({ titles }: { titles: PersonTitle[] }) {
+  return (
+    <div className={GRID_CLASS}>
+      {titles.map((t) =>
+        t.kind === "movie" ? (
+          <MovieCard key={`m${t.movie.id}`} movie={t.movie} widthClass="w-full" />
+        ) : (
+          <ShowCard key={`s${t.show.id}`} show={t.show} widthClass="w-full" />
+        )
+      )}
+    </div>
   );
 }
 

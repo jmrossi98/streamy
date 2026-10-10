@@ -6,6 +6,7 @@
  * In production uses the real API.
  */
 
+import { ACTED, crewSection, orderSections, type CreditSection } from "./personCreditRules";
 import { dedupeById, SHELF_PAGE_SIZE } from "./browseShelfRules";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
@@ -787,6 +788,9 @@ export type PersonDetail = {
 export type TmdbCombinedCreditItem = {
   id: number;
   media_type: "movie" | "tv";
+  /** Crew credits only: what the person did on the title. */
+  job?: string;
+  department?: string;
   title?: string;
   name?: string;
   overview: string | null;
@@ -903,25 +907,73 @@ export function mergeCombinedCredits(
   return { movies, shows };
 }
 
-export const getPersonCredits = cache(async (id: string): Promise<{ movies: Movie[]; shows: TVShow[] }> =>
+/** A movie or a show, for lists that hold both. */
+export type PersonTitle = { kind: "movie"; movie: Movie } | { kind: "show"; show: TVShow };
+
+/** One relationship a person has with titles ("Directed"), and the titles. */
+export type PersonCreditSection = CreditSection & { titles: PersonTitle[] };
+
+/**
+ * A person's credits, one section per thing they did, movies and shows
+ * together. A title appears in every section that applies -- a film someone
+ * wrote, directed and starred in is listed under all three -- and once within
+ * each, most popular first (mergeCombinedCredits).
+ */
+export function sectionCombinedCredits(
+  cast: TmdbCombinedCreditItem[],
+  crew: TmdbCombinedCreditItem[],
+  movieGenres: TmdbGenre[],
+  tvGenres: TmdbGenreTV[],
+  knownForDepartment: string | null
+): PersonCreditSection[] {
+  const groups = new Map<string, { section: CreditSection; items: TmdbCombinedCreditItem[] }>();
+  const add = (section: CreditSection, item: TmdbCombinedCreditItem) => {
+    const group = groups.get(section.key) ?? { section, items: [] };
+    group.items.push(item);
+    groups.set(section.key, group);
+  };
+  cast.forEach((item) => add(ACTED, item));
+  crew.forEach((item) => add(crewSection(item), item));
+
+  // Movies and shows are scored on the same scale, so one list can hold both.
+  const popularity = new Map<string, number>();
+  for (const item of [...cast, ...crew]) popularity.set(`${item.media_type}:${item.id}`, item.popularity ?? 0);
+  const score = (t: PersonTitle) => popularity.get(t.kind === "movie" ? `movie:${t.movie.id}` : `tv:${t.show.id}`) ?? 0;
+
+  const sections = [...groups.values()]
+    .map(({ section, items }) => {
+      const { movies, shows } = mergeCombinedCredits(items, [], movieGenres, tvGenres);
+      const titles: PersonTitle[] = [
+        ...movies.map((movie) => ({ kind: "movie" as const, movie })),
+        ...shows.map((show) => ({ kind: "show" as const, show })),
+      ];
+      return { ...section, titles: titles.sort((a, b) => score(b) - score(a)) };
+    })
+    .filter((s) => s.titles.length > 0);
+  return orderSections(sections, knownForDepartment);
+}
+
+export const getPersonCredits = cache(async (id: string): Promise<PersonCreditSection[]> =>
   USE_MOCK
     ? (await getMock()).mockGetPersonCredits(id)
     : withMemoryCache(
-    ["tmdb-person-credits", id],
+    ["tmdb-person-credit-sections", id],
     ONE_DAY_MS,
     () =>
       unstable_cache(
         async () => {
-          const [data, movieGenres, tvGenres] = await Promise.all([
+          const [data, person, movieGenres, tvGenres] = await Promise.all([
             fetchTmdb<{ cast?: TmdbCombinedCreditItem[]; crew?: TmdbCombinedCreditItem[] }>(
               `person/${id}/combined_credits`
             ),
+            getPersonByIdUncached(id),
             getGenresUncached(),
             getTVGenresUncached(),
           ]);
-          return mergeCombinedCredits(data.cast ?? [], data.crew ?? [], movieGenres, tvGenres);
+          return sectionCombinedCredits(data.cast ?? [], data.crew ?? [], movieGenres, tvGenres, person?.knownFor ?? null);
         },
-        ["tmdb-person-credits", id],
+        // "sections": the cached value changed shape from one merged list.
+        ["tmdb-person-credit-sections", id],
         { revalidate: CACHE_REVALIDATE }
       )()
   )

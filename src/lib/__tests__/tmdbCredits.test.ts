@@ -245,3 +245,45 @@ describe("mergeSearchResults", () => {
     expect(mergeSearchResults([], [])).toEqual([]);
   });
 });
+
+describe("sectionCombinedCredits", () => {
+  it("lists a title under every role the person had on it, once each", async () => {
+    const { sectionCombinedCredits } = await import("../tmdb");
+    const film = { id: 1, media_type: "movie" as const, title: "Unforgiven", overview: "", poster_path: null, backdrop_path: null, vote_average: 8, popularity: 9 };
+    const other = { ...film, id: 2, title: "Dirty Harry", popularity: 5 };
+    const sections = sectionCombinedCredits(
+      [film, other],
+      [
+        { ...film, job: "Director", department: "Directing" },
+        { ...film, job: "Producer", department: "Production" },
+        { ...film, job: "Executive Producer", department: "Production" },
+      ],
+      [],
+      [],
+      "Acting"
+    );
+    expect(sections.map((s) => s.label)).toEqual(["Acted in", "Directed", "Produced"]);
+    const names = (i: number) => sections[i].titles.map((t) => (t.kind === "movie" ? t.movie.title : t.show.name));
+    expect(names(0)).toEqual(["Unforgiven", "Dirty Harry"]);
+    expect(names(1)).toEqual(["Unforgiven"]);
+    // Two producing credits on one film are one card, not two.
+    expect(sections[2].titles).toHaveLength(1);
+  });
+
+  it("puts movies and shows in one list, most popular first", async () => {
+    const { sectionCombinedCredits } = await import("../tmdb");
+    const base = { overview: "", poster_path: null, backdrop_path: null, vote_average: 7 };
+    const [acted] = sectionCombinedCredits(
+      [
+        { ...base, id: 1, media_type: "movie", title: "Small Film", popularity: 2 },
+        { ...base, id: 2, media_type: "tv", name: "Big Show", popularity: 50 },
+        { ...base, id: 3, media_type: "movie", title: "Big Film", popularity: 20 },
+      ],
+      [],
+      [],
+      [],
+      "Acting"
+    );
+    expect(acted.titles.map((t) => (t.kind === "movie" ? t.movie.title : t.show.name))).toEqual(["Big Show", "Big Film", "Small Film"]);
+  });
+});
