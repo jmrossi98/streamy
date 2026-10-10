@@ -20,7 +20,9 @@ export default async function TVPage() {
         {/* Above Trending: what the viewer chose for themselves outranks what
             is merely popular. Hidden entirely when empty. */}
         {myList.length > 0 && <TVRow title="My List" shows={myList} href={shelfHref("tv", { kind: "my-list" })} />}
-        {/* Directly under My List: the one row that changes with the
+        {/* The way into the whole library, kept next to the viewer's own list. */}
+        {browse.all && <TVRow title={browse.all.title} shows={browse.all.shows} href={browse.all.href} />}
+        {/* Under those: the one row that changes with the
             calendar, so it goes where it will be seen while it is in season. */}
         {browse.holiday && (
           <TVRow title={browse.holiday.title} shows={browse.holiday.shows} href={browse.holiday.href} />

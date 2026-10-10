@@ -17,6 +17,8 @@ type Props = {
   myList?: Movie[];
   /** The holiday in season, when the library has anything for it. */
   holiday?: GenreRow | null;
+  /** Everything downloaded, A to Z; its heading opens the full grid. */
+  all?: GenreRow | null;
 };
 
 export function MoviesContent({
@@ -25,6 +27,7 @@ export function MoviesContent({
   progressList,
   myList = [],
   holiday = null,
+  all = null,
 }: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
 
@@ -58,7 +61,11 @@ export function MoviesContent({
           href={shelfHref("movies", { kind: "my-list" })}
         />
       )}
-      {/* Directly under My List: the one row that changes with the calendar,
+      {/* The way into the whole library, kept next to the viewer's own list. */}
+      {all && all.movies.length > 0 && (
+        <MovieRow title={all.title} movies={all.movies} progressMap={progressMap} href={all.href} />
+      )}
+      {/* Under those: the one row that changes with the calendar,
           so it goes where it will be seen while it is in season. */}
       {holiday && holiday.movies.length > 0 && (
         <MovieRow title={holiday.title} movies={holiday.movies} progressMap={progressMap} href={holiday.href} />

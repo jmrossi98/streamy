@@ -11,6 +11,8 @@
 export type Shelf =
   | { kind: "trending" }
   | { kind: "holiday" }
+  /** Everything downloaded, A to Z. */
+  | { kind: "all" }
   | { kind: "my-list" }
   | { kind: "genre"; genreId: number };
 
@@ -22,7 +24,7 @@ export function shelfSlug(shelf: Shelf): string {
 
 /** The shelf a URL segment names, or null for anything that is not one. */
 export function parseShelf(slug: string): Shelf | null {
-  if (slug === "trending" || slug === "holiday" || slug === "my-list") return { kind: slug };
+  if (slug === "trending" || slug === "holiday" || slug === "all" || slug === "my-list") return { kind: slug };
   const genre = /^genre-(\d{1,6})$/.exec(slug);
   return genre ? { kind: "genre", genreId: Number(genre[1]) } : null;
 }

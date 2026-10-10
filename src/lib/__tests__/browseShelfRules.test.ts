@@ -16,6 +16,7 @@ describe("shelf addresses", () => {
   const shelves: Shelf[] = [
     { kind: "trending" },
     { kind: "holiday" },
+    { kind: "all" },
     { kind: "my-list" },
     { kind: "genre", genreId: 878 },
   ];

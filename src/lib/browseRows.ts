@@ -25,7 +25,7 @@ import {
 } from "./tmdb";
 import { getLibraryMovies, getLibraryShows, type LibraryMovie, type LibraryShow } from "./downloadedLibrary";
 import { shelfHref, type Shelf } from "./browseShelfRules";
-import { byPopularity, genreBuckets, inGenre } from "./libraryRowRules";
+import { alphabetical, byPopularity, genreBuckets, inGenre } from "./libraryRowRules";
 import { holidayNow, pickHolidayTitles } from "./holidayRules";
 
 /**
@@ -70,8 +70,13 @@ async function showLibrary(): Promise<LibraryShow[] | null> {
   return library && library.length > 0 ? byPopularity(library) : null;
 }
 
+const ALL_MOVIES = "All Movies";
+const ALL_SHOWS = "All TV Shows";
+
 export type MovieBrowse = {
   trending: Movie[];
+  /** Everything downloaded, A to Z. Null when the rows are TMDB's, not the library's. */
+  all: MovieRowData | null;
   /** The holiday in season, when the library has anything for it. */
   holiday: MovieRowData | null;
   genreRows: MovieRowData[];
@@ -88,6 +93,7 @@ export async function getMovieBrowse({ leadOnly = false }: { leadOnly?: boolean 
     ]);
     return {
       trending,
+      all: null,
       holiday: null,
       genreRows: LEAD_MOVIE_GENRES.map((id, i) => ({
         title: genres.find((g) => g.id === id)?.name ?? "Genre",
@@ -105,6 +111,11 @@ export async function getMovieBrowse({ leadOnly = false }: { leadOnly?: boolean 
 
   return {
     trending: library.slice(0, ROW_LIMIT).map(movieCard),
+    all: {
+      title: ALL_MOVIES,
+      href: shelfHref("movies", { kind: "all" }),
+      movies: alphabetical(library, (m) => m.title).slice(0, ROW_LIMIT).map(movieCard),
+    },
     holiday:
       holiday && holidayMovies.length > 0
         ? {
@@ -123,6 +134,7 @@ export async function getMovieBrowse({ leadOnly = false }: { leadOnly?: boolean 
 
 export type ShowBrowse = {
   trending: TVShow[];
+  all: ShowRowData | null;
   holiday: ShowRowData | null;
   genreRows: ShowRowData[];
 };
@@ -133,11 +145,12 @@ export async function getShowBrowse({ genreRows = true }: { genreRows?: boolean 
 
   if (!library) {
     const trending = getTrendingTV(10);
-    if (!genreRows) return { trending: await trending, holiday: null, genreRows: [] };
+    if (!genreRows) return { trending: await trending, all: null, holiday: null, genreRows: [] };
     const genres = (await getTVGenres()).slice(0, FALLBACK_TV_GENRES);
     const lists = await Promise.all(genres.map((g) => getDiscoverTVByGenre(g.id, FALLBACK_ROW_SIZE)));
     return {
       trending: await trending,
+      all: null,
       holiday: null,
       genreRows: genres.map((g, i) => ({
         title: g.name,
@@ -153,6 +166,11 @@ export async function getShowBrowse({ genreRows = true }: { genreRows?: boolean 
 
   return {
     trending: library.slice(0, ROW_LIMIT).map(showCard),
+    all: {
+      title: ALL_SHOWS,
+      href: shelfHref("tv", { kind: "all" }),
+      shows: alphabetical(library, (s) => s.name).slice(0, ROW_LIMIT).map(showCard),
+    },
     holiday:
       holiday && holidayShows.length > 0
         ? {
@@ -193,9 +211,15 @@ export async function getMovieShelf(shelf: LibraryShelf, pages: number): Promise
       : { title: "Trending Now", items: await getTrendingPages(pages), paged: true };
   }
 
-  // The holiday shelf exists only in season, and only over the library.
+  // The remaining shelves exist only over the library.
+  if (!library) return null;
+  if (shelf.kind === "all") {
+    return { title: ALL_MOVIES, items: alphabetical(library, (m) => m.title).map(movieCard), paged: false };
+  }
+
+  // The holiday shelf exists only in season.
   const holiday = holidayNow();
-  if (!holiday || !library) return null;
+  if (!holiday) return null;
   return { title: holiday.title, items: pickHolidayTitles(holiday, library).map(movieCard), paged: false };
 }
 
@@ -216,8 +240,13 @@ export async function getShowShelf(shelf: LibraryShelf, pages: number): Promise<
       : { title: "Trending TV", items: await getTrendingTVPages(pages), paged: true };
   }
 
+  if (!library) return null;
+  if (shelf.kind === "all") {
+    return { title: ALL_SHOWS, items: alphabetical(library, (s) => s.name).map(showCard), paged: false };
+  }
+
   const holiday = holidayNow();
-  if (!holiday || !library) return null;
+  if (!holiday) return null;
   return { title: holiday.title, items: pickHolidayTitles(holiday, library).map(showCard), paged: false };
 }
 
@@ -233,6 +262,7 @@ export async function getMovieShelfLinks(): Promise<ShelfLink[]> {
   const holiday = holidayNow();
   const offered = library ? genreBuckets(library, genres, LEAD_MOVIE_GENRES).map((b) => b.genre) : genres;
   return [
+    ...(library ? [{ shelf: { kind: "all" as const }, label: ALL_MOVIES }] : []),
     { shelf: { kind: "trending" }, label: "Trending Now" },
     ...(holiday && library && pickHolidayTitles(holiday, library).length > 0
       ? [{ shelf: { kind: "holiday" as const }, label: holiday.title }]
@@ -246,6 +276,7 @@ export async function getShowShelfLinks(): Promise<ShelfLink[]> {
   const holiday = holidayNow();
   const offered = library ? genreBuckets(library, genres).map((b) => b.genre) : genres;
   return [
+    ...(library ? [{ shelf: { kind: "all" as const }, label: ALL_SHOWS }] : []),
     { shelf: { kind: "trending" }, label: "Trending TV" },
     ...(holiday && library && pickHolidayTitles(holiday, library).length > 0
       ? [{ shelf: { kind: "holiday" as const }, label: holiday.title }]

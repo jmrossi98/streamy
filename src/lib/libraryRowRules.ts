@@ -6,6 +6,8 @@
  * the library that carries the genre, so every card in it plays.
  */
 
+import { sortKey } from "./shelfFilterRules";
+
 export type RowGenre = { id: number; name: string };
 
 /**
@@ -17,6 +19,11 @@ const NOT_A_SHELF = new Set(["TV Movie"]);
 /** Most popular first. Stable for titles with no score. */
 export function byPopularity<T extends { popularity?: number }>(titles: T[]): T[] {
   return [...titles].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+}
+
+/** A to Z by the name a title is filed under ("The Matrix" under M). */
+export function alphabetical<T>(titles: T[], name: (title: T) => string): T[] {
+  return [...titles].sort((a, b) => sortKey(name(a)).localeCompare(sortKey(name(b))));
 }
 
 /** The titles carrying a genre, in the order given. */
