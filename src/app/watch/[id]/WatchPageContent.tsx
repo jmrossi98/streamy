@@ -1,5 +1,6 @@
 "use client";
 
+import { releaseLabel } from "@/lib/releaseDateRules";
 import { useState, useEffect } from "react";
 import type { Movie, MovieDetail } from "@/lib/tmdb";
 import { getMovieFromCache, setMovieInCache } from "@/lib/movieCache";
@@ -26,7 +27,8 @@ type Props = {
 
 function buildMetaLine(movie: Movie | MovieDetail): string {
   const parts: string[] = [];
-  if (movie.year) parts.push(movie.year);
+  const released = releaseLabel(movie);
+  if (released) parts.push(released);
   if (movie.duration) parts.push(movie.duration);
   if (movie.genres.length > 0) {
     parts.push(movie.genres.slice(0, 3).join(", "));
@@ -131,7 +133,7 @@ export function WatchPageContent({
       <div className="mx-auto hidden max-w-4xl px-4 py-8 text-center sm:px-6 sm:py-10 md:block md:text-left">
         <p className="text-lg text-white/80">{movie.overview}</p>
         <div className="mt-4 flex flex-wrap justify-center gap-4 text-white/70 md:justify-start">
-          {movie.year && <span>{movie.year}</span>}
+          {releaseLabel(movie) && <span>{releaseLabel(movie)}</span>}
           {movie.duration && <span>{movie.duration}</span>}
           <span className="font-medium text-green-400">{movie.rating} Rating</span>
         </div>

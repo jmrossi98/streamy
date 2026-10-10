@@ -1,5 +1,6 @@
 "use client";
 
+import { releaseLabel } from "@/lib/releaseDateRules";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -307,7 +308,7 @@ export function ShowContent({
         backdropUrl={show.backdrop}
         title={show.name}
         metaLine={[
-          show.year,
+          releaseLabel(show),
           show.numberOfSeasons > 0 ? `${show.numberOfSeasons} Season${show.numberOfSeasons === 1 ? "" : "s"}` : null,
           show.genres.slice(0, 2).join(", ") || null,
         ]
@@ -355,7 +356,7 @@ export function ShowContent({
       <div id="details" className="mx-auto max-w-4xl scroll-mt-28 px-4 py-10 text-left sm:px-6 md:px-10">
         <div className="hidden md:block">
           <p className="mb-2 text-sm text-white/70">
-            {show.year} · {show.rating}
+            {releaseLabel(show)} · {show.rating}
           </p>
           <p className="text-lg text-white/80">{show.overview}</p>
         </div>

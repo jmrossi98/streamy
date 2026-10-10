@@ -86,6 +86,8 @@ export type Movie = {
   poster: string;
   backdrop: string;
   year: string;
+  /** Full release date as TMDB gives it, "1999-03-31". Absent when TMDB has none. */
+  releaseDate?: string;
   rating: number;
   duration: string;
   genres: string[];
@@ -229,6 +231,7 @@ function toMovie(r: TmdbMovieResult, genres: TmdbGenre[]): Movie {
     poster: imageUrl(r.poster_path),
     backdrop: backdropUrl(r.backdrop_path),
     year,
+    releaseDate: r.release_date || undefined,
     rating: Math.round(r.vote_average * 10) / 10,
     duration: "", // filled in detail
     genres: genreNames,
@@ -354,6 +357,8 @@ export type TVShow = {
   poster: string;
   backdrop: string;
   year: string;
+  /** The date the first episode aired, "2008-01-20". Absent when TMDB has none. */
+  releaseDate?: string;
   rating: number;
   genres: string[];
   /** See Movie.popularity -- same rationale. */
@@ -417,6 +422,7 @@ function toTVShow(r: TmdbTVResult, genres: TmdbGenreTV[]): TVShow {
     poster: imageUrl(r.poster_path),
     backdrop: backdropUrl(r.backdrop_path),
     year,
+    releaseDate: r.first_air_date || undefined,
     rating: Math.round(r.vote_average * 10) / 10,
     genres: genreNames,
     popularity: r.popularity,
@@ -459,6 +465,7 @@ async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
     poster: imageUrl(data.poster_path),
     backdrop: backdropUrl(data.backdrop_path),
     year: data.first_air_date ? data.first_air_date.slice(0, 4) : "",
+    releaseDate: data.first_air_date || undefined,
     rating: Math.round((data.vote_average || 0) * 10) / 10,
     genres,
     numberOfSeasons: data.number_of_seasons || 1,
@@ -743,6 +750,7 @@ async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
     poster: imageUrl(movie.poster_path),
     backdrop: backdropUrl(movie.backdrop_path),
     year: movie.release_date ? movie.release_date.slice(0, 4) : "",
+    releaseDate: movie.release_date || undefined,
     rating: Math.round((movie.vote_average || 0) * 10) / 10,
     duration,
     genres,
