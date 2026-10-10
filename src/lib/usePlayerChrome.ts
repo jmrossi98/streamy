@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { spaceTogglesPlayback } from "./playerKeyRules";
 
 // Drives a custom control chrome layered over a <video>. The key reason this
 // exists rather than using native `controls`: a Jellyfin *transcode* is a
@@ -15,6 +16,8 @@ export function usePlayerChrome(
   containerRef: RefObject<HTMLElement | null>,
   opts: {
     knownDurationSeconds?: number | null;
+    /** False while something covers the picture (the start or error overlay): keys are left alone. */
+    keysEnabled?: boolean;
   } = {}
 ) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -101,6 +104,47 @@ export function usePlayerChrome(
     else v.pause();
     revealControls();
   }, [videoRef, revealControls]);
+
+  // Space is play/pause. Listened for on the window because nothing in the
+  // player holds focus when a title starts, so the press lands on <body>.
+  const keysEnabled = opts.keysEnabled ?? true;
+  useEffect(() => {
+    if (!keysEnabled) return;
+    const wanted = (e: KeyboardEvent) => {
+      const v = videoRef.current;
+      // Nothing loaded yet: no picture to toggle.
+      if (!v || v.readyState === 0) return false;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      return spaceTogglesPlayback({
+        key: e.key,
+        repeat: e.repeat,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        targetTag: target?.tagName,
+        targetType: target instanceof HTMLInputElement ? target.type : null,
+        targetEditable: target?.isContentEditable,
+        targetInPlayer: !!target && !!containerRef.current?.contains(target),
+      });
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!wanted(e)) return;
+      // Otherwise the page scrolls, or a focused control is pressed as well.
+      e.preventDefault();
+      togglePlay();
+    };
+    // A focused button fires its click on key *up* in some browsers, which
+    // would mute or leave fullscreen on top of the toggle above.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (wanted(e)) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [videoRef, containerRef, togglePlay, keysEnabled]);
 
   // One code path for both direct play and a transcode: a transcode's HLS
   // playlist spans the whole title, so hls.js just fetches the segment at the
