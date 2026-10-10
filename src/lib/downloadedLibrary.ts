@@ -91,6 +91,7 @@ async function loadMovies(): Promise<LibraryMovie[] | null> {
         poster: d.poster,
         backdrop: d.backdrop,
         year: d.year,
+        releaseDate: d.releaseDate,
         rating: d.rating,
         duration: d.duration,
         // TMDB's genres rather than Radarr's copy of them, so a title is
@@ -132,6 +133,7 @@ async function loadShows(): Promise<LibraryShow[] | null> {
         poster: d.poster,
         backdrop: d.backdrop,
         year: d.year,
+        releaseDate: d.releaseDate,
         rating: d.rating,
         genres: d.genres,
         popularity: meta?.popularity ?? 0,

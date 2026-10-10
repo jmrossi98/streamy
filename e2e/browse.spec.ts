@@ -115,3 +115,41 @@ test("search for something absent reports no results rather than breaking", asyn
   await expect(input).toBeVisible();
   await expect(page.locator("nav, header").first()).toBeVisible();
 });
+
+test("a shelf can be searched, sorted and cleared", async ({ page }) => {
+  await page.goto("/movies/browse/trending");
+  const cards = page.locator("a[href^='/watch/']");
+  await expect(cards.first()).toBeVisible();
+  const all = await cards.count();
+  expect(all).toBeGreaterThan(1);
+
+  // The mock catalogue is "Mock Movie 1" to "Mock Movie 20": one of them is 12.
+  const word = "movie 12";
+  // Typed only once React owns the field: text put into the server-rendered
+  // input before hydration is thrown away when the controlled value takes over.
+  const search = page.getByRole("searchbox", { name: "Search these movies" });
+  await search.evaluate(
+    (el) =>
+      new Promise<void>((resolve) => {
+        const tick = () => (Object.keys(el).some((k) => k.startsWith("__react")) ? resolve() : requestAnimationFrame(tick));
+        tick();
+      })
+  );
+  await search.fill(word);
+  await expect(page.getByRole("status").filter({ hasText: /of .* movies/ })).toBeVisible();
+  expect(await cards.count()).toBeLessThanOrEqual(all);
+  expect(await cards.count()).toBeGreaterThan(0);
+
+  // Nothing matching says so rather than showing an empty page.
+  await page.getByRole("searchbox", { name: "Search these movies" }).fill("zzzzqqqq");
+  await expect(page.getByText("No movies match.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(cards).toHaveCount(all);
+
+  // Sorting keeps every title and changes the order.
+  const before = await cards.evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  await page.getByRole("combobox", { name: "Sort" }).selectOption("title");
+  const after = await cards.evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  expect([...after].sort()).toEqual([...before].sort());
+});
