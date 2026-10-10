@@ -309,7 +309,7 @@ export function VideoChrome({
             <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} className="shrink-0 touch-manipulation">
               {isFullscreen ? (
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9L4 4m0 5V4h5m6 5l5-5m0 5V4h-5m-6 11l-5 5m0-5v5h5m6-5l5 5m0-5v5h-5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4l5 5m0-5v5H4m16-5l-5 5m0-5v5h5M4 20l5-5m0 5v-5H4m16 5l-5-5m0 5v-5h5" />
                 </svg>
               ) : (
                 <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
