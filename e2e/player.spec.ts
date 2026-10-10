@@ -176,4 +176,13 @@ test("space pauses and resumes, including with a player control focused", async 
   await page.keyboard.press("Space");
   await expect(video).toHaveJSProperty("paused", true);
   await expect(video).toHaveJSProperty("muted", mutedBefore);
+  // Focus that was tabbed (or scripted) to stays where it was put.
+  await expect(mute).toBeFocused();
+
+  // Focus left behind by a click is dropped, so the key press does not draw a
+  // focus ring around whatever was clicked last.
+  await mute.click();
+  await page.keyboard.press("Space");
+  await expect(video).toHaveJSProperty("paused", false);
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
 });
