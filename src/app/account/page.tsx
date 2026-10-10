@@ -2,10 +2,11 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
+import { WatchHistory } from "@/components/WatchHistory";
 
 /**
- * Account settings. Currently just the password, which until now could not be
- * changed at all from inside the app.
+ * Account settings: the password, and the person's own watch history. Open to
+ * every approved account, each seeing only its own.
  */
 export default async function AccountPage() {
   const session = await getSession();
@@ -34,6 +35,14 @@ export default async function AccountPage() {
         <div className="rounded-lg border border-white/10 bg-netflix-dark/80 px-4 py-5 sm:px-6">
           <ChangePasswordForm isAdmin={user.isAdmin} />
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-1 text-lg font-semibold text-white">Watch history</h2>
+        <p className="mb-4 text-sm text-white/50">
+          What you have watched and when you last watched it. Removing an entry also forgets where you left off.
+        </p>
+        <WatchHistory />
       </section>
     </div>
   );
