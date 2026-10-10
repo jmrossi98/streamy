@@ -155,3 +155,25 @@ test("a pause that lands while a resume is still loading is not overridden once 
   // meantime. This is the regression: playIntentRef in usePlayerEngine.ts.
   await expect(video).toHaveJSProperty("paused", true);
 });
+
+test("space pauses and resumes, including with a player control focused", async ({ page }) => {
+  await page.goto("/dev/player-harness");
+  const video = page.locator("video");
+
+  await clickWhenHydrated(page, page.getByRole("button", { name: /^play/i }).first());
+  await expect(video).toHaveJSProperty("paused", false);
+
+  await page.keyboard.press("Space");
+  await expect(video).toHaveJSProperty("paused", true);
+  await page.keyboard.press("Space");
+  await expect(video).toHaveJSProperty("paused", false);
+
+  // Focus left on a control by an earlier click must not turn space into a
+  // second press of that control: one toggle, and the control untouched.
+  const mute = page.getByRole("button", { name: /mute/i }).first();
+  await mute.focus();
+  const mutedBefore = await video.evaluate((v: HTMLVideoElement) => v.muted);
+  await page.keyboard.press("Space");
+  await expect(video).toHaveJSProperty("paused", true);
+  await expect(video).toHaveJSProperty("muted", mutedBefore);
+});

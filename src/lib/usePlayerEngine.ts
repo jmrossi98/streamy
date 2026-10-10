@@ -259,6 +259,9 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // stream rebuilt, so there's no offset to add and nothing to intercept.
   const chrome = usePlayerChrome(videoRef, containerRef, {
     knownDurationSeconds: runtimeMinutes ? runtimeMinutes * 60 : null,
+    // Behind the start overlay, playback has to begin through the overlay's
+    // own button, which also resumes from the saved position.
+    keysEnabled: !showOverlay,
   });
 
   // On mobile, hold at the play button instead of autoplaying. Fullscreen can
