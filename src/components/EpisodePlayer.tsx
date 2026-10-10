@@ -218,6 +218,7 @@ export function EpisodePlayer({
           closeHref={closeHref}
           onClose={onClose}
           chrome={chrome}
+          busy={buffering}
           extraBottomRight={
             <>
             <PlaybackOptionsMenu

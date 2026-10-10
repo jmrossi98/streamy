@@ -13,6 +13,8 @@ type ChromeState = {
   muted: boolean;
   volume: number;
   isFullscreen: boolean;
+  /** The button was pressed in an F11 fullscreen, which only F11 leaves. */
+  fullscreenHint?: boolean;
   controlsVisible: boolean;
   togglePlay: () => void;
   seek: (t: number) => void;
@@ -53,6 +55,7 @@ export function VideoChrome({
   onClose,
   chrome,
   live,
+  busy,
   extraTopRight,
   extraBottomRight,
 }: {
@@ -63,6 +66,12 @@ export function VideoChrome({
   chrome: ChromeState;
   /** Present only for a broadcast. Switches the timeline to DVR semantics. */
   live?: LiveState;
+  /**
+   * The picture is loading or has run out of buffer, and the player is
+   * drawing its spinner. The big play button stands down: it reads as
+   * "paused, press to start" over something that is already starting.
+   */
+  busy?: boolean;
   extraTopRight?: React.ReactNode;
   /** Rendered in the bottom bar, left of fullscreen -- e.g. a "next episode" button. */
   extraBottomRight?: React.ReactNode;
@@ -75,6 +84,7 @@ export function VideoChrome({
     muted,
     volume,
     isFullscreen,
+    fullscreenHint,
     controlsVisible,
     togglePlay,
     seek,
@@ -166,7 +176,7 @@ export function VideoChrome({
       </div>
 
       {/* Center play/pause -- big tap target, shown when paused. */}
-      {!isPlaying && (
+      {!isPlaying && !busy && (
         <button
           type="button"
           onClick={togglePlay}
@@ -304,7 +314,12 @@ export function VideoChrome({
             </span>
           )}
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="relative ml-auto flex items-center gap-2">
+            {fullscreenHint && (
+              <span role="status" className="absolute bottom-full right-0 mb-2 whitespace-nowrap rounded bg-black/85 px-2.5 py-1.5 text-xs text-white shadow-lg">
+                Press F11 to exit full screen
+              </span>
+            )}
             {extraBottomRight}
             <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} className="shrink-0 touch-manipulation">
               {isFullscreen ? (
