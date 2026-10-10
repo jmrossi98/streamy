@@ -186,3 +186,24 @@ test("space pauses and resumes, including with a player control focused", async 
   await expect(video).toHaveJSProperty("paused", false);
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
 });
+
+test("a title that is still loading shows a spinner, not a play button", async ({ page }) => {
+  // Held, so the player is past its start screen with nothing to show yet.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/test-assets/pause-test-clip.mp4", async (route) => {
+    await held;
+    await route.continue();
+  });
+
+  await page.goto("/dev/player-harness?autoPlay=1", { waitUntil: "domcontentloaded" });
+  await expect(page.getByLabel("Buffering")).toBeVisible();
+  // At most the small one in the control bar (it reads Pause once autoplay
+  // has been accepted). Two would mean the big centre button is up as well.
+  expect(await page.getByRole("button", { name: "Play", exact: true }).count()).toBeLessThan(2);
+
+  release();
+  await expect(page.getByLabel("Buffering")).toBeHidden({ timeout: 10_000 });
+});

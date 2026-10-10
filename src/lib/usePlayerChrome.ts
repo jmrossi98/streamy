@@ -29,6 +29,9 @@ export function usePlayerChrome(
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when the button was pressed in a fullscreen only the keyboard can leave.
+  const [fullscreenHint, setFullscreenHint] = useState(false);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fixed known runtime wins so the scrubber never resizes mid-transcode; fall
   // back to the element's own duration only when we weren't told the runtime.
@@ -75,15 +78,29 @@ export function usePlayerChrome(
     };
   }, [videoRef]);
 
+  // Two different fullscreens. The button's own is the Fullscreen API, which
+  // the page can enter and leave. F11 is the browser's: the page can see it
+  // (the display-mode media query) but has no way to leave it. Both count as
+  // fullscreen for the icon; only the first can be undone from here.
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    const browserFs = window.matchMedia("(display-mode: fullscreen)");
+    const onFs = () => {
+      setIsFullscreen(!!document.fullscreenElement || browserFs.matches);
+      if (!browserFs.matches) setFullscreenHint(false);
+    };
+    onFs();
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    browserFs.addEventListener("change", onFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      browserFs.removeEventListener("change", onFs);
+    };
   }, []);
 
   useEffect(
     () => () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
+      if (hintTimer.current) clearTimeout(hintTimer.current);
     },
     []
   );
@@ -214,6 +231,15 @@ export function usePlayerChrome(
       document.exitFullscreen().catch(() => {});
       return;
     }
+    // Fullscreen from F11. Asking for element fullscreen here would "work"
+    // and change nothing on screen, which is how the button came to look dead.
+    // Say what does leave it instead.
+    if (window.matchMedia("(display-mode: fullscreen)").matches) {
+      setFullscreenHint(true);
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+      hintTimer.current = setTimeout(() => setFullscreenHint(false), 4000);
+      return;
+    }
     if (el?.requestFullscreen) {
       el.requestFullscreen().catch(() => {
         // iOS doesn't allow element fullscreen -- use the video's own.
@@ -234,6 +260,7 @@ export function usePlayerChrome(
     muted,
     volume,
     isFullscreen,
+    fullscreenHint,
     controlsVisible,
     revealControls,
     setControlsVisible,

@@ -177,6 +177,7 @@ export function WatchPlayer({
           title={movieTitle}
           closeHref={closeHref}
           chrome={chrome}
+          busy={buffering}
           extraBottomRight={
             <PlaybackOptionsMenu
               audioTracks={audioTracks}

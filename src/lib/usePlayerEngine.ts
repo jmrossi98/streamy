@@ -303,11 +303,21 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     if (!v) return;
     const onWaiting = () => setBuffering(true);
     const onPlaying = () => setBuffering(false);
+    // The first load counts too. `waiting` only fires once playback has been
+    // asked for, so a title that was still fetching its opening seconds showed
+    // nothing but a play button, as if it were paused and ready.
+    setBuffering(v.readyState < HTMLMediaElement.HAVE_FUTURE_DATA && !v.error);
+    v.addEventListener("loadstart", onWaiting);
     v.addEventListener("waiting", onWaiting);
     v.addEventListener("playing", onPlaying);
+    v.addEventListener("canplay", onPlaying);
+    v.addEventListener("error", onPlaying);
     return () => {
+      v.removeEventListener("loadstart", onWaiting);
       v.removeEventListener("waiting", onWaiting);
       v.removeEventListener("playing", onPlaying);
+      v.removeEventListener("canplay", onPlaying);
+      v.removeEventListener("error", onPlaying);
     };
   }, []);
 
