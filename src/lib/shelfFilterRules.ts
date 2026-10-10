@@ -18,7 +18,8 @@ export type ShelfTitle = {
 };
 
 export const SHELF_SORTS = [
-  { value: "shelf", label: "Most popular" },
+  // The shelf's own order: popularity on most, A to Z on the "all" shelf.
+  { value: "shelf", label: "Default order" },
   { value: "title", label: "Title A–Z" },
   { value: "newest", label: "Newest first" },
   { value: "oldest", label: "Oldest first" },
