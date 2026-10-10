@@ -1,8 +1,7 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
 import { getPersonById, getPersonCredits } from "@/lib/tmdb";
-import { MovieRow } from "@/components/MovieRow";
-import { TVRow } from "@/components/TVRow";
+import { PersonCredits } from "@/components/PersonCredits";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
 type Props = { params: Promise<{ id: string }> };
@@ -54,12 +53,13 @@ export default async function PersonPage({ params }: Props) {
         </div>
       </div>
 
-      <div className="mt-10 space-y-2 [&>*:first-child]:pt-0">
-        {credits.movies.length > 0 && <MovieRow title="Movies" movies={credits.movies} />}
-        {credits.shows.length > 0 && <TVRow title="TV Shows" shows={credits.shows} />}
-      </div>
+      {credits.length > 0 && (
+        <div className="mt-10">
+          <PersonCredits sections={credits} />
+        </div>
+      )}
 
-      {credits.movies.length === 0 && credits.shows.length === 0 && (
+      {credits.length === 0 && (
         <p className="mx-auto max-w-5xl px-4 py-10 text-center text-white/50 sm:px-6 md:px-10">
           No known filmography.
         </p>

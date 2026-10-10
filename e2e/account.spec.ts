@@ -72,6 +72,36 @@ test("a person page renders a name and a filmography", async ({ page }) => {
   await expect(page.locator("img").first()).toBeVisible({ timeout: 15_000 });
 });
 
+test("a person page groups titles by role, movies and shows together, and can be narrowed", async ({ page }) => {
+  await page.goto("/person/1000");
+  const acted = page.getByRole("region", { name: "Acted in" });
+  const directed = page.getByRole("region", { name: "Directed" });
+  await expect(acted.getByRole("heading", { name: "Acted in" })).toBeVisible({ timeout: 10_000 });
+  await expect(directed.getByRole("heading", { name: "Directed" })).toBeVisible();
+
+  // One section holds both kinds.
+  await expect(acted.locator("a[href^='/watch/']").first()).toBeVisible();
+  await expect(acted.locator("a[href^='/show/']").first()).toBeVisible();
+
+  // Movies only: the shows go, and the section stays.
+  const kind = page.getByRole("combobox", { name: "Movies or TV" });
+  await kind.evaluate(
+    (el) =>
+      new Promise<void>((resolve) => {
+        const tick = () => (Object.keys(el).some((k) => k.startsWith("__react")) ? resolve() : requestAnimationFrame(tick));
+        tick();
+      })
+  );
+  await kind.selectOption("show");
+  await expect(acted.locator("a[href^='/watch/']")).toHaveCount(0);
+  // A role with nothing left under the filter is not shown as an empty heading.
+  await expect(directed).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(directed).toBeVisible();
+  await expect(kind).toHaveValue("all");
+});
+
 test("a person who does not exist does not error", async ({ page }) => {
   const res = await page.goto("/person/not-a-real-person");
   // 404 or a rendered empty state are both fine; a 500 is not. The mock

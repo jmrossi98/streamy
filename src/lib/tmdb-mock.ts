@@ -231,9 +231,13 @@ export async function mockGetPersonById(id: string): Promise<PersonDetail | null
 
 export async function mockGetPersonCredits(
   _id: string
-): Promise<{ movies: Movie[]; shows: TVShow[] }> {
-  return Promise.resolve({
-    movies: MOCK_MOVIES.slice(0, 6),
-    shows: MOCK_TV_SHOWS.slice(0, 4),
-  });
+): Promise<
+  { key: string; label: string; titles: ({ kind: "movie"; movie: Movie } | { kind: "show"; show: TVShow })[] }[]
+> {
+  const movies = (from: number, to: number) => MOCK_MOVIES.slice(from, to).map((movie) => ({ kind: "movie" as const, movie }));
+  const shows = (from: number, to: number) => MOCK_TV_SHOWS.slice(from, to).map((show) => ({ kind: "show" as const, show }));
+  return Promise.resolve([
+    { key: "acted", label: "Acted in", titles: [...movies(0, 6), ...shows(0, 4)] },
+    { key: "directed", label: "Directed", titles: movies(2, 4) },
+  ]);
 }

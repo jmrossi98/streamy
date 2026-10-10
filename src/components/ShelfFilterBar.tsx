@@ -14,6 +14,8 @@ export function ShelfFilterBar({
   shown,
   total,
   noun,
+  extra,
+  active: activeProp,
 }: {
   filter: ShelfFilter;
   onChange: (next: ShelfFilter) => void;
@@ -23,8 +25,12 @@ export function ShelfFilterBar({
   total: number;
   /** "movies" or "shows", for the count. */
   noun: string;
+  /** Further controls of the caller's own, placed with the genre and sort. */
+  extra?: React.ReactNode;
+  /** Whether anything is narrowing the list, when the caller's `extra` can too. */
+  active?: boolean;
 }) {
-  const active = isFiltering(filter);
+  const active = activeProp ?? isFiltering(filter);
   return (
     <div className="mb-5 flex flex-wrap items-center gap-2">
       {/* Widths are set on wrappers: the shared fields are full width by design. */}
@@ -49,6 +55,7 @@ export function ShelfFilterBar({
           </Select>
         </div>
       )}
+      {extra}
       <div className="w-40">
         <Select value={filter.sort} onChange={(e) => onChange({ ...filter, sort: e.target.value as ShelfSort })} aria-label="Sort">
           {SHELF_SORTS.map((s) => (
