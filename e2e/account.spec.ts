@@ -79,3 +79,29 @@ test("a person who does not exist does not error", async ({ page }) => {
   // to exercise.
   expect(res?.status()).toBeLessThan(500);
 });
+
+test("watch history lists what was watched and lets it be removed", async ({ page }) => {
+  // Saved through the same route the player uses, so the entries are real rows.
+  for (const movieId of ["603", "27205"]) {
+    const res = await page.request.post("/api/progress", { data: { movieId, progressSeconds: 300 } });
+    expect(res.ok()).toBe(true);
+  }
+
+  await page.goto("/account");
+  const section = page.locator("section", { has: page.getByRole("heading", { name: "Watch history" }) });
+  const rows = section.getByRole("listitem");
+  await expect(rows).toHaveCount(2, { timeout: 10_000 });
+  // Each entry carries a real date, not a blank.
+  await expect(rows.first().locator("time")).toHaveText(/\d/);
+
+  await rows.first().getByRole("button", { name: /^remove/i }).click();
+  await expect(rows).toHaveCount(1);
+
+  await section.getByRole("button", { name: "Clear all history" }).click();
+  await section.getByRole("button", { name: "Yes, clear it" }).click();
+  await expect(section.getByText("Nothing watched yet.")).toBeVisible();
+
+  // Gone on the server, not just from the page.
+  const after = await (await page.request.get("/api/history")).json();
+  expect(after.items).toEqual([]);
+});

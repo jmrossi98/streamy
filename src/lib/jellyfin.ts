@@ -13,6 +13,7 @@
  */
 import { cached } from "./ttlCache";
 import { isAllowedSubtitleLanguage, type AudioTrack } from "./audioLanguageRules";
+import { targetCovers, type HistoryTarget } from "./watchHistoryRules";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -514,6 +515,85 @@ export async function getJellyfinUserData(itemId: string, jellyfinUserId: string
   } catch (err) {
     console.error(`[jellyfin] getJellyfinUserData failed for item ${itemId}:`, err);
     return null;
+  }
+}
+
+/**
+ * Forgets that a person watched something, on their own Jellyfin account:
+ * position, played flag and last-played date all cleared.
+ *
+ * The other half of deleting watch history in Streamy. Without it the next
+ * pull (progressSync.ts) reads Jellyfin's record of the same watch as news and
+ * writes the deleted row straight back, and the Roku goes on offering to
+ * resume it.
+ *
+ * Works from the account's own watched list rather than a library lookup, so
+ * it finds a title whether or not its file is still there, and a full clear
+ * is two reads plus one small request per title.
+ *
+ * Returns false when Jellyfin could not be asked or a title could not be
+ * cleared: the caller must then leave Streamy's rows alone, or they would
+ * reappear by themselves. True when there was nothing to clear.
+ */
+export async function clearJellyfinWatchState(jellyfinUserId: string | null, target: HistoryTarget): Promise<boolean> {
+  if (!isJellyfinConfigured() || !jellyfinUserId) return true;
+  const uid = encodeURIComponent(jellyfinUserId);
+  type Item = {
+    Id: string;
+    Type?: string;
+    SeriesId?: string;
+    ParentIndexNumber?: number;
+    IndexNumber?: number;
+    ProviderIds?: Record<string, string>;
+  };
+  const list = (filter: string) =>
+    jellyfinFetch<{ Items: Item[] }>(
+      `/Items?userId=${uid}&Recursive=true&Filters=${filter}&IncludeItemTypes=Movie,Episode&fields=ProviderIds`
+    );
+  try {
+    const [played, resumable] = await Promise.all([list("IsPlayed"), list("IsResumable")]);
+    const items = [...new Map([...played.Items, ...resumable.Items].map((i) => [i.Id, i])).values()];
+
+    const seriesTmdb = new Map<string, string>();
+    const seriesIds = [...new Set(items.map((i) => i.SeriesId).filter((x): x is string => Boolean(x)))];
+    // Only a single-episode delete needs to know which show an episode belongs to.
+    if (target.kind === "episode") {
+      for (let i = 0; i < seriesIds.length; i += 100) {
+        const series = await jellyfinFetch<{ Items: { Id: string; ProviderIds?: Record<string, string> }[] }>(
+          `/Items?ids=${seriesIds.slice(i, i + 100).join(",")}&fields=ProviderIds`
+        );
+        for (const s of series.Items) {
+          const tmdb = s.ProviderIds?.Tmdb ?? s.ProviderIds?.tmdb;
+          if (tmdb) seriesTmdb.set(s.Id, tmdb);
+        }
+      }
+    }
+
+    const wanted = items.filter((i) => {
+      if (i.Type !== "Movie" && i.Type !== "Episode") return false;
+      const tmdbId =
+        i.Type === "Movie" ? i.ProviderIds?.Tmdb ?? i.ProviderIds?.tmdb : i.SeriesId ? seriesTmdb.get(i.SeriesId) : undefined;
+      return targetCovers(target, {
+        type: i.Type,
+        tmdbId: tmdbId ?? null,
+        season: i.ParentIndexNumber ?? null,
+        episode: i.IndexNumber ?? null,
+      });
+    });
+
+    // A few at a time: a long history is hundreds of these.
+    let failed = 0;
+    for (let i = 0; i < wanted.length; i += 8) {
+      const results = await Promise.allSettled(
+        wanted.slice(i, i + 8).map((item) => jellyfinFetch(`/UserPlayedItems/${item.Id}?userId=${uid}`, { method: "DELETE" }))
+      );
+      failed += results.filter((r) => r.status === "rejected").length;
+    }
+    if (failed) console.error(`[jellyfin] clearJellyfinWatchState: ${failed} of ${wanted.length} not cleared`);
+    return failed === 0;
+  } catch (err) {
+    console.error("[jellyfin] clearJellyfinWatchState failed:", err);
+    return false;
   }
 }
 
