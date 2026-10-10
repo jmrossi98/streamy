@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, type RefObject } from "react";
+import { cueLine } from "./subtitleCueRules";
 import Hls from "hls.js";
 import { isMobileViewport } from "./videoFullscreen";
 import { supportsNativeHls } from "./hlsSupport";
@@ -36,7 +37,25 @@ import type { SubtitleOption } from "@/components/SubtitleSelector";
 function applySubtitleMode(v: HTMLVideoElement, _tracks: SubtitleOption[], selected: number | null) {
   v.querySelectorAll<HTMLTrackElement>("track[data-sub-index]").forEach((el) => {
     el.track.mode = Number(el.dataset.subIndex) === selected ? "showing" : "disabled";
+    // A track's cues arrive when it is first shown, so they are placed then;
+    // one already loaded (switched away from and back) is placed here. The
+    // same function each time, so adding the listener again is a no-op.
+    el.addEventListener("load", placeLoadedCues);
+    placeCues(el.track);
   });
+}
+
+/** Lifts every cue clear of the control bar -- see subtitleCueRules. */
+function placeCues(track: TextTrack) {
+  for (const cue of Array.from(track.cues ?? [])) {
+    if (!(cue instanceof VTTCue)) continue;
+    cue.snapToLines = true;
+    cue.line = cueLine(cue.text);
+  }
+}
+
+function placeLoadedCues(e: Event) {
+  if (e.target instanceof HTMLTrackElement) placeCues(e.target.track);
 }
 
 /** Setting currentTime before the browser has any metadata (readyState 0)
