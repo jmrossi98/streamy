@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { episodeLabel, placeFromLabel, wantedEpisodes } from "../wantedEpisodeRules";
+import { episodeLabel, placeFromLabel, wantedEpisodes, wholeShowEpisodes } from "../wantedEpisodeRules";
 
 const NOW = Date.parse("2026-10-12T12:00:00Z");
 const ep = (id: number, over: Partial<Parameters<typeof wantedEpisodes>[0][number]> = {}) => ({
@@ -49,5 +49,17 @@ describe("placing a row from its own label", () => {
 
   it("says nothing about a release name", () => {
     expect(placeFromLabel("Vanderpump.Rules.S01E02.1080p.WEB")).toBeNull();
+  });
+});
+
+describe("what a whole-show request covers", () => {
+  const e = (seasonNumber: number, episodeNumber: number, hasFile = false) => ({ seasonNumber, episodeNumber, hasFile });
+
+  it("is every missing regular episode in broadcast order", () => {
+    expect(wholeShowEpisodes([e(2, 1), e(1, 2), e(1, 1, true), e(1, 3)])).toEqual([e(1, 2), e(1, 3), e(2, 1)]);
+  });
+
+  it("never includes the specials, so cancelled Extras are not asked for again", () => {
+    expect(wholeShowEpisodes([e(0, 1), e(0, 2), e(1, 1)])).toEqual([e(1, 1)]);
   });
 });
