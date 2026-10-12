@@ -5,6 +5,7 @@
  * no title matching involved.
  */
 
+import { sharedRead } from "./sharedRead";
 import { pickDeepRelease, type DeepRelease } from "./deepSearchRules";
 import { pickFastCopies, type FastCopyRelease } from "./fastCopyRules";
 import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
@@ -1125,7 +1126,27 @@ export async function readDownloadRouting(
   }
 }
 
+/** Routing is configuration: it changes when someone edits it, not between refreshes. */
+const ROUTING_TTL_MS = 60_000;
+
+/**
+ * readDownloadRouting, asked at most once a minute per service. The panel
+ * showing it refreshes every 2.5 seconds and this is several requests each
+ * time; it was the most frequent timeout against a busy Sonarr.
+ */
+export function sharedDownloadRouting(
+  service: "radarr" | "sonarr",
+  fetcher: Parameters<typeof readDownloadRouting>[0]
+): Promise<DownloadRouting | null> {
+  return sharedRead(`${service}:routing`, ROUTING_TTL_MS, async () => {
+    const routing = await readDownloadRouting(fetcher, service);
+    // Null is "could not be read"; thrown so the last good answer stands in.
+    if (!routing) throw new Error(`${service} routing unreadable`);
+    return routing;
+  }).catch(() => null);
+}
+
 export async function getDownloadRouting(): Promise<DownloadRouting | null> {
   if (!isRadarrConfigured()) return null;
-  return readDownloadRouting((path) => radarrFetch(path), "radarr");
+  return sharedDownloadRouting("radarr", (path) => radarrFetch(path));
 }
