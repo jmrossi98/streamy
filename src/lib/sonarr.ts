@@ -2231,7 +2231,9 @@ export async function getSonarrSeriesPlaces(seriesIds: number[]): Promise<Map<nu
           ),
           wanted: wantedEpisodes(episodes),
         };
-        seriesPlaces.set(id, { at: Date.now(), places });
+        // An empty list is a show Sonarr is still filling in. Remembering it
+        // put every row of a new show under "Other" for five minutes.
+        if (episodes.length > 0) seriesPlaces.set(id, { at: Date.now(), places });
         out.set(id, places);
       } catch (err) {
         console.error(`[sonarr] could not read series ${id} for the downloads panel:`, err);
