@@ -6,6 +6,7 @@
  * ID matching, never fuzzy title search.
  */
 
+import { unsearchedBacklog } from "./searchBacklogRules";
 import { wantedEpisodes, type EpisodeForWanted, type WantedEpisode } from "./wantedEpisodeRules";
 import { episodeSearchesToCancel, seriesSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { earliestDownloaded } from "./playStartRules";
@@ -701,6 +702,91 @@ async function waitForSonarrCommand(commandId: number): Promise<boolean> {
   return false;
 }
 
+type WantedRecord = {
+  id: number;
+  title: string;
+  seriesId: number;
+  seasonNumber: number;
+  episodeNumber: number;
+  monitored: boolean;
+  lastSearchTime?: string | null;
+};
+
+/**
+ * The whole list, not a page of it. This read the 50 most recently aired, and
+ * the healer picks from what it is given: with more than 50 wanted, the newest
+ * 50 were retried on their backoff for ever and nothing older was looked at.
+ * On 2026-10-12 that was Atlanta's season 13, whose only releases are dead
+ * torrents, standing in front of twelve seasons nobody had searched.
+ */
+const WANTED_PAGE_SIZE = 2000;
+/** The downloads panel polls; one read serves a burst of renders. */
+const WANTED_TTL_MS = 20_000;
+let wantedCache: { at: number; records: WantedRecord[] } | null = null;
+
+/** Every monitored, aired episode with no file, newest first. Throws if Sonarr cannot be read. */
+async function wantedMissing(): Promise<WantedRecord[]> {
+  if (wantedCache && Date.now() - wantedCache.at < WANTED_TTL_MS) return wantedCache.records;
+  const page = await sonarrFetch<{ records: WantedRecord[] }>(
+    `/api/v3/wanted/missing?pageSize=${WANTED_PAGE_SIZE}&sortKey=airDateUtc&sortDirection=descending`
+  );
+  wantedCache = { at: Date.now(), records: page.records };
+  return page.records;
+}
+
+/**
+ * Series still owed a regular episode, whatever their request says.
+ *
+ * A request reads "available" from its first imported file, so it cannot say
+ * whether a show is finished: Atlanta turned available with 79 of 357
+ * episodes, and the downloads panel, which listed queued episodes only for
+ * unfinished requests, dropped the other 278 from view.
+ */
+export async function getSonarrWantedSeriesIds(): Promise<number[]> {
+  if (!isSonarrConfigured()) return [];
+  try {
+    const wanted = await wantedMissing();
+    return [...new Set(wanted.filter((e) => e.monitored && e.seasonNumber !== 0).map((e) => e.seriesId))];
+  } catch (err) {
+    console.error("[sonarr] getSonarrWantedSeriesIds failed:", err);
+    return [];
+  }
+}
+
+const adoptedAt = new Map<number, number>();
+
+/**
+ * Puts wanted episodes that have never been searched back into the ordered
+ * queue -- see searchBacklogRules.ts. Returns how many. Called by the warden
+ * ahead of its drain, so they are searched on the same pass.
+ */
+export async function adoptUnsearchedEpisodes(): Promise<number> {
+  if (!isSonarrConfigured()) return 0;
+  const queue = await searchQueue();
+  const [wanted, downloading, pending] = await Promise.all([
+    wantedMissing(),
+    episodesInQueue(),
+    queue.pendingSearchIds(),
+  ]);
+  const backlog = unsearchedBacklog(
+    wanted.filter((e) => e.monitored),
+    new Set([...downloading, ...pending]),
+    adoptedAt
+  );
+  let adopted = 0;
+  for (const [seriesId, episodeIds] of backlog) {
+    await queue.enqueueEpisodeSearches(seriesId, episodeIds);
+    await storeSeriesLabels(seriesId);
+    for (const id of episodeIds) {
+      adoptedAt.set(id, Date.now());
+      markEpisodeSearchTriggered(id);
+    }
+    adopted += episodeIds.length;
+    console.log(`[sonarr] queued ${episodeIds.length} never-searched episode(s) of series ${seriesId}`);
+  }
+  return adopted;
+}
+
 /**
  * Episodes Sonarr still wants but has nothing in flight for: monitored, no
  * file, aired, and absent from the queue. Same failure shape as the Radarr
@@ -713,15 +799,13 @@ export async function getIdleWantedEpisodes(): Promise<
   if (!isSonarrConfigured()) return [];
   try {
     const [wanted, queue] = await Promise.all([
-      sonarrFetch<{
-        records: { id: number; title: string; seriesId: number; seasonNumber: number; monitored: boolean }[];
-      }>(`/api/v3/wanted/missing?pageSize=50&sortKey=airDateUtc&sortDirection=descending`),
+      wantedMissing(),
       sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`),
     ]);
     const queued = new Set(
       queue.records.map((r) => r.episodeId).filter((id): id is number => id != null)
     );
-    return wanted.records
+    return wanted
       // Season 0 is left out: specials are bonus clips and behind-the-scenes
       // featurettes that indexers almost never carry, so re-searching them
       // only ever came up empty -- 27 of them at a time, on every pass,
@@ -994,6 +1078,7 @@ export async function dropQueuedEpisodeSearch(episodeId: number): Promise<boolea
   // Only the episode id is known here, so every show's cached wanted list
   // goes; they are re-read on the next render.
   seriesPlaces.clear();
+  wantedCache = null;
   return true;
 }
 
@@ -2021,6 +2106,7 @@ export async function removeSonarrEpisodes(
     // The downloads panel caches each show's wanted episodes; without this
     // the cancelled ones would be listed again until the cache expired.
     seriesPlaces.delete(seriesId);
+    wantedCache = null;
 
     // Collected before the files go, since deleting clears the history trail
     // we need to find the still-seeding torrent. Best effort: not knowing
@@ -2090,6 +2176,7 @@ export async function removeSonarrSeries(seriesId: number): Promise<boolean> {
     await (await searchQueue()).clearPendingSearches(episodes.map((e) => e.id));
     if (!(await cancelSonarrDownload(seriesId))) return false;
     seriesPlaces.delete(seriesId);
+    wantedCache = null;
     return await deleteSonarrSeries(seriesId);
   } catch (err) {
     console.error(`[sonarr] removeSonarrSeries failed for ${seriesId}:`, err);

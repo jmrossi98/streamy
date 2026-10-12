@@ -7,6 +7,7 @@ import {
   getSonarrCompletedEpisodes,
   maybeDrainEpisodeSearches,
   getSonarrSeriesPlaces,
+  getSonarrWantedSeriesIds,
 } from "@/lib/sonarr";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
@@ -297,12 +298,17 @@ export async function AdminDownloadsSections() {
 
   // Where each TV row sits in its show, so the panel can fold them into
   // shows and seasons. Unplaced rows still render, under the show's "Other".
-  // Shows somebody asked for that are not finished. Read even when nothing
-  // of theirs has a row yet, for the episodes added just below.
-  const activeShowIds = requestTimes
-    .filter((r) => r.mediaType === "show" && (r.status === "requested" || r.status === "downloading"))
-    .map((r) => r.externalId)
-    .filter((id): id is number => id != null);
+  // Shows that are not finished. Read even when nothing of theirs has a row
+  // yet, for the episodes added just below. Sonarr's wanted list is what says
+  // so; the request alone turns "available" at its first file, which hid the
+  // rest of a long show as soon as one episode had landed.
+  const activeShowIds = [
+    ...requestTimes
+      .filter((r) => r.mediaType === "show" && (r.status === "requested" || r.status === "downloading"))
+      .map((r) => r.externalId)
+      .filter((id): id is number => id != null),
+    ...(await withDeadline(getSonarrWantedSeriesIds(), [], PANEL_DEADLINE_MS)),
+  ];
   const places = await withDeadline(
     getSonarrSeriesPlaces([...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId), ...activeShowIds]),
     new Map(),

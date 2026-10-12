@@ -26,7 +26,7 @@
  * The page-load kicks stay. They make things feel immediate when someone is
  * looking; this makes them correct when nobody is.
  */
-import { drainEpisodeSearchesNow } from "./sonarr";
+import { adoptUnsearchedEpisodes, drainEpisodeSearchesNow } from "./sonarr";
 import { healStalledDownloads } from "./downloadHealer";
 import { pendingSearchStats, type QueueStats } from "./pendingEpisodeSearch";
 import { isQueueStuck } from "./searchQueueRules";
@@ -36,6 +36,8 @@ export type WardenReport = {
   ranAt: string;
   /** Titles the healer re-grabbed or re-searched this pass. */
   healed: { title: string; reason: string }[];
+  /** Wanted episodes found never searched and put back in the queue. */
+  adopted: number;
   /** The episode-search queue before the drain, and after it. */
   queueBefore: QueueStats;
   queueAfter: QueueStats;
@@ -75,6 +77,12 @@ export async function runDownloadWarden(): Promise<WardenReport> {
   const queueBefore = await pendingSearchStats().catch((err) => {
     errors.push({ step: "queueStats", error: message(err) });
     return { total: 0, oldestWaitMinutes: 0, series: 0, retrying: 0 };
+  });
+
+  // Lost queue writes are put back before the drain, so it works on them now.
+  const adopted = await adoptUnsearchedEpisodes().catch((err) => {
+    errors.push({ step: "adopt", error: message(err) });
+    return 0;
   });
 
   // Drain first, heal second, and the order is load-bearing.
@@ -117,6 +125,7 @@ export async function runDownloadWarden(): Promise<WardenReport> {
   return {
     ranAt: new Date().toISOString(),
     healed,
+    adopted,
     queueBefore,
     queueAfter,
     stuck,
