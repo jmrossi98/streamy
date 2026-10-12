@@ -18,10 +18,10 @@ export const ADMIN_TABS = [
   { href: "/admin/security", label: "Security" },
   { href: "/admin/health", label: "Health" },
   { href: "/admin/metrics", label: "Metrics" },
-  // Downloads live under Storage: what is arriving and what it is filling up
-  // are the same question from two sides, and separate tabs meant opening one
-  // to make sense of the other.
-  { href: "/admin/storage", label: "Storage" },
+  // Downloads and the storage chart share a tab: what is arriving and what it
+  // is filling up are the same question from two sides. Named for the
+  // downloads, which are what the tab is opened for.
+  { href: "/admin/downloads", label: "Downloads" },
   { href: "/admin/spend", label: "Spend" },
   { href: "/admin/approvals", label: "Accounts" },
   { href: "/admin/jobs", label: "Job search" },

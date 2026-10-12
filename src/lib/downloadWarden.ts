@@ -30,6 +30,7 @@ import { drainEpisodeSearchesNow } from "./sonarr";
 import { healStalledDownloads } from "./downloadHealer";
 import { pendingSearchStats, type QueueStats } from "./pendingEpisodeSearch";
 import { isQueueStuck } from "./searchQueueRules";
+import { runServiceWatch, type ServiceWatchReport } from "./serviceWatch";
 
 export type WardenReport = {
   ranAt: string;
@@ -42,6 +43,8 @@ export type WardenReport = {
   stuck: boolean;
   /** Anything that threw, by the step that threw it. */
   errors: { step: string; error: string }[];
+  /** Which services were answering this pass; null if that check failed. */
+  services: ServiceWatchReport | null;
 };
 
 /**
@@ -104,6 +107,13 @@ export async function runDownloadWarden(): Promise<WardenReport> {
 
   const stuck = isQueueStuck(queueBefore, queueAfter);
 
+  // Not download recovery, but this pass is the one thing here that runs on
+  // time every ten minutes, which is what watching for a down service needs.
+  const services = await runServiceWatch().catch((err) => {
+    errors.push({ step: "services", error: message(err) });
+    return null;
+  });
+
   return {
     ranAt: new Date().toISOString(),
     healed,
@@ -111,5 +121,6 @@ export async function runDownloadWarden(): Promise<WardenReport> {
     queueAfter,
     stuck,
     errors,
+    services,
   };
 }

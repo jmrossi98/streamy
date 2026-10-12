@@ -24,12 +24,13 @@ import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownl
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { formatFileSize } from "@/lib/formatBytes";
 import { withDeadline } from "@/lib/withDeadline";
+import { episodeLabel } from "@/lib/wantedEpisodeRules";
 
 /**
  * Every downloads panel, as one block.
  *
- * Lives here rather than on its own page because downloads and storage answer
- * the same question from two directions -- what is arriving, and what it is
+ * Shares the Downloads tab with the storage chart because the two answer the
+ * same question from two directions -- what is arriving, and what it is
  * filling up -- and splitting them across tabs meant checking one to
  * understand the other. The storage chart sits above this.
  */
@@ -77,7 +78,10 @@ export async function AdminDownloadsSections() {
     // When each title was asked for, for stamping in-flight rows the download
     // client gives no grab time for.
     prisma.mediaRequest
-      .findMany({ where: { externalId: { not: null } }, select: { mediaType: true, externalId: true, requestedAt: true } })
+      .findMany({
+        where: { externalId: { not: null } },
+        select: { mediaType: true, externalId: true, requestedAt: true, status: true },
+      })
       .catch(() => []),
     withDeadline(getGameDownloads(), [], PANEL_DEADLINE_MS),
     withDeadline(getWishlist(), [], PANEL_DEADLINE_MS),
@@ -293,11 +297,53 @@ export async function AdminDownloadsSections() {
 
   // Where each TV row sits in its show, so the panel can fold them into
   // shows and seasons. Unplaced rows still render, under the show's "Other".
+  // Shows somebody asked for that are not finished. Read even when nothing
+  // of theirs has a row yet, for the episodes added just below.
+  const activeShowIds = requestTimes
+    .filter((r) => r.mediaType === "show" && (r.status === "requested" || r.status === "downloading"))
+    .map((r) => r.externalId)
+    .filter((id): id is number => id != null);
   const places = await withDeadline(
-    getSonarrSeriesPlaces(downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId)),
+    getSonarrSeriesPlaces([...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId), ...activeShowIds]),
     new Map(),
     PANEL_DEADLINE_MS
   );
+
+  // Every episode a requested show is still owed, whether or not anything has
+  // a row for it. Without these a show appeared only as far as the search
+  // queue or Sonarr's own queue had got: a whole series asked for and one
+  // season listed -- see wantedEpisodeRules.ts.
+  const listedEpisodes = new Set(downloads.map((d) => d.episodeId).filter((id) => id != null));
+  const showsWithWanted = new Set<number>();
+  const wantedRows: DownloadRow[] = [];
+  for (const seriesId of new Set(activeShowIds)) {
+    const series = places.get(seriesId);
+    if (!series) continue;
+    for (const e of series.wanted) {
+      showsWithWanted.add(seriesId);
+      if (listedEpisodes.has(e.episodeId)) continue;
+      wantedRows.push({
+        queueId: null,
+        externalId: seriesId,
+        episodeId: e.episodeId,
+        title: episodeLabel(series.title, e),
+        progress: null,
+        mediaType: "show" as const,
+        completed: false,
+        queued: true,
+        startedAt: requestedAt.get(`show:${seriesId}`) ?? null,
+      });
+    }
+  }
+  downloads.unshift(...wantedRows);
+  // The one whole-show "Searching..." row says nothing its episodes do not,
+  // and with no episode to belong to it sat alone under "Other".
+  for (let i = downloads.length - 1; i >= 0; i--) {
+    const d = downloads[i];
+    if (d.mediaType === "show" && d.episodeId == null && d.queueId == null && d.searching && showsWithWanted.has(d.externalId)) {
+      downloads.splice(i, 1);
+    }
+  }
   for (const d of downloads) {
     if (d.mediaType !== "show") continue;
     const series = places.get(d.externalId);

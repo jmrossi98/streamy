@@ -13,6 +13,7 @@
  */
 import { prisma } from "./db";
 import { isNotifyConfigured, notify } from "./notify";
+import { servicesVerdict } from "./serviceWatchRules";
 import {
   FRESHNESS_LIMITS_MINUTES,
   freshnessVerdict,
@@ -282,6 +283,34 @@ async function automaticSearchIndexerIds(base: string, key: string): Promise<num
   return pickAutomaticIndexers(indexers, profiles, benched ?? []);
 }
 
+/** How long a service gets to come back before the probe calls it down. */
+const SERVICES_RECHECK_MS = 20_000;
+
+/**
+ * Is every service the panel lists actually answering.
+ *
+ * The panel has always known; nothing scheduled ever asked it. Looked at
+ * twice, twenty seconds apart, and only what is down both times fails: these
+ * services restart themselves, and a VPN rotation restarts four of them on
+ * purpose.
+ */
+async function probeServices(): Promise<ProbeResult> {
+  try {
+    const { getServiceStatuses } = await import("./serviceStatus");
+    const first = await getServiceStatuses();
+    const down = new Set(first.filter((s) => s.state === "down").map((s) => s.name));
+    if (down.size === 0) return servicesVerdict([], first.length);
+    await new Promise((resolve) => setTimeout(resolve, SERVICES_RECHECK_MS));
+    const second = await getServiceStatuses();
+    return servicesVerdict(
+      second.filter((s) => s.state === "down" && down.has(s.name)),
+      second.length
+    );
+  } catch {
+    return servicesVerdict(null, 0);
+  }
+}
+
 export type HealthProbeReport = {
   success: boolean;
   summary: string;
@@ -298,7 +327,7 @@ export async function runHealthProbes(
 
   // In parallel: these touch different systems and one slow indexer should
   // not delay the freshness read that costs 30ms.
-  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes, liveTv, downloadClients] = await Promise.all([
+  const [freshness, stuckImports, regrab, search, batchJobs, exitNodes, liveTv, downloadClients, services] = await Promise.all([
     probeFreshness(),
     probeStuckImports(),
     probeRegrabLoop(),
@@ -307,9 +336,10 @@ export async function runHealthProbes(
     probeExitNodes(),
     probeLiveTv(),
     probeDownloadClients(),
+    probeServices(),
   ]);
 
-  const results = [...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes, ...liveTv, ...downloadClients];
+  const results = [services, ...freshness, stuckImports, regrab, search, ...batchJobs, exitNodes, ...liveTv, ...downloadClients];
   const { success, summary } = summarise(results);
   const detail = results
     .map((r) => `${r.status.toUpperCase().padEnd(4)}  ${r.name}: ${r.detail}`)
