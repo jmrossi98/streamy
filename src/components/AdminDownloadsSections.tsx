@@ -25,6 +25,7 @@ import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownl
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { formatFileSize } from "@/lib/formatBytes";
 import { withDeadline } from "@/lib/withDeadline";
+import { foldPacks } from "@/lib/downloadGroupRules";
 import { episodeLabel } from "@/lib/wantedEpisodeRules";
 
 /**
@@ -377,7 +378,7 @@ export async function AdminDownloadsSections() {
         <h2 className="text-lg font-semibold text-white mb-4">Downloads</h2>
         <div className="bg-netflix-dark/80 border border-white/10 rounded-lg px-4 py-5 sm:px-6">
           <PanelBoundary name="Downloads">
-            <DownloadsPanel downloads={downloads} />
+            <DownloadsPanel downloads={foldPacks(downloads)} />
           </PanelBoundary>
         </div>
       </section>

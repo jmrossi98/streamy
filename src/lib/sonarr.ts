@@ -243,6 +243,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
         sizeleft: number;
         added?: string;
         protocol?: string;
+        downloadId?: string;
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
       }[];
@@ -251,6 +252,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
       const unsafe = classifyBadRelease(r);
       return {
         queueId: r.id,
+        downloadId: r.downloadId,
         startedAt: r.added ?? null,
         externalId: r.seriesId,
         episodeId: r.episodeId,

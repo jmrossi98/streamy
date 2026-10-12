@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  episodeCount,
+  foldPacks,
   groupActionLabel,
   groupDownloads,
   groupProgress,
@@ -111,5 +113,33 @@ describe("a show's header, in a movie row's terms", () => {
     expect(groupSize([ep()])).toBeNull();
     expect(groupStarted(rows)).toBe("2026-09-28T10:00:00Z");
     expect(groupShare(rows)).toBe(67);
+  });
+});
+
+// Sonarr queues a season pack once per episode it covers. Frieren's 46 GB
+// pack showed as 28 identical torrents adding up to 1.2 TB.
+describe("foldPacks", () => {
+  const pack = (episodeNumber: number) =>
+    ep({ completed: false, progress: 7, downloadId: "EE07", sizeBytes: 46e9, episodeNumber, title: "Frieren.S01.2160p" });
+
+  it("shows one transfer once, standing for every episode in it", () => {
+    const rows = foldPacks([pack(3), pack(1), pack(2)]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].episodeNumber).toBe(1);
+    expect(rows[0].packEpisodes).toBe(3);
+    expect(groupSize(rows)).toBe(46e9);
+    expect(episodeCount(rows)).toBe(3);
+    expect(groupSummary(rows)).toBe("3 episodes · 3 downloading");
+  });
+
+  it("leaves separate downloads, finished episodes and movies alone", () => {
+    const rows = [
+      ep({ completed: false, downloadId: "A", episodeNumber: 1 }),
+      ep({ completed: false, downloadId: "B", episodeNumber: 2 }),
+      ep({ completed: true, downloadId: "A", episodeNumber: 3 }),
+      ep({ completed: false, episodeNumber: 4 }),
+      movie("Heat"),
+    ];
+    expect(foldPacks(rows)).toEqual(rows);
   });
 });

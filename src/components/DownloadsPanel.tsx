@@ -15,6 +15,7 @@ import {
   groupActionLabel,
   groupDownloads,
   groupProgress,
+  episodeCount,
   groupShare,
   groupSize,
   groupStarted,
@@ -74,6 +75,10 @@ export type DownloadRow = {
   seriesTitle?: string | null;
   seasonNumber?: number | null;
   episodeNumber?: number | null;
+  /** The download client's id for the transfer; shared by a pack's episodes. */
+  downloadId?: string | null;
+  /** On the one row standing for a season pack: how many episodes it holds. */
+  packEpisodes?: number;
 };
 
 /**
@@ -357,6 +362,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                 {d.protocol === "usenet" ? "Usenet" : "Torrent"}
               </span>
             )}
+            {d.packEpisodes && (
+              <span className="shrink-0 text-xs tabular-nums text-white/40">
+                Season pack · {d.packEpisodes} episodes
+              </span>
+            )}
             {formatFileSize(d.sizeBytes) && (
               <span className="shrink-0 text-xs tabular-nums text-white/40">
                 {formatFileSize(d.sizeBytes)}
@@ -616,7 +626,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                       TV
                     </span>
                     <span className="shrink-0 text-xs tabular-nums text-white/40">
-                      {item.rows.length} {item.rows.length === 1 ? "episode" : "episodes"}
+                      {episodeCount(item.rows)} {episodeCount(item.rows) === 1 ? "episode" : "episodes"}
                     </span>
                     {formatFileSize(groupSize(item.rows)) && (
                       <span className="shrink-0 text-xs tabular-nums text-white/40">

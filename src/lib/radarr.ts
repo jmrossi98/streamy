@@ -291,6 +291,9 @@ export function normalizeProtocol(raw: string | undefined): DownloadProtocol {
 
 export type ActiveDownload = {
   queueId: number;
+  /** The download client's own id for the transfer. Sonarr lists a season
+   *  pack once per episode it covers, all sharing this. */
+  downloadId?: string;
   /** When the grab entered the download client's queue. */
   startedAt?: string | null;
   externalId: number;
