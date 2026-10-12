@@ -35,7 +35,8 @@ import {
 } from "./seasonDeepSearchRules";
 import { fileBaseName } from "./radarr";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
-import { readDownloadRouting, type DownloadRouting } from "./radarr";
+import { sharedDownloadRouting, type DownloadRouting } from "./radarr";
+import { forgetShared, sharedRead } from "./sharedRead";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import type {
   MediaRequestStatus,
@@ -229,11 +230,15 @@ export async function getSonarrDownloadProgress(sonarrId: number): Promise<numbe
   }
 }
 
+/** Shorter than the panel's 2.5s refresh, so each refresh still sees new progress. */
+const ACTIVE_QUEUE_TTL_MS = 2_000;
+
 /** Every episode currently in Sonarr's active download queue, with live progress. */
 export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isSonarrConfigured()) return [];
   try {
-    const queue = await sonarrFetch<{
+    // Shared: the panel's renders overlap when Sonarr is slow -- see sharedRead.ts.
+    const queue = await sharedRead("sonarr:queue:active", ACTIVE_QUEUE_TTL_MS, () => sonarrFetch<{
       records: {
         id: number;
         seriesId: number;
@@ -247,7 +252,7 @@ export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
+    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`));
     return queue.records.map((r) => {
       const unsafe = classifyBadRelease(r);
       return {
@@ -724,16 +729,16 @@ type WantedRecord = {
 const WANTED_PAGE_SIZE = 2000;
 /** The downloads panel polls; one read serves a burst of renders. */
 const WANTED_TTL_MS = 20_000;
-let wantedCache: { at: number; records: WantedRecord[] } | null = null;
+const WANTED_KEY = "sonarr:wanted";
 
 /** Every monitored, aired episode with no file, newest first. Throws if Sonarr cannot be read. */
-async function wantedMissing(): Promise<WantedRecord[]> {
-  if (wantedCache && Date.now() - wantedCache.at < WANTED_TTL_MS) return wantedCache.records;
-  const page = await sonarrFetch<{ records: WantedRecord[] }>(
-    `/api/v3/wanted/missing?pageSize=${WANTED_PAGE_SIZE}&sortKey=airDateUtc&sortDirection=descending`
-  );
-  wantedCache = { at: Date.now(), records: page.records };
-  return page.records;
+function wantedMissing(): Promise<WantedRecord[]> {
+  return sharedRead(WANTED_KEY, WANTED_TTL_MS, async () => {
+    const page = await sonarrFetch<{ records: WantedRecord[] }>(
+      `/api/v3/wanted/missing?pageSize=${WANTED_PAGE_SIZE}&sortKey=airDateUtc&sortDirection=descending`
+    );
+    return page.records;
+  });
 }
 
 /**
@@ -1080,7 +1085,7 @@ export async function dropQueuedEpisodeSearch(episodeId: number): Promise<boolea
   // Only the episode id is known here, so every show's cached wanted list
   // goes; they are re-read on the next render.
   seriesPlaces.clear();
-  wantedCache = null;
+  forgetShared(WANTED_KEY);
   return true;
 }
 
@@ -2108,7 +2113,7 @@ export async function removeSonarrEpisodes(
     // The downloads panel caches each show's wanted episodes; without this
     // the cancelled ones would be listed again until the cache expired.
     seriesPlaces.delete(seriesId);
-    wantedCache = null;
+    forgetShared(WANTED_KEY);
 
     // Collected before the files go, since deleting clears the history trail
     // we need to find the still-seeding torrent. Best effort: not knowing
@@ -2178,7 +2183,7 @@ export async function removeSonarrSeries(seriesId: number): Promise<boolean> {
     await (await searchQueue()).clearPendingSearches(episodes.map((e) => e.id));
     if (!(await cancelSonarrDownload(seriesId))) return false;
     seriesPlaces.delete(seriesId);
-    wantedCache = null;
+    forgetShared(WANTED_KEY);
     return await deleteSonarrSeries(seriesId);
   } catch (err) {
     console.error(`[sonarr] removeSonarrSeries failed for ${seriesId}:`, err);
@@ -2350,5 +2355,5 @@ export async function getSonarrStuckImports(): Promise<string[]> {
  */
 export async function getSonarrDownloadRouting(): Promise<DownloadRouting | null> {
   if (!isSonarrConfigured()) return null;
-  return readDownloadRouting((path) => sonarrFetch(path), "sonarr");
+  return sharedDownloadRouting("sonarr", (path) => sonarrFetch(path));
 }
