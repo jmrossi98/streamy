@@ -7,7 +7,7 @@
  */
 
 import { unsearchedBacklog } from "./searchBacklogRules";
-import { wantedEpisodes, type EpisodeForWanted, type WantedEpisode } from "./wantedEpisodeRules";
+import { wantedEpisodes, wholeShowEpisodes, type EpisodeForWanted, type WantedEpisode } from "./wantedEpisodeRules";
 import { episodeSearchesToCancel, seriesSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { earliestDownloaded } from "./playStartRules";
 import {
@@ -1704,8 +1704,16 @@ export async function drainEpisodeSearchesNow(budgetMs: number): Promise<boolean
  * Searches a whole series in broadcast order -- season 1 episode 1 first,
  * then 2, 3, and on through later seasons -- so the show becomes watchable
  * from the beginning rather than from whichever episode happened to grab
- * first. Specials (season 0) go last; they're rarely what someone means by
- * "start watching this show".
+ * first.
+ *
+ * Specials (season 0) are not part of it. They used to go last, which meant
+ * every whole-show request also asked for dozens of bonus clips indexers
+ * rarely carry, and that cancelling them did not hold: this function monitors
+ * everything it is about to search, and for a new show it can run minutes
+ * after the request (searchSeriesOncePopulated) or again on a repeat request
+ * -- so Extras cancelled in the panel were monitored and searched again, and
+ * had to be cancelled twice. Extras are downloaded when their season is asked
+ * for by name.
  *
  * `justCreated` is for a series added a moment ago, whose episode list Sonarr
  * is still fetching. Without the wait a whole-show request for a show not yet
@@ -1722,13 +1730,7 @@ async function searchSeriesInEpisodeOrder(seriesId: number, justCreated = false)
     void searchSeriesOncePopulated(seriesId);
     return;
   }
-  const wanted = episodes
-    .filter((e) => !e.hasFile)
-    .sort((a, b) => {
-      const sa = a.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : a.seasonNumber;
-      const sb = b.seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : b.seasonNumber;
-      return sa - sb || a.episodeNumber - b.episodeNumber;
-    });
+  const wanted = wholeShowEpisodes(episodes);
   if (wanted.length === 0) return;
 
   // Monitor before searching. An explicit EpisodeSearch grabs regardless of
@@ -2285,10 +2287,11 @@ export async function requestShow(
     const match = lookup[0];
     if (!match) return { ok: false, error: "Show not found via Sonarr lookup" };
 
+    // Every numbered season; not the specials -- see searchSeriesInEpisodeOrder.
     const seasons = Array.isArray(match.seasons)
       ? (match.seasons as { seasonNumber: number }[]).map((s) => ({
           seasonNumber: s.seasonNumber,
-          monitored: true,
+          monitored: s.seasonNumber !== 0,
         }))
       : [];
 

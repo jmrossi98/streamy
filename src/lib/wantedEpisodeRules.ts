@@ -63,3 +63,14 @@ export function placeFromLabel(label: string): { seriesTitle: string; seasonNumb
   if (!m) return null;
   return { seriesTitle: m[1], seasonNumber: Number(m[2]), episodeNumber: Number(m[3]) };
 }
+
+/**
+ * What asking for a whole show asks for: every regular episode not on disk,
+ * in broadcast order. Never the specials (season 0) -- see
+ * searchSeriesInEpisodeOrder in sonarr.ts.
+ */
+export function wholeShowEpisodes<T extends { seasonNumber: number; episodeNumber: number; hasFile: boolean }>(episodes: T[]): T[] {
+  return episodes
+    .filter((e) => !e.hasFile && e.seasonNumber !== 0)
+    .sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
+}
