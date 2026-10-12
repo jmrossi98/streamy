@@ -22,7 +22,49 @@ export type GroupableRow = {
   episodeNumber?: number | null;
   sizeBytes?: number | null;
   startedAt?: string | null;
+  downloadId?: string | null;
+  /** Set on the one row that stands for a whole pack: how many episodes it holds. */
+  packEpisodes?: number;
 };
+
+/** How many episodes a row stands for: one, unless it is a folded pack. */
+function episodesIn(row: Pick<GroupableRow, "packEpisodes">): number {
+  return row.packEpisodes ?? 1;
+}
+
+/** Episodes across these rows, counting a pack as everything in it. */
+export function episodeCount(rows: Pick<GroupableRow, "packEpisodes">[]): number {
+  return rows.reduce((n, r) => n + episodesIn(r), 0);
+}
+
+/**
+ * One row per transfer. Sonarr's queue has an entry for every episode a
+ * season pack covers, each carrying the pack's name, size and progress, so a
+ * single 46 GB torrent of Frieren showed as 28 identical downloads adding up
+ * to 1.2 TB. Rows in flight that share a download id become the first of
+ * them (the earliest episode, so it sits in the right season), marked with
+ * how many episodes it holds.
+ */
+export function foldPacks<T extends GroupableRow & { episodeNumber?: number | null }>(rows: T[]): T[] {
+  const packs = new Map<string, T[]>();
+  for (const r of rows) {
+    if (r.mediaType !== "show" || r.completed || !r.downloadId) continue;
+    packs.set(r.downloadId, [...(packs.get(r.downloadId) ?? []), r]);
+  }
+  const keep = new Map<T, number>();
+  const drop = new Set<T>();
+  for (const members of packs.values()) {
+    if (members.length < 2) continue;
+    const first = [...members].sort(
+      (a, b) =>
+        (a.seasonNumber ?? Number.MAX_SAFE_INTEGER) - (b.seasonNumber ?? Number.MAX_SAFE_INTEGER) ||
+        (a.episodeNumber ?? Number.MAX_SAFE_INTEGER) - (b.episodeNumber ?? Number.MAX_SAFE_INTEGER)
+    )[0];
+    keep.set(first, members.length);
+    for (const m of members) if (m !== first) drop.add(m);
+  }
+  return rows.filter((r) => !drop.has(r)).map((r) => (keep.has(r) ? { ...r, packEpisodes: keep.get(r) } : r));
+}
 
 export type SeasonGroup<T> = {
   /** null for rows not tied to a season: a whole-show search, an unmatched grab. */
@@ -100,12 +142,13 @@ export function groupActionLabel(rows: Pick<GroupableRow, "completed">[]): "Canc
 
 /** "12 episodes · 3 downloading · 2 queued · 7 downloaded", leaving out the zeroes. */
 export function groupSummary(rows: GroupableRow[]): string {
-  const downloaded = rows.filter((r) => r.completed).length;
-  const notFound = rows.filter((r) => !r.completed && r.noRelease).length;
-  const queued = rows.filter((r) => !r.completed && !r.noRelease && r.queued).length;
-  const searching = rows.filter((r) => !r.completed && !r.noRelease && !r.queued && r.searching).length;
-  const downloading = rows.length - downloaded - notFound - queued - searching;
-  const parts = [`${rows.length} ${rows.length === 1 ? "episode" : "episodes"}`];
+  const downloaded = episodeCount(rows.filter((r) => r.completed));
+  const notFound = episodeCount(rows.filter((r) => !r.completed && r.noRelease));
+  const queued = episodeCount(rows.filter((r) => !r.completed && !r.noRelease && r.queued));
+  const searching = episodeCount(rows.filter((r) => !r.completed && !r.noRelease && !r.queued && r.searching));
+  const total = episodeCount(rows);
+  const downloading = total - downloaded - notFound - queued - searching;
+  const parts = [`${total} ${total === 1 ? "episode" : "episodes"}`];
   if (downloading > 0) parts.push(`${downloading} downloading`);
   if (searching > 0) parts.push(`${searching} searching`);
   if (queued > 0) parts.push(`${queued} queued`);
@@ -156,5 +199,5 @@ export function groupStarted(rows: GroupableRow[]): string | null {
 /** Share of the show that is on disk, 0-100, for the bar when nothing is transferring. */
 export function groupShare(rows: GroupableRow[]): number {
   if (rows.length === 0) return 0;
-  return Math.round((rows.filter((r) => r.completed).length / rows.length) * 100);
+  return Math.round((episodeCount(rows.filter((r) => r.completed)) / episodeCount(rows)) * 100);
 }
