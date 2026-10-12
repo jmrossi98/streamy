@@ -35,7 +35,7 @@ import {
 } from "./seasonDeepSearchRules";
 import { fileBaseName } from "./radarr";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
-import { sharedDownloadRouting, type DownloadRouting } from "./radarr";
+import { sharedDownloadRouting, TITLE_HISTORY_HOLD_MS, type DownloadRouting } from "./radarr";
 import { forgetShared, sharedRead } from "./sharedRead";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import type {
@@ -364,17 +364,18 @@ const SERIES_PROTOCOL_TTL_MS = 60 * 60_000;
 
 async function seriesProtocols(seriesId: number): Promise<Map<number, DownloadProtocol>> {
   try {
-    return await cached(
+    return await sharedRead(
       `sonarr:series-protocols:${seriesId}`,
       SERIES_PROTOCOL_TTL_MS,
       async () =>
         protocolsFromHistory(
           await sonarrFetch<HistoryEvent[]>(`/api/v3/history/series?seriesId=${seriesId}`),
           (e) => e.episodeId
-        )
+        ),
+      // Left alone for a while after a failure -- see TITLE_HISTORY_HOLD_MS.
+      { failureHoldMs: TITLE_HISTORY_HOLD_MS }
     );
-  } catch (err) {
-    console.error(`[sonarr] series history read failed for ${seriesId}:`, err);
+  } catch {
     return new Map();
   }
 }

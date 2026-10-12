@@ -5,7 +5,7 @@
  * no title matching involved.
  */
 
-import { sharedRead } from "./sharedRead";
+import { inBatches, sharedRead } from "./sharedRead";
 import { pickDeepRelease, type DeepRelease } from "./deepSearchRules";
 import { pickFastCopies, type FastCopyRelease } from "./fastCopyRules";
 import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
@@ -336,7 +336,8 @@ export const IMPORTING_STATES = new Set(["importPending", "importing"]);
 export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
-    const queue = await radarrFetch<{
+    // Shared between overlapping renders -- see sharedRead.ts.
+    const queue = await sharedRead("radarr:queue:active", 2_000, () => radarrFetch<{
       records: {
         id: number;
         movieId: number;
@@ -348,7 +349,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
         trackedDownloadState?: string;
         statusMessages?: { messages?: string[] }[];
       }[];
-    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`);
+    }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`));
     return queue.records.map((r) => {
       const unsafe = classifyBadRelease(r);
       return {
@@ -430,9 +431,11 @@ export async function getRadarrCompletedProtocols(): Promise<Map<number, Downloa
   const result = new Map<number, DownloadProtocol>();
   if (!isRadarrConfigured()) return result;
   try {
-    const history = await radarrFetch<{
+    // A thousand history records, and which protocol delivered a finished
+    // movie never changes: once a minute is plenty.
+    const history = await sharedRead("radarr:grab-history", 60_000, () => radarrFetch<{
       records: { movieId?: number; date: string; data?: { protocol?: string } }[];
-    }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending");
+    }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending"));
     for (const r of history.records) {
       if (r.movieId == null || result.has(r.movieId)) continue; // newest first -- first hit per movie wins
       result.set(r.movieId, normalizeProtocol(r.data?.protocol));
@@ -460,17 +463,35 @@ export function fileBaseName(relativePath: string): string {
  * had been discarded on import. Falls back to the movie title only if a file
  * is somehow missing its own filename (movieFile without a relativePath).
  */
+/**
+ * How long a title's own history is left alone after a failed read.
+ *
+ * These are one request per older movie. A failure was not remembered, so
+ * with Radarr slow every refresh of the downloads panel -- every 2.5 seconds
+ * -- sent the whole set again, all at once: 610 failed requests in a quarter
+ * of an hour on 2026-10-12, which kept Radarr at a core or more of CPU and
+ * unable to answer anything, in the middle of a large download batch.
+ */
+export const TITLE_HISTORY_HOLD_MS = 5 * 60_000;
+/** How many of those per-title reads run at once. */
+export const TITLE_HISTORY_BATCH = 4;
+
 async function movieProtocol(movieId: number): Promise<DownloadProtocol | undefined> {
   try {
-    const found = await cached(`radarr:movie-protocol:${movieId}`, 60 * 60_000, async () =>
-      protocolsFromHistory(
-        await radarrFetch<HistoryEvent[]>(`/api/v3/history/movie?movieId=${movieId}`),
-        (e) => e.movieId
-      )
+    const found = await sharedRead(
+      `radarr:movie-protocol:${movieId}`,
+      60 * 60_000,
+      async () =>
+        protocolsFromHistory(
+          await radarrFetch<HistoryEvent[]>(`/api/v3/history/movie?movieId=${movieId}`),
+          (e) => e.movieId
+        ),
+      { failureHoldMs: TITLE_HISTORY_HOLD_MS }
     );
     return found.get(movieId);
-  } catch (err) {
-    console.error(`[radarr] movie history read failed for ${movieId}:`, err);
+  } catch {
+    // Only a badge is lost, and it is asked for again after the hold. Not
+    // logged: one line per movie per refresh is what filled the log.
     return undefined;
   }
 }
@@ -479,19 +500,23 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const [movies, protocols] = await Promise.all([
-      radarrFetch<
-        {
-          id: number;
-          title: string;
-          hasFile: boolean;
-          movieFile?: { relativePath?: string; size?: number; dateAdded?: string };
-        }[]
-      >("/api/v3/movie"),
+      sharedRead("radarr:movies", 30_000, () =>
+        radarrFetch<
+          {
+            id: number;
+            title: string;
+            hasFile: boolean;
+            movieFile?: { relativePath?: string; size?: number; dateAdded?: string };
+          }[]
+        >("/api/v3/movie")
+      ),
       getRadarrCompletedProtocols(),
     ]);
     // Movies grabbed before the global 1000-grab window: their own history.
-    const older = await Promise.all(
-      movies.filter((m) => m.hasFile && !protocols.has(m.id)).map(async (m) => [m.id, await movieProtocol(m.id)] as const)
+    const older = await inBatches(
+      movies.filter((m) => m.hasFile && !protocols.has(m.id)),
+      TITLE_HISTORY_BATCH,
+      async (m) => [m.id, await movieProtocol(m.id)] as const
     );
     const olderById = new Map(older);
     return movies
