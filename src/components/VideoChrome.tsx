@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
 import { liveTrackPercent } from "@/lib/liveTimeline";
-import { seekHover } from "@/lib/seekHoverRules";
+import { PREVIEW_HEIGHT, PREVIEW_WIDTH, seekHover } from "@/lib/seekHoverRules";
+import { useSeekPreview } from "@/lib/useSeekPreview";
 
 type ChromeState = {
   isPlaying: boolean;
@@ -48,6 +49,16 @@ export type LiveState = {
  * to prevent.
  */
 const CONTROLS_FADE_MS = 300;
+
+const FINE_POINTER = "(pointer: fine)";
+function hasFinePointer(): boolean {
+  return window.matchMedia(FINE_POINTER).matches;
+}
+function subscribeFinePointer(onChange: () => void): () => void {
+  const query = window.matchMedia(FINE_POINTER);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
 
 export function VideoChrome({
   title,
@@ -118,59 +129,20 @@ export function VideoChrome({
   const [dragValue, setDragValue] = useState<number | null>(null);
   const dragging = dragValue !== null;
 
-  /*
-    Pointing at the seek bar shows where a click would land: the time, and the
-    frame there. The frame comes from a second, muted <video> on the same file
-    that is only ever seeked, never played -- a few Range requests per hover,
-    nothing prepared in advance. Mouse only; a finger covers what it points at.
-    Created on the first hover and kept, so later hovers do not reload it.
-  */
+  // Pointing at the seek bar shows where a click would land: the time, and
+  // the frame there -- see useSeekPreview. Mouse only; a finger covers what
+  // it points at.
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
-  const [previewArmed, setPreviewArmed] = useState(false);
-  // Remembered against the file they are about, so a new title starts clean.
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const [readySrc, setReadySrc] = useState<string | null>(null);
-  const previewFailed = !!previewSrc && failedSrc === previewSrc;
-  const previewReady = !!previewSrc && readySrc === previewSrc;
-  const previewRef = useRef<HTMLVideoElement>(null);
-  const previewWanted = useRef<number | null>(null);
-  const hoverTime = hover?.t ?? null;
-  useEffect(() => {
-    const v = previewRef.current;
-    if (!v || hoverTime == null) return;
-    previewWanted.current = hoverTime;
-    // One seek at a time: the next position is taken up when this one lands.
-    const apply = () => {
-      const t = previewWanted.current;
-      if (t == null || v.seeking || v.readyState < 1) return;
-      previewWanted.current = null;
-      try {
-        v.currentTime = t;
-      } catch {
-        /* not seekable yet; the next hover tries again */
-      }
-    };
-    const landed = () => {
-      setReadySrc(previewSrc ?? null);
-      apply();
-    };
-    apply();
-    v.addEventListener("seeked", landed);
-    v.addEventListener("loadedmetadata", apply);
-    return () => {
-      v.removeEventListener("seeked", landed);
-      v.removeEventListener("loadedmetadata", apply);
-    };
-  }, [hoverTime, previewArmed, previewSrc]);
-  // Let go of the file when the player closes.
-  useEffect(() => {
-    const v = previewRef.current;
-    return () => {
-      if (!v) return;
-      v.removeAttribute("src");
-      v.load();
-    };
-  }, [previewArmed]);
+  // A phone or tablet never hovers, so it never opens the second copy.
+  const hasMouse = useSyncExternalStore(subscribeFinePointer, hasFinePointer, () => false);
+  const {
+    videoRef: previewVideoRef,
+    canvasRef: previewCanvasRef,
+    failed: previewFailed,
+    hasFrame: previewHasFrame,
+    point: previewPoint,
+    onError: onPreviewError,
+  } = useSeekPreview(live || !hasMouse ? null : previewSrc, duration);
 
   const pct = dragging ? along(dragValue) : along(currentTime);
   const bufPct = along(buffered);
@@ -275,29 +247,41 @@ export function VideoChrome({
               if (rect.width <= 0) return;
               const { x, seconds } = seekHover(e.clientX - rect.left, rect.width, duration);
               setHover((h) => (h && h.x === x && h.t === seconds ? h : { x, t: seconds }));
-              if (previewSrc) setPreviewArmed(true);
+              previewPoint(seconds);
             }}
-            onPointerLeave={() => setHover(null)}
+            onPointerLeave={() => {
+              setHover(null);
+              previewPoint(null);
+            }}
           >
             <div
               className={`pointer-events-none absolute bottom-full z-20 mb-3 -translate-x-1/2 overflow-hidden rounded border border-white/20 bg-black/90 shadow-lg ${hover ? "" : "hidden"}`}
               style={{ left: hover?.x ?? 0 }}
             >
-              {previewSrc && previewArmed && !previewFailed && (
-                <video
-                  ref={previewRef}
-                  src={previewSrc}
-                  muted
-                  playsInline
-                  preload="metadata"
-                  tabIndex={-1}
+              {previewSrc && !previewFailed && (
+                <canvas
+                  ref={previewCanvasRef}
+                  width={PREVIEW_WIDTH}
+                  height={PREVIEW_HEIGHT}
                   aria-hidden
-                  onError={() => setFailedSrc(previewSrc)}
-                  className={`block h-[90px] w-40 bg-black object-contain ${previewReady ? "" : "opacity-0"}`}
+                  className={`block h-[90px] w-40 bg-black ${previewHasFrame ? "" : "opacity-0"}`}
                 />
               )}
               <div className="px-2 py-0.5 text-center text-xs tabular-nums text-white">{formatTime(hover?.t ?? 0)}</div>
             </div>
+            {previewSrc && hasMouse && !previewFailed && (
+              <video
+                ref={previewVideoRef}
+                src={previewSrc}
+                muted
+                playsInline
+                preload="metadata"
+                tabIndex={-1}
+                aria-hidden
+                onError={onPreviewError}
+                className="pointer-events-none absolute h-px w-px opacity-0"
+              />
+            )}
             <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
               <div className="absolute inset-y-0 left-0 bg-white/25" style={{ width: `${bufPct}%` }} />
               <div className="absolute inset-y-0 left-0 bg-netflix-red" style={{ width: `${pct}%` }} />
