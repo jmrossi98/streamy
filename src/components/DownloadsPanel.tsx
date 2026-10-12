@@ -173,6 +173,9 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // clicked once and is waiting for its confirming second click.
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<string | null>(null);
+  // A removal that did not go through. Without it the rows simply reappeared,
+  // which read as the cancel having been undone rather than having failed.
+  const [failure, setFailure] = useState<string | null>(null);
 
   // Last real (non-bridged) snapshot seen for each key, so a download that
   // drops out of both the active-queue and completed lists for a moment
@@ -464,15 +467,19 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
       return;
     }
     setConfirming(null);
+    setFailure(null);
     setManagingKey(key);
     const keys = rows.map(rowKey);
     setRemovedKeys((prev) => new Set([...prev, ...keys]));
-    const restore = () =>
+    const what = scope === "season" ? `${show.title} - ${seasonLabel(seasonNumber)}` : show.title;
+    const restore = () => {
+      setFailure(`Could not remove ${what}: the download manager did not answer. Nothing was changed; try again.`);
       setRemovedKeys((prev) => {
         const next = new Set(prev);
         for (const k of keys) next.delete(k);
         return next;
       });
+    };
     try {
       const res = await fetch("/api/admin/downloads/manage", {
         method: "POST",
@@ -522,6 +529,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
 
   return (
     <div>
+      {failure && (
+        <p role="alert" className="mb-3 rounded border border-netflix-red/40 bg-netflix-red/10 px-3 py-2 text-sm text-white/80">
+          {failure}
+        </p>
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <input
           type="search"
