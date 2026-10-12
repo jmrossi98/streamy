@@ -52,7 +52,7 @@ async function clickWhenHydrated(
 
 test("play then pause actually pauses, and stays paused", async ({ page }) => {
   await page.goto("/dev/player-harness");
-  const video = page.locator("video");
+  const video = page.locator("video:not([aria-hidden])"); // not the seek preview's copy
 
   await clickWhenHydrated(page, page.getByRole("button", { name: /^play/i }).first());
   await expect(video).toHaveJSProperty("paused", false);
@@ -96,7 +96,7 @@ test("a pause that lands while a resume is still loading is not overridden once 
   });
 
   await page.goto("/dev/player-harness?progress=5", { waitUntil: "domcontentloaded" });
-  const video = page.locator("video");
+  const video = page.locator("video:not([aria-hidden])"); // not the seek preview's copy
 
   // Resume click FIRST, before anything has played. This ordering is the whole
   // reason the test is stable.
@@ -158,7 +158,7 @@ test("a pause that lands while a resume is still loading is not overridden once 
 
 test("space pauses and resumes, including with a player control focused", async ({ page }) => {
   await page.goto("/dev/player-harness");
-  const video = page.locator("video");
+  const video = page.locator("video:not([aria-hidden])"); // not the seek preview's copy
 
   await clickWhenHydrated(page, page.getByRole("button", { name: /^play/i }).first());
   await expect(video).toHaveJSProperty("paused", false);
