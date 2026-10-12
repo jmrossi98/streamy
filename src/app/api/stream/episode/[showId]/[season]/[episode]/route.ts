@@ -1,5 +1,5 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { findJellyfinEpisodeItemId } from "@/lib/jellyfin";
+import { streamEpisodeItemId, checkedEpisodeStream } from "@/lib/streamItemId";
 import { proxyJellyfinStream } from "@/lib/streamProxy";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export async function GET(request: Request, { params }: Props) {
     return new Response("Bad request", { status: 400 });
   }
 
-  const itemId = await findJellyfinEpisodeItemId(showId, seasonNum, episodeNum);
+  const itemId = await streamEpisodeItemId(showId, seasonNum, episodeNum);
   if (!itemId) {
     return new Response("Not available", { status: 404 });
   }
@@ -28,9 +28,10 @@ export async function GET(request: Request, { params }: Props) {
   const searchParams = new URL(request.url).searchParams;
   const transcode = searchParams.get("mode") === "transcode";
   const startSeconds = Number(searchParams.get("t"));
-  return proxyJellyfinStream(itemId, request, {
+  const res = await proxyJellyfinStream(itemId, request, {
     transcode,
     startSeconds: Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : undefined,
     playSessionId: searchParams.get("session") || undefined,
   });
+  return checkedEpisodeStream(res, showId, seasonNum, episodeNum);
 }

@@ -1,5 +1,5 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { findJellyfinEpisodeItemId } from "@/lib/jellyfin";
+import { streamEpisodeItemId, checkedEpisodeStream } from "@/lib/streamItemId";
 import { proxyJellyfinHlsResource } from "@/lib/streamProxy";
 import { chooseAudio, getLanguagePlan } from "@/lib/playbackLanguage";
 
@@ -21,7 +21,7 @@ export async function GET(request: Request, { params }: Props) {
     return new Response("Bad request", { status: 400 });
   }
 
-  const itemId = await findJellyfinEpisodeItemId(showId, seasonNum, episodeNum);
+  const itemId = await streamEpisodeItemId(showId, seasonNum, episodeNum);
   if (!itemId) {
     return new Response("Not available", { status: 404 });
   }
@@ -32,7 +32,7 @@ export async function GET(request: Request, { params }: Props) {
     resource === "master.m3u8"
       ? chooseAudio(await getLanguagePlan(itemId, "tv", showId), new URL(request.url).searchParams.get("audio"))
       : null;
-  return proxyJellyfinHlsResource(
+  const res = await proxyJellyfinHlsResource(
     itemId,
     resource,
     `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}/hls`,
@@ -40,4 +40,5 @@ export async function GET(request: Request, { params }: Props) {
     undefined,
     audio
   );
+  return checkedEpisodeStream(res, showId, seasonNum, episodeNum);
 }

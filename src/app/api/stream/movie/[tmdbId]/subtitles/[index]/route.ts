@@ -1,5 +1,6 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { findJellyfinMovieItemId, getJellyfinSubtitleTracks } from "@/lib/jellyfin";
+import { getJellyfinSubtitleTracks } from "@/lib/jellyfin";
+import { streamMovieItemId } from "@/lib/streamItemId";
 import { proxyJellyfinSubtitle } from "@/lib/streamProxy";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ export async function GET(_request: Request, { params }: Props) {
     return new Response("Bad request", { status: 400 });
   }
 
-  const itemId = await findJellyfinMovieItemId(tmdbId);
+  const itemId = await streamMovieItemId(tmdbId);
   if (!itemId) {
     return new Response("Not available", { status: 404 });
   }

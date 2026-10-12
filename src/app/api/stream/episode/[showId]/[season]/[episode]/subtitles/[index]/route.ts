@@ -1,5 +1,6 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { findJellyfinEpisodeItemId, getJellyfinSubtitleTracks } from "@/lib/jellyfin";
+import { getJellyfinSubtitleTracks } from "@/lib/jellyfin";
+import { streamEpisodeItemId } from "@/lib/streamItemId";
 import { proxyJellyfinSubtitle } from "@/lib/streamProxy";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export async function GET(_request: Request, { params }: Props) {
     return new Response("Bad request", { status: 400 });
   }
 
-  const itemId = await findJellyfinEpisodeItemId(showId, seasonNum, episodeNum);
+  const itemId = await streamEpisodeItemId(showId, seasonNum, episodeNum);
   if (!itemId) {
     return new Response("Not available", { status: 404 });
   }

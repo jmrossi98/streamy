@@ -1,5 +1,5 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { findJellyfinMovieItemId } from "@/lib/jellyfin";
+import { streamMovieItemId, checkedMovieStream } from "@/lib/streamItemId";
 import { proxyJellyfinHlsResource } from "@/lib/streamProxy";
 import { chooseAudio, getLanguagePlan } from "@/lib/playbackLanguage";
 
@@ -15,7 +15,7 @@ export async function GET(request: Request, { params }: Props) {
   }
 
   const { tmdbId, path } = await params;
-  const itemId = await findJellyfinMovieItemId(tmdbId);
+  const itemId = await streamMovieItemId(tmdbId);
   if (!itemId) {
     return new Response("Not available", { status: 404 });
   }
@@ -26,5 +26,6 @@ export async function GET(request: Request, { params }: Props) {
     resource === "master.m3u8"
       ? chooseAudio(await getLanguagePlan(itemId, "movie", tmdbId), new URL(request.url).searchParams.get("audio"))
       : null;
-  return proxyJellyfinHlsResource(itemId, resource, `/api/stream/movie/${tmdbId}/hls`, request, undefined, audio);
+  const res = await proxyJellyfinHlsResource(itemId, resource, `/api/stream/movie/${tmdbId}/hls`, request, undefined, audio);
+  return checkedMovieStream(res, tmdbId);
 }
