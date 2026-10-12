@@ -219,6 +219,7 @@ export function EpisodePlayer({
           onClose={onClose}
           chrome={chrome}
           busy={buffering}
+          previewSrc={videoUrl}
           extraBottomRight={
             <>
             <PlaybackOptionsMenu

@@ -25,6 +25,8 @@ export type GroupableRow = {
   downloadId?: string | null;
   /** Set on the one row that stands for a whole pack: how many episodes it holds. */
   packEpisodes?: number;
+  /** Every episode of the show that is wanted or already on disk. */
+  seriesEpisodes?: number | null;
 };
 
 /** How many episodes a row stands for: one, unless it is a folded pack. */
@@ -164,7 +166,31 @@ export function groupSummary(rows: GroupableRow[]): string {
 export function groupProgress(rows: GroupableRow[]): number | null {
   const moving = rows.filter((r) => !r.completed && !r.queued && !r.searching && !r.noRelease && r.progress != null);
   if (moving.length === 0) return null;
+  const whole = showProgress(rows);
+  if (whole != null) return whole;
   return Math.round(moving.reduce((sum, r) => sum + (r.progress ?? 0), 0) / moving.length);
+}
+
+/**
+ * How much of the whole show has arrived, or null when its size is unknown.
+ *
+ * The figure above is the average of whatever is transferring this second,
+ * and for a long show that goes backwards: episodes at 95% finish and leave
+ * the average, ones at 0% join it, and Atlanta read 95% and then 88% with
+ * more of it on disk than before. This counts what is left instead -- every
+ * unfinished row, by how much of it is missing -- against all of the show's
+ * episodes, so finishing an episode can only move it up.
+ */
+export function showProgress(rows: GroupableRow[]): number | null {
+  const total = rows.find((r) => r.seriesEpisodes != null)?.seriesEpisodes;
+  if (!total || total <= 0) return null;
+  let remaining = 0;
+  for (const r of rows) {
+    if (r.completed) continue;
+    const moving = !r.queued && !r.searching && !r.noRelease && r.progress != null;
+    remaining += episodesIn(r) * (moving ? 1 - Math.min(100, Math.max(0, r.progress ?? 0)) / 100 : 1);
+  }
+  return Math.min(100, Math.max(0, Math.round(((total - remaining) / total) * 100)));
 }
 
 /**

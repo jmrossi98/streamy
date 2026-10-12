@@ -152,6 +152,23 @@ export function usePlayerChrome(
     const onPointerDown = (e: PointerEvent) => {
       focusFromPointer = e.target instanceof Node && !!containerRef.current?.contains(e.target);
     };
+    // A control that was clicked does not keep the keyboard. Left focused, the
+    // seek bar took the next key press for itself: arrows nudged it, and any
+    // key at all drew its focus ring. Let go once the click has been handled
+    // (hence the timeout); focus reached with Tab is left alone, and so is a
+    // text field, which is clicked in order to type.
+    const onPointerUp = () => {
+      if (!focusFromPointer) return;
+      setTimeout(() => {
+        const focused = document.activeElement;
+        if (!(focused instanceof HTMLElement) || !containerRef.current?.contains(focused)) return;
+        const typing =
+          focused instanceof HTMLTextAreaElement ||
+          focused.isContentEditable ||
+          (focused instanceof HTMLInputElement && !["range", "button", "checkbox", "radio"].includes(focused.type));
+        if (!typing) focused.blur();
+      }, 0);
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Tab") focusFromPointer = false;
       if (!wanted(e)) return;
@@ -167,10 +184,12 @@ export function usePlayerChrome(
       if (wanted(e)) e.preventDefault();
     };
     window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
