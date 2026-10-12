@@ -1152,8 +1152,9 @@ const EPISODE_POPULATE_TIMEOUT_MS = 20_000;
 const EPISODE_POPULATE_POLL_MS = 400;
 
 /**
- * A season's episodes, waiting for Sonarr to populate them if it is still
- * fetching metadata for a series that was just added.
+ * A season's episodes -- or the whole series', with no season given -- waiting
+ * for Sonarr to populate them if it is still fetching metadata for a series
+ * that was just added.
  *
  * Only waits when the series is new. An established series with no episodes
  * in a season genuinely has none -- an unaired season, or specials -- and
@@ -1162,23 +1163,21 @@ const EPISODE_POPULATE_POLL_MS = 400;
  */
 async function episodesWhenReady(
   seriesId: number,
-  seasonNumber: number,
+  seasonNumber: number | null,
   justCreated: boolean
 ): Promise<SonarrEpisode[]> {
   const deadline = Date.now() + EPISODE_POPULATE_TIMEOUT_MS;
+  const path =
+    `/api/v3/episode?seriesId=${seriesId}` + (seasonNumber == null ? "" : `&seasonNumber=${seasonNumber}`);
   for (;;) {
-    const episodes = await sonarrFetch<SonarrEpisode[]>(
-      `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
-    );
+    const episodes = await sonarrFetch<SonarrEpisode[]>(path);
     if (episodes.length > 0 && justCreated) {
       // Episodes exist before Sonarr's post-add actions have run, and those
       // reset every episode's monitored flag -- see seriesRefreshPending. Hold
       // until the initial refresh has finished, so the monitoring the caller
       // applies next is the last word rather than being undone a moment later.
       await waitForSeriesRefresh(seriesId, deadline + SERIES_REFRESH_EXTRA_MS);
-      return await sonarrFetch<SonarrEpisode[]>(
-        `/api/v3/episode?seriesId=${seriesId}&seasonNumber=${seasonNumber}`
-      );
+      return await sonarrFetch<SonarrEpisode[]>(path);
     }
     if (episodes.length > 0 || !justCreated || Date.now() >= deadline) return episodes;
     await new Promise((resolve) => setTimeout(resolve, EPISODE_POPULATE_POLL_MS));
@@ -1610,9 +1609,22 @@ export async function drainEpisodeSearchesNow(budgetMs: number): Promise<boolean
  * from the beginning rather than from whichever episode happened to grab
  * first. Specials (season 0) go last; they're rarely what someone means by
  * "start watching this show".
+ *
+ * `justCreated` is for a series added a moment ago, whose episode list Sonarr
+ * is still fetching. Without the wait a whole-show request for a show not yet
+ * in Sonarr read an empty list, took it to mean there was nothing to search,
+ * and returned having queued nothing: The Real Housewives of Atlanta sat in
+ * the downloads panel as one "Searching..." row under "Other" with none of its
+ * 405 episodes queued or searched. A season request already waited this way.
  */
-async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
-  const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+async function searchSeriesInEpisodeOrder(seriesId: number, justCreated = false): Promise<void> {
+  const episodes = await episodesWhenReady(seriesId, null, justCreated);
+  if (episodes.length === 0 && justCreated) {
+    // Still nothing after the wait: a long show on a slow metadata day. The
+    // request returns, and the search starts when the episodes arrive.
+    void searchSeriesOncePopulated(seriesId);
+    return;
+  }
   const wanted = episodes
     .filter((e) => !e.hasFile)
     .sort((a, b) => {
@@ -1650,6 +1662,28 @@ async function searchSeriesInEpisodeOrder(seriesId: number): Promise<void> {
       // still wanted, so a failed batch loses speed, not the request.
       console.error(`[sonarr] SeriesSearch failed for ${seriesId}:`, err);
     });
+  }
+}
+
+/** How long a new series is watched for its episode list after the request has returned. */
+const LATE_POPULATE_TIMEOUT_MS = 10 * 60_000;
+const LATE_POPULATE_POLL_MS = 5_000;
+
+/** Starts the ordered search for a new series once Sonarr has its episodes. Never throws. */
+async function searchSeriesOncePopulated(seriesId: number): Promise<void> {
+  const deadline = Date.now() + LATE_POPULATE_TIMEOUT_MS;
+  try {
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, LATE_POPULATE_POLL_MS));
+      const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+      if (episodes.length === 0) continue;
+      await waitForSeriesRefresh(seriesId, Date.now() + SERIES_REFRESH_EXTRA_MS);
+      await searchSeriesInEpisodeOrder(seriesId);
+      return;
+    }
+    console.error(`[sonarr] series ${seriesId} had no episodes ${LATE_POPULATE_TIMEOUT_MS / 60_000} minutes after being added; nothing was searched`);
+  } catch (err) {
+    console.error(`[sonarr] late search for new series ${seriesId} failed:`, err);
   }
 }
 
@@ -2158,7 +2192,7 @@ export async function requestShow(
         seasons,
       }),
     });
-    await searchSeriesInEpisodeOrder(created.id);
+    await searchSeriesInEpisodeOrder(created.id, true);
     return { ok: true, sonarrId: created.id, tvdbId, status: "requested" };
   } catch (err) {
     console.error(`[sonarr] requestShow failed for tmdbId ${tmdbId}:`, err);
