@@ -6,6 +6,7 @@
  * ID matching, never fuzzy title search.
  */
 
+import { wantedEpisodes, type EpisodeForWanted, type WantedEpisode } from "./wantedEpisodeRules";
 import { episodeSearchesToCancel, seriesSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { earliestDownloaded } from "./playStartRules";
 import {
@@ -2083,6 +2084,8 @@ export type SeriesPlaces = {
   title: string;
   /** Episode id -> where it sits in the show. */
   episodes: Map<number, { seasonNumber: number; episodeNumber: number }>;
+  /** Monitored, aired and not on disk: what the show is still owed. */
+  wanted: WantedEpisode[];
 };
 
 /** A show's episode list barely changes; the panel asking for it polls every 2.5s. */
@@ -2107,13 +2110,14 @@ export async function getSonarrSeriesPlaces(seriesIds: number[]): Promise<Map<nu
       try {
         const [series, episodes] = await Promise.all([
           sonarrFetch<{ title: string }>(`/api/v3/series/${id}`),
-          sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${id}`),
+          sonarrFetch<EpisodeForWanted[]>(`/api/v3/episode?seriesId=${id}`),
         ]);
         const places: SeriesPlaces = {
           title: series.title,
           episodes: new Map(
             episodes.map((e) => [e.id, { seasonNumber: e.seasonNumber, episodeNumber: e.episodeNumber }])
           ),
+          wanted: wantedEpisodes(episodes),
         };
         seriesPlaces.set(id, { at: Date.now(), places });
         out.set(id, places);

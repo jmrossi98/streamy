@@ -95,6 +95,9 @@ function whyNotFixable(id: string): string {
   if (id === "live.channels_responding") {
     return "the cause is upstream; see the provider reachability probe";
   }
+  if (id === "services.answering") {
+    return "which container to restart depends on why it is down; the admin assistant can restart one on request";
+  }
   if (id === "exit_nodes.healthy") {
     return "the tunnel and exit-node containers are deliberately not restartable from here";
   }
