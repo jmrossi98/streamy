@@ -77,6 +77,7 @@ export type JellyfinItem = {
   ProviderIds?: Record<string, string>;
   LocationType?: string;
   IndexNumber?: number;
+  ParentIndexNumber?: number;
 };
 
 /**
@@ -149,6 +150,11 @@ async function findJellyfinSeriesId(showTmdbId: string): Promise<string | null> 
   return result.Items.find((i) => matchesTmdbId(i, showTmdbId))?.Id ?? null;
 }
 
+/** Exactly this season and episode; an item missing either number is not it. */
+export function matchesEpisode(item: JellyfinItem, seasonNumber: number, episodeNumber: number): boolean {
+  return item.ParentIndexNumber === seasonNumber && item.IndexNumber === episodeNumber;
+}
+
 /** Jellyfin item id for one episode. Null if the show or that specific episode isn't scanned in yet. */
 export async function findJellyfinEpisodeItemId(
   showTmdbId: string,
@@ -160,10 +166,15 @@ export async function findJellyfinEpisodeItemId(
     const seriesId = await findJellyfinSeriesId(showTmdbId);
     if (!seriesId) return null;
 
+    // The parameter is `season`. This sent `seasonNumber`, which Jellyfin
+    // ignores, so the whole show came back and the first episode with the
+    // right number won: asking for Potomac S11 E1 played S1 E1. The season is
+    // checked on each item as well, so an ignored filter can never again pick
+    // an episode from a different season.
     const episodes = await jellyfinFetch<{ Items: JellyfinItem[] }>(
-      `/Shows/${seriesId}/Episodes?seasonNumber=${seasonNumber}&fields=ProviderIds`
+      `/Shows/${seriesId}/Episodes?season=${seasonNumber}&fields=ProviderIds`
     );
-    const episode = episodes.Items.find((e) => e.IndexNumber === episodeNumber && isPlayable(e));
+    const episode = episodes.Items.find((e) => matchesEpisode(e, seasonNumber, episodeNumber) && isPlayable(e));
     if (!episode) requestJellyfinLibraryScan();
     return episode?.Id ?? null;
   } catch (err) {

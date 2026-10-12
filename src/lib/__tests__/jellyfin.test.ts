@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchesTmdbId, isPlayable, type JellyfinItem } from "../jellyfin";
+import { matchesEpisode, matchesTmdbId, isPlayable, type JellyfinItem } from "../jellyfin";
 
 // Regression: Jellyfin's AnyProviderIdEquals filter is silently ignored on
 // this server version -- it returned the whole library regardless of the id
@@ -54,5 +54,21 @@ describe("isPlayable", () => {
 
   it("rejects an item with no location at all", () => {
     expect(isPlayable({ Id: "a" })).toBe(false);
+  });
+});
+
+// Regression: the season filter was sent under a name Jellyfin ignores, so the
+// whole show came back and the first "episode 1" won. The Real Housewives of
+// Potomac S11 E1 played S1 E1.
+describe("matchesEpisode", () => {
+  const s1e1: JellyfinItem = { Id: "a", ParentIndexNumber: 1, IndexNumber: 1 };
+  const s11e1: JellyfinItem = { Id: "b", ParentIndexNumber: 11, IndexNumber: 1 };
+
+  it("picks the episode from the season asked for, not the first with that number", () => {
+    expect([s1e1, s11e1].find((e) => matchesEpisode(e, 11, 1))?.Id).toBe("b");
+  });
+
+  it("does not match an item with no season number", () => {
+    expect(matchesEpisode({ Id: "c", IndexNumber: 1 }, 1, 1)).toBe(false);
   });
 });
