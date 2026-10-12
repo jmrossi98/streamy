@@ -13,3 +13,8 @@ export async function cachedItemId(key: string, lookup: () => Promise<string | n
   if (id) cache.set(key, { id, at: Date.now() });
   return id;
 }
+
+/** Drops one remembered id, for when Jellyfin no longer serves it. */
+export function forgetItemId(key: string): void {
+  cache.delete(key);
+}

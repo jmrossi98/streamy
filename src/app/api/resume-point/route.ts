@@ -41,5 +41,6 @@ export async function GET(request: Request) {
   const [itemId, jellyfinUserId] = await Promise.all([itemIdPromise, jellyfinUserIdFor(userId)]);
   const jellyfin = itemId ? await getJellyfinUserData(itemId, jellyfinUserId) : null;
   const seconds = resumeSeconds(row ? { seconds: row.progressSeconds, updatedAt: row.updatedAt } : null, jellyfin);
-  return NextResponse.json({ seconds }, { headers: { "Cache-Control": "no-store" } });
+  // signedIn tells "nothing saved for you" apart from "could not say" -- see useFreshResume.
+  return NextResponse.json({ seconds, signedIn: true }, { headers: { "Cache-Control": "no-store" } });
 }

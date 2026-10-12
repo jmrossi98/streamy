@@ -5,12 +5,20 @@ import { useEffect, useState, type RefObject } from "react";
 /** Below this, two positions are the same spot. */
 const MOVED_SEC = 5;
 
+/**
+ * Null only when the question could not be asked. "Nothing saved" is an
+ * answer, and it is 0: read as null it left the page's own value standing,
+ * and a page rendered for somebody else -- another account in the same
+ * browser, or a copy the browser kept -- then started this viewer at that
+ * person's position and saved it as theirs.
+ */
 async function fetchResumePoint(query: string): Promise<number | null> {
   try {
     const r = await fetch(`/api/resume-point?${query}`, { cache: "no-store" });
     if (!r.ok) return null;
-    const d = (await r.json()) as { seconds?: number | null };
-    return typeof d.seconds === "number" ? d.seconds : null;
+    const d = (await r.json()) as { seconds?: number | null; signedIn?: boolean };
+    if (typeof d.seconds === "number") return d.seconds;
+    return d.signedIn ? 0 : null;
   } catch {
     return null;
   }

@@ -437,6 +437,12 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // above already tears down and recreates the hls.js instance on the same
   // videoSrc change, and calling the native load() directly on an element
   // hls.js is attached to fights its own lifecycle management.
+  const subtitleTracksRef = useRef(subtitleTracks);
+  const selectedSubtitleRef = useRef(selectedSubtitle);
+  useEffect(() => {
+    subtitleTracksRef.current = subtitleTracks;
+    selectedSubtitleRef.current = selectedSubtitle;
+  }, [subtitleTracks, selectedSubtitle]);
   useEffect(() => {
     if (!didSwapRef.current) return;
     const v = videoRef.current;
@@ -468,7 +474,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       }
       // v.load() reset every text track back to its <track> default -- reassert
       // whichever one the viewer had picked.
-      applySubtitleMode(v, subtitleTracks, selectedSubtitle);
+      applySubtitleMode(v, subtitleTracksRef.current, selectedSubtitleRef.current);
       // Skip resuming if a real pause landed while the swap was in flight --
       // the seek/subtitle restoration above still applies regardless, so the
       // paused frame lands in the right place rather than the swap's start.
@@ -477,7 +483,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     };
     v.addEventListener("canplay", onReady, { once: true });
     return () => v.removeEventListener("canplay", onReady);
-  }, [transcoding, subtitleTracks, selectedSubtitle, needsHlsJs]);
+    // Only a real source swap. Subtitles used to be dependencies here, so once
+    // any swap had happened, picking a caption -- or the caption list arriving
+    // a moment after the player opened -- ran this again: the element was
+    // reloaded with no position to return to and the title started over.
+  }, [transcoding, needsHlsJs]);
 
   // A menu pick while already transcoding: new session, same position. The
   // hls.js effect above has already re-attached to the new source by the
