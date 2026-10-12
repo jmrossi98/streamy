@@ -25,11 +25,23 @@ export const FAILURE_HOLD_MS = 10_000;
 /** How old a last good answer may be and still stand in for a failed read. */
 export const STALE_FOR_MS = 2 * 60_000;
 
+type Options = {
+  now?: () => number;
+  /**
+   * How long to leave the source alone after a failure. Longer for reads made
+   * once per title: a library's worth of them failing together is a library's
+   * worth of requests on every retry.
+   */
+  failureHoldMs?: number;
+};
+
 /**
  * @param ttlMs how long a good answer is reused. Rejects only when the read
  *              failed and there is no recent answer to fall back on.
  */
-export async function sharedRead<T>(key: string, ttlMs: number, read: () => Promise<T>, now = () => Date.now()): Promise<T> {
+export async function sharedRead<T>(key: string, ttlMs: number, read: () => Promise<T>, options: Options = {}): Promise<T> {
+  const now = options.now ?? (() => Date.now());
+  const hold = options.failureHoldMs ?? FAILURE_HOLD_MS;
   let slot = slots.get(key);
   if (!slot) {
     slot = { at: 0, value: undefined, has: false, failedAt: 0, inflight: null };
@@ -39,7 +51,7 @@ export async function sharedRead<T>(key: string, ttlMs: number, read: () => Prom
   if (s.has && now() - s.at < ttlMs) return s.value as T;
   if (s.inflight) return s.inflight as Promise<T>;
   const usable = () => s.has && now() - s.at < STALE_FOR_MS;
-  if (s.failedAt > 0 && now() - s.failedAt < FAILURE_HOLD_MS) {
+  if (s.failedAt > 0 && now() - s.failedAt < hold) {
     if (usable()) return s.value as T;
     throw new Error(`${key}: failed a moment ago, not asked again yet`);
   }
@@ -71,4 +83,17 @@ export function forgetShared(key: string): void {
     s.has = false;
     s.failedAt = 0;
   }
+}
+
+/**
+ * Runs `work` over `items` a few at a time, keeping their order. For reads
+ * made once per title, so a cold start asks a handful of questions at once
+ * instead of one per movie in the library.
+ */
+export async function inBatches<T, R>(items: T[], size: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(...(await Promise.all(items.slice(i, i + size).map(work))));
+  }
+  return out;
 }

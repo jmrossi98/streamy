@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { episodeLabel, wantedEpisodes } from "../wantedEpisodeRules";
+import { episodeLabel, placeFromLabel, wantedEpisodes } from "../wantedEpisodeRules";
 
 const NOW = Date.parse("2026-10-12T12:00:00Z");
 const ep = (id: number, over: Partial<Parameters<typeof wantedEpisodes>[0][number]> = {}) => ({
@@ -34,5 +34,20 @@ describe("episodes a requested show is still owed", () => {
   it("labels a row the way the search queue does", () => {
     expect(episodeLabel("Show", { seasonNumber: 3, episodeNumber: 7, title: "Reunion" })).toBe("Show - S3 E7 - Reunion");
     expect(episodeLabel("Show", { seasonNumber: 3, episodeNumber: 7, title: "" })).toBe("Show - S3 E7");
+  });
+});
+
+describe("placing a row from its own label", () => {
+  it("reads back what episodeLabel wrote", () => {
+    const label = episodeLabel("Vanderpump Rules", { seasonNumber: 1, episodeNumber: 2, title: "This Is Break-up" });
+    expect(placeFromLabel(label)).toEqual({ seriesTitle: "Vanderpump Rules", seasonNumber: 1, episodeNumber: 2 });
+  });
+
+  it("copes with a title containing a dash and an episode with no title", () => {
+    expect(placeFromLabel("Frieren - Beyond - S1 E28")).toEqual({ seriesTitle: "Frieren - Beyond", seasonNumber: 1, episodeNumber: 28 });
+  });
+
+  it("says nothing about a release name", () => {
+    expect(placeFromLabel("Vanderpump.Rules.S01E02.1080p.WEB")).toBeNull();
   });
 });

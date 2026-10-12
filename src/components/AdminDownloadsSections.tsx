@@ -26,7 +26,7 @@ import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { formatFileSize } from "@/lib/formatBytes";
 import { withDeadline } from "@/lib/withDeadline";
 import { foldPacks } from "@/lib/downloadGroupRules";
-import { episodeLabel } from "@/lib/wantedEpisodeRules";
+import { episodeLabel, placeFromLabel } from "@/lib/wantedEpisodeRules";
 
 /**
  * Every downloads panel, as one block.
@@ -354,9 +354,22 @@ export async function AdminDownloadsSections() {
   for (const d of downloads) {
     if (d.mediaType !== "show") continue;
     const series = places.get(d.externalId);
-    if (!series) continue;
+    if (!series) {
+      // Sonarr did not answer for this show; a queued row still names its
+      // own season and episode.
+      const fromLabel = placeFromLabel(d.title);
+      if (fromLabel) {
+        d.seriesTitle = fromLabel.seriesTitle;
+        d.seasonNumber = fromLabel.seasonNumber;
+        d.episodeNumber = fromLabel.episodeNumber;
+      }
+      continue;
+    }
     d.seriesTitle = series.title;
-    const place = d.episodeId != null ? series.episodes.get(d.episodeId) : undefined;
+    // The label again when the list does not have the episode: a show added
+    // a minute ago can be read before Sonarr has finished filling it in.
+    const place =
+      (d.episodeId != null ? series.episodes.get(d.episodeId) : undefined) ?? placeFromLabel(d.title) ?? undefined;
     d.seasonNumber = place?.seasonNumber ?? null;
     d.episodeNumber = place?.episodeNumber ?? null;
   }

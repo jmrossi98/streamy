@@ -49,3 +49,17 @@ export function wantedEpisodes(episodes: EpisodeForWanted[], now = Date.now()): 
 export function episodeLabel(seriesTitle: string, e: Pick<WantedEpisode, "seasonNumber" | "episodeNumber" | "title">): string {
   return `${seriesTitle} - S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` - ${e.title}` : ""}`;
 }
+
+/**
+ * Reads the show, season and episode back out of an episodeLabel.
+ *
+ * The panel places a row by asking Sonarr for the show's episode list. When
+ * Sonarr is too busy to answer, every row of the show landed under "Other"
+ * although each one says where it belongs in its own name: Vanderpump Rules,
+ * 261 queued episodes, all in one unnumbered bucket.
+ */
+export function placeFromLabel(label: string): { seriesTitle: string; seasonNumber: number; episodeNumber: number } | null {
+  const m = /^(.+?) - S(\d+) E(\d+)(?: - |$)/.exec(label);
+  if (!m) return null;
+  return { seriesTitle: m[1], seasonNumber: Number(m[2]), episodeNumber: Number(m[3]) };
+}
