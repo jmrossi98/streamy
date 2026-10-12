@@ -991,6 +991,9 @@ export async function dropQueuedEpisodeSearch(episodeId: number): Promise<boolea
     console.error(`[sonarr] could not unmonitor episode ${episodeId}:`, err);
     return false;
   }
+  // Only the episode id is known here, so every show's cached wanted list
+  // goes; they are re-read on the next render.
+  seriesPlaces.clear();
   return true;
 }
 
@@ -1987,18 +1990,48 @@ export async function removeSonarrEpisodes(
     if (targets.length === 0) return { ok: false, error: "Episode not found in Sonarr" };
     const targetIds = new Set(targets.map((e) => e.id));
 
-    // Collected before the files go, since deleting clears the history trail
-    // we need to find the still-seeding torrent.
-    const downloadIds = await getSonarrDownloadIds(targets.map((e) => e.id));
-
-    // Stop wanting them *before* touching the queue, so nothing removed below
-    // is simply grabbed again: unmonitor, drop queued searches, and stop any
-    // search already running for them (it would grab regardless of monitoring).
+    // Stop wanting them first, before anything that can fail or take long.
+    //
+    // This used to come after a history lookup for every episode, and a slow
+    // Sonarr timed that out: the whole removal was abandoned with the season
+    // still monitored, and the rows came straight back. Cancelling Atlanta's
+    // 48 specials on 2026-10-12 did exactly that. Once these three writes
+    // have landed nothing will search for or list the episodes again, whatever
+    // happens to the clean-up below.
     await sonarrFetch(`/api/v3/episode/monitor`, {
       method: "PUT",
       body: JSON.stringify({ episodeIds: targets.map((e) => e.id), monitored: false }),
     });
+    // The season too, otherwise Sonarr treats it as still wanted.
+    if (episodeNumber == null) {
+      const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
+        `/api/v3/series/${seriesId}`
+      );
+      await sonarrFetch(`/api/v3/series/${seriesId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          ...full,
+          seasons: full.seasons.map((s) =>
+            s.seasonNumber === seasonNumber ? { ...s, monitored: false } : s
+          ),
+        }),
+      });
+    }
     await (await searchQueue()).clearPendingSearches(targets.map((e) => e.id));
+    // The downloads panel caches each show's wanted episodes; without this
+    // the cancelled ones would be listed again until the cache expired.
+    seriesPlaces.delete(seriesId);
+
+    // Collected before the files go, since deleting clears the history trail
+    // we need to find the still-seeding torrent. Best effort: not knowing
+    // leaves a torrent seeding, which is no reason to keep the season wanted.
+    const downloadIds = await getSonarrDownloadIds(targets.map((e) => e.id)).catch((err) => {
+      console.error(`[sonarr] could not look up downloads for series ${seriesId} S${seasonNumber}:`, err);
+      return [] as string[];
+    });
+
+    // And stop any search already running for them (it would grab regardless
+    // of monitoring).
     await stopEpisodeSearches(
       targets.map((e) => e.id),
       episodeNumber == null ? { seriesId, seasonNumber } : null
@@ -2029,22 +2062,6 @@ export async function removeSonarrEpisodes(
     // A grab that was already in flight lands a moment after the first pass.
     await new Promise((resolve) => setTimeout(resolve, CANCEL_SWEEP_DELAY_MS));
     await dropQueued();
-
-    // Unmonitor the season too, otherwise Sonarr treats it as still wanted.
-    if (episodeNumber == null) {
-      const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
-        `/api/v3/series/${seriesId}`
-      );
-      await sonarrFetch(`/api/v3/series/${seriesId}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          ...full,
-          seasons: full.seasons.map((s) =>
-            s.seasonNumber === seasonNumber ? { ...s, monitored: false } : s
-          ),
-        }),
-      });
-    }
 
     // Sonarr stops tracking a torrent once it's imported, so removing the
     // episode leaves it seeding in the download client -- gone from Streamy
