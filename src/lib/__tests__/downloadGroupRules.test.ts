@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  showProgress,
   episodeCount,
   foldPacks,
   groupActionLabel,
@@ -141,5 +142,36 @@ describe("foldPacks", () => {
       movie("Heat"),
     ];
     expect(foldPacks(rows)).toEqual(rows);
+  });
+});
+
+// Atlanta read 95% and then 88%: the average of what was transferring fell as
+// finished episodes left it and fresh ones joined.
+describe("showProgress", () => {
+  const moving = (progress: number, episodeNumber: number) =>
+    ep({ completed: false, progress, episodeNumber, seriesEpisodes: 10 });
+  const queued = (episodeNumber: number) => ep({ completed: false, queued: true, episodeNumber, seriesEpisodes: 10 });
+
+  it("counts what is left against the whole show", () => {
+    // 10 episodes: 6 on disk and not listed, two at 50%, two queued.
+    expect(showProgress([moving(50, 7), moving(50, 8), queued(9), queued(10)])).toBe(70);
+  });
+
+  it("goes up, not down, when an episode finishes and the next one starts", () => {
+    const before = showProgress([moving(95, 7), moving(95, 8), queued(9), queued(10)]);
+    const after = showProgress([moving(0, 9), queued(10)]);
+    expect(before).toBe(79);
+    expect(after).toBe(80);
+    expect(groupProgress([moving(0, 9), queued(10)])).toBe(80);
+  });
+
+  it("counts a pack as every episode in it", () => {
+    expect(showProgress([{ ...moving(50, 1), packEpisodes: 10 }])).toBe(50);
+  });
+
+  it("says nothing when the show's size is unknown, leaving the old average", () => {
+    const rows = [ep({ completed: false, progress: 40 }), ep({ completed: false, progress: 60, episodeNumber: 2 })];
+    expect(showProgress(rows)).toBeNull();
+    expect(groupProgress(rows)).toBe(50);
   });
 });

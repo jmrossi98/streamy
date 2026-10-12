@@ -2200,6 +2200,8 @@ export type SeriesPlaces = {
   episodes: Map<number, { seasonNumber: number; episodeNumber: number }>;
   /** Monitored, aired and not on disk: what the show is still owed. */
   wanted: WantedEpisode[];
+  /** Regular episodes on disk plus those still owed: the whole of what was asked for. */
+  total: number;
 };
 
 /** A show's episode list barely changes; the panel asking for it polls every 2.5s. */
@@ -2232,6 +2234,9 @@ export async function getSonarrSeriesPlaces(seriesIds: number[]): Promise<Map<nu
             episodes.map((e) => [e.id, { seasonNumber: e.seasonNumber, episodeNumber: e.episodeNumber }])
           ),
           wanted: wantedEpisodes(episodes),
+          total:
+            episodes.filter((e) => e.hasFile && e.seasonNumber !== 0).length +
+            wantedEpisodes(episodes).filter((e) => e.seasonNumber !== 0).length,
         };
         // An empty list is a show Sonarr is still filling in. Remembering it
         // put every row of a new show under "Other" for five minutes.

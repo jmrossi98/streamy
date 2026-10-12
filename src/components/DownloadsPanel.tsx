@@ -79,6 +79,8 @@ export type DownloadRow = {
   downloadId?: string | null;
   /** On the one row standing for a season pack: how many episodes it holds. */
   packEpisodes?: number;
+  /** TV only: every episode of the show that is wanted or on disk, for its progress. */
+  seriesEpisodes?: number | null;
 };
 
 /**

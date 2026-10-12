@@ -366,6 +366,7 @@ export async function AdminDownloadsSections() {
       continue;
     }
     d.seriesTitle = series.title;
+    d.seriesEpisodes = series.total;
     // The label again when the list does not have the episode: a show added
     // a minute ago can be read before Sonarr has finished filling it in.
     const place =
