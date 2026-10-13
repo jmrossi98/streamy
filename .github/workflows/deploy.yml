@@ -263,7 +263,14 @@ jobs:
           OPENROUTER_CLAUDE_FALLBACKS: ${{ secrets.OPENROUTER_CLAUDE_FALLBACKS }}
           # Self-hosted SearXNG on mediabox. Optional: the chat panel hides the
           # search toggle when unset rather than offering a switch that fails.
-          SEARXNG_URL: ${{ secrets.SEARXNG_URL }}
+          #
+          # Switched off 2026-10-12, and the container on mediabox stopped. Its
+          # health check ran a real search every ten minutes from the home
+          # address, and DuckDuckGo, Brave, Startpage and Google answered with
+          # CAPTCHAs and rate limits until a real search returned nothing. To
+          # bring it back: point the check in serviceStatus.ts at something
+          # that contacts no search engine first, then restore the secret here.
+          SEARXNG_URL: ""
           # Read-only HTTP for /data/flash on mediabox (the `flash` container,
           # port 8099), reached over Tailscale like Jellyfin and gamarr. Holds
           # the SWFs behind the Games tab's Flash half. Optional: unset means
