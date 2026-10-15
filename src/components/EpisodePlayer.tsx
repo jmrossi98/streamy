@@ -98,6 +98,7 @@ export function EpisodePlayer({
     buffering,
     playbackError,
     needsHlsJs,
+    transcoding,
     videoSrc,
     videoRef,
     containerRef,
@@ -220,7 +221,10 @@ export function EpisodePlayer({
           onClose={onClose}
           chrome={chrome}
           busy={buffering}
-          previewSrc={videoUrl}
+          // Not while transcoding: the preview reads the raw file, which this
+          // browser has just been found unable to play -- and Safari, rather
+          // than failing, downloads all of it (see directPlayRules.ts).
+          previewSrc={transcoding ? null : videoUrl}
           extraBottomRight={
             <>
             <PlaybackOptionsMenu

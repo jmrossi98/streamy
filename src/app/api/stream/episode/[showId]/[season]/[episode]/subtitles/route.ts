@@ -13,7 +13,7 @@ type Props = { params: Promise<{ showId: string; season: string; episode: string
 // watch page equivalent (show/[id]/episode/[season]/[episode]/page.tsx) is a
 // server component and calls both functions itself instead of hitting this
 // route.
-export async function GET(_request: Request, { params }: Props) {
+export async function GET(request: Request, { params }: Props) {
   const session = await getSession();
   const userId = await getValidSessionUserId(session);
   if (!userId) {
@@ -34,7 +34,7 @@ export async function GET(_request: Request, { params }: Props) {
 
   const [subtitles, codecForcesTranscode] = await Promise.all([
     getJellyfinSubtitleTracks(itemId),
-    needsForcedTranscode(itemId),
+    needsForcedTranscode(itemId, request.headers.get("user-agent")),
   ]);
   const language = await getLanguagePlan(itemId, "tv", showId, subtitles?.tracks);
   return Response.json({

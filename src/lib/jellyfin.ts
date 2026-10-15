@@ -14,6 +14,7 @@
 import { cached } from "./ttlCache";
 import { isAllowedSubtitleLanguage, type AudioTrack } from "./audioLanguageRules";
 import { targetCovers, type HistoryTarget } from "./watchHistoryRules";
+import { containerBlocksDirectPlay } from "./directPlayRules";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -457,18 +458,27 @@ const VIDEO_CODECS_NEEDING_TRANSCODE = new Set(["hevc", "h265"]);
  * VIDEO_CODECS_NEEDING_TRANSCODE. Used to skip straight to the transcode
  * instead of attempting (and silently failing at) direct play first.
  */
-export async function needsForcedTranscode(itemId: string): Promise<boolean> {
+export async function needsForcedTranscode(itemId: string, userAgent?: string | null): Promise<boolean> {
   if (!isJellyfinConfigured()) return false;
   try {
     const result = await jellyfinFetch<{
-      Items: { MediaStreams?: { Type: string; Codec?: string }[] }[];
-    }>(`/Items?Ids=${itemId}&Fields=MediaStreams`);
-    const streams = result.Items[0]?.MediaStreams ?? [];
+      Items: {
+        Container?: string;
+        MediaStreams?: { Type: string; Codec?: string }[];
+        MediaSources?: { Container?: string }[];
+      }[];
+    }>(`/Items?Ids=${itemId}&Fields=MediaStreams,MediaSources`);
+    const item = result.Items[0];
+    const streams = item?.MediaStreams ?? [];
     const audioCodec = streams.find((s) => s.Type === "Audio")?.Codec?.toLowerCase();
     const videoCodec = streams.find((s) => s.Type === "Video")?.Codec?.toLowerCase();
+    // The container too, for this browser -- see directPlayRules.ts: Safari
+    // given an .mkv neither plays it nor errors, so the fallback never fires.
+    const container = item?.MediaSources?.[0]?.Container ?? item?.Container;
     return (
       (!!audioCodec && AUDIO_CODECS_NEEDING_TRANSCODE.has(audioCodec)) ||
-      (!!videoCodec && VIDEO_CODECS_NEEDING_TRANSCODE.has(videoCodec))
+      (!!videoCodec && VIDEO_CODECS_NEEDING_TRANSCODE.has(videoCodec)) ||
+      containerBlocksDirectPlay(container, userAgent)
     );
   } catch (err) {
     console.error(`[jellyfin] needsForcedTranscode failed for item ${itemId}:`, err);
