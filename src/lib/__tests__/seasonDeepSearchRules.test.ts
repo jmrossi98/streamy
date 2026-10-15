@@ -77,8 +77,30 @@ describe("pickUnmatchedEpisode", () => {
     expect(pickUnmatchedEpisode([ep({ episodeNumbers: [3] })], target)).toBeNull();
     expect(pickUnmatchedEpisode([ep({ episodeNumbers: [2, 3] })], target)).toBeNull();
     expect(pickUnmatchedEpisode([pack()], target)).toBeNull();
-    expect(pickUnmatchedEpisode([ep({ rejections: ["Unknown Series", "Not enough seeders"] })], target)).toBeNull();
+    expect(pickUnmatchedEpisode([ep({ rejections: ["Unknown Series", "Release is blocklisted"] })], target)).toBeNull();
     expect(pickUnmatchedEpisode([ep({ seriesTitle: "Fanny and Alexander Revisited" })], target)).toBeNull();
+  });
+
+  it("takes a thinly seeded or oversized copy when it is the only one (RHONJ S02E18, 2026-10-15)", () => {
+    const rhonj = { titles: ["The Real Housewives of New Jersey"], year: 2009, seasonNumber: 2, episodeNumber: 18 };
+    const copy = (over: Partial<SeasonRelease>) =>
+      ep({
+        title: "The Real Housewives of New Jersey S02E18 Reunion Part 2 HDTV XviD",
+        seriesTitle: "The Real Housewives of New Jersey",
+        seasonNumber: 2,
+        episodeNumbers: [18],
+        ...over,
+      });
+    const picked = pickUnmatchedEpisode(
+      [
+        copy({ guid: "four", seeders: 4, rejections: ["Not enough seeders: 4. Minimum seeders: 5"] }),
+        copy({ guid: "big", seeders: 1, qualityWeight: 2000, rejections: ["1.9 GB is larger than maximum allowed 1.2 GB (for 43min)", "Not enough seeders: 1. Minimum seeders: 5"] }),
+        copy({ guid: "dead", seeders: 0, qualityWeight: 3000, rejections: ["Not enough seeders: 0. Minimum seeders: 5"] }),
+      ],
+      rhonj
+    );
+    // Best quality among copies somebody seeds; a dead swarm is never taken.
+    expect(picked?.guid).toBe("big");
   });
 });
 

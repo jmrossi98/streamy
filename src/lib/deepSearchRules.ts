@@ -33,10 +33,11 @@ export type DeepRelease = {
  *    something that exists nowhere else still beats no copy, provided at
  *    least one seeder is there -- checked separately below.
  *
- * Everything else -- unparseable, wrong movie, blocklisted, wrong language,
- * too big -- stands.
+ * Everything else -- unparseable, wrong movie, blocklisted, wrong language --
+ * stands.
  */
-const OVERLOOKABLE = [/^unknown is not wanted in profile/i, /^not enough seeders/i];
+// Since 2026-10-15 also the size cap: availability first (Jake).
+const OVERLOOKABLE = [/^unknown is not wanted in profile/i, /^not enough seeders/i, /larger than maximum allowed/i];
 
 function onlyOverlookable(r: DeepRelease): boolean {
   const why = r.rejections ?? [];
