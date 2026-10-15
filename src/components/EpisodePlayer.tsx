@@ -71,7 +71,7 @@ export function EpisodePlayer({
   const resumeQuery = videoUrl
     ? `showId=${encodeURIComponent(showId)}&season=${seasonNumber}&episode=${episodeNumber}`
     : null;
-  const resumeFrom = useFreshResume(resumeQuery, initialProgressSeconds);
+  const { seconds: resumeFrom, settled: resumeSettled } = useFreshResume(resumeQuery, initialProgressSeconds);
   const [showNextOverlay, setShowNextOverlay] = useState(false);
   const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
 
@@ -108,6 +108,7 @@ export function EpisodePlayer({
   } = usePlayerEngine({
     videoUrl,
     initialProgressSeconds: resumeFrom,
+    resumeSettled,
     runtimeMinutes,
     autoPlay,
     forceTranscode,
@@ -182,7 +183,7 @@ export function EpisodePlayer({
         // hls.js feeds the element itself via MSE -- setting src too would
         // fight it. Every other case (direct play, native Safari HLS) uses
         // the attribute normally.
-        src={needsHlsJs ? undefined : videoSrc}
+        src={needsHlsJs || !videoSrc ? undefined : videoSrc}
         autoPlay={!needsHlsJs}
         playsInline
         controls={false}

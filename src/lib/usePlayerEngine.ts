@@ -6,7 +6,8 @@ import Hls from "hls.js";
 import { isMobileViewport } from "./videoFullscreen";
 import { supportsNativeHls } from "./hlsSupport";
 import { usePlayerChrome } from "./usePlayerChrome";
-import { classifyPlayRejection, hlsFatalAction, HLS_LOAD_CONFIG } from "./playbackErrorRules";
+import { classifyPlayRejection, hlsFatalAction, nativeHlsShouldRetry, HLS_LOAD_CONFIG } from "./playbackErrorRules";
+import { holdTranscodeForResume, shouldMoveStartedPlayback } from "./resumeStartRules";
 import type { SubtitleOption } from "@/components/SubtitleSelector";
 
 /**
@@ -63,20 +64,24 @@ function placeLoadedCues(e: Event) {
  * confirmed live, a resumed title's Play/Retry button reliably stuck at
  * HAVE_NOTHING. Wait for loadedmetadata first, the same way the
  * reload-on-swap effect already waits for canplay before its own seek. */
-function seekThenRun(v: HTMLVideoElement, target: number, then: () => void) {
-  if (v.readyState >= 1) {
-    v.currentTime = target;
+/**
+ * The target is read when the seek actually happens, so a resume point that
+ * settles while metadata is still loading is the one used. Returns a cancel:
+ * a start sequence that is superseded must not leave a listener behind to
+ * seek and play() later (each re-run of the start effect used to add another).
+ */
+function seekThenRun(v: HTMLVideoElement, target: () => number, then: () => void): () => void {
+  const run = () => {
+    const at = target();
+    if (at > 0) v.currentTime = at;
     then();
-    return;
+  };
+  if (v.readyState >= 1) {
+    run();
+    return () => {};
   }
-  v.addEventListener(
-    "loadedmetadata",
-    () => {
-      v.currentTime = target;
-      then();
-    },
-    { once: true }
-  );
+  v.addEventListener("loadedmetadata", run, { once: true });
+  return () => v.removeEventListener("loadedmetadata", run);
 }
 
 /**
@@ -109,6 +114,10 @@ const SEEK_SAVE_DELAY_MS = 2_000;
 export type PlayerEngineOptions = {
   videoUrl?: string | null;
   initialProgressSeconds: number;
+  /** False while the fresh resume point is still being asked for (see
+   * useFreshResume). A transcode is not requested until it is true, so it
+   * starts once, at the right spot -- see resumeStartRules.ts. Defaults true. */
+  resumeSettled?: boolean;
   runtimeMinutes?: number | null;
   autoPlay: boolean;
   /** Skip straight to the transcode instead of attempting direct play first
@@ -138,7 +147,7 @@ export type PlayerEngineOptions = {
 };
 
 export function usePlayerEngine(opts: PlayerEngineOptions) {
-  const { videoUrl, initialProgressSeconds, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, audioTracks = [], defaultAudio = null, identityKey, saveProgress } = opts;
+  const { videoUrl, initialProgressSeconds, resumeSettled = true, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, audioTracks = [], defaultAudio = null, identityKey, saveProgress } = opts;
   const hasSource = !!videoUrl;
   // Always direct-plays and falls back to a transcode only if the browser
   // can't decode the source -- no manual quality picker. That picker (4K/
@@ -197,7 +206,13 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // cold seek 10 minutes in, 0.13s for the next segment). That is both correct
   // and far faster than tearing the transcode down and rebuilding it, which is
   // what this used to do on every scrub.
-  const videoSrc = !videoUrl
+  //
+  // Held (empty) while a transcode waits on the fresh resume point: hls.js
+  // takes its startPosition when it is created, and Safari's native player
+  // starts at 0, so requesting the stream any earlier starts Jellyfin's encode
+  // at a position the resume seek then throws away -- see resumeStartRules.ts.
+  const holdTranscode = holdTranscodeForResume(transcoding, resumeSettled);
+  const videoSrc = !videoUrl || holdTranscode
     ? ""
     : transcoding
       ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${chosenAudio != null ? `&audio=${chosenAudio}` : ""}`
@@ -231,6 +246,14 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   useEffect(() => {
     initialProgressRef.current = initialProgressSeconds;
   }, [initialProgressSeconds]);
+  // The position the start sequence actually used, once it has used one --
+  // what a late-arriving resume point is compared against.
+  const startedAtRef = useRef<number | null>(null);
+  const startTarget = () => {
+    const at = initialProgressRef.current;
+    startedAtRef.current = at;
+    return at;
+  };
   // Guards the reload effect from firing on first mount, where the initial
   // source and the saved-progress seek are handled elsewhere.
   const didSwapRef = useRef(false);
@@ -557,10 +580,22 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // effect. That let a mobile viewer's video briefly autoplay inline before
   // the correction landed, which is what "the overlay doesn't show up until
   // refreshing" turned out to be.
+  //
+  // The resume point is read through initialProgressRef when the seek happens,
+  // and is deliberately NOT a dependency. It used to be: when the fresh resume
+  // point arrived (useFreshResume) the whole start sequence ran again -- a
+  // second seek and play(), on a transcode a second cold start, and on the
+  // hls.js path a canplay listener left armed after playback had begun, to
+  // yank the playhead back on the next stall or scrub. A late answer is now
+  // handled by the small effect below this one.
   useEffect(() => {
     if (!hasSource || !playing || !videoRef.current || isMobile || isMobileViewport()) return;
     const v = videoRef.current;
     setVideoLoading(true);
+    // Nothing to start yet: the transcode is waiting on the resume point, and
+    // this runs again (holdTranscode is a dependency) once it is released.
+    if (holdTranscode) return;
+    let cancelSeek = () => {};
     const startPlayback = () => {
       // The wait above (loadedmetadata or canplay) can resolve after the
       // viewer already clicked pause -- don't fight a pause that landed
@@ -593,7 +628,9 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       // the assumption its URL already started at the right place -- it never
       // did (see videoSrc), which is why resuming a transcoded title replayed
       // it from the beginning.
-      if (initialProgressSeconds > 0) seekThenRun(v, initialProgressSeconds, startPlayback);
+      // Nothing to seek to: play straight away, inside the click's gesture
+      // where there is one (iOS refuses a play() deferred past it).
+      if (startTarget() > 0) cancelSeek = seekThenRun(v, startTarget, startPlayback);
       else startPlayback();
     };
     if (needsHlsJs) {
@@ -601,10 +638,39 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       // can succeed -- firing immediately, the way direct play and native
       // HLS do, would just reject every time.
       v.addEventListener("canplay", doPlay, { once: true });
-      return () => v.removeEventListener("canplay", doPlay);
+      return () => {
+        v.removeEventListener("canplay", doPlay);
+        cancelSeek();
+      };
     }
     doPlay();
-  }, [hasSource, playing, initialProgressSeconds, isMobile, needsHlsJs, transcoding]);
+    return () => cancelSeek();
+  }, [hasSource, playing, isMobile, needsHlsJs, transcoding, holdTranscode]);
+
+  // A resume point that settles after the start sequence has already sought:
+  // move there once, without another play() or another listener -- unless
+  // the viewer has scrubbed away since (see shouldMoveStartedPlayback). Before
+  // the seek has happened there is nothing to do; it reads the new value.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const moveIfStillAtStart = () => {
+      if (!shouldMoveStartedPlayback(startedAtRef.current, initialProgressSeconds, v.currentTime)) return;
+      startedAtRef.current = initialProgressSeconds;
+      try {
+        v.currentTime = initialProgressSeconds;
+      } catch {
+        // Not seekable; playback carries on from where it started.
+      }
+    };
+    if (v.readyState >= 1) {
+      moveIfStillAtStart();
+      return;
+    }
+    // Started from 0 with no seek pending, and no metadata yet to seek in.
+    v.addEventListener("loadedmetadata", moveIfStillAtStart, { once: true });
+    return () => v.removeEventListener("loadedmetadata", moveIfStillAtStart);
+  }, [initialProgressSeconds]);
 
   const handlePlayClick = () => {
     const v = videoRef.current;
@@ -640,7 +706,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       // Fresh intent -- see the mount effect's doPlay.
       playIntentRef.current = "play";
       // Same for both paths -- see the mount effect's doPlay.
-      if (initialProgressSeconds > 0) seekThenRun(v, initialProgressSeconds, startPlayback);
+      if (startTarget() > 0) seekThenRun(v, startTarget, startPlayback);
       else startPlayback();
     };
     // Fullscreen is opt-in via the chrome's own button (usePlayerChrome), not
@@ -739,6 +805,9 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     lastPositionRef.current = 0;
     lastSavedRef.current = -1;
     return () => {
+      // In the cleanup, not the body: this effect is declared after the start
+      // sequence, so resetting on mount would wipe the position it just used.
+      startedAtRef.current = null;
       // The remembered position, not v.currentTime -- see lastPositionRef.
       saveAt(lastPositionRef.current);
       // Leaving the page mid-transcode would otherwise leave that ffmpeg job
@@ -754,6 +823,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // showing the error overlay. Only a failure while already transcoding is a
   // real error -- there's nothing lower to fall back to. Callers wire this
   // straight onto the <video>'s onError.
+  const nativeRetriesRef = useRef(0);
   const onVideoError = () => {
     // hls.js owns the element: it sees the same failure, retries it (see the
     // ERROR handler above) and reports only what it cannot recover. Reacting
@@ -768,6 +838,22 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       setVideoLoading(true);
       return;
     }
+    // Native HLS (Safari): retry in place first -- see nativeHlsShouldRetry.
+    const v = videoRef.current;
+    if (hasSource && transcoding && v && nativeHlsShouldRetry(nativeRetriesRef.current)) {
+      nativeRetriesRef.current += 1;
+      const at = chrome.currentTime > 0 ? chrome.currentTime : initialProgressRef.current;
+      setVideoLoading(true);
+      setTimeout(() => {
+        if (videoRef.current !== v) return;
+        v.load();
+        seekThenRun(v, () => at, () => {
+          if (playIntentRef.current === "play") v.play().catch(() => {});
+          setVideoLoading(false);
+        });
+      }, 1000 * nativeRetriesRef.current);
+      return;
+    }
     setPlaying(false);
     setShowOverlay(true);
     setVideoLoading(false);
@@ -775,6 +861,8 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   };
 
   const onVideoPlay = () => {
+    // Started: a later failure gets the full set of retries again.
+    nativeRetriesRef.current = 0;
     setShowOverlay(false);
     setPlaybackError(false);
     chrome.revealControls();
@@ -799,9 +887,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     if (!forceTranscode || transcoding) return;
     if (forceTranscodeAppliedForRef.current === identityKey) return;
     forceTranscodeAppliedForRef.current = identityKey;
-    // Keep whatever position playback had reached, falling back to the saved
-    // one when it hasn't started yet -- the reload effect seeks there.
-    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : initialProgressSeconds || null;
+    // Keep whatever position playback had reached. When it hasn't started
+    // yet, leave it to the start sequence, which reads the resume point as
+    // settled by then -- copying it here froze the page's (possibly stale)
+    // value into hls.js's startPosition before the fresh one had arrived.
+    resumeAtRef.current = chrome.currentTime > 0 ? chrome.currentTime : null;
     didSwapRef.current = true;
     setAutoFellBack(true);
     setVideoLoading(true);

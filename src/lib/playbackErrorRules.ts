@@ -48,6 +48,17 @@ export function hlsFatalAction(errorType: string, attemptsSoFar: number): HlsFat
 }
 
 /**
+ * Safari's native HLS player has no retry of its own that we can configure,
+ * and its <video> error was shown straight away -- so a cold transcode that
+ * was slow with its first segment was "Couldn't start playback" there, with
+ * the Retry tap (a reload at the same spot, now warm) always working. The same
+ * bounded in-place retry hls.js gets, before anything is shown.
+ */
+export function nativeHlsShouldRetry(attemptsSoFar: number): boolean {
+  return attemptsSoFar < HLS_FATAL_RETRIES;
+}
+
+/**
  * hls.js load policies with room for a cold transcode.
  *
  * The defaults allow a playlist ~10 s and one retry. A cold Jellyfin
