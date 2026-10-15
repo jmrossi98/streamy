@@ -141,6 +141,32 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
   }
 }
 
+/** qBittorrent's view of its own network, from /api/v2/transfer/info. */
+export type TorrentNetwork = {
+  connectionStatus: string;
+  dhtNodes: number;
+};
+
+/** Whether qBittorrent can reach the outside at all. Null when unreadable. */
+export async function getTorrentNetwork(): Promise<TorrentNetwork | null> {
+  if (!isQbittorrentConfigured()) return null;
+  const cookie = await login();
+  if (!cookie) return null;
+  try {
+    const res = await fetch(`${QBITTORRENT_URL}/api/v2/transfer/info`, {
+      headers: { ...baseHeaders(), Cookie: cookie },
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { connection_status?: string; dht_nodes?: number };
+    return { connectionStatus: body.connection_status ?? "unknown", dhtNodes: body.dht_nodes ?? 0 };
+  } catch (err) {
+    console.error("[qbittorrent] network read failed:", err);
+    return null;
+  }
+}
+
 /**
  * Torrents that are trying to download and getting nowhere.
  *

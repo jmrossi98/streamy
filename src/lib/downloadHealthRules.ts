@@ -274,6 +274,26 @@ export function isPermanentlyBlocked(
   );
 }
 
+/**
+ * Whether the torrent client itself has no network, so no torrent's state says
+ * anything about its release.
+ *
+ * From 2026-10-14 14:18 to 2026-10-15 20:58 the tunnel qBittorrent lives in
+ * passed no traffic. Every torrent grabbed in that time sat in metaDL, which
+ * isMetadataDead reads as "no peer has this", so the healer dropped and
+ * blocklisted 103 releases in 31 hours -- the same Real Housewives hashes again
+ * and again, each second drop holding the release blocked for a week. None of
+ * them was bad. Zero DHT nodes is the tell: a client with any network at all
+ * finds some within a minute of starting. Unreadable is not offline -- that
+ * only costs this one refinement, as before.
+ */
+export function isTorrentClientOffline(
+  network: { connectionStatus: string; dhtNodes: number } | null | undefined
+): boolean {
+  if (!network) return false;
+  return network.connectionStatus === "disconnected" || network.dhtNodes === 0;
+}
+
 /** A torrent no seeder anywhere can finish: none connected and none in the swarm. */
 export function isDeadSwarm(t: { swarmSeeds: number; connectedSeeds: number } | undefined): boolean {
   return !!t && t.swarmSeeds === 0 && t.connectedSeeds === 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRedundantImport, isDeadSwarm, isMetadataDead, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isRedundantImport, isDeadSwarm, isMetadataDead, isTorrentClientOffline, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -152,6 +152,17 @@ describe("torrent metadata and waiting states", () => {
 
   it("gives metadata ten minutes, ahead of the general stall grace", () => {
     expect(isMetadataDead({ torrentState: "metaDL", ageMinutes: 9 })).toBe(false);
+  });
+
+  it("calls the torrent client offline only on its own evidence (2026-10-14 outage)", () => {
+    // What qBittorrent reported through the 31-hour dead tunnel.
+    expect(isTorrentClientOffline({ connectionStatus: "firewalled", dhtNodes: 0 })).toBe(true);
+    expect(isTorrentClientOffline({ connectionStatus: "disconnected", dhtNodes: 12 })).toBe(true);
+    // Firewalled with peers is a missing port forward, not an outage: still judged.
+    expect(isTorrentClientOffline({ connectionStatus: "firewalled", dhtNodes: 300 })).toBe(false);
+    expect(isTorrentClientOffline({ connectionStatus: "connected", dhtNodes: 159 })).toBe(false);
+    // Unreadable is not offline.
+    expect(isTorrentClientOffline(null)).toBe(false);
     expect(isUnhealthy({ errorMessage: null, ageMinutes: 10, hasProgress: false, clientStatus: "queued", torrentState: "metaDL" })).toBe(true);
   });
 
