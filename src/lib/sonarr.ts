@@ -29,6 +29,7 @@ import { isConfidenceBlockedQueueItem, type QueueItemForImportCheck } from "./ra
 import { isSearchStale } from "./radarr";
 import {
   overrideLanguages,
+  pickAcceptedRelease,
   pickUnmatchedEpisode,
   pickUnmatchedSeasonPack,
   type SeasonRelease,
@@ -1827,7 +1828,21 @@ export async function deepSearchSonarrSeason(seriesId: number, seasonNumber: num
         signal: AbortSignal.timeout(SEASON_DEEP_SEARCH_TIMEOUT_MS),
       }),
     ]);
-    // Something Sonarr accepts is the ordinary search's to grab.
+    // An accepted full-season pack is grabbed as it is: it may come from an
+    // interactive-only indexer the ordinary search never asks (see
+    // pickAcceptedRelease). Accepted single episodes are left to the
+    // per-episode deep search, which takes them the same way.
+    const acceptedPack = pickAcceptedRelease(releases.filter((r) => r.fullSeason === true));
+    if (acceptedPack) {
+      if (!(await nothingYet())) return null;
+      await sonarrFetch(`/api/v3/release`, {
+        method: "POST",
+        body: JSON.stringify({ guid: acceptedPack.guid, indexerId: acceptedPack.indexerId }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      console.log(`[sonarr] deep search grabbed pack "${acceptedPack.title}" for series ${seriesId} S${seasonNumber}`);
+      return acceptedPack.title;
+    }
     if (releases.some((r) => !r.rejected)) return null;
     const pick = pickUnmatchedSeasonPack(releases, {
       titles: [series.title, ...(series.alternateTitles ?? []).map((a) => a.title ?? "")].filter(Boolean),
@@ -1897,7 +1912,19 @@ export async function deepSearchSonarrEpisode(seriesId: number, episodeId: numbe
         signal: AbortSignal.timeout(SEASON_DEEP_SEARCH_TIMEOUT_MS),
       }),
     ]);
-    if (releases.some((r) => !r.rejected)) return null;
+    // An accepted release is grabbed as it is -- see pickAcceptedRelease for
+    // why this no longer just returns and leaves it to Sonarr.
+    const accepted = pickAcceptedRelease(releases);
+    if (accepted) {
+      if (!(await stillMissing())) return null;
+      await sonarrFetch(`/api/v3/release`, {
+        method: "POST",
+        body: JSON.stringify({ guid: accepted.guid, indexerId: accepted.indexerId }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      console.log(`[sonarr] deep search grabbed "${accepted.title}" for episode ${episodeId}`);
+      return accepted.title;
+    }
     const target = {
       titles: [series.title, ...(series.alternateTitles ?? []).map((a) => a.title ?? "")].filter(Boolean),
       year: series.year,

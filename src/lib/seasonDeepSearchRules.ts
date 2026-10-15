@@ -157,6 +157,31 @@ export function pickUnmatchedEpisode<R extends SeasonRelease>(
 }
 
 /**
+ * A release Sonarr accepted outright, to grab as it is -- best quality, usenet
+ * before torrent, then most seeders; never a torrent nobody seeds.
+ *
+ * The deep search used to stop at the first sight of an accepted release, on
+ * the reasoning that Sonarr's own search would take it. Not when only an
+ * interactive-only indexer had it (Internet Archive, Knaben, and since
+ * 2026-10-15 Usenet Crawler, kept out of automatic searches for speed or a
+ * small free allowance): Sonarr's automatic search never asks those, so the
+ * one good copy -- RHONJ S02E18 on usenet, where every torrent had 1-4
+ * seeders -- would have been passed over on every try.
+ */
+export function pickAcceptedRelease<R extends SeasonRelease>(releases: R[]): R | null {
+  const candidates = releases.filter(
+    (r) => !r.rejected && (r.protocol === "usenet" || (r.seeders ?? 0) >= 1)
+  );
+  candidates.sort(
+    (a, b) =>
+      (b.qualityWeight ?? 0) - (a.qualityWeight ?? 0) ||
+      Number(b.protocol === "usenet") - Number(a.protocol === "usenet") ||
+      (b.seeders ?? 0) - (a.seeders ?? 0)
+  );
+  return candidates[0] ?? null;
+}
+
+/**
  * Languages to grab under. Sonarr requires them on an override; a release
  * whose name gave none ("Unknown") takes the series' original language.
  */

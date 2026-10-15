@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isSameSeries,
   overrideLanguages,
+  pickAcceptedRelease,
   pickUnmatchedEpisode,
   pickUnmatchedSeasonPack,
   rollUpSeason,
@@ -142,5 +143,31 @@ describe("rollUpSeason", () => {
   it("has no state until every episode has one", () => {
     expect(rollUpSeason([1, 2], { 1: s("available") })).toBeUndefined();
     expect(rollUpSeason([], {})).toBeUndefined();
+  });
+});
+
+describe("pickAcceptedRelease", () => {
+  const ok = (over: Partial<SeasonRelease>): SeasonRelease => ({
+    guid: "g",
+    indexerId: 19,
+    title: "The.Real.Housewives.of.New.Jersey.S02E18.720p.HDTV.x264-MOMENTUM",
+    rejected: false,
+    rejections: [],
+    ...over,
+  });
+
+  it("takes an accepted usenet copy only an interactive-only indexer had (RHONJ S02E18)", () => {
+    const picked = pickAcceptedRelease([
+      ok({ guid: "sd-usenet", protocol: "usenet", qualityWeight: 100 }),
+      ok({ guid: "720-usenet", protocol: "usenet", qualityWeight: 400 }),
+      ok({ guid: "rejected", protocol: "torrent", seeders: 4, rejected: true, rejections: ["Not enough seeders"] }),
+    ]);
+    expect(picked?.guid).toBe("720-usenet");
+  });
+
+  it("prefers usenet at equal quality and never takes a dead torrent", () => {
+    expect(pickAcceptedRelease([ok({ guid: "t", protocol: "torrent", seeders: 50 }), ok({ guid: "u", protocol: "usenet" })])?.guid).toBe("u");
+    expect(pickAcceptedRelease([ok({ protocol: "torrent", seeders: 0 })])).toBeNull();
+    expect(pickAcceptedRelease([])).toBeNull();
   });
 });
