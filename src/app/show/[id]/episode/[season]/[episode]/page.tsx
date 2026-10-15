@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -53,7 +54,7 @@ export default async function EpisodeWatchPage({ params }: Props) {
     ? `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}`
     : null;
   const [subtitles, codecForcesTranscode] = jellyfinItemId
-    ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId)])
+    ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId, (await headers()).get("user-agent"))])
     : [null, false];
   // Original-language audio (subbed, not dubbed) -- a non-default track can
   // only be selected by transcoding. See audioLanguageRules.ts.

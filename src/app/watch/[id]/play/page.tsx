@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -37,7 +38,7 @@ export default async function WatchPlayPage({ params }: Props) {
   // Proxied through our own origin -- see the note in lib/jellyfin.ts.
   const videoUrl = jellyfinItemId ? `/api/stream/movie/${id}` : null;
   const [subtitles, codecForcesTranscode] = jellyfinItemId
-    ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId)])
+    ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId, (await headers()).get("user-agent"))])
     : [null, false];
   // Original-language audio -- see the episode page and audioLanguageRules.ts.
   const language = jellyfinItemId
