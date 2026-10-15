@@ -6,6 +6,7 @@ import {
   isRedundantImport,
   isDeadSwarm,
   isMetadataDead,
+  isTorrentClientOffline,
   IMPORT_STUCK_MINUTES,
   pickIdleEpisodeBatch,
   REHEAL_COOLDOWN_MS,
@@ -579,12 +580,22 @@ async function healPass(): Promise<HealedDownload[]> {
     string,
     { swarmSeeds: number; connectedSeeds: number; state: string; lastActivityAt?: number | null }
   >();
+  let torrentClientOffline = false;
   try {
-    const { getTorrentHealth } = await import("./qbittorrent");
-    for (const t of (await getTorrentHealth()) ?? []) if (t.hash) swarm.set(t.hash, t);
+    const { getTorrentHealth, getTorrentNetwork } = await import("./qbittorrent");
+    const [torrents, network] = await Promise.all([getTorrentHealth(), getTorrentNetwork()]);
+    for (const t of torrents ?? []) if (t.hash) swarm.set(t.hash, t);
+    torrentClientOffline = isTorrentClientOffline(network);
   } catch (err) {
     console.error("[healer] could not read torrent swarms:", err);
   }
+  // With the client offline, no torrent is judged at all -- see
+  // isTorrentClientOffline. They are left exactly as they are and pick up
+  // where they were once the network is back; usenet is unaffected.
+  if (torrentClientOffline) {
+    console.warn("[healer] qBittorrent has no network (0 DHT nodes / disconnected): leaving every torrent alone this pass");
+  }
+  const judgeable = (e: QueueHealth) => !(torrentClientOffline && e.protocol === "torrent");
 
   // qBittorrent's own state on each torrent entry, so "queued" in Sonarr can
   // be told apart from "still fetching metadata" (see isWaitingItsTurn).
@@ -605,8 +616,8 @@ async function healPass(): Promise<HealedDownload[]> {
   const healed = await Promise.all([
     ...radarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("movie", e)),
     ...sonarrQueue.filter(isUnsafe).map((e) => rejectUnsafe("show", e)),
-    ...radarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm, replacements)),
-    ...sonarrQueue.map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm, replacements)),
+    ...radarrQueue.filter(judgeable).map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("movie", e, swarm, replacements)),
+    ...sonarrQueue.filter(judgeable).map(withTorrentState).filter((e) => !e.unsafe && isUnhealthy(e)).map((e) => healOne("show", e, swarm, replacements)),
     ...dueStuckImports([...radarrQueue, ...sonarrQueue]).map((e) =>
       replaceStuckImport(radarrQueue.includes(e) ? "movie" : "show", e)
     ),
