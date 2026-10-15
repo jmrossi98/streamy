@@ -9,6 +9,8 @@ import {
   manageSonarrEpisodes,
 } from "@/lib/sonarr";
 import { countReplacements } from "@/lib/rejectedReleases";
+import { getShowById } from "@/lib/tmdb";
+import { logAudit } from "@/lib/auditLog";
 
 /**
  * Never cached. This is live state that changes the moment a download starts,
@@ -82,6 +84,17 @@ export async function POST(request: Request) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 502 });
   }
+  // Who asked, as the title-level request route already records. Without it
+  // there was no way to tell whose show a series was: on 2026-10-15, deciding
+  // which shows stay at full quality, four of ten had no requester on record
+  // because they came in through this route.
+  const title = (await getShowById(tmdbId).catch(() => null))?.name ?? `show ${tmdbId}`;
+  logAudit(
+    session?.user?.name ?? "unknown",
+    hasEpisode ? "show.request.episode" : "show.request.season",
+    title,
+    hasEpisode ? `S${seasonNumber}E${episodeNumber} (${tier})` : `S${seasonNumber} (${tier})`
+  );
   return NextResponse.json({ ok: true, status: "requested" });
 }
 
