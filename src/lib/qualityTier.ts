@@ -1,8 +1,17 @@
 /**
  * Which quality profile a request lands on.
  *
- * Admins request in 4K; everyone else gets 1080p. Pure policy with no
- * imports, so it can be tested without the Radarr/Sonarr clients.
+ * Admins request in 4K; everyone else gets the "720p first" profile. Pure
+ * policy with no imports, so it can be tested without the Radarr/Sonarr
+ * clients.
+ *
+ * The profiles themselves live in Radarr/Sonarr, chosen by env
+ * (*_QUALITY_PROFILE_ID / *_QUALITY_PROFILE_ID_4K). Since 2026-10-15 the HD
+ * one is id 3, "720p first (any quality fallback)": 720p, then 1080p, then
+ * 2160p, then SD -- availability over size, Jake's call. Neither profile
+ * allows upgrades: once a title has a file, nothing searches for a better
+ * one. Shows on the 720p profile are also re-encoded to 720p on mediabox
+ * (mediabox-infra scripts/downscale-720p.py) when a fallback grabbed more.
  *
  * ## This is a property of the file, not of the viewer
  *

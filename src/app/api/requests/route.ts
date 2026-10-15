@@ -15,11 +15,11 @@ export async function POST(request: Request) {
   }
   const actorName = session?.user?.name ?? "unknown";
 
-  // Admins request in 4K, everyone else in 1080p. Read from the database via
-  // requireAdmin rather than the session's isAdmin claim, so a demoted admin
-  // stops pulling 40GB remuxes immediately rather than when their token
-  // expires -- and because requireAdmin fails closed, an unreachable database
-  // downgrades to 1080p instead of upgrading.
+  // Admins request in 4K, everyone else 720p first (see lib/qualityTier.ts).
+  // Read from the database via requireAdmin rather than the session's isAdmin
+  // claim, so a demoted admin stops pulling 40GB remuxes immediately rather
+  // than when their token expires -- and because requireAdmin fails closed, an
+  // unreachable database downgrades instead of upgrading.
   //
   // Note this sets the quality of the *title*, not of this user's playback:
   // there is one file, and everyone who watches it afterwards gets it. See
