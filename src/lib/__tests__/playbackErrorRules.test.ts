@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyPlayRejection, hlsFatalAction, HLS_FATAL_RETRIES } from "../playbackErrorRules";
+import { classifyPlayRejection, hlsFatalAction, nativeHlsShouldRetry, HLS_FATAL_RETRIES } from "../playbackErrorRules";
 
 const domError = (name: string) => Object.assign(new Error(name), { name });
 
@@ -27,5 +27,13 @@ describe("hlsFatalAction", () => {
   it("gives up after the retry budget, and on other fatal types", () => {
     expect(hlsFatalAction("networkError", HLS_FATAL_RETRIES)).toBe("give-up");
     expect(hlsFatalAction("muxError", 0)).toBe("give-up");
+  });
+});
+
+describe("nativeHlsShouldRetry", () => {
+  it("retries a native HLS error in place a bounded number of times", () => {
+    expect(nativeHlsShouldRetry(0)).toBe(true);
+    expect(nativeHlsShouldRetry(HLS_FATAL_RETRIES - 1)).toBe(true);
+    expect(nativeHlsShouldRetry(HLS_FATAL_RETRIES)).toBe(false);
   });
 });

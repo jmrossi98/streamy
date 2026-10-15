@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useState, type RefObject } from "react";
-
-/** Below this, two positions are the same spot. */
-const MOVED_SEC = 5;
+import { pickResumeSeconds, RESUME_ANSWER_WAIT_MS, RESUME_MOVED_SEC } from "./resumeStartRules";
 
 /**
  * Null only when the question could not be asked. "Nothing saved" is an
@@ -26,8 +24,11 @@ async function fetchResumePoint(query: string): Promise<number | null> {
 
 /**
  * The resume point as of now, not as of whenever the page was rendered (see
- * /api/resume-point). Starts as the page's value so playback never waits on
- * this; if the fresh answer has moved, the player seeks to it.
+ * /api/resume-point). Starts as the page's value; `settled` turns true once
+ * the fresh answer is in, could not be had, or took longer than
+ * RESUME_ANSWER_WAIT_MS. Direct play starts straight away and moves if the
+ * answer moved; a transcode waits for `settled` (see resumeStartRules.ts for
+ * why starting one at the wrong spot is what made Resume fail first time).
  *
  * useResumeRecheck re-checks whenever the viewer comes back to a paused
  * player (tab or window regains focus): a Streamy player left open while something was
@@ -35,22 +36,42 @@ async function fetchResumePoint(query: string): Promise<number | null> {
  * now stale, spot -- reported 2026-09-30 as "Jellyfin follows Streamy but not
  * the other way round". A playing video is never moved.
  */
-export function useFreshResume(query: string | null, fromPage: number): number {
-  const [seconds, setSeconds] = useState(fromPage);
+export function useFreshResume(query: string | null, fromPage: number): { seconds: number; settled: boolean } {
+  // Keyed by the question, so a player that moves to another episode without
+  // remounting starts from that episode's page value and waits again, rather
+  // than comparing against (and keeping) the previous episode's answer.
+  const [state, setState] = useState({ query, seconds: fromPage, settled: !query });
+  const current = state.query === query ? state : { query, seconds: fromPage, settled: !query };
 
   useEffect(() => {
     if (!query) return;
     let live = true;
+    const settle = (fresh: number | null) => {
+      if (!live) return;
+      setState((s) => ({
+        query,
+        seconds: pickResumeSeconds(s.query === query ? s.seconds : fromPage, fresh),
+        settled: true,
+      }));
+    };
+    // Too slow to wait for: let a transcode start from the page's value. The
+    // answer still counts when it comes; the player moves to it if the viewer
+    // has not moved off the start (see shouldMoveStartedPlayback).
+    const timer = setTimeout(() => settle(null), RESUME_ANSWER_WAIT_MS);
     void fetchResumePoint(query).then((fresh) => {
-      if (!live || fresh == null) return;
-      setSeconds((current) => (Math.abs(fresh - current) > MOVED_SEC ? fresh : current));
+      clearTimeout(timer);
+      settle(fresh);
     });
     return () => {
       live = false;
+      clearTimeout(timer);
     };
+    // fromPage deliberately not a dependency: a re-render with a different
+    // page value for the same title must not throw away a fresh answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  return seconds;
+  return { seconds: current.seconds, settled: current.settled };
 }
 
 /** The return-to-a-paused-player half of useFreshResume; needs the player's element. */
@@ -67,7 +88,7 @@ export function useResumeRecheck(query: string | null, videoRef: RefObject<HTMLV
       const now = videoRef.current;
       // Still paused and still the same element: only then is moving it safe.
       if (fresh == null || !now || now !== v || !now.paused) return;
-      if (Math.abs(fresh - now.currentTime) > MOVED_SEC) {
+      if (Math.abs(fresh - now.currentTime) > RESUME_MOVED_SEC) {
         try {
           now.currentTime = fresh;
         } catch {
