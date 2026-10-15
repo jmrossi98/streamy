@@ -68,12 +68,38 @@ export function isSameSeries(parsedTitle: string, target: Pick<SeasonTarget, "ti
   });
 }
 
-/** The only objection overridden: Sonarr could not tell which series this is. */
+/**
+ * The objections overridden, all of them only ever after the ordinary search
+ * has already come up empty (the deep search runs from an episode's second
+ * idle try):
+ *
+ *  - Sonarr could not tell which series this is (the Fanny and Alexander case);
+ *  - fewer seeders than ordinary searches require (5, set 2026-10-04 so
+ *    automatic grabs stop landing on near-dead swarms), and
+ *  - bigger than the profile's size cap.
+ *
+ * The last two since 2026-10-15, when 122 old Real Housewives episodes sat
+ * "missing" with copies right there in the results: RHONJ S02E18 had 8, seven
+ * rejected only for 1-4 seeders, RHOA S04E23 an SD copy with 4. Jake's rule:
+ * availability first. A slow copy of something that exists nowhere else still
+ * beats no copy -- at least one seeder is required, checked in the pickers.
+ * Everything else (wrong series, blocklisted, wrong language) stands.
+ */
 const UNKNOWN_SERIES = /^unknown series$/i;
+const OVERLOOKABLE = [
+  UNKNOWN_SERIES,
+  /^not enough seeders/i,
+  /larger than maximum allowed/i,
+  /^unknown is not wanted in profile/i,
+];
+
+function onlyOverlookable(why: string[]): boolean {
+  return why.length > 0 && why.every((x) => OVERLOOKABLE.some((re) => re.test(x.trim())));
+}
 
 /**
  * The season pack to grab by override, or null. Only a full pack of the
- * requested season whose sole rejection is "Unknown Series" and whose parsed
+ * requested season rejected only for overlookable reasons and whose parsed
  * title is this series. Usenet or a torrent somebody is seeding; best quality
  * first, then most seeders.
  */
@@ -84,7 +110,7 @@ export function pickUnmatchedSeasonPack<R extends SeasonRelease>(releases: R[], 
       r.fullSeason === true &&
       r.seasonNumber === target.seasonNumber &&
       why.length > 0 &&
-      why.every((x) => UNKNOWN_SERIES.test(x.trim())) &&
+      onlyOverlookable(why) &&
       (r.protocol === "usenet" || (r.seeders ?? 0) >= 1) &&
       isSameSeries(r.seriesTitle ?? "", target)
     );
@@ -99,8 +125,8 @@ export function pickUnmatchedSeasonPack<R extends SeasonRelease>(releases: R[], 
 }
 
 /**
- * The same for one episode: a release of exactly that episode, rejected only
- * as "Unknown Series", whose parsed title is this series. Multi-episode files
+ * The same for one episode: a release of exactly that episode, rejected
+ * for nothing but overlookable reasons, whose parsed title is this series. Multi-episode files
  * are left out -- they would be grabbed for one episode and imported as two.
  */
 export function pickUnmatchedEpisode<R extends SeasonRelease>(
@@ -116,7 +142,7 @@ export function pickUnmatchedEpisode<R extends SeasonRelease>(
       numbers.length === 1 &&
       numbers[0] === target.episodeNumber &&
       why.length > 0 &&
-      why.every((x) => UNKNOWN_SERIES.test(x.trim())) &&
+      onlyOverlookable(why) &&
       (r.protocol === "usenet" || (r.seeders ?? 0) >= 1) &&
       isSameSeries(r.seriesTitle ?? "", target)
     );
