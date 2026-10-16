@@ -176,3 +176,48 @@ export function byDueSoonest(
   if (y === null) return -1;
   return x - y;
 }
+
+/**
+ * The comparable form of a service name: "news.usenet.farm" and "usenet.farm",
+ * "NZBFinder" and "nzbfinder", are the same thing.
+ */
+export function serviceKey(name: string): string {
+  return name.toLowerCase().replace(/^(news|www)\./, "").replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Pairs each subscription row with the automatically read renewal for the same
+ * service, so the panel shows one row per thing paid for.
+ *
+ * Both lists describe overlapping services: a person enters what they pay
+ * ("Newshosting, $14.95/mo"), and renewals.ts reads what SABnzbd and Prowlarr
+ * know about the same accounts (usage, a VIP expiry). Listed side by side,
+ * every usenet service appeared twice (2026-10-15). A matched renewal is shown
+ * on its subscription's row; only the unmatched ones keep their own rows.
+ */
+export function pairRenewals<R extends { name: string }>(
+  subscriptions: { id: string; name: string }[],
+  renewals: R[]
+): { bySubscription: Map<string, R>; unmatched: R[] } {
+  const bySubscription = new Map<string, R>();
+  const unmatched: R[] = [];
+  for (const r of renewals) {
+    const sub = subscriptions.find((s) => serviceKey(s.name) === serviceKey(r.name) && !bySubscription.has(s.id));
+    if (sub) bySubscription.set(sub.id, r);
+    else unmatched.push(r);
+  }
+  return { bySubscription, unmatched };
+}
+
+/**
+ * A read renewal's detail as shown on its subscription's row. "Expiry not set
+ * in SABnzbd/Prowlarr" only means something when nothing else knows the date;
+ * a subscription row with its own renewal date does.
+ */
+export function pairedDetail(detail: string, subscriptionHasDate: boolean): string {
+  if (!subscriptionHasDate) return detail;
+  return detail
+    .split(" · ")
+    .filter((part) => !/expiry not set/i.test(part))
+    .join(" · ");
+}

@@ -9,6 +9,8 @@ import {
   describeDue,
   dueUrgencyClass,
   formatUsd,
+  pairRenewals,
+  pairedDetail,
   type AwsSpend,
   type SpendTotals,
 } from "@/lib/spendRules";
@@ -136,6 +138,9 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
   // they're kept for the record, and nothing about them is due.
   const active = rows.filter((r) => r.active).sort(byDueSoonest);
   const cancelled = rows.filter((r) => !r.active);
+  // One row per service: a renewal read off SABnzbd/Prowlarr for something
+  // already entered here is shown on that row, not as a second one.
+  const { bySubscription: readFor, unmatched: otherRenewals } = pairRenewals(rows, autoRenewals);
 
   return (
     <div className="space-y-4">
@@ -287,6 +292,15 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
                     {!row.active && <span className="text-[11px] text-white/40">cancelled</span>}
                   </div>
                   {row.notes && <p className="truncate text-xs text-white/40">{row.notes}</p>}
+                  {readFor.get(row.id) && (readFor.get(row.id)!.detail || readFor.get(row.id)!.problem) && (
+                    <p
+                      className={`truncate text-xs ${
+                        readFor.get(row.id)!.problem ? "text-amber-200/70" : "text-white/40"
+                      }`}
+                    >
+                      {readFor.get(row.id)!.problem || pairedDetail(readFor.get(row.id)!.detail, !!row.renewsAt)}
+                    </p>
+                  )}
                   {row.url && (
                     <a
                       href={row.url}
@@ -350,9 +364,9 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
             so they're a plain read-only tail on the same list rather than the
             separate card they used to live in -- "what expires next" and "what
             do I pay" are the same glance. */}
-        {autoRenewals.length > 0 && (
+        {otherRenewals.length > 0 && (
           <ul className="divide-y divide-white/5 border-t border-white/10">
-            {autoRenewals.map((r) => (
+            {otherRenewals.map((r) => (
               <li
                 key={`${r.source}:${r.name}`}
                 className="flex items-center gap-3 px-4 py-2.5"
