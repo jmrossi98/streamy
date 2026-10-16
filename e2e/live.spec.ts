@@ -28,7 +28,9 @@ test("the URL picks the tab, and an unknown tab falls back to Now", async ({ pag
   await page.goto("/live?tab=recordings");
   const tabs = page.getByRole("navigation", { name: "Live TV sections" });
   await expect(tabs.getByRole("link", { name: "Recordings" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByText("Recordings will appear here once Sportarr has saved a game.")).toBeVisible();
+  // No SPORTARR_URL in the e2e environment, so the tab says so rather than
+  // showing an empty list.
+  await expect(page.getByText("Sportarr isn’t configured")).toBeVisible();
 
   await page.goto("/live?tab=nonsense");
   await expect(tabs.getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page");

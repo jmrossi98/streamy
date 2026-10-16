@@ -7,9 +7,10 @@ import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { ChannelCard } from "@/components/ChannelCard";
-import { SportsSchedule } from "@/components/SportsSchedule";
+import { SportsTab } from "@/components/SportsTab";
+import { RecordingsTab } from "@/components/RecordingsTab";
 import { LiveNowGames } from "@/components/LiveNowGames";
-import { Button, ButtonLink, Panel, Select, TabBar, TabLink, TextInput } from "@/components/ui";
+import { Button, ButtonLink, Select, TabBar, TabLink, TextInput } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import { groupIntoShelves } from "@/lib/liveShelves";
 import { LIVE_TABS, liveTabHref, parseLiveTab, type LiveTab } from "@/lib/liveTabs";
@@ -155,19 +156,12 @@ export function LiveTvContent({
           <GuideTab lineup={lineup} listed={listed} truncated={truncated} total={channels.length} isAdmin={isAdmin} {...lookups} />
         ))}
 
-      {/* Hosted as-is for now; the owner is replacing its contents with the
-          Sportarr integration. Rendered whether or not the lineup loaded,
-          since the schedule is independent of Jellyfin. */}
-      {tab === "sports" && <SportsSchedule channels={channels} />}
+      {/* Both rendered whether or not the lineup loaded: the schedule comes
+          from ESPN and the recordings from Sportarr, neither of which needs
+          Jellyfin's channels. */}
+      {tab === "sports" && <SportsTab />}
 
-      {tab === "recordings" && (
-        <Panel className="mt-6 text-center">
-          <p className="text-base font-semibold text-white/80">No recordings yet</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-white/50">
-            Recordings will appear here once Sportarr has saved a game.
-          </p>
-        </Panel>
-      )}
+      {tab === "recordings" && <RecordingsTab />}
     </div>
   );
 }
