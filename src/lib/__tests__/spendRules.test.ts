@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   byDueSoonest,
+  buildServiceList,
   computeTotals,
   pairRenewals,
   pairedDetail,
@@ -200,5 +201,41 @@ describe("describeCost without a price", () => {
     expect(describeCost(0, "yearly")).toBe("—");
     expect(describeCost(0, "free")).toBe("Free");
     expect(describeCost(15, "yearly")).toBe("$15.00/yr ($1.25/mo)");
+  });
+});
+
+describe("buildServiceList", () => {
+  const subs = [
+    { id: "nh", name: "Newshosting", active: true, daysLeft: 14 },
+    { id: "uf", name: "usenet.farm", active: true, daysLeft: 163 },
+    { id: "nf", name: "NZBFinder", active: true, daysLeft: 365 },
+    { id: "old", name: "OldVPN", active: false, daysLeft: null },
+  ];
+  const renewals = [
+    { name: "Newshosting", source: "usenet" },
+    { name: "news.usenet.farm", source: "usenet" },
+    { name: "NZBgeek", source: "usenet" },
+    { name: "trex", source: "iptv" },
+  ];
+  const creds = [
+    { key: "usenet:news.newshosting.com", name: "Newshosting" },
+    { key: "indexer:20", name: "NZBFinder" },
+    { key: "indexer:7", name: "NZBgeek" },
+    { key: "iptv:5", name: "trex" },
+    { key: "indexer:19", name: "Usenet Crawler" },
+  ];
+
+  it("puts each service's entry, detected info and login on one row", () => {
+    const items = buildServiceList(subs, renewals, creds);
+    const byName = (n: string) => items.find((i) => (i.sub?.name ?? i.renewal?.name ?? i.cred?.name) === n)!;
+    expect(byName("Newshosting").renewal?.name).toBe("Newshosting");
+    expect(byName("Newshosting").cred?.key).toBe("usenet:news.newshosting.com");
+    expect(byName("usenet.farm").renewal?.name).toBe("news.usenet.farm");
+    expect(byName("NZBgeek").cred?.key).toBe("indexer:7");
+    expect(byName("trex").cred?.key).toBe("iptv:5");
+    expect(byName("Usenet Crawler").sub).toBeUndefined();
+    // One row per service: 4 entries + 2 detected-only + 1 login-only.
+    expect(items).toHaveLength(7);
+    expect(items[items.length - 1].sub?.name).toBe("OldVPN");
   });
 });

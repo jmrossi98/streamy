@@ -225,3 +225,38 @@ export function pairedDetail(detail: string, subscriptionHasDate: boolean): stri
     .filter((part) => !/expiry not set/i.test(part))
     .join(" · ");
 }
+
+/** One service as the subscriptions list shows it: whatever is known about it, from each source. */
+export type ServiceItem<S, R, C> = { key: string; sub?: S; renewal?: R; cred?: C };
+
+/**
+ * Everything about each service in one row (2026-10-16): the entry with its
+ * price, the expiry or usage read off the service, and the login or key that
+ * can be rotated. Matched by serviceKey, so "news.usenet.farm" (SABnzbd) and
+ * "usenet.farm" (entered) are one service. Order: active entries by renewal,
+ * then detected-only services, then credential-only ones, cancelled last.
+ */
+export function buildServiceList<
+  S extends { id: string; name: string; active: boolean; daysLeft?: number | null },
+  R extends { name: string; source: string },
+  C extends { key: string; name: string },
+>(subs: S[], renewals: R[], creds: C[]): ServiceItem<S, R, C>[] {
+  const { bySubscription, unmatched } = pairRenewals(subs, renewals);
+  const items: ServiceItem<S, R, C>[] = [
+    ...[...subs].sort((a, b) => Number(b.active) - Number(a.active) || byDueSoonest(a, b)).map((s) => ({
+      key: `sub:${s.id}`,
+      sub: s,
+      renewal: bySubscription.get(s.id),
+    })),
+    ...unmatched.map((r) => ({ key: `renewal:${r.source}:${r.name}`, renewal: r })),
+  ];
+  for (const c of creds) {
+    const item = items.find(
+      (i) => !i.cred && serviceKey(i.sub?.name ?? i.renewal?.name ?? "") === serviceKey(c.name)
+    );
+    if (item) item.cred = c;
+    else items.push({ key: `cred:${c.key}`, cred: c });
+  }
+  // Cancelled entries last, whatever else they carry.
+  return [...items.filter((i) => i.sub?.active !== false), ...items.filter((i) => i.sub?.active === false)];
+}

@@ -68,15 +68,24 @@ export async function PATCH(request: Request) {
   const id = typeof body.id === "string" ? body.id : "";
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  // `active` and the renewal date. Cancelling is the edit that matters, and
-  // the row is kept rather than deleted so the history stays readable; the
-  // date is here because it's the one field that goes stale on its own, so
-  // it gets corrected far more often than anything else on the row.
+  // Any field of the row, each only when sent: a partial edit (just the date,
+  // just cancelling) can never blank the others. Cancelling keeps the row
+  // rather than deleting it so the history stays readable. Everything became
+  // editable on 2026-10-16 -- a price or a plan changes on renewal too, not
+  // only the date.
+  const text = (k: string) => (typeof body[k] === "string" ? { [k]: (body[k] as string).trim() } : {});
+  const cost = Number(body.cost);
   await prisma.subscription.update({
     where: { id },
     data: {
       ...(typeof body.active === "boolean" ? { active: body.active } : {}),
       ...("renewsAt" in body ? { renewsAt: parseRenewsAt(body.renewsAt) } : {}),
+      ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
+      ...text("category"),
+      ...text("url"),
+      ...text("notes"),
+      ...(CADENCES.has(body.cadence) ? { cadence: body.cadence } : {}),
+      ...("cost" in body ? { cost: Number.isFinite(cost) && cost > 0 ? cost : 0 } : {}),
     },
   });
   return NextResponse.json({ ok: true });
