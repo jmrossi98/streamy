@@ -1,0 +1,84 @@
+import { unstable_noStore } from "next/cache";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+import { getLiveChannels, isJellyfinConfiguredForLiveTv, isJellyfinReachable } from "@/lib/liveTv";
+import { getChannelInfo, type ChannelInfo } from "@/lib/dispatcharr";
+import { resolveLogoFallbacks } from "@/lib/channelLogoResolve";
+import { AdminSection } from "@/components/ui";
+import { StreamBrowser } from "@/components/StreamBrowser";
+import { AdminLiveTvLineup } from "@/components/AdminLiveTvLineup";
+
+/**
+ * Live TV management: what is in the lineup, and what is not.
+ *
+ * Everything here used to sit at the top of /live itself -- Select mode,
+ * bulk hide and delete, the Hidden channels panel, and the stream browser --
+ * above the channels anyone came to watch. Moved on 2026-10-16 so the
+ * viewing page is only for viewing, the way YouTube TV keeps its settings
+ * out of the Live/Library/Sports tabs. The admin layout gates the route.
+ *
+ * Lighter than /live's load on purpose: no guide data, no per-channel health
+ * sampling. This page is for picking channels out by name, which the name,
+ * logo and provider label are enough for.
+ */
+export const dynamic = "force-dynamic";
+
+export default async function AdminLiveTvPage() {
+  unstable_noStore();
+  const session = await getSession();
+
+  const envSet = isJellyfinConfiguredForLiveTv();
+  const reachable = envSet ? await isJellyfinReachable() : false;
+  const channels = reachable ? await getLiveChannels() : [];
+
+  // Best effort, same reasoning as on /live: a Dispatcharr hiccup costs the
+  // provider labels, not the page. Plain object, since a Map does not survive
+  // the server/client boundary.
+  let infoByChannel: Record<string, ChannelInfo> = {};
+  try {
+    const info = await getChannelInfo();
+    if (info) infoByChannel = Object.fromEntries(info);
+  } catch (err) {
+    console.error("[admin/live-tv] getChannelInfo failed:", err);
+  }
+
+  let logoFallbacks: Record<string, string> = {};
+  try {
+    logoFallbacks = await resolveLogoFallbacks(channels, infoByChannel);
+  } catch (err) {
+    console.error("[admin/live-tv] resolveLogoFallbacks failed:", err);
+  }
+
+  // Hiding is per viewer, so this is the admin's own hidden list -- the same
+  // one the Hidden panel on /live used to show them.
+  const userId = await getValidSessionUserId(session);
+  const hidden = userId
+    ? await prisma.hiddenChannelItem.findMany({
+        where: { userId },
+        select: { channelId: true, name: true },
+        orderBy: { name: "asc" },
+      })
+    : [];
+
+  return (
+    <div className="space-y-10">
+      <AdminSection title="Lineup">
+        <AdminLiveTvLineup
+          envSet={envSet}
+          reachable={reachable}
+          channels={channels}
+          hiddenChannels={hidden}
+          infoByChannel={infoByChannel}
+          logoFallbacks={logoFallbacks}
+        />
+      </AdminSection>
+
+      {/*
+        Below the lineup rather than beside it. Rendered even when the tuner
+        is unreachable, since an empty lineup is exactly when someone wants
+        to add to it. StreamBrowser draws its own heading.
+      */}
+      <StreamBrowser />
+    </div>
+  );
+}

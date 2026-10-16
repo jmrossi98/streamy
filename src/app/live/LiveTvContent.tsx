@@ -1,16 +1,18 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { ChannelCard } from "@/components/ChannelCard";
-import { StreamBrowser } from "@/components/StreamBrowser";
 import { SportsSchedule } from "@/components/SportsSchedule";
+import { LiveNowGames } from "@/components/LiveNowGames";
+import { Button, ButtonLink, Panel, Select, TabBar, TabLink, TextInput } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import { groupIntoShelves } from "@/lib/liveShelves";
+import { LIVE_TABS, liveTabHref, parseLiveTab, type LiveTab } from "@/lib/liveTabs";
 
 type HiddenEntry = { channelId: string; name: string };
 
@@ -26,7 +28,7 @@ type Props = {
   myListIds: string[];
   /** Channels this viewer has hidden from their lineup, name-snapshotted. */
   hiddenChannels: HiddenEntry[];
-  /** Gates the stream browser: adding a channel publishes it to everyone. */
+  /** Shows the link to channel management, which lives under /admin. */
   isAdmin: boolean;
   /** Channel name -> provider and dead-stream state, best effort. */
   infoByChannel: Record<string, ChannelInfo>;
@@ -36,6 +38,9 @@ type Props = {
   /** Channel name -> a logo to use when the channel has none of its own. */
   logoFallbacks: Record<string, string>;
 };
+
+/** What every tab needs to draw a channel card. */
+type CardLookups = Pick<Props, "infoByChannel" | "statusByChannel" | "logoFallbacks">;
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
 const PAGE_SIZE = 60;
@@ -47,211 +52,39 @@ function numberValue(number: string | null): number {
   return m ? parseFloat(m[0]) : NaN;
 }
 
+/**
+ * Live TV, in four tabs: Now, Guide, Sports, Recordings.
+ *
+ * One client component switching on `?tab=` rather than four routes: the
+ * channels are loaded once by the server page and every tab draws from the
+ * same list, so a route per tab would refetch the whole lineup on each
+ * switch. See liveTabs.ts for why the tabs exist at all.
+ *
+ * Nothing here manages the lineup. Select mode, bulk hide/delete, the Hidden
+ * channels panel and the stream browser all moved to /admin/live-tv
+ * (2026-10-16): they were the first thing on the page and the last thing a
+ * viewer wanted.
+ */
 export function LiveTvContent({
   envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
   statusByChannel, logoFallbacks,
 }: Props) {
-  const [query, setQuery] = useState("");
-  const [shown, setShown] = useState(PAGE_SIZE);
-  const [sortBy, setSortBy] = useState<"name" | "number">("name");
-  const [category, setCategory] = useState<string>("all");
+  // The page is force-dynamic, so this is available on the server render too
+  // and the tab arrives in the first HTML rather than after hydration.
+  const searchParams = useSearchParams();
+  const tab = parseLiveTab(searchParams.get("tab"));
 
-  const [hidden, setHidden] = useState<HiddenEntry[]>(hiddenChannels);
-  const router = useRouter();
-  const [hiddenPanelOpen, setHiddenPanelOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteNote, setDeleteNote] = useState<string | null>(null);
-  const [unhiding, setUnhiding] = useState<string | null>(null);
-
-  const [selectMode, setSelectMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [hiding, setHiding] = useState(false);
-
-  const hiddenIds = useMemo(() => new Set(hidden.map((h) => h.channelId)), [hidden]);
+  const hiddenIds = useMemo(() => new Set(hiddenChannels.map((h) => h.channelId)), [hiddenChannels]);
   const listed = useMemo(() => new Set(myListIds), [myListIds]);
-  const channelById = useMemo(() => new Map(channels.map((c) => [c.id, c])), [channels]);
 
-  // Computed once over the whole lineup rather than per render of a card:
-  // classifying 1,477 names on every keystroke is wasted work.
-  const categoryById = useMemo(
-    () => new Map(channels.map((c) => [c.id, classifyChannel(c.name)])),
-    [channels]
+  // Placeholders filtered here rather than only in the stream browser: one
+  // promoted before that filter existed is still in the lineup, and a
+  // channel named "#####" is no more watchable from a row than it was from
+  // the catalogue.
+  const lineup = useMemo(
+    () => channels.filter((c) => !looksLikePlaceholder(c.name) && !hiddenIds.has(c.id)),
+    [channels, hiddenIds]
   );
-
-  // Only offer categories this lineup actually has, with counts. An empty
-  // "Kids" option that filters to nothing is worse than no option.
-  const availableCategories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const cat of categoryById.values()) {
-      counts.set(cat, (counts.get(cat) ?? 0) + 1);
-    }
-    return [...CHANNEL_CATEGORIES, "Other"]
-      .filter((c) => (counts.get(c) ?? 0) > 0)
-      .map((c) => ({ name: c, count: counts.get(c)! }));
-  }, [categoryById]);
-
-  const sorted = useMemo(() => {
-    // Placeholders filtered here rather than only in the stream browser: one
-    // promoted before that filter existed is still in the lineup, and a
-    // channel named "#####" is no more watchable from the grid than it was
-    // from the catalogue.
-    const arr = channels.filter((c) => !looksLikePlaceholder(c.name));
-    if (sortBy === "number") {
-      arr.sort((a, b) => {
-        const an = numberValue(a.number);
-        const bn = numberValue(b.number);
-        if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
-        if (!Number.isNaN(an)) return -1;
-        if (!Number.isNaN(bn)) return 1;
-        return a.name.localeCompare(b.name);
-      });
-    } else {
-      arr.sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return arr;
-  }, [channels, sortBy]);
-
-  // Excludes My List, not just hidden -- a starred channel already has its
-  // own shelf above (My Stations), and showing it a second time down here
-  // was the literal meaning of "duplicated on the page", reported live.
-  const unfilteredVisible = useMemo(
-    () =>
-      sorted.filter(
-        (c) =>
-          !hiddenIds.has(c.id) &&
-          !listed.has(c.id) &&
-          (category === "all" || categoryById.get(c.id) === category)
-      ),
-    [sorted, hiddenIds, listed, category, categoryById]
-  );
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return unfilteredVisible;
-    // Number as well as name: on a broadcast lineup people reach for "7.1"
-    // as readily as for the call sign.
-    return unfilteredVisible.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        (c.number ?? "").toLowerCase().includes(q) ||
-        (c.now?.name ?? "").toLowerCase().includes(q)
-    );
-  }, [unfilteredVisible, query]);
-
-  // Pinned above the rest. Left out of bulk-hide on purpose -- favorites are
-  // managed with the star button, and mixing the two actions on the same
-  // shelf invites hiding something you just starred.
-  const mine = channels.filter((c) => listed.has(c.id) && !hiddenIds.has(c.id));
-  const visible = filtered.slice(0, shown);
-  const showShelves = !query.trim() && category === "all" && !selectMode;
-  const shelves = useMemo(() => groupIntoShelves(unfilteredVisible), [unfilteredVisible]);
-
-  function toggleSelect(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function exitSelectMode() {
-    setSelectMode(false);
-    setSelectedIds(new Set());
-  }
-
-  /**
-   * Removes the selected channels from the lineup, for everybody.
-   *
-   * Deliberately distinct from Hide, which is per-viewer and reversible from
-   * the Hidden channels panel. This one is shared and interrupts anyone
-   * watching, so it confirms first and names what it is about to do -- and the
-   * server records who did it.
-   *
-   * Sequential rather than parallel: each removal makes Dispatcharr rebuild
-   * the guide, and firing a dozen at once has had it return partial lineups.
-   */
-  async function deleteSelected() {
-    const targets = [...selectedIds]
-      .map((id) => channelById.get(id))
-      .filter((c): c is LiveChannel => !!c);
-    if (targets.length === 0) return;
-
-    const names = targets.map((c) => c.name).join(", ");
-    if (
-      !window.confirm(
-        `Remove ${targets.length === 1 ? "this channel" : `these ${targets.length} channels`} ` +
-          `from Live TV for everyone?\n\n${names}\n\n` +
-          "The stream stays in the catalogue and can be added back. " +
-          "To remove it only for yourself, use Hide instead."
-      )
-    ) {
-      return;
-    }
-
-    setDeleting(true);
-    setDeleteNote(null);
-    const failed: string[] = [];
-    try {
-      for (const channel of targets) {
-        const res = await fetch("/api/live/streams/demote", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channelId: Number(channel.id) }),
-        });
-        if (!res.ok) failed.push(channel.name);
-      }
-      if (failed.length > 0) {
-        setDeleteNote(`Couldn't remove: ${failed.join(", ")}`);
-      } else {
-        setDeleteNote(
-          `Removed ${targets.length} channel${targets.length === 1 ? "" : "s"}. ` +
-            "Jellyfin caches its channel list, so it may take a few minutes to disappear."
-        );
-        exitSelectMode();
-        router.refresh();
-      }
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  async function hideSelected() {
-    const entries = [...selectedIds]
-      .map((id) => channelById.get(id))
-      .filter((c): c is LiveChannel => !!c)
-      .map((c) => ({ channelId: c.id, name: c.name }));
-    if (entries.length === 0) return;
-    setHiding(true);
-    try {
-      const res = await fetch("/api/live/hidden", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channels: entries }),
-      });
-      if (res.ok) {
-        setHidden((prev) => [
-          ...prev,
-          ...entries.filter((e) => !prev.some((p) => p.channelId === e.channelId)),
-        ]);
-        exitSelectMode();
-      }
-    } finally {
-      setHiding(false);
-    }
-  }
-
-  async function unhide(channelId: string) {
-    setUnhiding(channelId);
-    try {
-      const res = await fetch(`/api/live/hidden?channelId=${encodeURIComponent(channelId)}`, {
-        method: "DELETE",
-      });
-      if (res.ok) setHidden((prev) => prev.filter((h) => h.channelId !== channelId));
-    } finally {
-      setUnhiding(null);
-    }
-  }
 
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
   // "Jellyfin is fine but has no tuner", and "there's a tuner but it returned
@@ -293,292 +126,289 @@ export function LiveTvContent({
     };
   }
 
+  const emptyPanel = empty && (
+    <div className="rounded-lg border border-white/10 bg-netflix-dark/60 px-4 py-10 text-center">
+      <p className="text-base font-semibold text-white/80">{empty.title}</p>
+      <p className="mx-auto mt-2 max-w-md text-sm text-white/50">{empty.detail}</p>
+    </div>
+  );
+
+  const lookups: CardLookups = { infoByChannel, statusByChannel, logoFallbacks };
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 md:px-6">
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h1 className={ROW_H2_CLASS}>Live TV</h1>
-        {channels.length > 0 && (
-          <span className="text-sm text-white/40">
-            {query ? `${filtered.length} of ${unfilteredVisible.length}` : `${unfilteredVisible.length} channel${unfilteredVisible.length === 1 ? "" : "s"}`}
-            {truncated && !query ? "+" : ""}
-          </span>
-        )}
-      </div>
+      <h1 className={ROW_H2_CLASS}>Live TV</h1>
+      <LiveTabBar active={tab} />
 
-      {channels.length > 0 && !empty && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {/* Always shown, not gated on a channel count worth paging through --
-              that gate hid search entirely on a lineup smaller than PAGE_SIZE
-              (60), which a curated promoted-channel lineup usually is. Finding
-              a specific channel by name is the same need at 23 channels as at
-              600; only *paging* through the grid is what actually needs a
-              lineup that large. */}
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              // Reset paging here rather than in an effect: it is a consequence
-              // of the edit, not of the render. Without it the reveal count from
-              // the previous search carries over and results look arbitrarily
-              // long.
-              setShown(PAGE_SIZE);
-            }}
-            placeholder="Search channels…"
-            // text-base on mobile: iOS zooms the viewport on a focused input
-            // under 16px and there is no way back out without pinching.
-            className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
-          />
-
-          {availableCategories.length > 1 && (
-            <select
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                setShown(PAGE_SIZE);
-              }}
-              className="streamy-select shrink-0 rounded border border-white/15 bg-black/40 py-2 pl-3 text-sm text-white focus:border-white/40 focus:outline-none"
-              aria-label="Filter channels by type"
-            >
-              <option value="all">All types</option>
-              {availableCategories.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name} ({c.count})
-                </option>
-              ))}
-            </select>
-          )}
-
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as "name" | "number")}
-            className="streamy-select shrink-0 rounded border border-white/15 bg-black/40 py-2 pl-3 text-sm text-white focus:border-white/40 focus:outline-none"
-            aria-label="Sort channels"
-          >
-            <option value="name">Sort: Name</option>
-            <option value="number">Sort: Channel #</option>
-          </select>
-
-          {!selectMode ? (
-            <button
-              type="button"
-              onClick={() => setSelectMode(true)}
-              className="shrink-0 rounded bg-white/10 px-3 py-2 text-sm text-white transition-colors hover:bg-white/20"
-            >
-              Select
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={exitSelectMode}
-              className="shrink-0 rounded bg-white/10 px-3 py-2 text-sm text-white transition-colors hover:bg-white/20"
-            >
-              Cancel
-            </button>
-          )}
-
-          {hidden.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setHiddenPanelOpen((v) => !v)}
-              className="shrink-0 rounded bg-white/10 px-3 py-2 text-sm text-white/70 transition-colors hover:bg-white/20"
-            >
-              Hidden ({hidden.length})
-            </button>
-          )}
-        </div>
-      )}
-
-      {selectMode && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-white/15 bg-netflix-dark/80 px-4 py-3">
-          <span className="text-sm text-white/70">
-            {selectedIds.size} selected
-          </span>
-          <button
-            type="button"
-            onClick={hideSelected}
-            disabled={selectedIds.size === 0 || hiding || deleting}
-            className="ml-auto rounded bg-netflix-red px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-netflix-red/80 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {hiding ? "Hiding…" : `Hide selected`}
-          </button>
-          {/* Outlined rather than filled, and second: hiding is the one most
-              people want, and this one changes the lineup for everybody. */}
-          <button
-            type="button"
-            onClick={deleteSelected}
-            disabled={selectedIds.size === 0 || hiding || deleting}
-            title="Remove from Live TV for everyone -- the stream stays in the catalogue"
-            className="rounded border border-white/25 px-3 py-1.5 text-sm font-semibold text-white/70 transition-colors hover:border-red-400/60 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {deleting ? "Deleting…" : "Delete selected"}
-          </button>
-        </div>
-      )}
-
-      {deleteNote && (
-        <p className="mb-4 text-sm text-white/60">{deleteNote}</p>
-      )}
-
-      {hiddenPanelOpen && hidden.length > 0 && (
-        <div className="mb-6 rounded-lg border border-white/10 bg-netflix-dark/60 p-4">
-          <h2 className="mb-3 text-sm font-semibold text-white/80">Hidden channels</h2>
-          <ul className="space-y-2">
-            {hidden.map((h) => (
-              <li key={h.channelId} className="flex items-center justify-between gap-3 text-sm">
-                <span className="truncate text-white/70">{h.name}</span>
-                <button
-                  type="button"
-                  onClick={() => unhide(h.channelId)}
-                  disabled={unhiding === h.channelId}
-                  className="shrink-0 rounded bg-white/10 px-2.5 py-1 text-xs text-white transition-colors hover:bg-white/20 disabled:opacity-50"
-                >
-                  {unhiding === h.channelId ? "…" : "Unhide"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {empty ? (
-        <div className="rounded-lg border border-white/10 bg-netflix-dark/60 px-4 py-10 text-center">
-          <p className="text-base font-semibold text-white/80">{empty.title}</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-white/50">{empty.detail}</p>
-        </div>
-      ) : (
+      {tab === "now" && (
         <>
-          {mine.length > 0 && !query && !selectMode && (
-            <section className="mb-8">
-              <h2 className="mb-3 font-display text-xl font-bold text-white">My Stations</h2>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {mine.map((c) => (
-                  <ChannelCard
-                    key={`mine:${c.id}`}
-                    channel={c}
-                    inList
-                    info={infoByChannel[c.name]}
-                    status={statusByChannel[c.name]}
-                    logoFallback={logoFallbacks[c.name]}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/*
-            A heading either way, not only when My Stations pushes one out.
-            Without this, a viewer with nothing starred landed straight in an
-            unlabeled wall of cards -- fine once you already know what page
-            you're on, disorienting on first visit, which is the "confusing"
-            part of "stream navigation is confusing" that a screenshot alone
-            wouldn't have shown.
-          */}
-          {/*
-            Browsing (no search, no category picked, not selecting): one row per
-            league, then per genre -- see liveShelves.ts. Searching, filtering or
-            selecting falls back to the flat grid below, which is what those
-            need: every match in one place, and every card selectable.
-          */}
-          {showShelves &&
-            shelves.map(({ shelf, channels: row }) => (
-              <section key={shelf.key} className="mb-8">
-                <h2 className={ROW_H2_CLASS}>
-                  {shelf.title} <span className="text-sm font-normal text-white/40">{row.length}</span>
-                </h2>
-                <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
-                  {row.map((c) => (
-                    <div key={c.id} className="w-72 shrink-0 snap-start">
-                      <ChannelCard
-                        channel={c}
-                        inList={listed.has(c.id)}
-                        info={infoByChannel[c.name]}
-                        status={statusByChannel[c.name]}
-                        logoFallback={logoFallbacks[c.name]}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ))}
-
-          {!showShelves && !query && !selectMode && (
-            <h2 className="mb-3 font-display text-xl font-bold text-white">
-              {mine.length > 0 ? "All Channels" : "Channels"}
-            </h2>
-          )}
-
-          {!showShelves && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {visible.map((c) => (
-              <ChannelCard
-                key={c.id}
-                channel={c}
-                inList={listed.has(c.id)}
-                selectMode={selectMode}
-                selected={selectedIds.has(c.id)}
-                onToggleSelect={() => toggleSelect(c.id)}
-                info={infoByChannel[c.name]}
-                status={statusByChannel[c.name]}
-                logoFallback={logoFallbacks[c.name]}
-              />
-            ))}
-          </div>
-          )}
-
-          {filtered.length === 0 && (
-            <p className="py-10 text-center text-sm text-white/40">
-              No channels match “{query}”.
-            </p>
-          )}
-
-          {!showShelves && shown < filtered.length && (
-            <div className="mt-4 flex justify-center">
-              <button
-                type="button"
-                onClick={() => setShown((n) => n + PAGE_SIZE)}
-                className="rounded bg-white/10 px-4 py-2 text-sm text-white transition-colors hover:bg-white/20"
-              >
-                Show {Math.min(PAGE_SIZE, filtered.length - shown)} more
-              </button>
-            </div>
-          )}
-
-          {truncated && !query && shown >= filtered.length && (
-            // Said out loud rather than silently cutting the list off, which
-            // is what the old hard cap did.
-            <p className="mt-4 text-center text-xs text-white/30">
-              Showing the first {channels.length} channels. Your tuner reports more -
-              narrow the playlist in Jellyfin if you need the rest.
-            </p>
-          )}
+          {/* The games row is independent of Jellyfin entirely, so it still
+              renders above a broken lineup: someone landing here while Live
+              TV is down should still see what's on. */}
+          <LiveNowGames channels={channels} />
+          {emptyPanel ?? <NowTab lineup={lineup} listed={listed} {...lookups} />}
         </>
       )}
 
-      {/*
-        Below the lineup, not above it: a viewer opening Live TV wants a
-        channel first, and the grid -- not "what's on tonight" -- is that.
-        Still rendered whether or not the lineup loaded, since the schedule is
-        independent of Jellyfin/Dispatcharr entirely and someone landing here
-        while Live TV is broken should still be able to see what's on -- it
-        just won't be clickable to anything, since findChannelForFixture has
-        nothing to match against.
-      */}
-      <SportsSchedule channels={channels} />
+      {tab === "guide" &&
+        (emptyPanel ?? (
+          <GuideTab lineup={lineup} listed={listed} truncated={truncated} total={channels.length} isAdmin={isAdmin} {...lookups} />
+        ))}
 
-      {/*
-        Below the lineup rather than beside it: this is a maintenance surface,
-        not something a viewer scrolls past on the way to watching something.
-        Rendered even when the tuner is unreachable, since an empty lineup is
-        exactly when someone wants to add to it.
+      {/* Hosted as-is for now; the owner is replacing its contents with the
+          Sportarr integration. Rendered whether or not the lineup loaded,
+          since the schedule is independent of Jellyfin. */}
+      {tab === "sports" && <SportsSchedule channels={channels} />}
 
-        Open to any signed-in viewer now, not just admins -- searching and
-        promoting a stream is the same "found something worth adding" action
-        whoever does it. Removing one stays admin-only inside StreamBrowser
-        itself: taking a channel away can interrupt someone else's game
-        mid-watch, which is a different, higher-stakes action than adding.
-      */}
-      <StreamBrowser />
+      {tab === "recordings" && (
+        <Panel className="mt-6 text-center">
+          <p className="text-base font-semibold text-white/80">No recordings yet</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-white/50">
+            Recordings will appear here once Sportarr has saved a game.
+          </p>
+        </Panel>
+      )}
     </div>
+  );
+}
+
+function LiveTabBar({ active }: { active: LiveTab }) {
+  return (
+    <TabBar label="Live TV sections" className="mb-6">
+      {LIVE_TABS.map((t) => (
+        <TabLink key={t.key} href={liveTabHref(t.key)} active={t.key === active}>
+          {t.label}
+        </TabLink>
+      ))}
+    </TabBar>
+  );
+}
+
+/**
+ * Now: what to put on. My Stations first, then one row per league and genre.
+ * No search, sort or filter -- those are the Guide's, and a row that can be
+ * narrowed is a grid wearing a costume.
+ */
+function NowTab({
+  lineup, listed, infoByChannel, statusByChannel, logoFallbacks,
+}: { lineup: LiveChannel[]; listed: Set<string> } & CardLookups) {
+  // Pinned above the rest. Starred channels are left out of the rows below
+  // on purpose -- a channel already on its own shelf, shown a second time
+  // further down, was the literal meaning of "duplicated on the page",
+  // reported live.
+  const mine = lineup.filter((c) => listed.has(c.id));
+  const shelves = useMemo(
+    () => groupIntoShelves([...lineup].filter((c) => !listed.has(c.id)).sort((a, b) => a.name.localeCompare(b.name))),
+    [lineup, listed]
+  );
+
+  const card = (c: LiveChannel) => (
+    <div key={c.id} className="w-72 shrink-0 snap-start">
+      <ChannelCard
+        channel={c}
+        inList={listed.has(c.id)}
+        info={infoByChannel[c.name]}
+        status={statusByChannel[c.name]}
+        logoFallback={logoFallbacks[c.name]}
+      />
+    </div>
+  );
+
+  return (
+    <>
+      {mine.length > 0 && (
+        <section className="mb-8">
+          <h2 className={ROW_H2_CLASS}>My Stations</h2>
+          <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-2">{mine.map(card)}</div>
+        </section>
+      )}
+
+      {/* One row per league, then per genre -- see liveShelves.ts. */}
+      {shelves.map(({ shelf, channels: row }) => (
+        <section key={shelf.key} className="mb-8">
+          <h2 className={ROW_H2_CLASS}>
+            {shelf.title} <span className="text-sm font-normal text-white/40">{row.length}</span>
+          </h2>
+          <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-2">{row.map(card)}</div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Guide: every channel, searchable, sortable, filterable by type.
+ *
+ * For now this is the flat grid /live always had; the only place search,
+ * the category select and the sort select live. A real time-grid guide
+ * (channels down, half-hours across) comes in a later PR.
+ */
+function GuideTab({
+  lineup, listed, truncated, total, isAdmin, infoByChannel, statusByChannel, logoFallbacks,
+}: { lineup: LiveChannel[]; listed: Set<string>; truncated: boolean; total: number; isAdmin: boolean } & CardLookups) {
+  const [query, setQuery] = useState("");
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const [sortBy, setSortBy] = useState<"name" | "number">("name");
+  const [category, setCategory] = useState<string>("all");
+
+  // Computed once over the whole lineup rather than per render of a card:
+  // classifying 1,477 names on every keystroke is wasted work.
+  const categoryById = useMemo(
+    () => new Map(lineup.map((c) => [c.id, classifyChannel(c.name)])),
+    [lineup]
+  );
+
+  // Only offer categories this lineup actually has, with counts. An empty
+  // "Kids" option that filters to nothing is worse than no option.
+  const availableCategories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const cat of categoryById.values()) {
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    }
+    return [...CHANNEL_CATEGORIES, "Other"]
+      .filter((c) => (counts.get(c) ?? 0) > 0)
+      .map((c) => ({ name: c, count: counts.get(c)! }));
+  }, [categoryById]);
+
+  const sorted = useMemo(() => {
+    const arr = [...lineup];
+    if (sortBy === "number") {
+      arr.sort((a, b) => {
+        const an = numberValue(a.number);
+        const bn = numberValue(b.number);
+        if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
+        if (!Number.isNaN(an)) return -1;
+        if (!Number.isNaN(bn)) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    } else {
+      arr.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return arr;
+  }, [lineup, sortBy]);
+
+  const inCategory = useMemo(
+    () => sorted.filter((c) => category === "all" || categoryById.get(c.id) === category),
+    [sorted, category, categoryById]
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return inCategory;
+    // Number as well as name: on a broadcast lineup people reach for "7.1"
+    // as readily as for the call sign.
+    return inCategory.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.number ?? "").toLowerCase().includes(q) ||
+        (c.now?.name ?? "").toLowerCase().includes(q)
+    );
+  }, [inCategory, query]);
+
+  const visible = filtered.slice(0, shown);
+
+  return (
+    <>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {/* Always shown, not gated on a channel count worth paging through:
+            finding a specific channel by name is the same need at 23
+            channels as at 600. */}
+        <TextInput
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            // Reset paging here rather than in an effect: it is a consequence
+            // of the edit, not of the render. Without it the reveal count from
+            // the previous search carries over and results look arbitrarily
+            // long.
+            setShown(PAGE_SIZE);
+          }}
+          placeholder="Search channels…"
+          aria-label="Search channels"
+          // text-base on mobile: iOS zooms the viewport on a focused input
+          // under 16px and there is no way back out without pinching.
+          className="min-w-0 flex-1 py-2 text-base sm:text-sm"
+        />
+
+        {availableCategories.length > 1 && (
+          <Select
+            value={category}
+            onChange={(e) => {
+              setCategory(e.target.value);
+              setShown(PAGE_SIZE);
+            }}
+            className="w-auto shrink-0 py-2"
+            aria-label="Filter channels by type"
+          >
+            <option value="all">All types</option>
+            {availableCategories.map((c) => (
+              <option key={c.name} value={c.name}>
+                {c.name} ({c.count})
+              </option>
+            ))}
+          </Select>
+        )}
+
+        <Select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as "name" | "number")}
+          className="w-auto shrink-0 py-2"
+          aria-label="Sort channels"
+        >
+          <option value="name">Sort: Name</option>
+          <option value="number">Sort: Channel #</option>
+        </Select>
+
+        <span className="text-sm text-white/40">
+          {query ? `${filtered.length} of ${inCategory.length}` : `${inCategory.length} channel${inCategory.length === 1 ? "" : "s"}`}
+          {truncated && !query ? "+" : ""}
+        </span>
+
+        {/* The one trace of management left on the viewing page: a way for
+            the admin to get to it. Everyone else never sees it. */}
+        {isAdmin && (
+          <ButtonLink href="/admin/live-tv" variant="ghost" size="sm" className="ml-auto">
+            Manage channels
+          </ButtonLink>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {visible.map((c) => (
+          <ChannelCard
+            key={c.id}
+            channel={c}
+            inList={listed.has(c.id)}
+            info={infoByChannel[c.name]}
+            status={statusByChannel[c.name]}
+            logoFallback={logoFallbacks[c.name]}
+          />
+        ))}
+      </div>
+
+      {filtered.length === 0 && (
+        <p className="py-10 text-center text-sm text-white/40">
+          {query ? <>No channels match “{query}”.</> : "No channels of this type."}
+        </p>
+      )}
+
+      {shown < filtered.length && (
+        <div className="mt-4 flex justify-center">
+          <Button variant="secondary" onClick={() => setShown((n) => n + PAGE_SIZE)}>
+            Show {Math.min(PAGE_SIZE, filtered.length - shown)} more
+          </Button>
+        </div>
+      )}
+
+      {truncated && !query && shown >= filtered.length && (
+        // Said out loud rather than silently cutting the list off, which
+        // is what the old hard cap did.
+        <p className="mt-4 text-center text-xs text-white/30">
+          Showing the first {total} channels. Your tuner reports more -
+          narrow the playlist in Jellyfin if you need the rest.
+        </p>
+      )}
+    </>
   );
 }
