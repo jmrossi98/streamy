@@ -609,6 +609,37 @@ export async function setRadarrMovieMonitored(
   });
 }
 
+/** Every download id in Radarr's queue, or null when that can't be known -- see the Sonarr twin. */
+export async function getRadarrTrackedDownloadIds(): Promise<Set<string> | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const q = await radarrFetch<{ totalRecords?: number; records: { downloadId?: string }[] }>(`/api/v3/queue?pageSize=2000`);
+    if ((q.totalRecords ?? 0) > q.records.length) return null;
+    return new Set(q.records.map((r) => (r.downloadId ?? "").toLowerCase()).filter(Boolean));
+  } catch {
+    return null;
+  }
+}
+
+/** A movie's title and whether it is out yet, for the healer's give-up; null when Radarr can't say. */
+export async function describeRadarrMovie(
+  radarrId: number
+): Promise<{ title: string; isAvailable: boolean; availableSince: Date | null } | null> {
+  if (!isRadarrConfigured()) return null;
+  try {
+    const m = await radarrFetch<{ title: string; isAvailable?: boolean; digitalRelease?: string; physicalRelease?: string }>(
+      `/api/v3/movie/${radarrId}`
+    );
+    const times = [m.digitalRelease, m.physicalRelease]
+      .filter((d): d is string => !!d)
+      .map((d) => Date.parse(d))
+      .filter((t) => !Number.isNaN(t));
+    return { title: m.title, isAvailable: m.isAvailable ?? true, availableSince: times.length ? new Date(Math.min(...times)) : null };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Drops blocklist entries older than `maxAgeHours`.
  *

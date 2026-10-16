@@ -313,6 +313,39 @@ export function shouldSearchImmediately(rejectionsInLastHour: number): boolean {
 // Don't re-heal the same title repeatedly -- if a fresh grab also goes bad,
 // wait before trying again so we don't churn through every release on the
 // indexer in a tight loop.
+/** The client categories Sonarr and Radarr download into. */
+export const ARR_CATEGORIES = new Set(["tv-sonarr", "radarr"]);
+/** How long an untracked download is given before it counts as orphaned. */
+export const ORPHAN_AFTER_MS = 2 * 3600_000;
+
+/**
+ * Unfinished torrents in Sonarr's or Radarr's category that neither app is
+ * tracking any more. Pure.
+ *
+ * Found 2026-10-16: six dead Housewives torrents sat in qBittorrent at 0 seeds
+ * after Sonarr had dropped them from its queue. Beyond the wasted slot, a
+ * later grab of the same release hit qBittorrent's "already added" answer,
+ * which Sonarr reports as "Failed to connect to qBittorrent" -- so the one
+ * well-seeded copy of S5E3 could never be grabbed at all. A finished torrent
+ * is never touched here (seeding is download-leftovers-cleanup's business),
+ * nor one added in the last two hours, which may simply not be in a queue
+ * read yet.
+ */
+export function orphanedTorrents<T extends { hash: string; category?: string; progress: number; addedOn?: number | null }>(
+  torrents: T[],
+  tracked: Set<string>,
+  now: number = Date.now()
+): T[] {
+  return torrents.filter(
+    (t) =>
+      ARR_CATEGORIES.has(t.category ?? "") &&
+      t.progress < 1 &&
+      !tracked.has(t.hash.toLowerCase()) &&
+      t.addedOn != null &&
+      now - t.addedOn * 1000 > ORPHAN_AFTER_MS
+  );
+}
+
 export const REHEAL_COOLDOWN_MS = 15 * 60 * 1000;
 const MAX_IDLE_BACKOFF_MS = 24 * 60 * 60 * 1000;
 
