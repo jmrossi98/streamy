@@ -10,6 +10,7 @@ import { ChannelCard } from "@/components/ChannelCard";
 import { StreamBrowser } from "@/components/StreamBrowser";
 import { SportsSchedule } from "@/components/SportsSchedule";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
+import { groupIntoShelves } from "@/lib/liveShelves";
 
 type HiddenEntry = { channelId: string; name: string };
 
@@ -142,6 +143,8 @@ export function LiveTvContent({
   // shelf invites hiding something you just starred.
   const mine = channels.filter((c) => listed.has(c.id) && !hiddenIds.has(c.id));
   const visible = filtered.slice(0, shown);
+  const showShelves = !query.trim() && category === "all" && !selectMode;
+  const shelves = useMemo(() => groupIntoShelves(unfilteredVisible), [unfilteredVisible]);
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -471,12 +474,41 @@ export function LiveTvContent({
             part of "stream navigation is confusing" that a screenshot alone
             wouldn't have shown.
           */}
-          {!query && !selectMode && (
+          {/*
+            Browsing (no search, no category picked, not selecting): one row per
+            league, then per genre -- see liveShelves.ts. Searching, filtering or
+            selecting falls back to the flat grid below, which is what those
+            need: every match in one place, and every card selectable.
+          */}
+          {showShelves &&
+            shelves.map(({ shelf, channels: row }) => (
+              <section key={shelf.key} className="mb-8">
+                <h2 className={ROW_H2_CLASS}>
+                  {shelf.title} <span className="text-sm font-normal text-white/40">{row.length}</span>
+                </h2>
+                <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
+                  {row.map((c) => (
+                    <div key={c.id} className="w-72 shrink-0 snap-start">
+                      <ChannelCard
+                        channel={c}
+                        inList={listed.has(c.id)}
+                        info={infoByChannel[c.name]}
+                        status={statusByChannel[c.name]}
+                        logoFallback={logoFallbacks[c.name]}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+
+          {!showShelves && !query && !selectMode && (
             <h2 className="mb-3 font-display text-xl font-bold text-white">
               {mine.length > 0 ? "All Channels" : "Channels"}
             </h2>
           )}
 
+          {!showShelves && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {visible.map((c) => (
               <ChannelCard
@@ -492,6 +524,7 @@ export function LiveTvContent({
               />
             ))}
           </div>
+          )}
 
           {filtered.length === 0 && (
             <p className="py-10 text-center text-sm text-white/40">
@@ -499,7 +532,7 @@ export function LiveTvContent({
             </p>
           )}
 
-          {shown < filtered.length && (
+          {!showShelves && shown < filtered.length && (
             <div className="mt-4 flex justify-center">
               <button
                 type="button"
