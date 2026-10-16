@@ -87,7 +87,7 @@ test("search finds a title from the catalogue", async ({ page }) => {
 
   await page.getByRole("button", { name: "Search" }).first().click();
 
-  const input = page.getByPlaceholder(/search movies and shows/i);
+  const input = page.getByPlaceholder(/search movies/i);
   await expect(input).toBeVisible({ timeout: 10_000 });
   await input.fill("Mock Movie");
 
@@ -104,7 +104,7 @@ test("search for something absent reports no results rather than breaking", asyn
   await page.goto("/");
   await page.getByRole("button", { name: "Search" }).first().click();
 
-  const input = page.getByPlaceholder(/search movies and shows/i);
+  const input = page.getByPlaceholder(/search movies/i);
   await expect(input).toBeVisible({ timeout: 10_000 });
   await input.fill("zzzzz-no-such-title-zzzzz");
 
