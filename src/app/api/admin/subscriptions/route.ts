@@ -52,6 +52,9 @@ export async function POST(request: Request) {
       url: typeof body.url === "string" ? body.url.trim() : "",
       notes: typeof body.notes === "string" ? body.notes.trim() : "",
       renewsAt: parseRenewsAt(body.renewsAt),
+      // Created already cancelled when cancelling an auto-detected row (an
+      // IPTV line, an indexer) that had no entry of its own to mark.
+      active: body.active !== false,
     },
   });
   return NextResponse.json({ id: sub.id });

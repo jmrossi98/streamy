@@ -193,3 +193,12 @@ describe("pairedDetail", () => {
     expect(pairedDetail(d, false)).toBe(d);
   });
 });
+
+describe("describeCost without a price", () => {
+  it("shows a dash, not $0.00, for a row nobody priced", () => {
+    expect(describeCost(0, "monthly")).toBe("—");
+    expect(describeCost(0, "yearly")).toBe("—");
+    expect(describeCost(0, "free")).toBe("Free");
+    expect(describeCost(15, "yearly")).toBe("$15.00/yr ($1.25/mo)");
+  });
+});

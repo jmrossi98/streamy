@@ -133,6 +133,30 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
     }
   }
 
+  // An auto-detected row has no entry of its own to mark cancelled, so
+  // cancelling one creates that entry, already cancelled. pairRenewals then
+  // folds the detected row into it: it shows greyed out with Restore, the
+  // same as any other cancelled subscription.
+  async function cancelDetected(r: Renewal) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: r.name,
+          category: r.source,
+          renewsAt: r.expiresUtc?.slice(0, 10) ?? "",
+          active: false,
+        }),
+      });
+      if (res.ok) router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Soonest first, so the list answers "is anything about to lapse" by being
   // read from the top. Cancelled rows keep their own order at the bottom --
   // they're kept for the record, and nothing about them is due.
@@ -404,6 +428,15 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
                     {describeDue(r.daysLeft, r.problem)}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => cancelDetected(r)}
+                  disabled={busy}
+                  title="Mark cancelled"
+                  className="shrink-0 rounded bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/15 disabled:opacity-40"
+                >
+                  Cancel
+                </button>
               </li>
             ))}
           </ul>
