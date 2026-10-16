@@ -3,6 +3,8 @@ import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getLiveChannels, isJellyfinConfiguredForLiveTv, isJellyfinReachable } from "@/lib/liveTv";
 import { getChannelInfo, type ChannelInfo } from "@/lib/dispatcharr";
+import { channelStatuses } from "@/lib/liveChannelHealth";
+import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { resolveLogoFallbacks } from "@/lib/channelLogoResolve";
 import { AdminSection } from "@/components/ui";
 import { StreamBrowser } from "@/components/StreamBrowser";
@@ -49,6 +51,15 @@ export default async function AdminLiveTvPage() {
     console.error("[admin/live-tv] resolveLogoFallbacks failed:", err);
   }
 
+  // The verdicts viewers' cards carry, so what is hidden from them is badged
+  // here rather than silently absent from one page and present on the other.
+  let statusByChannel: Record<string, ChannelVerdict> = {};
+  try {
+    statusByChannel = Object.fromEntries(await channelStatuses(channels.map((c) => c.name)));
+  } catch (err) {
+    console.error("[admin/live-tv] channelStatuses failed:", err);
+  }
+
   // Hiding is per viewer, so this is the admin's own hidden list -- the same
   // one the Hidden panel on /live used to show them.
   const userId = await getValidSessionUserId(session);
@@ -69,6 +80,7 @@ export default async function AdminLiveTvPage() {
           channels={channels}
           hiddenChannels={hidden}
           infoByChannel={infoByChannel}
+          statusByChannel={statusByChannel}
           logoFallbacks={logoFallbacks}
         />
       </AdminSection>

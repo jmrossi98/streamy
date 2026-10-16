@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { refreshGuide } from "@/lib/liveTv";
 import {
   isDispatcharrConfigured,
+  listChannels,
   nextChannelNumber,
   promoteStreamToChannel,
 } from "@/lib/dispatcharr";
@@ -48,6 +49,24 @@ export async function POST(request: Request) {
   }
   if (!name) {
     return NextResponse.json({ error: "name required" }, { status: 400 });
+  }
+
+  // Already in the lineup -- the same stream, or a channel of the same name
+  // -- is answered with that channel rather than a second copy. Two viewers
+  // adding the same game feed from its game page left two "Patriots at
+  // Bills" channels in the lineup (2026-10-16). Unreadable lineup: carry on
+  // and add; a duplicate is cheaper than a refused add.
+  const existing = (await listChannels().catch(() => null))?.find(
+    (c) => c.streamIds.includes(streamId) || c.name.trim().toLowerCase() === name.toLowerCase()
+  );
+  if (existing) {
+    return NextResponse.json({
+      id: existing.id,
+      channelNumber: null,
+      refreshing: false,
+      existing: true,
+      note: `Already in the lineup as "${existing.name}".`,
+    });
   }
 
   // Chosen here rather than left to Dispatcharr, which assigns nothing: a

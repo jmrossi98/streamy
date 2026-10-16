@@ -117,7 +117,33 @@ export type StreamHealth = {
    */
   speed?: number;
   speedAt?: string;
+  /** Consecutive checks it has failed to open, and since when. */
+  failures?: number;
+  downSince?: string;
 };
+
+/**
+ * How many consecutive failed checks before a channel is hidden from viewers.
+ * One miss is a provider hiccup or a probe that lost a race with a VPN
+ * rotation; three in a row, an hour and a half apart, is a dead channel, and
+ * a dead channel in the lineup is a tune that fails for whoever picks it.
+ * Hidden, not deleted: it comes straight back the first time it opens.
+ */
+export const HIDE_AFTER_FAILURES = 3;
+
+export function hiddenForViewers(health: StreamHealth | null | undefined): boolean {
+  return !!health && !health.playable && (health.failures ?? 0) >= HIDE_AFTER_FAILURES;
+}
+
+/** "for 2 hours" / "for 3 days", from an ISO time; empty when unknown. */
+function downFor(since: string | undefined, now: number): string {
+  const at = since ? Date.parse(since) : NaN;
+  if (!Number.isFinite(at) || now <= at) return "";
+  const hours = (now - at) / 3_600_000;
+  if (hours < 1.5) return " for an hour";
+  if (hours < 36) return ` for ${Math.round(hours)} hours`;
+  return ` for ${Math.round(hours / 24)} days`;
+}
 
 /** Below this a stream is not keeping up. Measured 2026-10-04: 0.68 was unwatchable, 1.03 fine. */
 export const KEEPING_UP_SPEED = 0.95;
@@ -147,6 +173,8 @@ export type ChannelVerdict = {
   state: ChannelState;
   /** Shown to a viewer, so it says what to expect rather than what was measured. */
   detail: string;
+  /** Down for long enough that viewers no longer see it at all (admins still do). */
+  hidden?: boolean;
 };
 
 /**
@@ -159,13 +187,22 @@ export type ChannelVerdict = {
 export function channelVerdict(
   channelName: string,
   health: StreamHealth | null,
-  live: Set<string> | null
+  live: Set<string> | null,
+  now: number = Date.now()
 ): ChannelVerdict {
   if (!health) {
     return { state: "unknown", detail: "Not checked recently" };
   }
   if (!health.playable) {
-    return { state: "down", detail: health.detail || "Channel is not responding" };
+    const hidden = hiddenForViewers(health);
+    return {
+      state: "down",
+      detail:
+        `Not responding${downFor(health.downSince, now)}` +
+        (health.detail ? ` (${health.detail})` : "") +
+        (hidden ? " - hidden from viewers" : ""),
+      ...(hidden ? { hidden } : {}),
+    };
   }
   // A still picture with no sound is a slate regardless of what is scheduled,
   // and saying "no game on" for one would be a false statement about the
