@@ -42,8 +42,14 @@ type Props = {
  * above it, because the upstreams are third-party IPTV and their open time is
  * not ours to control. The cost of waiting too long is a spinner; the cost of
  * giving up too early is a wrong answer.
+ *
+ * 20s since 2026-10-16. With 1s segments (mediabox-infra#78) and the probe
+ * capped, a tune measured end to end delivered its first segment in 2.6-5.3s
+ * and 8s of video by 6-8s. 60s was then mostly a spinner over dead feeds --
+ * times four with the retries, ~4 minutes before a game page tried the next
+ * option. 20s is still 2-3x the slowest measured tune.
  */
-const TUNE_TIMEOUT_MS = 60_000;
+const TUNE_TIMEOUT_MS = 20_000;
 
 /**
  * How far behind the live edge to sit, in seconds.
@@ -58,7 +64,10 @@ const TUNE_TIMEOUT_MS = 60_000;
  * latency was fixed (mediabox-infra#78). The old `liveSyncDurationCount: 3`
  * quietly went from nine seconds of protection to three.
  */
-const LIVE_SYNC_SECONDS = 8;
+// 4 since 2026-10-16 (was 8): playback starts once 4s are buffered rather
+// than 8, which was most of the wait a viewer felt after tuning. Still four
+// 1s segments of cushion against an upstream hiccup.
+const LIVE_SYNC_SECONDS = 4;
 
 /**
  * How much back-buffer hls.js keeps client-side.
@@ -368,8 +377,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
      * the viewer keeps seeing the same "Tuning..." spinner a first attempt
      * shows, not a flash of an error that then heals itself.
      */
-    const scheduleRetry = (finalError: string) => {
-      if (retryCountRef.current >= MAX_RETRIES) {
+    const scheduleRetry = (finalError: string, retryable = true) => {
+      if (!retryable || retryCountRef.current >= MAX_RETRIES) {
         setError(finalError);
         setLoading(false);
         onGiveUpRef.current?.();
@@ -388,7 +397,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       tuneTimer = null;
       scheduleRetry(
         "This channel didn’t start. The stream is most likely off air - " +
-          "the channel list includes it either way."
+          "the channel list includes it either way.",
+        // With somewhere else to go (a game page's other options), a feed that
+        // sent nothing in 20s is skipped now: a dead event feed does not come
+        // back on a retry, and retrying three times was minutes of spinner
+        // before the next option got a turn.
+        !onGiveUpRef.current
       );
     }, TUNE_TIMEOUT_MS);
 
