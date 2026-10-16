@@ -72,8 +72,9 @@ export default async function LivePage() {
     console.error("[live] channelStatuses failed:", err);
   }
 
-  // Gates the stream browser below. Re-checked against the database rather
-  // than read from the session token, like every other admin surface here.
+  // Only decides whether the Guide tab shows a "Manage channels" link to
+  // /admin/live-tv, which has its own gate. Re-checked against the database
+  // rather than read from the session token, like every other admin surface.
   const isAdmin = !!(await requireAdmin(session));
 
   const userId = await getValidSessionUserId(session);
