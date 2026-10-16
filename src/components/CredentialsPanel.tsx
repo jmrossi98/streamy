@@ -118,7 +118,7 @@ export function CredentialsPanel() {
               ))}
               <div className="flex items-end gap-2 sm:col-span-3">
                 <Button type="submit" variant="primary" size="sm" disabled={busy}>
-                  {busy ? "Saving…" : "Save"}
+                  {busy ? (t.service === "IPTV provider" ? "Saving and moving channels… (about 30s)" : "Saving…") : "Save"}
                 </Button>
                 <Button
                   size="sm"

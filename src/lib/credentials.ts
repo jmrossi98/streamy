@@ -10,7 +10,7 @@
  * GitHub secrets deployed into Streamy's env, and rotating one means changing
  * both ends at once, which a form here could only half do.
  */
-import { filledValues, isServerUrl, maskSecret, maskUsername, providerAlert, type CredentialAlert } from "./credentialRules";
+import { filledValues, iptvUpdateMessage, isServerUrl, maskSecret, maskUsername, providerAlert, type CredentialAlert } from "./credentialRules";
 import { listIptvAccounts, updateIptvAccount } from "./dispatcharr";
 import { getAutomaticRenewals } from "./renewals";
 import { serviceKey } from "./spendRules";
@@ -125,10 +125,9 @@ export async function updateCredential(key: string, values: Record<string, unkno
     const v = filledValues(values, ["serverUrl", "username", "password"]);
     if (Object.keys(v).length === 0) return { ok: false, message: "Nothing to change.", changed: [] };
     if (v.serverUrl && !isServerUrl(v.serverUrl)) return { ok: false, message: "Server URL must be an http(s) address.", changed: [] };
-    const ok = await updateIptvAccount(Number(id), v);
-    return ok
-      ? { ok, changed: Object.keys(v), message: "Saved; the playlist is refreshing. Channels follow within 10 minutes." }
-      : { ok, changed: [], message: "Dispatcharr did not accept the change." };
+    const r = await updateIptvAccount(Number(id), v);
+    if (!r) return { ok: false, changed: [], message: "Dispatcharr did not accept the change." };
+    return { ok: true, changed: Object.keys(v), message: iptvUpdateMessage(r) };
   }
 
   if (kind === "indexer") {

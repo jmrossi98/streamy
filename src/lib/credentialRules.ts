@@ -62,3 +62,16 @@ export function providerAlert(r: { daysLeft: number | null; detail?: string; pro
   }
   return null;
 }
+
+/** What the panel says after an IPTV login was saved and carried across. */
+export function iptvUpdateMessage(r: { refresh: string; epgUpdated: number; relinked: number }): string {
+  if (r.refresh === "error") {
+    return "Saved, but the provider rejected the new login when refreshing -- check the server URL, username and password.";
+  }
+  if (r.refresh !== "success") {
+    return "Saved; the playlist is still refreshing. Channels and the guide will follow within 10 minutes.";
+  }
+  const parts = [`${r.relinked} channel stream${r.relinked === 1 ? "" : "s"} moved to the new login`];
+  if (r.epgUpdated) parts.push("guide updated");
+  return `Saved and live: ${parts.join(", ")}.`;
+}
