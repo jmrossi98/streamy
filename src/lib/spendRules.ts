@@ -85,6 +85,10 @@ export function formatUsd(amount: number): string {
 
 /** Per-cadence label, so a yearly price shows its monthly equivalent too. */
 export function describeCost(cost: number, cadence: string): string {
+  // No price entered (the API stores 0 rather than refusing the row), e.g. a
+  // service cancelled straight from its auto-detected row: say so, rather
+  // than print a price of $0.00 that nobody charged.
+  if (cost <= 0 && cadence !== "free" && cadence !== "metered") return "—";
   switch (cadence) {
     case "free":
       return "Free";
