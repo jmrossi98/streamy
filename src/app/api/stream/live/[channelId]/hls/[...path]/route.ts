@@ -1,5 +1,5 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { openLiveStream } from "@/lib/liveTv";
+import { keepLiveSessionAlive, openLiveStream } from "@/lib/liveTv";
 import { proxyJellyfinHlsResource } from "@/lib/streamProxy";
 
 /**
@@ -52,6 +52,11 @@ export async function GET(request: Request, { params }: Props) {
     }
     mediaSourceId = handle.mediaSourceId;
   }
+
+  // Every request carries the session: the master as playSessionId (ours),
+  // later playlists and segments as PlaySessionId (Jellyfin echoes it).
+  const q = new URL(request.url).searchParams;
+  keepLiveSessionAlive(q.get("playSessionId") ?? q.get("PlaySessionId"));
 
   return proxyJellyfinHlsResource(
     channelId,
