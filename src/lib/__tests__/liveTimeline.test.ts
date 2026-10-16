@@ -7,6 +7,7 @@ import {
   looksLikePlaceholder,
   channelCarriesNetwork,
   findCandidateChannels,
+  namesBothTeams,
   findEpgElsewhereChannelNames,
   gameReferenceTime,
   findChannelForFixture,
@@ -596,5 +597,38 @@ describe("guide lookups at game time", () => {
   it("flags a station showing something else at game time, and nothing without guide data", () => {
     expect(findEpgElsewhereChannelNames(fixture, guide, "2026-10-04T16:30:00Z")).toEqual(["CBS ELSEWHERE"]);
     expect(findEpgElsewhereChannelNames(fixture, new Map(), "2026-10-04T16:30:00Z")).toEqual([]);
+  });
+});
+
+describe("Sharks at Predators, 2026-10-15", () => {
+  const fixture = {
+    league: "NHL",
+    awayTeam: "San Jose Sharks",
+    homeTeam: "Nashville Predators",
+    broadcasts: ["ESPN+", "NBC Sports BA", "Scripps Sports"],
+  };
+  const channels = [
+    { id: "nhln", name: "SP - NHL NETWORK HD" },
+    { id: "espn-sj", name: "Sharks vs Predators (Sharks Broadcast)" },
+    { id: "espn-nsh", name: "Sharks vs Predators (Predators Broadcast)" },
+    { id: "nbcsba", name: "NBC Sports Bay Area" },
+    { id: "other", name: "Kings vs Ducks (Kings Broadcast)" },
+  ];
+
+  it("offers both feeds of this very game first, then the carrying network", () => {
+    const ids = findCandidateChannels(fixture, channels, 8).map((c) => c.id);
+    expect(ids.slice(0, 2).sort()).toEqual(["espn-nsh", "espn-sj"]);
+    expect(ids).toContain("nbcsba");
+    expect(ids).not.toContain("other");
+  });
+
+  it("matches ESPN's abbreviated regional network to the spelled-out channel", () => {
+    expect(channelCarriesNetwork("NBC Sports Bay Area", "NBC Sports BA")).toBe(true);
+    expect(channelCarriesNetwork("NBC Sports California", "NBC Sports BA")).toBe(false);
+  });
+
+  it("needs both teams, not one", () => {
+    expect(namesBothTeams("Sharks vs Predators (Sharks Broadcast)", fixture)).toBe(true);
+    expect(namesBothTeams("NHL SAN JOSE SHARKS", fixture)).toBe(false);
   });
 });

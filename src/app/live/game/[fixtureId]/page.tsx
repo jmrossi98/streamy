@@ -18,6 +18,8 @@ import {
 } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
+import { getAutomaticRenewals } from "@/lib/renewals";
+import { providerAlert } from "@/lib/credentialRules";
 
 /**
  * One game's page: which channel is showing it, and what else might be.
@@ -112,8 +114,30 @@ export default async function GamePage({
   // "Stale" here means "do not default to this": the provider gave up on it,
   // it would not open at the last scan, or its own guide has something other
   // than this sport in the slot.
+  // A provider whose subscription has lapsed: its login no longer works, so
+  // none of its channels can play. On 2026-10-15 trex expired at 22:00 and
+  // a Sharks game fell back to NHL Network on trex -- nothing here knew.
+  // Best effort, like the lookups above.
+  let expiredProviders = new Set<string>();
+  try {
+    const renewals = await getAutomaticRenewals();
+    expiredProviders = new Set(
+      renewals
+        .filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger")
+        .map((r) => r.name.toLowerCase())
+    );
+  } catch (err) {
+    console.error("[live/game] provider expiry lookup failed:", err);
+  }
+  const providerExpired = (name: string) => {
+    const provider = infoByChannel[name]?.provider;
+    return !!provider && expiredProviders.has(provider.toLowerCase());
+  };
   const isStale = (name: string) =>
-    infoByChannel[name]?.stale === true || notResponding.has(normaliseName(name)) || epgElsewhere.has(name);
+    infoByChannel[name]?.stale === true ||
+    providerExpired(name) ||
+    notResponding.has(normaliseName(name)) ||
+    epgElsewhere.has(name);
 
   const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames, qualityOf);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);

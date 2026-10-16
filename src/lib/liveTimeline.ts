@@ -328,6 +328,16 @@ function teamCity(teamName: string | null): string | null {
   return city.length < 4 ? null : city;
 }
 
+/** Whether a channel name carries both teams' nicknames, as whole words. */
+export function namesBothTeams(
+  channelName: string,
+  fixture: { awayTeam?: string | null; homeTeam?: string | null }
+): boolean {
+  const names = [teamNickname(fixture.awayTeam ?? null), teamNickname(fixture.homeTeam ?? null)];
+  if (names.some((x) => x == null)) return false;
+  return names.every((x) => new RegExp(`\\b${x}\\b`, "i").test(channelName));
+}
+
 export function findChannelForFixture<C extends { id: string; name: string }>(
   fixture: { awayTeam: string | null; homeTeam: string | null },
   channels: C[]
@@ -558,7 +568,25 @@ const SIBLING_SUFFIX = /^\s*(?:news|deportes|business|sports?|\+|plus|u\b|\d)/;
  * network the channel has to look like an affiliate ("FOX 29 ...", or a call
  * sign), because ESPN's "FOX" means the local FOX station.
  */
+/**
+ * ESPN abbreviates some regional networks where channel lineups spell them
+ * out: "NBC Sports BA" is the channel "NBC Sports Bay Area". On 2026-10-15 the
+ * Sharks broadcast matched nothing for that reason.
+ */
+const NETWORK_ALIASES: Record<string, string> = {
+  "nbc sports ba": "nbc sports bay area",
+  "nbcs ba": "nbc sports bay area",
+  "nbc sports ca": "nbc sports california",
+  "nbcs ca": "nbc sports california",
+};
+
 export function channelCarriesNetwork(channelName: string, network: string): boolean {
+  const alias = NETWORK_ALIASES[network.trim().toLowerCase()];
+  if (alias && channelCarriesNetworkExact(channelName, alias)) return true;
+  return channelCarriesNetworkExact(channelName, network);
+}
+
+function channelCarriesNetworkExact(channelName: string, network: string): boolean {
   const n = channelName.toLowerCase();
   // Squashed so "ESPN2" and "ESPN 2" compare equal.
   const net = network.toLowerCase().replace(/[^a-z0-9+]+/g, "");
@@ -638,6 +666,15 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
 
   for (const channel of channels) {
     const n = channel.name.toLowerCase();
+    // An event feed naming both sides of this very game ("Sharks vs Predators
+    // (Sharks Broadcast)") is the most specific guess there is, below only
+    // the guide itself. The distrust of event feeds is about channels named
+    // after one team, which turned out to be placeholder loops; on 2026-10-15
+    // this skip hid both ESPN+ feeds of the Sharks game the page was for.
+    if (namesBothTeams(channel.name, fixture)) {
+      consider(channel, -4);
+      continue;
+    }
     if (looksLikeEventFeed(n)) continue;
 
     const brand = NETWORK_BRANDS.find((b) => b.pattern.test(n));
