@@ -57,6 +57,12 @@ export async function resetSearch(key: string): Promise<void> {
   await prisma.wantedSearch.deleteMany({ where: { key } });
 }
 
+/** Forgets several entries at once: an admin retried them. */
+export async function resetSearches(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await prisma.wantedSearch.deleteMany({ where: { key: { in: keys } } });
+}
+
 /** The give-ups recent enough for the downloads panel, newest first. */
 export async function recentGiveUps(now: number = Date.now()): Promise<GivenUp[]> {
   const rows = await prisma.wantedSearch.findMany({

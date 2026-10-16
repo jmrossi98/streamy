@@ -863,10 +863,19 @@ export async function describeSonarrEpisode(episodeId: number): Promise<{ label:
  * touched, no queue emptied. The healer's give-up (see searchGiveUpRules.ts).
  */
 export async function unmonitorSonarrEpisodes(episodeIds: number[]): Promise<void> {
+  await setSonarrEpisodesMonitored(episodeIds, false);
+}
+
+/** Makes Sonarr want these episodes again -- an admin's retry after a give-up. */
+export async function monitorSonarrEpisodes(episodeIds: number[]): Promise<void> {
+  await setSonarrEpisodesMonitored(episodeIds, true);
+}
+
+async function setSonarrEpisodesMonitored(episodeIds: number[], monitored: boolean): Promise<void> {
   if (!isSonarrConfigured() || episodeIds.length === 0) return;
   await sonarrFetch(`/api/v3/episode/monitor`, {
     method: "PUT",
-    body: JSON.stringify({ episodeIds, monitored: false }),
+    body: JSON.stringify({ episodeIds, monitored }),
   });
 }
 

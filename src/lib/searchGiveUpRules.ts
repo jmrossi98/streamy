@@ -71,10 +71,33 @@ export function giveUpReason(entry: SearchLedgerEntry, now: number = Date.now())
 /** The line under a given-up row on the downloads panel. */
 export function giveUpNotice(entry: SearchLedgerEntry): string {
   const tried = entry.gaveUpAt ? entry.gaveUpAt.getTime() - entry.firstSearchedAt.getTime() : GIVE_UP_AFTER_MS;
-  return `Gave up after ${days(tried)}: no indexer had a usable release. Request it again to try once more.`;
+  return `Gave up after ${days(tried)}: no indexer had a usable release. Retry to search again.`;
 }
 
 /** Whether a given-up title is still recent enough to list. */
 export function stillShown(entry: SearchLedgerEntry, now: number = Date.now()): boolean {
   return entry.gaveUpAt != null && now - entry.gaveUpAt.getTime() < GIVE_UP_SHOWN_MS;
+}
+
+export type RetryTarget = { mediaType: "movie" | "show"; externalId: number; episodeId?: number | null; gaveUp?: boolean };
+
+/**
+ * What an admin's Retry asks Radarr and Sonarr for: the given-up movies, and
+ * the given-up episodes grouped per show (one search command per show). Rows
+ * that were not given up on, and show rows with no episode, are left out:
+ * there is nothing to un-give-up, and a whole-show search was never the ask.
+ */
+export function retryTargets(rows: RetryTarget[]): { movies: number[]; episodes: Map<number, number[]> } {
+  const movies = new Set<number>();
+  const episodes = new Map<number, number[]>();
+  for (const r of rows) {
+    if (!r.gaveUp) continue;
+    if (r.mediaType === "movie") movies.add(r.externalId);
+    else if (r.episodeId != null) {
+      const ids = episodes.get(r.externalId) ?? [];
+      if (!ids.includes(r.episodeId)) ids.push(r.episodeId);
+      episodes.set(r.externalId, ids);
+    }
+  }
+  return { movies: [...movies], episodes };
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { StreamySelect } from "@/components/StreamySelect";
+import { Button } from "@/components/ui";
 import {
   DOWNLOAD_SORTS,
   dedupeDownloads,
@@ -186,6 +187,10 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // A removal that did not go through. Without it the rows simply reappeared,
   // which read as the cancel having been undone rather than having failed.
   const [failure, setFailure] = useState<string | null>(null);
+  // Given-up rows an admin just retried. They read "Retrying…" until the next
+  // poll replaces them with the episode's or movie's new wanted row -- which
+  // has the same key, so they cannot simply be hidden like a cancel.
+  const [retried, setRetried] = useState<Set<string>>(new Set());
 
   // Last real (non-bridged) snapshot seen for each key, so a download that
   // drops out of both the active-queue and completed lists for a moment
@@ -252,6 +257,16 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
         else changed = true;
       }
       return changed ? next : prev;
+    });
+  }, [downloads]);
+
+  // A retried row is done "retrying" once the server lists it as anything but
+  // given up; forgetting it then means a later give-up of the same title shows.
+  useEffect(() => {
+    const stillGivenUp = new Set(downloads.filter((d) => d.gaveUp).map(rowKey));
+    setRetried((prev) => {
+      const next = new Set([...prev].filter((k) => stillGivenUp.has(k)));
+      return next.size === prev.size ? prev : next;
     });
   }, [downloads]);
 
@@ -341,9 +356,56 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
     }
   }
 
+  /** Wants given-up titles again and searches now: one row, or every given-up row of a show or season. */
+  async function handleRetry(key: string, rows: DownloadRow[], title: string) {
+    const targets = rows.filter((r) => r.gaveUp && !retried.has(rowKey(r)));
+    if (targets.length === 0) return;
+    const keys = targets.map(rowKey);
+    setFailure(null);
+    setManagingKey(key);
+    setRetried((prev) => new Set([...prev, ...keys]));
+    const undo = () => {
+      setFailure(`Could not retry ${title}: Radarr/Sonarr did not answer. Nothing was changed; try again.`);
+      setRetried((prev) => {
+        const next = new Set(prev);
+        for (const k of keys) next.delete(k);
+        return next;
+      });
+    };
+    try {
+      const res = await fetch("/api/admin/downloads/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: targets.map((r) => ({ mediaType: r.mediaType, externalId: r.externalId, episodeId: r.episodeId })),
+          title,
+        }),
+      });
+      if (!res.ok) undo();
+      else router.refresh();
+    } catch {
+      undo();
+    } finally {
+      setManagingKey(null);
+    }
+  }
+
+  /** "Retry 3" beside a show or season with given-up episodes in it, or nothing. */
+  function groupRetryButton(key: string, rows: DownloadRow[], title: string) {
+    const n = rows.filter((r) => r.gaveUp && !retried.has(rowKey(r))).length;
+    if (n === 0) return null;
+    const retryKey = `${key}-retry`;
+    return (
+      <Button variant="ghost" size="xs" onClick={() => handleRetry(retryKey, rows, title)} disabled={managingKey === retryKey}>
+        {managingKey === retryKey ? "…" : `Retry ${n}`}
+      </Button>
+    );
+  }
+
   function renderRow(d: DownloadRow) {
     const key = rowKey(d);
     const isManaging = managingKey === key;
+    const retrying = d.gaveUp === true && retried.has(key);
     return (
       <li key={key} className="flex flex-col gap-1.5">
         {/* Stacked on a phone, one line from sm up.
@@ -389,11 +451,13 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           <div className="flex shrink-0 items-center justify-end gap-3">
             <span
               className={`tabular-nums ${
-                d.noRelease || d.unsafe ? "font-medium text-netflix-red" : "text-white/50"
+                (d.noRelease || d.unsafe) && !retrying ? "font-medium text-netflix-red" : "text-white/50"
               }`}
             >
               {d.completed
                 ? "Downloaded"
+                : retrying
+                  ? "Retrying…"
                 : d.gaveUp
                   ? "Gave up"
                 : d.noRelease
@@ -410,6 +474,11 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                           ? `${d.progress}%`
                           : "metadata…"}
             </span>
+            {d.gaveUp && !retrying && (
+              <Button variant="ghost" size="xs" onClick={() => handleRetry(key, [d], d.title)} disabled={isManaging}>
+                {isManaging ? "…" : "Retry"}
+              </Button>
+            )}
             {!d.gaveUp && (
               <button
                 type="button"
@@ -446,7 +515,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
             <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
           )}
         </div>
-        {d.notice && (
+        {d.notice && !retrying && (
           <p
             className={`text-xs ${
               d.noRelease || d.unsafe ? "text-netflix-red" : "text-amber-300"
@@ -658,6 +727,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                   </button>
                   <div className="flex shrink-0 items-center justify-end gap-3">
                     <span className="tabular-nums text-white/50">{groupStatus(item.rows)}</span>
+                    {groupRetryButton(showKey, item.rows, item.title)}
                     {groupButton(showKey, item.rows, "series", item, null)}
                   </div>
                 </div>
@@ -705,8 +775,12 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                             </button>
                             {/* Rows with no season have nothing a season
                                 removal could name; they keep their own buttons. */}
-                            {season.seasonNumber != null &&
-                              groupButton(seasonKey, season.rows, "season", item, season.seasonNumber)}
+                            <div className="flex shrink-0 items-center gap-3">
+                              {item.seasons.length > 1 &&
+                                groupRetryButton(seasonKey, season.rows, `${item.title} - ${seasonLabel(season.seasonNumber)}`)}
+                              {season.seasonNumber != null &&
+                                groupButton(seasonKey, season.rows, "season", item, season.seasonNumber)}
+                            </div>
                           </div>
                           {seasonOpen && <ul className="mt-3 space-y-3">{season.rows.map(renderRow)}</ul>}
                         </div>
