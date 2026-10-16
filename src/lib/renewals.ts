@@ -78,6 +78,8 @@ async function iptvRenewals(): Promise<Renewal[]> {
         is_trial?: boolean;
         active_connections?: number | null;
         max_connections?: number | null;
+        /** One per line (login) on the panel, the account's own first -- see iptvLineRules.ts. */
+        lines?: { name?: string; status?: string; expires_utc?: string | null; max_streams?: number }[];
         error?: string;
       }[];
     } | null;
@@ -97,6 +99,7 @@ async function iptvRenewals(): Promise<Renewal[]> {
       const bits: string[] = [];
       if (s.status && s.status !== "Active") bits.push(s.status);
       if (s.is_trial) bits.push("trial");
+      if ((s.lines?.length ?? 0) > 1) bits.push(`${s.lines!.length} lines`);
       if (s.max_connections) bits.push(`${s.max_connections} connection${s.max_connections === 1 ? "" : "s"}`);
       return {
         name,

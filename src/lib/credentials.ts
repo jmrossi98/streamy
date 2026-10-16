@@ -11,7 +11,8 @@
  * both ends at once, which a form here could only half do.
  */
 import { filledValues, iptvUpdateMessage, isServerUrl, maskSecret, maskUsername, providerAlert, type CredentialAlert } from "./credentialRules";
-import { listIptvAccounts, updateIptvAccount } from "./dispatcharr";
+import { addIptvLine, listIptvAccounts, removeIptvLine, updateIptvAccount } from "./dispatcharr";
+import { isLineLogin, lineAlert, type IptvLine } from "./iptvLineRules";
 import { getAutomaticRenewals } from "./renewals";
 import { invalidateCache } from "./ttlCache";
 import { serviceKey } from "./spendRules";
@@ -26,6 +27,8 @@ export type CredentialTarget = {
   fields: CredentialField[];
   /** Set when the login is known not to work (expired) or about to stop. */
   alert?: CredentialAlert | null;
+  /** IPTV only: the account's login and every extra line -- see iptvLineRules.ts. */
+  lines?: IptvLine[];
 };
 
 const PROWLARR = process.env.PROWLARR_URL?.replace(/\/$/, "");
@@ -84,6 +87,7 @@ export async function listCredentialTargets(): Promise<CredentialTarget[]> {
       service: "IPTV provider",
       name: a.name,
       alert: providerAlert(iptvRenewal(a.name)),
+      lines: a.lines,
       fields: [
         { name: "serverUrl", label: "Server URL", secret: false, current: a.serverUrl ? new URL(a.serverUrl).host : "not set" },
         { name: "username", label: "Username", secret: false, current: maskUsername(a.username) },
@@ -116,6 +120,38 @@ export async function listCredentialTargets(): Promise<CredentialTarget[]> {
 }
 
 export type UpdateResult = { ok: boolean; message: string; changed: string[] };
+
+/**
+ * Adds another login on the same IPTV panel as a line. Viewers are spread
+ * across lines by Dispatcharr and never pick one -- see iptvLineRules.ts.
+ */
+export async function addCredentialLine(key: string, values: Record<string, unknown>): Promise<UpdateResult> {
+  const [kind, id] = key.split(":");
+  if (kind !== "iptv") return { ok: false, message: "Only an IPTV provider has lines.", changed: [] };
+  const v = filledValues(values, ["username", "password"]);
+  if (!v.username || !v.password) return { ok: false, message: "Username and password required.", changed: [] };
+  if (!isLineLogin(v.username) || !isLineLogin(v.password)) return { ok: false, message: "That doesn't look like a panel login.", changed: [] };
+  const line = await addIptvLine(Number(id), v.username, v.password);
+  if (!line) return { ok: false, message: "Dispatcharr did not accept the line.", changed: [] };
+  invalidateCache("renewals");
+  const alert = lineAlert(line);
+  return {
+    ok: true,
+    changed: ["line"],
+    message: alert
+      ? `${line.name} added, but the panel says: ${alert.text}`
+      : `${line.name} added. Viewers use it automatically whenever the other lines are busy.`,
+  };
+}
+
+/** Removes an extra line. The account's own login stays. */
+export async function removeCredentialLine(key: string, lineId: number): Promise<UpdateResult> {
+  const [kind, id] = key.split(":");
+  if (kind !== "iptv" || !Number.isInteger(lineId)) return { ok: false, message: "No such line.", changed: [] };
+  const ok = await removeIptvLine(Number(id), lineId);
+  if (ok) invalidateCache("renewals");
+  return ok ? { ok, changed: ["line"], message: "Line removed." } : { ok, changed: [], message: "Dispatcharr would not remove that line." };
+}
 
 /** Saves new values for one target. Blank fields are left as they are. */
 export async function updateCredential(key: string, values: Record<string, unknown>): Promise<UpdateResult> {
