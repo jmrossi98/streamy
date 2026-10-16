@@ -9,8 +9,9 @@
 import { normalizeProbe, type ProbeResult } from "./streamVerifyRules";
 
 // The service runs one probe at a time and makes a request wait up to 30s for
-// another's to finish, then ~10-20s for its own.
-const TIMEOUT_MS = 70_000;
+// another's to finish, then ~10s for its own -- up to ~45s for an HLS stream,
+// whose master playlist can take a while to open.
+const TIMEOUT_MS = 100_000;
 
 function cfg(): { base: string; token: string } | null {
   const base = process.env.STREAM_PROBE_URL?.replace(/\/$/, "");
