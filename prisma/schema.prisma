@@ -977,3 +977,28 @@ model JobApplication {
   @@index([provider, boardSlug, jobId])
   @@index([postingId])
 }
+
+// A Dispatcharr channel that was added from a game page's "More streams for
+// this game" list, so it can be removed again once the game is over.
+//
+// Those channels are one-game event feeds ("NHL | 08 - 8pm Sharks at
+// Predators"): the provider stream behind them is dead the moment the game
+// ends, but the channel stays in the lineup until someone deletes it by hand.
+// The Sharks game on 2026-10-15/16 left several of them sitting in Live TV.
+// Only channels added *for a fixture* are recorded here -- anything added from
+// the general stream browser is a deliberate, permanent addition and is never
+// touched by the cleanup (see gameChannelCleanupRules.ts).
+model GameChannel {
+  // Dispatcharr's numeric channel id. Unlike Jellyfin's ids this one is stable:
+  // it is the record Dispatcharr itself owns, and the one demoteChannel takes.
+  channelId   Int       @id
+  // The sportsSchedule fixture id, as it appears in the game page URL.
+  fixtureId   String
+  name        String
+  createdAt   DateTime  @default(now())
+  // When a cleanup pass first saw the fixture as finished. ESPN gives no "ended
+  // at", so the 30-minute grace is counted from here.
+  endedSeenAt DateTime?
+
+  @@index([fixtureId])
+}
