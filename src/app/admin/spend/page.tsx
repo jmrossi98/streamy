@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/db";
 import { AdminSection } from "@/components/ui";
 import { SpendPanel } from "@/components/SpendPanel";
-import { CredentialsPanel } from "@/components/CredentialsPanel";
 import { computeTotals, daysUntil } from "@/lib/spendRules";
 import { awsSpend, openRouterCredits } from "@/lib/spend";
 import { getAutomaticRenewals } from "@/lib/renewals";
@@ -60,12 +59,6 @@ export default async function AdminSpendPage() {
             autoRenewals={autoRenewals}
           />
         </div>
-      </AdminSection>
-      {/* Next to what is paid for, because a renewal is usually when a login
-          or key changes. Loaded in the browser so a slow service never holds
-          up the spend figures above. */}
-      <AdminSection title="Logins & API keys">
-        <CredentialsPanel />
       </AdminSection>
       </div>
   );
