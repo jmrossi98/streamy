@@ -17,6 +17,7 @@ import {
   resolveChannelForFixture,
 } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
+import { GameStreamFinder } from "@/components/GameStreamFinder";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
@@ -264,6 +265,9 @@ export default async function GamePage({
           fixtureId={fixtureId}
           storedChoice={storedChoice}
         />
+        {/* Below the lineup's options: what the catalogue has that the lineup
+            doesn't, one click from being a channel. */}
+        <GameStreamFinder fixtureId={fixtureId} />
       </div>
     </div>
   );

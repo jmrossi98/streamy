@@ -1,0 +1,43 @@
+import { NextResponse } from "next/server";
+import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { isDispatcharrConfigured, listPromotedStreamIds, listStreams } from "@/lib/dispatcharr";
+import { getTodaysFixtures } from "@/lib/sportsSchedule";
+import { getAutomaticRenewals } from "@/lib/renewals";
+import { providerAlert } from "@/lib/credentialRules";
+import { gameStreamQueries, rankGameStreams } from "@/lib/gameStreamRules";
+
+/**
+ * Provider streams that might carry one of today's games, for the game page's
+ * "More streams for this game" list (see gameStreamRules.ts). Signed-in only,
+ * like adding a stream. Read-only: adding one goes through
+ * /api/live/streams/promote, the same as the stream browser.
+ */
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export async function GET(request: Request) {
+  if (!(await getValidSessionUserId(await getSession()))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isDispatcharrConfigured()) return NextResponse.json({ streams: [] });
+  const fixtureId = new URL(request.url).searchParams.get("fixtureId") ?? "";
+  const fixture = (await getTodaysFixtures().catch(() => [])).find((f) => f.id === fixtureId);
+  if (!fixture) return NextResponse.json({ streams: [] });
+
+  const [pages, promoted, renewals] = await Promise.all([
+    Promise.all(gameStreamQueries(fixture).map((q) => listStreams({ search: q, pageSize: 100 }).catch(() => null))),
+    listPromotedStreamIds().catch(() => null),
+    getAutomaticRenewals().catch(() => []),
+  ]);
+  const expiredProviders = new Set(
+    renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
+  );
+  const streams = rankGameStreams(
+    pages.flatMap((p) => p?.items ?? []),
+    fixture,
+    { promoted: new Set(promoted?.keys() ?? []), expiredProviders }
+  );
+  return NextResponse.json({
+    streams: streams.map((s) => ({ id: s.id, name: s.name, provider: s.provider, logoUrl: s.logoUrl })),
+  });
+}
