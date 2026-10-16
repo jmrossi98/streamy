@@ -854,3 +854,40 @@ export async function nextChannelNumber(): Promise<number> {
   // should not be produced by accident.
   return Math.floor(highest) + 1;
 }
+
+/** An IPTV provider login as Dispatcharr holds it, without the password itself. */
+export type IptvAccount = { id: number; name: string; serverUrl: string; username: string; hasPassword: boolean };
+
+/** The Xtream Codes provider accounts (the IPTV logins). Null when Dispatcharr is unreachable. */
+export async function listIptvAccounts(): Promise<IptvAccount[] | null> {
+  const raw = await api<{ id: number; name: string; account_type?: string; is_active?: boolean; server_url?: string; username?: string; password?: string }[]>(
+    "/api/m3u/accounts/"
+  );
+  if (!raw) return null;
+  return raw
+    .filter((a) => a.account_type === "XC")
+    .map((a) => ({ id: a.id, name: a.name, serverUrl: a.server_url ?? "", username: a.username ?? "", hasPassword: !!a.password }));
+}
+
+/**
+ * Replaces a provider's login and refreshes its playlist at once.
+ *
+ * The rest of a login change -- EPG URLs that embed the login, and channels
+ * moved onto the new copy of each stream (Dispatcharr keys streams by URL,
+ * which carries the login) -- is mediabox-infra's iptv-credentials-sync.py,
+ * which notices the change within ten minutes.
+ */
+export async function updateIptvAccount(
+  id: number,
+  values: { serverUrl?: string; username?: string; password?: string }
+): Promise<boolean> {
+  const body: Record<string, string> = {};
+  if (values.serverUrl) body.server_url = values.serverUrl;
+  if (values.username) body.username = values.username;
+  if (values.password) body.password = values.password;
+  if (Object.keys(body).length === 0) return false;
+  const saved = await api<{ id: number }>(`/api/m3u/accounts/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+  if (!saved) return false;
+  await api(`/api/m3u/refresh/${id}/`, { method: "POST", body: "{}" });
+  return true;
+}

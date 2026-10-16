@@ -22,7 +22,7 @@ export const ADMIN_TABS = [
   // is filling up are the same question from two sides. Named for the
   // downloads, which are what the tab is opened for.
   { href: "/admin/downloads", label: "Downloads" },
-  { href: "/admin/spend", label: "Spend" },
+  { href: "/admin/spend", label: "Subscriptions" },
   { href: "/admin/approvals", label: "Accounts" },
   { href: "/admin/jobs", label: "Job search" },
   { href: "/admin/tour-watch", label: "Tour watch" },
