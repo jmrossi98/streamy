@@ -13,9 +13,24 @@
  */
 import { findJellyfinEpisodeItemId, findJellyfinMovieItemId } from "./jellyfin";
 import { cachedItemId, forgetItemId } from "./jellyfinItemIdCache";
+import { findJellyfinRecordingItemId, getSportarrEvent } from "./sportarr";
 
 const episodeKey = (showId: string, season: number, episode: number) => `ep:${showId}:${season}:${episode}`;
 const movieKey = (tmdbId: string) => `movie:${tmdbId}`;
+const recordingKey = (eventId: number) => `recording:${eventId}`;
+
+/** A game recording's item, by Sportarr event id (see sportarr.ts for the lookup). */
+export function streamRecordingItemId(eventId: number): Promise<string | null> {
+  return cachedItemId(recordingKey(eventId), async () => {
+    const event = await getSportarrEvent(eventId);
+    return event ? findJellyfinRecordingItemId(event) : null;
+  });
+}
+
+export function checkedRecordingStream(res: Response, eventId: number): Response {
+  if (res.status === 502) forgetItemId(recordingKey(eventId));
+  return res;
+}
 
 export function streamEpisodeItemId(showId: string, season: number, episode: number): Promise<string | null> {
   return cachedItemId(episodeKey(showId, season, episode), () => findJellyfinEpisodeItemId(showId, season, episode));
