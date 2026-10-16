@@ -8,6 +8,13 @@ import type { SearchResultItem } from "@/lib/tmdb";
 
 type SearchModalProps = { open: boolean; onClose: () => void };
 
+/** The live half of a search -- see /api/search/live and liveSearchRules.ts. */
+type LiveResults = {
+  games: { id: string; name: string; league: string; detail: string; state: "pre" | "in" | "post" }[];
+  channels: { id: string; name: string; number: string | null; nowName: string | null; logoUrl: string | null }[];
+};
+const NO_LIVE: LiveResults = { games: [], channels: [] };
+
 export function SearchModal({ open, onClose }: SearchModalProps) {
   const [mounted, setMounted] = useState(false);
   const [query, setQuery] = useState("");
@@ -20,6 +27,9 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
+  // Today's games and the channel lineup, fetched beside the movie/show search
+  // so a slow tuner never holds those up. First page only.
+  const [live, setLive] = useState<LiveResults>(NO_LIVE);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const search = useCallback(async (q: string, pageNum: number = 1, append: boolean = false) => {
@@ -27,8 +37,15 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
       if (!append) {
         setResults([]);
         setHasMore(false);
+        setLive(NO_LIVE);
       }
       return;
+    }
+    if (!append) {
+      fetch(`/api/search/live?q=${encodeURIComponent(q)}`)
+        .then((r) => (r.ok ? r.json() : NO_LIVE))
+        .then((d: LiveResults) => setLive({ games: d.games ?? [], channels: d.channels ?? [] }))
+        .catch(() => setLive(NO_LIVE));
     }
     if (append) setLoadingMore(true);
     else setLoading(true);
@@ -99,6 +116,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
   if (!open || !mounted) return null;
 
   const hasResults = results.length > 0;
+  const hasLive = live.games.length > 0 || live.channels.length > 0;
 
   /* Portal to body: modal was inside <header class="z-50">, so z-[100] was trapped and painted under <main>. */
   return createPortal(
@@ -130,7 +148,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search movies and shows..."
+              placeholder="Search movies, shows and live TV..."
               className="min-w-0 flex-1 bg-transparent text-base text-white placeholder-white/50 outline-none"
               autoComplete="off"
             />
@@ -139,8 +157,55 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
             {loading && (
               <div className="p-6 text-center text-white/60">Searching…</div>
             )}
-            {!loading && query.trim() && !hasResults && (
+            {!loading && query.trim() && !hasResults && !hasLive && (
               <div className="p-6 text-center text-white/60">No results found.</div>
+            )}
+            {hasLive && query.trim() && (
+              <div className="border-b border-white/10 py-2">
+                <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-white/40">Live</p>
+                <ul>
+                  {live.games.map((g) => (
+                    <li key={`g-${g.id}`}>
+                      <Link
+                        href={`/live/game/${encodeURIComponent(g.id)}`}
+                        onClick={onClose}
+                        className="flex min-h-[44px] items-center gap-3 p-3 transition-colors hover:bg-white/10 active:bg-white/15 touch-manipulation"
+                      >
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${g.state === "in" ? "bg-red-500" : "bg-white/30"}`} aria-hidden />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-white">{g.name}</p>
+                          <p className="text-sm text-white/60">
+                            {g.league} · {g.state === "in" ? `Live, ${g.detail}` : g.detail}
+                          </p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                  {live.channels.map((c) => (
+                    <li key={`c-${c.id}`}>
+                      <Link
+                        href={`/live/${encodeURIComponent(c.id)}`}
+                        onClick={onClose}
+                        className="flex min-h-[44px] items-center gap-3 p-3 transition-colors hover:bg-white/10 active:bg-white/15 touch-manipulation"
+                      >
+                        <div className="relative flex h-9 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-white/10">
+                          {c.logoUrl ? (
+                            <Image src={c.logoUrl} alt="" fill className="object-contain p-1" sizes="64px" unoptimized />
+                          ) : (
+                            <span className="text-[10px] text-white/50">{c.number ?? "TV"}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-white">{c.name}</p>
+                          <p className="truncate text-sm text-white/60">
+                            Channel{c.number ? ` ${c.number}` : ""}{c.nowName ? ` · Now: ${c.nowName}` : ""}
+                          </p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
             {!loading && hasResults && (
               <>
