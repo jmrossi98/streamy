@@ -1,0 +1,87 @@
+/**
+ * Extra lines (logins) on one IPTV provider. Pure.
+ *
+ * Jake, 2026-10-16: "when i get new logins it seamlessly adds it to streamy
+ * and any one watching can automatically stream with any unused line. the
+ * user shouldn't need to know or manually connect to a line, we should
+ * handle that."
+ *
+ * Dispatcharr already does the balancing. An M3U account holds profiles,
+ * each with its own connection limit and a search/replace that rewrites the
+ * login inside a stream URL, and its proxy takes the first profile with a
+ * free slot (apps/channels/models.py: "at max connections ... trying next
+ * profile"). So a line is a profile whose rewrite swaps in that line's
+ * username and password; Dispatcharr applies it to
+ * "<server>/live/<user>/<pass>/1234.ts" to learn the login it should use
+ * (apps/m3u/credentials.py), both for playback and for reading that line's
+ * own expiry. This file builds those patterns and describes lines;
+ * dispatcharr.ts sends them.
+ */
+import { providerAlert, type CredentialAlert } from "./credentialRules";
+
+export type IptvLine = {
+  /** Dispatcharr's profile id. */
+  id: number;
+  name: string;
+  /** The account's own login, which cannot be removed. */
+  isDefault: boolean;
+  active: boolean;
+  /** Connections this line allows at once (0 means Dispatcharr won't limit it). */
+  maxStreams: number;
+  /** Connections in use right now, as Dispatcharr counts them. */
+  viewers: number;
+  expiresUtc: string | null;
+  /** The panel's own word for the line: "Active", "Expired", "Banned"... */
+  status: string | null;
+};
+
+/** What a panel login looks like; anything else is a typo or an injection attempt on the rewrite. */
+export function isLineLogin(value: string): boolean {
+  return /^[A-Za-z0-9_.@-]{1,64}$/.test(value);
+}
+
+/**
+ * The profile patterns that make a stream URL use this login. Both URL
+ * shapes a panel hands out are matched -- "/live/<user>/<pass>/<id>.ts" and
+ * the bare "/<user>/<pass>/<id>" -- and the pattern never mentions the
+ * account's own login, so a renewal of that one leaves the lines working.
+ */
+export function lineProfilePatterns(username: string, password: string): { search: string; replace: string } {
+  return {
+    search: "^(https?://[^/]+/(?:(?:live|movie|series|timeshift)/)?)[^/]+/[^/]+/",
+    replace: `$1${username}/${password}/`,
+  };
+}
+
+/** "Line 2", "Line 3"... the first name not already taken. */
+export function nextLineName(existing: string[]): string {
+  const taken = new Set(existing.map((n) => n.trim().toLowerCase()));
+  for (let n = 2; ; n++) {
+    const name = `Line ${n}`;
+    if (!taken.has(name.toLowerCase())) return name;
+  }
+}
+
+/** How many connections the provider allows across its working lines. */
+export function lineCapacity(lines: IptvLine[]): number {
+  return lines.filter((l) => l.active && !isLineDead(l)).reduce((n, l) => n + (l.maxStreams || 0), 0);
+}
+
+export function isLineDead(line: IptvLine): boolean {
+  if (/expired|disabled|banned/i.test(line.status ?? "")) return true;
+  return line.expiresUtc != null && Date.parse(line.expiresUtc) < Date.now();
+}
+
+/** "2 lines · 2 connections" / "1 line · 1 connection". */
+export function lineSummary(lines: IptvLine[]): string {
+  const working = lines.filter((l) => l.active && !isLineDead(l)).length;
+  const capacity = lineCapacity(lines);
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  return `${plural(working, "line")} · ${plural(capacity, "connection")}`;
+}
+
+/** The same expired/expiring warning a provider login gets, for one line. */
+export function lineAlert(line: IptvLine, now: number = Date.now()): CredentialAlert | null {
+  const daysLeft = line.expiresUtc ? Math.floor((Date.parse(line.expiresUtc) - now) / 86_400_000) : null;
+  return providerAlert({ daysLeft, detail: line.status ?? undefined });
+}

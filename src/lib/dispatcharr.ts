@@ -22,6 +22,7 @@ import { cleanText } from "./text";
 import { cached } from "./ttlCache";
 import { sliceStreamPage } from "./streamSearch";
 import { epgUrlFor, relinkChannelStreams, type RelinkStream } from "./iptvRelinkRules";
+import { lineProfilePatterns, nextLineName, type IptvLine } from "./iptvLineRules";
 
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
@@ -899,17 +900,92 @@ export async function nextChannelNumber(): Promise<number> {
 }
 
 /** An IPTV provider login as Dispatcharr holds it, without the password itself. */
-export type IptvAccount = { id: number; name: string; serverUrl: string; username: string; hasPassword: boolean };
+export type IptvAccount = {
+  id: number;
+  name: string;
+  serverUrl: string;
+  username: string;
+  hasPassword: boolean;
+  /** The account's own login first, then every extra line -- see iptvLineRules.ts. */
+  lines: IptvLine[];
+};
+
+type RawProfile = {
+  id: number;
+  name: string;
+  is_default?: boolean;
+  is_active?: boolean;
+  max_streams?: number;
+  current_viewers?: number;
+  exp_date?: string | null;
+  custom_properties?: { user_info?: { status?: string } } | null;
+};
+
+/** Only what the panel needs: never the login a profile's rewrite carries. */
+function toLine(p: RawProfile): IptvLine {
+  return {
+    id: p.id,
+    name: p.name,
+    isDefault: !!p.is_default,
+    active: p.is_active !== false,
+    maxStreams: p.max_streams ?? 0,
+    viewers: p.current_viewers ?? 0,
+    expiresUtc: p.exp_date ?? null,
+    status: p.custom_properties?.user_info?.status ?? null,
+  };
+}
 
 /** The Xtream Codes provider accounts (the IPTV logins). Null when Dispatcharr is unreachable. */
 export async function listIptvAccounts(): Promise<IptvAccount[] | null> {
-  const raw = await api<{ id: number; name: string; account_type?: string; is_active?: boolean; server_url?: string; username?: string; password?: string }[]>(
-    "/api/m3u/accounts/"
-  );
+  const raw = await api<
+    { id: number; name: string; account_type?: string; is_active?: boolean; server_url?: string; username?: string; password?: string; profiles?: RawProfile[] }[]
+  >("/api/m3u/accounts/");
   if (!raw) return null;
   return raw
     .filter((a) => a.account_type === "XC")
-    .map((a) => ({ id: a.id, name: a.name, serverUrl: a.server_url ?? "", username: a.username ?? "", hasPassword: !!a.password }));
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      serverUrl: a.server_url ?? "",
+      username: a.username ?? "",
+      hasPassword: !!a.password,
+      lines: (a.profiles ?? []).sort((x, y) => Number(!!y.is_default) - Number(!!x.is_default) || x.id - y.id).map(toLine),
+    }));
+}
+
+/**
+ * Adds another login on the same panel as a line: a Dispatcharr profile whose
+ * rewrite swaps that login into every stream URL, with one connection. The
+ * proxy then uses it whenever the other lines are busy -- see
+ * iptvLineRules.ts. Dispatcharr is asked to read the line's own status and
+ * expiry straight away, so a dead login shows as dead on the spot.
+ */
+export async function addIptvLine(accountId: number, username: string, password: string): Promise<IptvLine | null> {
+  const account = await api<{ profiles?: RawProfile[] }>(`/api/m3u/accounts/${accountId}/`);
+  if (!account) return null;
+  const { search, replace } = lineProfilePatterns(username, password);
+  const created = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: nextLineName((account.profiles ?? []).map((p) => p.name)),
+      max_streams: 1,
+      is_active: true,
+      is_default: false,
+      search_pattern: search,
+      replace_pattern: replace,
+    }),
+  });
+  if (!created || typeof created.id !== "number") return null;
+  await api(`/api/m3u/refresh-account-info/${created.id}/`, { method: "POST", body: "{}" });
+  const after = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${created.id}/`);
+  return toLine(after ?? created);
+}
+
+/** Removes an extra line. The account's own login is never removed this way. */
+export async function removeIptvLine(accountId: number, lineId: number): Promise<boolean> {
+  const line = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`);
+  if (!line || line.is_default) return false;
+  return (await api(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`, { method: "DELETE" })) !== null;
 }
 
 /** What a saved login change did, for the admin panel to report. */

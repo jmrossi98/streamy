@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Field, Select, TextInput } from "@/components/ui";
-import { CredentialForm, useCredentialTargets } from "@/components/CredentialsPanel";
+import { CredentialForm, IptvLines, useCredentialTargets } from "@/components/CredentialsPanel";
 import {
   buildServiceList,
   describeCost,
@@ -138,6 +138,15 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                     </p>
                   )}
                   {c && <p className="truncate text-xs text-white/40">{c.fields.map((f) => `${f.label}: ${f.current}`).join(" · ")}</p>}
+                  {c?.lines && (
+                    <IptvLines
+                      target={c}
+                      onChanged={(text) => {
+                        setNotice({ key: item.key, text });
+                        void reload();
+                      }}
+                    />
+                  )}
                   {c?.alert && (
                     <p className={`text-xs ${c.alert.tone === "danger" ? "text-red-300/80" : "text-amber-200/80"}`}>{c.alert.text}</p>
                   )}
