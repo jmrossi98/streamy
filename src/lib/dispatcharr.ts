@@ -439,17 +439,23 @@ export type DispatcharrChannel = {
   name: string;
   logoId: number | null;
   streamIds: number[];
+  /**
+   * The channel's UUID -- what the proxy's status endpoint identifies a
+   * playing channel by (see activeChannelKeys), not the numeric id.
+   */
+  uuid: string | null;
 };
 
+type ChannelRow = { id?: number; name?: string; logo_id?: number | null; streams?: number[]; uuid?: string };
+
 export async function listChannels(): Promise<DispatcharrChannel[] | null> {
-  const data = await api<
-    | { results?: { id?: number; name?: string; logo_id?: number | null; streams?: number[] }[] }
-    | { id?: number; name?: string; logo_id?: number | null; streams?: number[] }[]
-  >(`/api/channels/channels/?page_size=1000`);
+  const data = await api<{ results?: ChannelRow[] } | ChannelRow[]>(
+    `/api/channels/channels/?page_size=1000`
+  );
   if (!data) return null;
   const rows = Array.isArray(data) ? data : (data.results ?? []);
   return rows
-    .filter((r): r is { id: number; name: string; logo_id?: number | null; streams?: number[] } =>
+    .filter((r): r is ChannelRow & { id: number; name: string } =>
       typeof r?.id === "number" && typeof r?.name === "string"
     )
     .map((r) => ({
@@ -457,7 +463,40 @@ export async function listChannels(): Promise<DispatcharrChannel[] | null> {
       name: r.name,
       logoId: typeof r.logo_id === "number" ? r.logo_id : null,
       streamIds: r.streams ?? [],
+      uuid: typeof r.uuid === "string" ? r.uuid : null,
     }));
+}
+
+/**
+ * The channels somebody is watching right now, as the proxy identifies them
+ * (`channel_id`, which is the channel's UUID), or null when that can't be told.
+ *
+ * Asked of /proxy/ts/status and its `clients` field because that is the one
+ * signal already proven to mean "a viewer": mediabox's live-channel-check.py
+ * yields to viewers on the same field, after the process-table version
+ * mistook a dead channel's reconnect loop for someone watching (2026-09-27).
+ * A channel with an ffmpeg running but no clients is NOT counted -- that is
+ * exactly the retrying-dead-feed case. `clients` arrives as a count or as a
+ * list depending on the Dispatcharr version, so both are read.
+ *
+ * Null rather than an empty set on failure: "nobody is watching" and "couldn't
+ * ask" must stay distinguishable, because the caller deletes channels on the
+ * former and has to do nothing on the latter.
+ */
+export async function activeChannelKeys(): Promise<Set<string> | null> {
+  const data = await api<{ channels?: { channel_id?: unknown; clients?: unknown }[] }>(
+    `/proxy/ts/status`
+  );
+  // An answer with no `channels` list is an idle proxy, read the same way the
+  // checker reads it (`status.get("channels") or []`); only no answer is null.
+  if (!data || typeof data !== "object") return null;
+  const keys = new Set<string>();
+  for (const c of Array.isArray(data.channels) ? data.channels : []) {
+    const count =
+      typeof c?.clients === "number" ? c.clients : Array.isArray(c?.clients) ? c.clients.length : 0;
+    if (count > 0 && c?.channel_id != null) keys.add(String(c.channel_id));
+  }
+  return keys;
 }
 
 /**

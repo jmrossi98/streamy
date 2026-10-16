@@ -37,7 +37,8 @@ export function GameStreamFinder({ fixtureId }: { fixtureId: string }) {
       const res = await fetch("/api/live/streams/promote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ streamId: s.id, name: s.name, logoUrl: s.logoUrl }),
+        // fixtureId marks it as a one-game channel, removed after the game.
+        body: JSON.stringify({ streamId: s.id, name: s.name, logoUrl: s.logoUrl, fixtureId }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       setAdded((a) => ({ ...a, [s.id]: res.ok ? "Added. It joins the list above in a few seconds." : body.error ?? "Couldn't add it." }));
@@ -55,6 +56,7 @@ export function GameStreamFinder({ fixtureId }: { fixtureId: string }) {
       <h3 className="mb-1 text-sm font-semibold text-white/80">More streams for this game</h3>
       <p className="mb-3 text-xs text-white/40">
         From the providers&apos; catalogues, not in Live TV yet. A stream naming both teams is usually the game itself.
+        Channels added here are removed automatically about 30 minutes after the game ends.
       </p>
       <ul className="divide-y divide-white/5 rounded-lg border border-white/10">
         {streams.map((s) => (

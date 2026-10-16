@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { refreshGuide } from "@/lib/liveTv";
 import {
   isDispatcharrConfigured,
@@ -71,6 +72,23 @@ export async function POST(request: Request) {
       { error: "Dispatcharr wouldn't add that stream." },
       { status: 502 }
     );
+  }
+
+  // Added from a game page: remember which fixture it was for, so the
+  // download warden's pass can remove it once that game is over (see
+  // gameChannelCleanupRules.ts). Only these are recorded -- a channel added
+  // from the general stream browser carries no fixtureId and is never
+  // cleaned up. Best effort: failing to record costs a manual delete later,
+  // not the add itself.
+  const fixtureId = typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
+  if (fixtureId) {
+    await prisma.gameChannel
+      .upsert({
+        where: { channelId: created.id },
+        create: { channelId: created.id, fixtureId, name },
+        update: { fixtureId, name, endedSeenAt: null },
+      })
+      .catch((err) => console.error("[promote] couldn't record game channel:", err));
   }
 
   // Kick Jellyfin now rather than waiting for its own schedule, which can be

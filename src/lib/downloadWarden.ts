@@ -31,6 +31,7 @@ import { healStalledDownloads } from "./downloadHealer";
 import { pendingSearchStats, type QueueStats } from "./pendingEpisodeSearch";
 import { isQueueStuck } from "./searchQueueRules";
 import { runServiceWatch, type ServiceWatchReport } from "./serviceWatch";
+import { runGameChannelCleanup, type GameChannelCleanupReport } from "./gameChannelCleanup";
 
 export type WardenReport = {
   ranAt: string;
@@ -47,6 +48,8 @@ export type WardenReport = {
   errors: { step: string; error: string }[];
   /** Which services were answering this pass; null if that check failed. */
   services: ServiceWatchReport | null;
+  /** Game-page channels removed after their game; null if that step failed. */
+  gameChannels: GameChannelCleanupReport | null;
 };
 
 /**
@@ -83,6 +86,16 @@ export async function runDownloadWarden(): Promise<WardenReport> {
   const adopted = await adoptUnsearchedEpisodes().catch((err) => {
     errors.push({ step: "adopt", error: message(err) });
     return 0;
+  });
+
+  // Not download recovery either (see `services` below for the same call):
+  // channels added from a game page outlive the game, and this is the pass
+  // that reliably comes back to remove them. Run before the drain rather than
+  // after it because it is a few quick requests and the drain is the step
+  // that can use up the route's time budget.
+  const gameChannels = await runGameChannelCleanup().catch((err) => {
+    errors.push({ step: "gameChannels", error: message(err) });
+    return null;
   });
 
   // Drain first, heal second, and the order is load-bearing.
@@ -131,5 +144,6 @@ export async function runDownloadWarden(): Promise<WardenReport> {
     stuck,
     errors,
     services,
+    gameChannels,
   };
 }
