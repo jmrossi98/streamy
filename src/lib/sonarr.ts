@@ -19,7 +19,7 @@ import {
 } from "./searchQueueRules";
 import { cached } from "./ttlCache";
 import { getTvExternalIds } from "./tmdb";
-import { deleteTorrents } from "./qbittorrent";
+import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
 import { expireBlocklist, QUEUE_PAGE_SIZE, toQueueHealth } from "./radarr";
 import { computeProgress } from "./radarr";
@@ -480,15 +480,18 @@ export async function cancelSonarrDownload(
 ): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   const emptyQueue = async (): Promise<number> => {
-    const queue = await sonarrFetch<{ records: { id: number; seriesId: number }[] }>(
+    const queue = await sonarrFetch<{ records: { id: number; seriesId: number; downloadId?: string }[] }>(
       `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
     );
     // A series can legitimately have several episodes in flight at once.
     const entries = queue.records.filter((r) => r.seriesId === sonarrId);
     for (const entry of entries) {
-      await sonarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`, {
+      // A private tracker's torrent that still owes seeding stays in the client.
+      const removal = await clientRemoval(entry.downloadId);
+      await sonarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=${removal.removeFromClient}&blocklist=${blocklist}`, {
         method: "DELETE",
       });
+      await removal.after();
     }
     return entries.length;
   };
@@ -925,18 +928,24 @@ export async function cancelSonarrQueueItem(
     // afterwards there is nothing left to ask. Cancelling has to stop the
     // episode being wanted, not just stop this one transfer -- see below.
     let episodeId: number | null = null;
+    let downloadId: string | undefined;
     try {
       const queue = await sonarrFetch<{
-        records: { id: number; episodeId?: number }[];
+        records: { id: number; episodeId?: number; downloadId?: string }[];
       }>(`/api/v3/queue?pageSize=250`);
-      episodeId = queue.records.find((r) => r.id === queueId)?.episodeId ?? null;
+      const record = queue.records.find((r) => r.id === queueId);
+      episodeId = record?.episodeId ?? null;
+      downloadId = record?.downloadId;
     } catch (err) {
       console.error(`[sonarr] could not resolve the episode for queue ${queueId}:`, err);
     }
 
-    await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=${blocklist}`, {
+    // A private tracker's torrent that still owes seeding stays in the client.
+    const removal = await clientRemoval(downloadId);
+    await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=${removal.removeFromClient}&blocklist=${blocklist}`, {
       method: "DELETE",
     });
+    await removal.after();
 
     // A cancel that only removes the queue entry is not a cancel.
     //
@@ -2218,14 +2227,17 @@ export async function removeSonarrEpisodes(
 
     // Drop anything currently downloading for these episodes.
     const dropQueued = async () => {
-      const queue = await sonarrFetch<{ records: { id: number; episodeId?: number }[] }>(
+      const queue = await sonarrFetch<{ records: { id: number; episodeId?: number; downloadId?: string }[] }>(
         `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
       );
       for (const record of queue.records) {
         if (record.episodeId != null && targetIds.has(record.episodeId)) {
-          await sonarrFetch(`/api/v3/queue/${record.id}?removeFromClient=true&blocklist=false`, {
+          // A private tracker's torrent that still owes seeding stays in the client.
+          const removal = await clientRemoval(record.downloadId);
+          await sonarrFetch(`/api/v3/queue/${record.id}?removeFromClient=${removal.removeFromClient}&blocklist=false`, {
             method: "DELETE",
           });
+          await removal.after();
         }
       }
     };

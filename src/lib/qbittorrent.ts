@@ -10,6 +10,8 @@
  * then cleaned up by qBittorrent's own share limits instead.
  */
 
+import { mustKeepSeeding } from "./privateSeedRules";
+
 const QBITTORRENT_URL = process.env.QBITTORRENT_URL?.replace(/\/$/, "");
 const QBITTORRENT_USER = process.env.QBITTORRENT_USER;
 const QBITTORRENT_PASSWORD = process.env.QBITTORRENT_PASSWORD;
@@ -56,6 +58,16 @@ async function login(): Promise<string | null> {
  */
 export async function deleteTorrents(hashes: string[]): Promise<boolean> {
   if (!isQbittorrentConfigured() || hashes.length === 0) return false;
+  // A private tracker's torrent that hasn't met its seeding rule is moved to
+  // seed-only instead of deleted -- see privateSeedRules.ts. Every caller gets
+  // this, so no delete path can earn a hit-and-run.
+  const held = await heldForSeeding(hashes);
+  if (held === null) return false;
+  if (held.size > 0) {
+    await moveToSeedOnly([...held]);
+    hashes = hashes.filter((h) => !held.has(h.toLowerCase()));
+    if (hashes.length === 0) return true;
+  }
   const cookie = await login();
   if (!cookie) return false;
 
@@ -80,6 +92,97 @@ export async function deleteTorrents(hashes: string[]): Promise<boolean> {
     console.error("[qbittorrent] deleteTorrents failed:", err);
     return false;
   }
+}
+
+/** The category a private torrent goes to when nothing wants it but its tracker still does. */
+export const SEED_ONLY_CATEGORY = "private-seed";
+
+type RawTorrent = {
+  hash?: string;
+  private?: boolean;
+  progress?: number;
+  ratio?: number;
+  seeding_time?: number;
+  downloaded?: number;
+  uploaded?: number;
+};
+
+async function qbit(path: string, form?: Record<string, string>): Promise<Response | null> {
+  const cookie = await login();
+  if (!cookie) return null;
+  try {
+    return await fetch(`${QBITTORRENT_URL}${path}`, {
+      method: form ? "POST" : "GET",
+      headers: {
+        ...baseHeaders(),
+        Cookie: cookie,
+        ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      },
+      body: form ? new URLSearchParams(form).toString() : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    console.error(`[qbittorrent] ${path} failed:`, err);
+    return null;
+  }
+}
+
+/**
+ * Which of these torrents a private tracker still needs seeded, lowercase.
+ * Null when qBittorrent can't be read -- callers must then not delete
+ * anything, since "couldn't tell" is not "safe".
+ */
+export async function heldForSeeding(hashes: string[]): Promise<Set<string> | null> {
+  if (!isQbittorrentConfigured()) return new Set();
+  const wanted = hashes.map((h) => h.toLowerCase()).filter(Boolean);
+  if (wanted.length === 0) return new Set();
+  const res = await qbit(`/api/v2/torrents/info?hashes=${wanted.join("|")}`);
+  if (!res?.ok) return null;
+  const rows = (await res.json()) as RawTorrent[];
+  return new Set(
+    rows
+      .filter((t) =>
+        mustKeepSeeding({
+          isPrivate: t.private === true,
+          progress: t.progress ?? 0,
+          ratio: t.ratio ?? 0,
+          seedingTime: t.seeding_time ?? 0,
+          downloaded: t.downloaded ?? 0,
+          uploaded: t.uploaded ?? 0,
+        })
+      )
+      .map((t) => (t.hash ?? "").toLowerCase())
+  );
+}
+
+/**
+ * Takes torrents out of Sonarr's and Radarr's categories and keeps them
+ * seeding: mediabox's private-seed-guard keeps them forced active and removes
+ * them once their tracker's rule is met.
+ */
+export async function moveToSeedOnly(hashes: string[]): Promise<void> {
+  if (hashes.length === 0) return;
+  await qbit("/api/v2/torrents/createCategory", { category: SEED_ONLY_CATEGORY, savePath: "" });
+  await qbit("/api/v2/torrents/setCategory", { hashes: hashes.join("|"), category: SEED_ONLY_CATEGORY });
+  await qbit("/api/v2/torrents/start", { hashes: hashes.join("|") });
+  console.log(`[qbittorrent] kept ${hashes.length} private torrent(s) seeding for their tracker`);
+}
+
+/**
+ * What to pass as `removeFromClient` when taking a download out of Sonarr's or
+ * Radarr's queue. False for a private torrent that still owes seeding (and it
+ * is moved to seed-only once the queue entry is gone -- call the returned
+ * `after`), and also false when qBittorrent can't be read, for the same
+ * reason deleteTorrents refuses then.
+ */
+export async function clientRemoval(downloadId: string | null | undefined): Promise<{ removeFromClient: boolean; after: () => Promise<void> }> {
+  const none = { removeFromClient: true, after: async () => undefined };
+  if (!downloadId || !isQbittorrentConfigured()) return none;
+  const held = await heldForSeeding([downloadId]);
+  if (held === null) return { removeFromClient: false, after: async () => undefined };
+  if (held.size === 0) return none;
+  return { removeFromClient: false, after: () => moveToSeedOnly([downloadId.toLowerCase()]) };
 }
 
 /** One torrent, reduced to what a health check needs. */
