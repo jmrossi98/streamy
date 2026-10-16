@@ -1002,3 +1002,25 @@ model GameChannel {
 
   @@index([fixtureId])
 }
+
+/// The healer's re-searches of a wanted episode or movie, so a title no
+/// indexer carries is given up on after a day instead of re-searched for
+/// ever -- see searchGiveUpRules.ts. One row per title; deleted when it is
+/// asked for again.
+model WantedSearch {
+  /// "episode:<sonarr episode id>" | "movie:<radarr movie id>"
+  key             String    @id
+  // "movie" | "show"
+  mediaType       String
+  // Radarr movie id / Sonarr series id, same as MediaRequest.externalId.
+  externalId      Int
+  episodeId       Int?
+  /// "Show - S1 E3 - Title" or the movie's title, for the panel and the audit log.
+  label           String
+  firstSearchedAt DateTime  @default(now())
+  lastSearchedAt  DateTime  @default(now())
+  searches        Int       @default(0)
+  gaveUpAt        DateTime?
+
+  @@index([gaveUpAt])
+}

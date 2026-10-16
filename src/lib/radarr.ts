@@ -663,7 +663,14 @@ export async function expireBlocklist(
   }
 }
 
-export type IdleWantedMovie = { externalId: number; title: string };
+export type IdleWantedMovie = {
+  externalId: number;
+  title: string;
+  /** Radarr's own "is it out yet", by its availability setting. */
+  isAvailable?: boolean;
+  /** Its digital or disc release, whichever came first; null when unknown. */
+  availableSince?: Date | null;
+};
 
 /**
  * Movies Radarr still wants but has nothing in flight for: monitored, no
@@ -676,15 +683,32 @@ export async function getIdleWantedMovies(): Promise<IdleWantedMovie[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const [movies, queue] = await Promise.all([
-      radarrFetch<{ id: number; title: string; hasFile: boolean; monitored: boolean }[]>(
-        "/api/v3/movie"
-      ),
+      radarrFetch<
+        {
+          id: number;
+          title: string;
+          hasFile: boolean;
+          monitored: boolean;
+          isAvailable?: boolean;
+          digitalRelease?: string;
+          physicalRelease?: string;
+        }[]
+      >("/api/v3/movie"),
       radarrFetch<{ records: { movieId: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`),
     ]);
     const queued = new Set(queue.records.map((r) => r.movieId));
+    const earliest = (...dates: (string | undefined)[]): Date | null => {
+      const times = dates.filter((d): d is string => !!d).map((d) => Date.parse(d)).filter((t) => !Number.isNaN(t));
+      return times.length > 0 ? new Date(Math.min(...times)) : null;
+    };
     return movies
       .filter((m) => m.monitored && !m.hasFile && !queued.has(m.id))
-      .map((m) => ({ externalId: m.id, title: m.title }));
+      .map((m) => ({
+        externalId: m.id,
+        title: m.title,
+        isAvailable: m.isAvailable ?? true,
+        availableSince: earliest(m.digitalRelease, m.physicalRelease),
+      }));
   } catch (err) {
     console.error("[radarr] getIdleWantedMovies failed:", err);
     return [];

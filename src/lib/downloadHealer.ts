@@ -24,6 +24,8 @@ import {
   cancelRadarrQueueItem,
   searchRadarrMovie,
   expireRadarrBlocklist,
+  setRadarrMovieMonitored,
+  type IdleWantedMovie,
   type QueueHealth,
 } from "./radarr";
 import {
@@ -37,6 +39,7 @@ import {
   deepSearchSonarrEpisode,
   expireSonarrBlocklist,
   outstandingSearches,
+  unmonitorSonarrEpisodes,
 } from "./sonarr";
 import {
   countRecentRejections,
@@ -48,6 +51,7 @@ import {
   recordReplacement,
 } from "./rejectedReleases";
 import { decideHeal, healScope, repeatOffenders, replacementsToday, type Replacement } from "./healLoopRules";
+import { giveUpReason, shouldGiveUp, type SearchLedgerEntry } from "./searchGiveUpRules";
 
 /**
  * Auto-recovery for downloads that will never finish on their own.
@@ -405,14 +409,45 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
     }
   }
 
+  // Loaded here rather than imported at the top so this module's unit tests
+  // stay free of the database (see __tests__/pureTestGraph.test.ts).
+  // The import is inside the try, not just the call: when the generated Prisma
+  // client is absent the `import()` itself throws, which took the whole heal
+  // pass down rather than costing it this one refinement.
+  let queued = new Set<number>();
+  let ledger: SearchLedger | null = null;
+  try {
+    const { pendingSearchIds } = await import("./pendingEpisodeSearch");
+    queued = new Set(await pendingSearchIds());
+    ledger = await import("./wantedSearches");
+  } catch (err) {
+    // Worst case the ordered queue is re-searched in parallel, which is the
+    // old behaviour, and nothing is given up on -- not a reason to stop
+    // healing stalled downloads.
+    console.error("[healer] could not read the ordered search queue:", err);
+  }
+
+  // Titles nothing can be found for are given up on here, before any search
+  // -- see searchGiveUpRules.ts. Episodes still waiting in the ordered queue
+  // are left to it: their next search is one someone just asked for.
+  const gaveUp = new Set<string>();
+  if (ledger) {
+    const given = await giveUpOnHopeless(ledger, movies, episodes.filter((e) => !queued.has(e.episodeId)));
+    healed.push(...given.healed);
+    for (const key of given.keys) gaveUp.add(key);
+  }
+  const record = (items: LedgerItem[]) =>
+    ledger?.recordSearches(items).catch((err) => console.error("[healer] could not record the searches:", err));
+
   for (const movie of movies) {
     const key = `idle:movie:${movie.externalId}`;
-    if (onIdleCooldown(key)) continue;
+    if (gaveUp.has(key) || onIdleCooldown(key)) continue;
     lastHealedAt.set(key, Date.now());
     idleTries.set(key, (idleTries.get(key) ?? 0) + 1);
     try {
       await searchRadarrMovie(movie.externalId);
       console.log(`[healer] re-searching idle "${movie.title}"`);
+      await record([{ key: `movie:${movie.externalId}`, mediaType: "movie", externalId: movie.externalId, episodeId: null, label: movie.title }]);
       healed.push({ title: movie.title, reason: "wanted but nothing in flight" });
     } catch (err) {
       console.error(`[healer] idle re-search failed for "${movie.title}":`, err);
@@ -439,21 +474,6 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   // idle, they are waiting their turn; the drain owns them, and drops any that
   // fail three times, at which point this pass sees them again.
   //
-  // Loaded here rather than imported at the top so this module's unit tests
-  // stay free of the database (see __tests__/pureTestGraph.test.ts).
-  // The import is inside the try, not just the call: when the generated Prisma
-  // client is absent the `import()` itself throws, which took the whole heal
-  // pass down rather than costing it this one refinement.
-  let queued = new Set<number>();
-  try {
-    const { pendingSearchIds } = await import("./pendingEpisodeSearch");
-    queued = new Set(await pendingSearchIds());
-  } catch (err) {
-    // Worst case the ordered queue is re-searched in parallel, which is the
-    // old behaviour -- not a reason to stop healing stalled downloads.
-    console.error("[healer] could not read the ordered search queue:", err);
-  }
-
   // Re-searching idle episodes is background work, and it yields to anything
   // someone asked for: while requested episodes are waiting in the ordered
   // queue, or any search is already running, this pass adds nothing. Sonarr
@@ -472,7 +492,7 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   // A small batch per pass rather than one command for everything due -- see
   // IDLE_EPISODE_BATCH for what the unbounded version cost.
   const dueEpisodes = pickIdleEpisodeBatch(
-    episodes.filter((e) => !queued.has(e.episodeId)),
+    episodes.filter((e) => !queued.has(e.episodeId) && !gaveUp.has(`idle:episode:${e.episodeId}`)),
     (e) => idleTries.get(`idle:episode:${e.episodeId}`) ?? 0,
     (e) => onIdleCooldown(`idle:episode:${e.episodeId}`)
   );
@@ -484,6 +504,9 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   if (dueEpisodes.length > 0) {
     try {
       await searchSonarrEpisodes(dueEpisodes.map((e) => e.episodeId));
+      await record(
+        dueEpisodes.map((e) => ({ key: `episode:${e.episodeId}`, mediaType: "show", externalId: e.seriesId, episodeId: e.episodeId, label: e.title }))
+      );
       // Attempt counts logged so a title quietly backing off to daily is
       // visible in the log rather than looking like the healer stopped.
       console.log(
@@ -525,6 +548,77 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
   }
 
   return healed;
+}
+
+type LedgerItem = { key: string; mediaType: "movie" | "show"; externalId: number; episodeId: number | null; label: string };
+/** What this needs of wantedSearches.ts, which is loaded at run time (see above). */
+type SearchLedger = {
+  searchLedger(keys: string[]): Promise<Map<string, SearchLedgerEntry>>;
+  recordSearches(items: LedgerItem[]): Promise<void>;
+  markGivenUp(key: string, title: string, reason: string): Promise<void>;
+  resetSearch(key: string): Promise<void>;
+};
+type IdleWantedEpisode = Awaited<ReturnType<typeof getIdleWantedEpisodes>>[number];
+
+/**
+ * Unmonitors every idle title the ledger says has been searched for long
+ * enough with nothing found, and returns their idle keys so this pass does
+ * not search them again. A title found given up on and wanted again was
+ * asked for afresh: its count starts over.
+ */
+async function giveUpOnHopeless(
+  ledger: SearchLedger,
+  movies: IdleWantedMovie[],
+  episodes: IdleWantedEpisode[]
+): Promise<{ healed: HealedDownload[]; keys: Set<string> }> {
+  const items = [
+    ...movies.map((m) => ({
+      idleKey: `idle:movie:${m.externalId}`,
+      key: `movie:${m.externalId}`,
+      title: m.title,
+      release: { released: m.isAvailable ?? true, releasedAt: m.availableSince ?? null },
+      giveUp: () => setRadarrMovieMonitored(m.externalId, false),
+    })),
+    ...episodes.map((e) => ({
+      idleKey: `idle:episode:${e.episodeId}`,
+      key: `episode:${e.episodeId}`,
+      title: e.title,
+      release: { releasedAt: e.airedAt ?? null },
+      giveUp: () => unmonitorSonarrEpisodes([e.episodeId]),
+    })),
+  ];
+  const healed: HealedDownload[] = [];
+  const keys = new Set<string>();
+  let entries: Map<string, SearchLedgerEntry>;
+  try {
+    entries = await ledger.searchLedger(items.map((i) => i.key));
+  } catch (err) {
+    console.error("[healer] could not read the search ledger:", err);
+    return { healed, keys };
+  }
+  for (const item of items) {
+    const entry = entries.get(item.key);
+    if (!entry) continue;
+    try {
+      if (entry.gaveUpAt) {
+        await ledger.resetSearch(item.key);
+        idleTries.delete(item.idleKey);
+        lastHealedAt.delete(item.idleKey);
+        console.log(`[healer] "${item.title}" is wanted again after a give-up: starting over`);
+        continue;
+      }
+      if (!shouldGiveUp(entry, item.release)) continue;
+      const reason = giveUpReason(entry);
+      await item.giveUp();
+      await ledger.markGivenUp(item.key, item.title, reason);
+      console.log(`[healer] gave up on "${item.title}": ${reason}`);
+      healed.push({ title: item.title, reason });
+      keys.add(item.idleKey);
+    } catch (err) {
+      console.error(`[healer] could not give up on "${item.title}":`, err);
+    }
+  }
+  return { healed, keys };
 }
 
 // How long a blocklisted release stays blocked. Long enough that a genuinely

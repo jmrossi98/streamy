@@ -27,6 +27,8 @@ import { formatFileSize } from "@/lib/formatBytes";
 import { withDeadline } from "@/lib/withDeadline";
 import { foldPacks } from "@/lib/downloadGroupRules";
 import { episodeLabel, placeFromLabel } from "@/lib/wantedEpisodeRules";
+import { recentGiveUps } from "@/lib/wantedSearches";
+import { giveUpNotice } from "@/lib/searchGiveUpRules";
 
 /**
  * Every downloads panel, as one block.
@@ -343,6 +345,30 @@ export async function AdminDownloadsSections() {
     }
   }
   downloads.unshift(...wantedRows);
+
+  // Titles the healer stopped looking for -- see searchGiveUpRules.ts. Listed
+  // for a few days so a show that lost episodes says where they went, rather
+  // than them simply vanishing from "queued". One asked for again since is
+  // wanted again and already has a row above.
+  const listedNow = new Set(downloads.map((d) => `${d.mediaType}:${d.externalId}:${d.episodeId ?? ""}`));
+  const givenUp = await withDeadline(recentGiveUps(), [], PANEL_DEADLINE_MS);
+  downloads.unshift(
+    ...givenUp
+      .filter((g) => !listedNow.has(`${g.mediaType}:${g.externalId}:${g.episodeId ?? ""}`))
+      .map((g): DownloadRow => ({
+        queueId: null,
+        externalId: g.externalId,
+        episodeId: g.episodeId ?? undefined,
+        title: g.label,
+        progress: null,
+        mediaType: g.mediaType,
+        completed: false,
+        noRelease: true,
+        gaveUp: true,
+        startedAt: g.gaveUpAt.toISOString(),
+        notice: giveUpNotice(g),
+      }))
+  );
   // The one whole-show "Searching..." row says nothing its episodes do not,
   // and with no episode to belong to it sat alone under "Other".
   for (let i = downloads.length - 1; i >= 0; i--) {
