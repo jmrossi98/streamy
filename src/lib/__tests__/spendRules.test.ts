@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   byDueSoonest,
   computeTotals,
+  pairRenewals,
+  pairedDetail,
   daysUntil,
   describeCost,
   describeDue,
@@ -159,5 +161,35 @@ describe("byDueSoonest", () => {
     // simply omits the field.
     const sorted = [{ daysLeft: null }, {}, { daysLeft: 40 }].sort(byDueSoonest);
     expect(sorted[0].daysLeft).toBe(40);
+  });
+});
+
+describe("pairRenewals", () => {
+  it("folds each read renewal into the subscription for the same service (2026-10-15 duplicates)", () => {
+    const subs = [
+      { id: "a", name: "Newshosting" },
+      { id: "b", name: "usenet.farm" },
+      { id: "c", name: "NZBFinder" },
+    ];
+    const renewals = [
+      { name: "news.usenet.farm" },
+      { name: "NZBFinder" },
+      { name: "Newshosting" },
+      { name: "NZBgeek" },
+      { name: "trex" },
+    ];
+    const { bySubscription, unmatched } = pairRenewals(subs, renewals);
+    expect(bySubscription.get("a")?.name).toBe("Newshosting");
+    expect(bySubscription.get("b")?.name).toBe("news.usenet.farm");
+    expect(bySubscription.get("c")?.name).toBe("NZBFinder");
+    expect(unmatched.map((r) => r.name)).toEqual(["NZBgeek", "trex"]);
+  });
+});
+
+describe("pairedDetail", () => {
+  it("drops the missing-expiry note when the subscription has its own date", () => {
+    const d = "provider · 82.7 GB today · 3554 GB this month · expiry not set in SABnzbd";
+    expect(pairedDetail(d, true)).toBe("provider · 82.7 GB today · 3554 GB this month");
+    expect(pairedDetail(d, false)).toBe(d);
   });
 });
