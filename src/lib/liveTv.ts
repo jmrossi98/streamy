@@ -626,3 +626,33 @@ async function refreshGuideAfterCurrent(id: string): Promise<void> {
     followUpQueued = false;
   }
 }
+
+/** When each live session was last pinged, so a ping goes out at most every PING_EVERY_MS. */
+const lastPing = new Map<string, number>();
+const PING_EVERY_MS = 10_000;
+
+/**
+ * Tells Jellyfin a live transcode is still being watched.
+ *
+ * Jellyfin kills a transcode its kill timer thinks is abandoned, and on
+ * 2026-10-16 it killed one a minute in while the player was fetching a
+ * segment every second: the job ran with no PlaySessionId (the live route's
+ * session id never reached Jellyfin, since fixed in streamProxy.ts), and
+ * segment requests alone did not keep it alive. Called on every live HLS
+ * request; pings at most every ten seconds per session, well inside the
+ * one-minute timeout. Best effort -- a missed ping costs nothing by itself.
+ */
+export function keepLiveSessionAlive(playSessionId: string | null | undefined): void {
+  if (!playSessionId || !isJellyfinConfiguredForLiveTv()) return;
+  const now = Date.now();
+  if (now - (lastPing.get(playSessionId) ?? 0) < PING_EVERY_MS) return;
+  lastPing.set(playSessionId, now);
+  if (lastPing.size > 500) {
+    for (const [id, at] of lastPing) if (now - at > 10 * 60_000) lastPing.delete(id);
+  }
+  void fetch(`${JELLYFIN_URL}/Sessions/Playing/Ping?playSessionId=${encodeURIComponent(playSessionId)}`, {
+    method: "POST",
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+  }).catch(() => {});
+}

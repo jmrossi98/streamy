@@ -165,7 +165,10 @@ export async function proxyJellyfinHlsResource(
     jellyfinPath === "master.m3u8"
       ? jellyfinHlsMasterUrl(
           itemId,
-          incoming.searchParams.get("session") || undefined,
+          // "playSessionId" is what the live player sends; "session" the VOD one.
+          // Live passed nothing through until 2026-10-16, so its transcodes ran
+          // with PlaySessionId null: nothing could keep them alive or stop them.
+          incoming.searchParams.get("session") || incoming.searchParams.get("playSessionId") || undefined,
           mediaSourceId,
           audioStreamIndex
         )
