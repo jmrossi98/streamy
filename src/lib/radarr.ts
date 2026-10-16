@@ -9,7 +9,7 @@ import { inBatches, sharedRead } from "./sharedRead";
 import { pickDeepRelease, type DeepRelease } from "./deepSearchRules";
 import { pickFastCopies, type FastCopyRelease } from "./fastCopyRules";
 import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
-import { deleteTorrents } from "./qbittorrent";
+import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import { cached } from "./ttlCache";
@@ -386,20 +386,22 @@ export async function cancelRadarrQueueItem(
 ): Promise<boolean> {
   if (!isRadarrConfigured()) return false;
   try {
-    if (unmonitor) {
-      try {
-        const queue = await radarrFetch<{ records: { id: number; movieId?: number }[] }>(
-          `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
-        );
-        const movieId = queue.records.find((r) => r.id === queueId)?.movieId;
-        if (movieId != null) await stopWantingMovie(movieId);
-      } catch (err) {
-        console.error(`[radarr] could not unmonitor the movie for queue ${queueId}:`, err);
-      }
+    let record: { id: number; movieId?: number; downloadId?: string } | undefined;
+    try {
+      const queue = await radarrFetch<{ records: { id: number; movieId?: number; downloadId?: string }[] }>(
+        `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
+      );
+      record = queue.records.find((r) => r.id === queueId);
+    } catch (err) {
+      console.error(`[radarr] could not read queue entry ${queueId}:`, err);
     }
-    await radarrFetch(`/api/v3/queue/${queueId}?removeFromClient=true&blocklist=${blocklist}`, {
+    if (unmonitor && record?.movieId != null) await stopWantingMovie(record.movieId);
+    // A private tracker's torrent that still owes seeding stays in the client.
+    const removal = await clientRemoval(record?.downloadId);
+    await radarrFetch(`/api/v3/queue/${queueId}?removeFromClient=${removal.removeFromClient}&blocklist=${blocklist}`, {
       method: "DELETE",
     });
+    await removal.after();
     return true;
   } catch (err) {
     console.error(`[radarr] cancelRadarrQueueItem failed for ${queueId}:`, err);
@@ -547,14 +549,16 @@ export async function cancelRadarrDownload(
   if (!isRadarrConfigured()) return false;
   try {
     const emptyQueue = async () => {
-      const queue = await radarrFetch<{ records: { id: number; movieId: number }[] }>(
+      const queue = await radarrFetch<{ records: { id: number; movieId: number; downloadId?: string }[] }>(
         `/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`
       );
       // Every entry, not the first: a movie can have a stuck and a fresh one.
       for (const entry of queue.records.filter((r) => r.movieId === radarrId)) {
-        await radarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=true&blocklist=${blocklist}`, {
+        const removal = await clientRemoval(entry.downloadId);
+        await radarrFetch(`/api/v3/queue/${entry.id}?removeFromClient=${removal.removeFromClient}&blocklist=${blocklist}`, {
           method: "DELETE",
         });
+        await removal.after();
       }
     };
     // A user-initiated cancel must first stop Radarr wanting the movie --
