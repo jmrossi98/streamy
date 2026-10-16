@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRedundantImport, isDeadSwarm, isMetadataDead, isTorrentClientOffline, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isRedundantImport, orphanedTorrents, isDeadSwarm, isMetadataDead, isTorrentClientOffline, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -239,5 +239,29 @@ describe("stall patience", () => {
   it("does not wait on one that never got a byte, or when the client gave no reading", () => {
     expect(isUnhealthy(entry({ ...stalled, hasProgress: false, idleMinutes: 5 }))).toBe(true);
     expect(isUnhealthy(entry({ ...stalled, hasProgress: true }))).toBe(true);
+  });
+});
+
+describe("orphanedTorrents (2026-10-16: dead Housewives torrents Sonarr had forgotten)", () => {
+  const NOW = Date.parse("2026-10-16T20:00:00Z");
+  const hoursAgo = (h: number) => (NOW - h * 3600_000) / 1000;
+  const t = (over: Partial<{ hash: string; category: string; progress: number; addedOn: number | null }>) => ({
+    hash: "aa",
+    category: "tv-sonarr",
+    progress: 0,
+    addedOn: hoursAgo(5),
+    ...over,
+  });
+  it("finds an unfinished, untracked torrent in an arr category", () => {
+    expect(orphanedTorrents([t({})], new Set(), NOW)).toHaveLength(1);
+    expect(orphanedTorrents([t({ category: "radarr", hash: "BB" })], new Set(), NOW)).toHaveLength(1);
+  });
+  it("leaves tracked, finished, recent, foreign and undated torrents alone", () => {
+    expect(orphanedTorrents([t({ hash: "AA" })], new Set(["aa"]), NOW)).toHaveLength(0);
+    expect(orphanedTorrents([t({ progress: 1 })], new Set(), NOW)).toHaveLength(0);
+    expect(orphanedTorrents([t({ addedOn: hoursAgo(1) })], new Set(), NOW)).toHaveLength(0);
+    expect(orphanedTorrents([t({ category: "games" })], new Set(), NOW)).toHaveLength(0);
+    expect(orphanedTorrents([t({ category: "rh-probe" })], new Set(), NOW)).toHaveLength(0);
+    expect(orphanedTorrents([t({ addedOn: null })], new Set(), NOW)).toHaveLength(0);
   });
 });

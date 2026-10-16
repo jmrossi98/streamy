@@ -94,6 +94,10 @@ export type TorrentHealth = {
   dlSpeed: number;
   /** When a piece last moved, in unix seconds. */
   lastActivityAt?: number | null;
+  /** The client category: "tv-sonarr", "radarr", ... */
+  category?: string;
+  /** When it was added, in unix seconds. */
+  addedOn?: number | null;
 };
 
 /**
@@ -124,6 +128,8 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
       num_complete?: number;
       dlspeed?: number;
       last_activity?: number;
+      category?: string;
+      added_on?: number;
     }[];
     return body.map((t) => ({
       hash: (t.hash ?? "").toLowerCase(),
@@ -134,6 +140,8 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
       swarmSeeds: t.num_complete ?? 0,
       dlSpeed: t.dlspeed ?? 0,
       lastActivityAt: t.last_activity && t.last_activity > 0 ? t.last_activity : null,
+      category: t.category ?? "",
+      addedOn: t.added_on && t.added_on > 0 ? t.added_on : null,
     }));
   } catch (err) {
     console.error("[qbittorrent] torrent health read failed:", err);

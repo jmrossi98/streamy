@@ -7,7 +7,7 @@
  */
 
 import { unsearchedBacklog } from "./searchBacklogRules";
-import { wantedEpisodes, wholeShowEpisodes, type EpisodeForWanted, type WantedEpisode } from "./wantedEpisodeRules";
+import { episodeLabel, wantedEpisodes, wholeShowEpisodes, type EpisodeForWanted, type WantedEpisode } from "./wantedEpisodeRules";
 import { episodeSearchesToCancel, seriesSearchesToCancel, type ArrCommand } from "./cancelRules";
 import { earliestDownloaded } from "./playStartRules";
 import {
@@ -720,6 +720,7 @@ type WantedRecord = {
   monitored: boolean;
   airDateUtc?: string | null;
   lastSearchTime?: string | null;
+  series?: { title?: string };
 };
 
 /**
@@ -738,7 +739,7 @@ const WANTED_KEY = "sonarr:wanted";
 function wantedMissing(): Promise<WantedRecord[]> {
   return sharedRead(WANTED_KEY, WANTED_TTL_MS, async () => {
     const page = await sonarrFetch<{ records: WantedRecord[] }>(
-      `/api/v3/wanted/missing?pageSize=${WANTED_PAGE_SIZE}&sortKey=airDateUtc&sortDirection=descending`
+      `/api/v3/wanted/missing?pageSize=${WANTED_PAGE_SIZE}&sortKey=airDateUtc&sortDirection=descending&includeSeries=true`
     );
     return page.records;
   });
@@ -804,7 +805,7 @@ export async function adoptUnsearchedEpisodes(): Promise<number> {
  * "searching" forever with no search actually running.
  */
 export async function getIdleWantedEpisodes(): Promise<
-  { episodeId: number; title: string; seriesId: number; seasonNumber: number; airedAt?: Date | null }[]
+  { episodeId: number; title: string; seriesId: number; seasonNumber: number; airedAt?: Date | null; label: string }[]
 > {
   if (!isSonarrConfigured()) return [];
   try {
@@ -828,10 +829,29 @@ export async function getIdleWantedEpisodes(): Promise<
         seriesId: e.seriesId,
         seasonNumber: e.seasonNumber,
         airedAt: e.airDateUtc ? new Date(e.airDateUtc) : null,
+        // "Show - S1 E3 - Title", for the give-up row and the audit log.
+        label: e.series?.title ? episodeLabel(e.series.title, e) : e.title,
       }));
   } catch (err) {
     console.error("[sonarr] getIdleWantedEpisodes failed:", err);
     return [];
+  }
+}
+
+/** "Show - S1 E3 - Title" and when it aired, for one episode; null when Sonarr can't say. */
+export async function describeSonarrEpisode(episodeId: number): Promise<{ label: string; airedAt: Date | null } | null> {
+  if (!isSonarrConfigured()) return null;
+  try {
+    const e = await sonarrFetch<WantedRecord>(`/api/v3/episode/${episodeId}`);
+    // Not every Sonarr version embeds the series in an episode; ask for it then.
+    const seriesTitle =
+      e.series?.title ?? (await sonarrFetch<{ title?: string }>(`/api/v3/series/${e.seriesId}`).catch(() => null))?.title;
+    return {
+      label: seriesTitle ? episodeLabel(seriesTitle, e) : e.title,
+      airedAt: e.airDateUtc ? new Date(e.airDateUtc) : null,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -1168,6 +1188,23 @@ export async function getSonarrQueueHealth(): Promise<QueueHealth[]> {
   } catch (err) {
     console.error("[sonarr] getSonarrQueueHealth failed:", err);
     return [];
+  }
+}
+
+/**
+ * Every download id in Sonarr's queue, or null when that can't be known for
+ * certain -- unreachable, or a queue longer than one page. The orphan sweep
+ * deletes torrents that are NOT in here, so "couldn't tell" must never read
+ * as "nothing is tracked".
+ */
+export async function getSonarrTrackedDownloadIds(): Promise<Set<string> | null> {
+  if (!isSonarrConfigured()) return null;
+  try {
+    const q = await sonarrFetch<{ totalRecords?: number; records: { downloadId?: string }[] }>(`/api/v3/queue?pageSize=2000`);
+    if ((q.totalRecords ?? 0) > q.records.length) return null;
+    return new Set(q.records.map((r) => (r.downloadId ?? "").toLowerCase()).filter(Boolean));
+  } catch {
+    return null;
   }
 }
 

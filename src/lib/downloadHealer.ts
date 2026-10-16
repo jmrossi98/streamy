@@ -6,6 +6,7 @@ import {
   isRedundantImport,
   isDeadSwarm,
   isMetadataDead,
+  orphanedTorrents,
   isTorrentClientOffline,
   IMPORT_STUCK_MINUTES,
   pickIdleEpisodeBatch,
@@ -25,6 +26,8 @@ import {
   searchRadarrMovie,
   expireRadarrBlocklist,
   setRadarrMovieMonitored,
+  describeRadarrMovie,
+  getRadarrTrackedDownloadIds,
   type IdleWantedMovie,
   type QueueHealth,
 } from "./radarr";
@@ -40,6 +43,8 @@ import {
   expireSonarrBlocklist,
   outstandingSearches,
   unmonitorSonarrEpisodes,
+  describeSonarrEpisode,
+  getSonarrTrackedDownloadIds,
 } from "./sonarr";
 import {
   countRecentRejections,
@@ -197,6 +202,14 @@ async function healOne(
       console.error("[healer] could not record replacement:", err)
     );
 
+    // A release that died counts towards giving up on the title, the same as
+    // a search that found nothing -- see searchGiveUpRules.ts. Without this a
+    // title cycling through dead torrents was never idle and never given up
+    // on: Housewives of New Jersey went through 187 grabs in 30 hours
+    // (2026-10-15/16), every one of them a torrent with no real seeder.
+    const gaveUp = await countDropTowardsGiveUp(mediaType, entry);
+    if (gaveUp) return { title: gaveUp.title, reason: gaveUp.reason };
+
     if (decision === "dropOnly") {
       // No new search now, and none from the idle pass for a good while.
       const idleKey = mediaType === "movie" ? `idle:movie:${entry.externalId}` : `idle:episode:${entry.episodeId}`;
@@ -226,6 +239,49 @@ async function healOne(
     return { title: entry.title, reason };
   } catch (err) {
     console.error(`[healer] failed to heal "${entry.title}":`, err);
+    return null;
+  }
+}
+
+/**
+ * Records a dropped release in the give-up ledger and, when the title has now
+ * been tried long enough, stops wanting it. Returns what was given up on, or
+ * null to carry on replacing. Never throws: a ledger that can't be read costs
+ * the give-up, never the heal.
+ */
+async function countDropTowardsGiveUp(
+  mediaType: "movie" | "show",
+  entry: QueueHealth
+): Promise<{ title: string; reason: string } | null> {
+  try {
+    const ledger: SearchLedger = await import("./wantedSearches");
+    if (mediaType === "movie") {
+      const movie = await describeRadarrMovie(entry.externalId);
+      const key = `movie:${entry.externalId}`;
+      const title = movie?.title ?? entry.title;
+      await ledger.recordSearches([{ key, mediaType: "movie", externalId: entry.externalId, episodeId: null, label: title }]);
+      const tried = (await ledger.searchLedger([key])).get(key);
+      if (!movie || !shouldGiveUp(tried, { released: movie.isAvailable, releasedAt: movie.availableSince })) return null;
+      await setRadarrMovieMonitored(entry.externalId, false);
+      const reason = giveUpReason(tried!);
+      await ledger.markGivenUp(key, title, reason);
+      console.log(`[healer] gave up on "${title}": ${reason}`);
+      return { title, reason };
+    }
+    if (entry.episodeId == null) return null;
+    const episode = await describeSonarrEpisode(entry.episodeId);
+    const key = `episode:${entry.episodeId}`;
+    const title = episode?.label ?? entry.title;
+    await ledger.recordSearches([{ key, mediaType: "show", externalId: entry.externalId, episodeId: entry.episodeId, label: title }]);
+    const tried = (await ledger.searchLedger([key])).get(key);
+    if (!episode || !shouldGiveUp(tried, { releasedAt: episode.airedAt })) return null;
+    await unmonitorSonarrEpisodes([entry.episodeId]);
+    const reason = giveUpReason(tried!);
+    await ledger.markGivenUp(key, title, reason);
+    console.log(`[healer] gave up on "${title}": ${reason}`);
+    return { title, reason };
+  } catch (err) {
+    console.error(`[healer] could not count "${entry.title}" towards giving up:`, err);
     return null;
   }
 }
@@ -505,7 +561,7 @@ async function healIdleWantedTitles(): Promise<HealedDownload[]> {
     try {
       await searchSonarrEpisodes(dueEpisodes.map((e) => e.episodeId));
       await record(
-        dueEpisodes.map((e) => ({ key: `episode:${e.episodeId}`, mediaType: "show", externalId: e.seriesId, episodeId: e.episodeId, label: e.title }))
+        dueEpisodes.map((e) => ({ key: `episode:${e.episodeId}`, mediaType: "show", externalId: e.seriesId, episodeId: e.episodeId, label: e.label }))
       );
       // Attempt counts logged so a title quietly backing off to daily is
       // visible in the log rather than looking like the healer stopped.
@@ -582,7 +638,7 @@ async function giveUpOnHopeless(
     ...episodes.map((e) => ({
       idleKey: `idle:episode:${e.episodeId}`,
       key: `episode:${e.episodeId}`,
-      title: e.title,
+      title: e.label,
       release: { releasedAt: e.airedAt ?? null },
       giveUp: () => unmonitorSonarrEpisodes([e.episodeId]),
     })),
@@ -676,10 +732,20 @@ async function healPass(): Promise<HealedDownload[]> {
   >();
   let torrentClientOffline = false;
   try {
-    const { getTorrentHealth, getTorrentNetwork } = await import("./qbittorrent");
+    const { getTorrentHealth, getTorrentNetwork, deleteTorrents } = await import("./qbittorrent");
     const [torrents, network] = await Promise.all([getTorrentHealth(), getTorrentNetwork()]);
     for (const t of torrents ?? []) if (t.hash) swarm.set(t.hash, t);
     torrentClientOffline = isTorrentClientOffline(network);
+    // Unfinished torrents neither app tracks any more -- see orphanedTorrents.
+    // Read strictly: only when both queues are known in full does "not in a
+    // queue" mean orphaned.
+    const [sonarrIds, radarrIds] = await Promise.all([getSonarrTrackedDownloadIds(), getRadarrTrackedDownloadIds()]);
+    if (torrents && sonarrIds && radarrIds) {
+      const orphans = orphanedTorrents(torrents, new Set([...sonarrIds, ...radarrIds]));
+      if (orphans.length > 0 && (await deleteTorrents(orphans.map((t) => t.hash)))) {
+        console.log(`[healer] removed ${orphans.length} orphaned torrent(s): ${orphans.map((t) => t.name).join(", ")}`);
+      }
+    }
   } catch (err) {
     console.error("[healer] could not read torrent swarms:", err);
   }
