@@ -5,6 +5,7 @@ import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
 import { gameStreamQueries, rankGameStreams } from "@/lib/gameStreamRules";
+import { isStreamProbeConfigured } from "@/lib/streamProbe";
 
 /**
  * Provider streams that might carry one of today's games, for the game page's
@@ -39,5 +40,9 @@ export async function GET(request: Request) {
   );
   return NextResponse.json({
     streams: streams.map((s) => ({ id: s.id, name: s.name, provider: s.provider, logoUrl: s.logoUrl })),
+    // Whether the page should check the top candidates with
+    // /api/live/game-streams/verify. Off when the probe is not set up, which
+    // leaves the list exactly as it was before checking existed.
+    verify: isStreamProbeConfigured(),
   });
 }
