@@ -212,6 +212,10 @@ export default async function GamePage({
   const demoteDeadPrimary = primaryIsDead && liveCandidates.length > 0;
 
   const channel = demoteDeadPrimary ? null : primary;
+  // A remembered pick for this game is only honoured while that channel can
+  // still play: the one remembered on 2026-10-15 was an empty channel, and it
+  // kept being the default after the working feeds appeared beside it.
+  if (storedChoice && isStale(storedChoice.name)) storedChoice = null;
   const candidates = demoteDeadPrimary
     ? [...liveCandidates, primary!, ...deadCandidates]
     : [...liveCandidates, ...deadCandidates];

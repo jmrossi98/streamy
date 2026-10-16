@@ -541,7 +541,10 @@ async function getChannelInfoUncached(): Promise<Map<string, ChannelInfo> | null
       // Stale only when *every* stream behind it is: a channel with a
       // working fallback still tunes, and calling that one dead would hide
       // a channel that works.
-      stale: streams.length > 0 && streams.every((s) => s.is_stale === true),
+      // A channel with no streams at all is as dead as one whose every stream
+      // is stale: Dispatcharr answers "No streams assigned to channel". On
+      // 2026-10-15 an empty "US: SAN JOSE SHARKS" was a Sharks game's default.
+      stale: streams.length === 0 || streams.every((s) => s.is_stale === true),
       // The provider's own logo address. Taken from the stream because that
       // is where it lives -- every sampled stream carries one, while the
       // published channel often does not, which is the gap that leaves
