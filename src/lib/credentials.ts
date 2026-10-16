@@ -13,6 +13,7 @@
 import { filledValues, iptvUpdateMessage, isServerUrl, maskSecret, maskUsername, providerAlert, type CredentialAlert } from "./credentialRules";
 import { listIptvAccounts, updateIptvAccount } from "./dispatcharr";
 import { getAutomaticRenewals } from "./renewals";
+import { invalidateCache } from "./ttlCache";
 import { serviceKey } from "./spendRules";
 
 export type CredentialField = { name: string; label: string; secret: boolean; current: string };
@@ -127,6 +128,9 @@ export async function updateCredential(key: string, values: Record<string, unkno
     if (v.serverUrl && !isServerUrl(v.serverUrl)) return { ok: false, message: "Server URL must be an http(s) address.", changed: [] };
     const r = await updateIptvAccount(Number(id), v);
     if (!r) return { ok: false, changed: [], message: "Dispatcharr did not accept the change." };
+    // A new login usually means a renewal: drop the cached expiry so the next
+    // page load reads the date mediabox re-checks after a login change.
+    invalidateCache("renewals");
     return { ok: true, changed: Object.keys(v), message: iptvUpdateMessage(r) };
   }
 

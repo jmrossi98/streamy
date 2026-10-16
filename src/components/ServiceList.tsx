@@ -110,8 +110,13 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
           const c = item.cred;
           const cancelled = s?.active === false;
           const name = s?.name ?? r?.name ?? c?.name ?? "";
-          const daysLeft = s?.daysLeft ?? r?.daysLeft ?? null;
-          const dateIso = s?.renewsAt ?? r?.expiresUtc ?? null;
+          // A date the service reports itself (an IPTV panel, the TLS
+          // certificate, the domain) wins over one typed in: it follows a
+          // renewal on its own, which a typed date never does. Typed dates
+          // cover what nothing reports.
+          const detected = r?.expiresUtc ? r : null;
+          const daysLeft = detected ? detected.daysLeft : (s?.daysLeft ?? r?.daysLeft ?? null);
+          const dateIso = detected?.expiresUtc ?? s?.renewsAt ?? null;
           const renewsOn = dateIso
             ? new Date(dateIso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
             : null;
@@ -177,7 +182,13 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                 </div>
               </div>
               {open?.key === item.key && open.mode === "info" && (
-                <InfoForm initial={infoFor(item)} busy={busy} onSave={(info) => saveInfo(item, info)} onCancel={() => setOpen(null)} />
+                <InfoForm
+                  initial={infoFor(item)}
+                  busy={busy}
+                  dateDetected={!!r?.expiresUtc}
+                  onSave={(info) => saveInfo(item, info)}
+                  onCancel={() => setOpen(null)}
+                />
               )}
               {open?.key === item.key && open.mode === "login" && c && (
                 <CredentialForm
@@ -198,7 +209,20 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
   );
 }
 
-function InfoForm({ initial, busy, onSave, onCancel }: { initial: Info; busy: boolean; onSave: (i: Info) => void; onCancel: () => void }) {
+function InfoForm({
+  initial,
+  busy,
+  onSave,
+  onCancel,
+  dateDetected = false,
+}: {
+  initial: Info;
+  busy: boolean;
+  onSave: (i: Info) => void;
+  onCancel: () => void;
+  /** The service reports its own expiry, which is what the row shows. */
+  dateDetected?: boolean;
+}) {
   const [info, setInfo] = useState(initial);
   const set = (k: keyof Info) => (e: { target: { value: string } }) => setInfo((v) => ({ ...v, [k]: e.target.value }));
   return (
@@ -227,7 +251,7 @@ function InfoForm({ initial, busy, onSave, onCancel }: { initial: Info; busy: bo
           ))}
         </Select>
       </Field>
-      <Field label="Renews on">
+      <Field label="Renews on" hint={dateDetected ? "Read automatically from the service; this is only a fallback" : undefined}>
         <TextInput type="date" value={info.renewsAt} onChange={set("renewsAt")} />
       </Field>
       <Field label="Managed at (URL)">

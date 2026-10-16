@@ -29,8 +29,13 @@ import { buildUsenetRenewals } from "./usenetRenewalRules";
 
 const PROBE_TIMEOUT_MS = 8_000;
 
-/** Renewals move on the order of days; nothing here needs a fresh read. */
-const RENEWAL_TTL_MS = 60 * 60_000;
+/**
+ * Renewals move on the order of days, but a renewal just made should show
+ * soon: an hour here on top of the provider check's schedule read as "the
+ * date has to be entered by hand" (2026-10-16). Fifteen minutes; a saved IPTV
+ * login also clears it outright (credentials.ts).
+ */
+const RENEWAL_TTL_MS = 15 * 60_000;
 
 export type RenewalSource = "iptv" | "tls" | "domain" | "usenet" | "manual";
 
