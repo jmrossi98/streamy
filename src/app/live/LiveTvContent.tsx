@@ -82,9 +82,17 @@ export function LiveTvContent({
   // promoted before that filter existed is still in the lineup, and a
   // channel named "#####" is no more watchable from a row than it was from
   // the catalogue.
+  //
+  // Two more go the same way (2026-10-16), by the server's verdict: a channel
+  // the checker has found dead three scans running, and a per-game event
+  // slot whose game is over. Admins still see both, badged, so they can be
+  // fixed or removed; nobody else should ever tune one.
   const lineup = useMemo(
-    () => channels.filter((c) => !looksLikePlaceholder(c.name) && !hiddenIds.has(c.id)),
-    [channels, hiddenIds]
+    () =>
+      channels.filter(
+        (c) => !looksLikePlaceholder(c.name) && !hiddenIds.has(c.id) && (isAdmin || !statusByChannel[c.name]?.hidden)
+      ),
+    [channels, hiddenIds, isAdmin, statusByChannel]
   );
 
   // The three states are deliberately distinguished. "Jellyfin is unreachable",

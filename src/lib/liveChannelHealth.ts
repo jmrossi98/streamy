@@ -18,6 +18,7 @@
  */
 import { channelVerdict, liveAliases, streamQualityRank, type ChannelVerdict, type StreamHealth } from "./liveChannelRules";
 import { getTodaysFixtures } from "./sportsSchedule";
+import { eventSlotLabel, eventSlotState } from "./eventSlotRules";
 
 const PROBE_TIMEOUT_MS = 8_000;
 
@@ -30,6 +31,8 @@ type PublishedChannel = {
   detail?: string;
   speed?: number | null;
   speedAt?: string | null;
+  failures?: number | null;
+  downSince?: string | null;
 };
 
 type Published = { generatedAt?: string; channels?: PublishedChannel[] };
@@ -64,6 +67,8 @@ export async function fetchPublishedChannelHealth(): Promise<{
         detail: c.detail,
         speed: typeof c.speed === "number" ? c.speed : undefined,
         speedAt: c.speedAt ?? undefined,
+        failures: typeof c.failures === "number" ? c.failures : undefined,
+        downSince: c.downSince ?? undefined,
       });
     }
     return { generatedAt: body.generatedAt ?? null, health };
@@ -158,12 +163,25 @@ export async function channelStatuses(
   const live = fixtures ? liveAliases(fixtures) : null;
 
   const out = new Map<string, ChannelStatus>();
+  const now = Date.now();
   for (const name of channelNames) {
     const health = published?.health.get(normaliseName(name)) ?? null;
     out.set(name, {
-      ...channelVerdict(name, health, live),
+      ...eventSlotVerdict(name, now, channelVerdict(name, health, live, now)),
       checkedAt: published?.generatedAt ?? null,
     });
   }
   return out;
+}
+
+/**
+ * A per-game event slot is judged by the clock before the probe -- see
+ * eventSlotRules.ts. Before its game it is a slate however healthy the
+ * stream looks; after it, nothing worth listing until tomorrow.
+ */
+function eventSlotVerdict(name: string, now: number, verdict: ChannelVerdict): ChannelVerdict {
+  const state = eventSlotState(name, now);
+  if (state === "upcoming") return { state: "no-event", detail: eventSlotLabel(name, now) ?? "Not started yet" };
+  if (state === "over") return { state: "filler", detail: eventSlotLabel(name, now) ?? "Game over", hidden: true };
+  return verdict;
 }

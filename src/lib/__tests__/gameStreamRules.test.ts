@@ -35,6 +35,16 @@ describe("rankGameStreams", () => {
     const got = rankGameStreams(streams, sharks, { promoted: new Set([4]), expiredProviders: new Set(["trex"]) });
     expect(got.map((s) => s.id)).toEqual([1]);
   });
+  it("drops a slot whose game is over and ranks one not yet open behind one that is", () => {
+    const streams = [
+      { id: 1, name: "NHL | 08 - 8pm Sharks at Predators" },
+      { id: 2, name: "NHL | 02 - 1pm Sharks at Predators" },
+      { id: 3, name: "NHL | 05 - 5pm Sharks at Predators" },
+    ];
+    // 6pm Eastern on 2026-10-16: the 1pm slot is over, the 5pm one open, the 8pm one not yet.
+    const now = Date.parse("2026-10-16T22:00:00Z");
+    expect(rankGameStreams(streams, sharks, { now }).map((s) => s.id)).toEqual([3, 1]);
+  });
 });
 
 describe("gameStreamQueries", () => {

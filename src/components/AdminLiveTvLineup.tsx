@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
+import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { ChannelCard } from "@/components/ChannelCard";
 import { Button, TextInput } from "@/components/ui";
 
@@ -17,6 +18,8 @@ type Props = {
   /** The admin's own hidden channels -- hiding is per viewer. */
   hiddenChannels: HiddenEntry[];
   infoByChannel: Record<string, ChannelInfo>;
+  /** The same verdicts /live shows, so a dead or idle channel is badged here too. */
+  statusByChannel?: Record<string, ChannelVerdict>;
   logoFallbacks: Record<string, string>;
 };
 
@@ -33,7 +36,7 @@ const PAGE_SIZE = 60;
  * is half of deciding whether to remove it.
  */
 export function AdminLiveTvLineup({
-  envSet, reachable, channels, hiddenChannels, infoByChannel, logoFallbacks,
+  envSet, reachable, channels, hiddenChannels, infoByChannel, statusByChannel = {}, logoFallbacks,
 }: Props) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -251,6 +254,7 @@ export function AdminLiveTvLineup({
             selected={selectedIds.has(c.id)}
             onToggleSelect={() => toggleSelect(c.id)}
             info={infoByChannel[c.name]}
+            status={statusByChannel[c.name]}
             logoFallback={logoFallbacks[c.name]}
           />
         ))}

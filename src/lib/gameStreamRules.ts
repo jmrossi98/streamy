@@ -10,6 +10,7 @@
  * then one naming a team or the carrying network.
  */
 import { channelCarriesNetwork, looksLikePlaceholder } from "./liveTimeline";
+import { eventSlotState } from "./eventSlotRules";
 
 export type GameStreamCandidate = { id: number; name: string; stale?: boolean; provider?: string | null };
 export type GameFixture = { league: string; awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] };
@@ -60,18 +61,22 @@ export function gameStreamScore(name: string, f: GameFixture): number | null {
 export function rankGameStreams<S extends GameStreamCandidate>(
   streams: S[],
   f: GameFixture,
-  opts: { promoted?: Set<number>; expiredProviders?: Set<string>; limit?: number } = {}
+  opts: { promoted?: Set<number>; expiredProviders?: Set<string>; limit?: number; now?: number } = {}
 ): S[] {
   const seen = new Set<number>();
+  const now = opts.now ?? Date.now();
   return streams
     .filter((s) => {
       if (seen.has(s.id)) return false;
       seen.add(s.id);
+      // A per-game slot whose game is over is a slate -- see eventSlotRules.
+      if (eventSlotState(s.name, now) === "over") return false;
       return !s.stale && !opts.promoted?.has(s.id) && !(s.provider && opts.expiredProviders?.has(s.provider.toLowerCase()));
     })
     .map((s) => ({ s, score: gameStreamScore(s.name, f) }))
     .filter((x): x is { s: S; score: number } => x.score !== null)
-    .sort((a, b) => a.score - b.score)
+    // A slot that is not open yet ranks behind one that is, within a score.
+    .sort((a, b) => a.score - b.score || Number(eventSlotState(a.s.name, now) === "upcoming") - Number(eventSlotState(b.s.name, now) === "upcoming"))
     .slice(0, opts.limit ?? 12)
     .map((x) => x.s);
 }

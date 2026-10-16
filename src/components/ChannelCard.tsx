@@ -222,7 +222,7 @@ export function ChannelCard({
             {/* Paired with words, never colour alone -- the same rule the
                 security panel follows for severity. */}
             {status.state === "down"
-              ? "Not responding"
+              ? status.detail || "Not responding"
               : status.state === "filler"
                 ? "Showing a placeholder"
                 : status.detail}
