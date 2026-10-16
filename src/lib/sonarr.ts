@@ -718,6 +718,7 @@ type WantedRecord = {
   seasonNumber: number;
   episodeNumber: number;
   monitored: boolean;
+  airDateUtc?: string | null;
   lastSearchTime?: string | null;
 };
 
@@ -803,7 +804,7 @@ export async function adoptUnsearchedEpisodes(): Promise<number> {
  * "searching" forever with no search actually running.
  */
 export async function getIdleWantedEpisodes(): Promise<
-  { episodeId: number; title: string; seriesId: number; seasonNumber: number }[]
+  { episodeId: number; title: string; seriesId: number; seasonNumber: number; airedAt?: Date | null }[]
 > {
   if (!isSonarrConfigured()) return [];
   try {
@@ -821,11 +822,29 @@ export async function getIdleWantedEpisodes(): Promise<
       // ahead of real requests. A special someone explicitly asks for still
       // goes through the ordered queue, which retries it on its own.
       .filter((e) => e.monitored && e.seasonNumber !== 0 && !queued.has(e.id))
-      .map((e) => ({ episodeId: e.id, title: e.title, seriesId: e.seriesId, seasonNumber: e.seasonNumber }));
+      .map((e) => ({
+        episodeId: e.id,
+        title: e.title,
+        seriesId: e.seriesId,
+        seasonNumber: e.seasonNumber,
+        airedAt: e.airDateUtc ? new Date(e.airDateUtc) : null,
+      }));
   } catch (err) {
     console.error("[sonarr] getIdleWantedEpisodes failed:", err);
     return [];
   }
+}
+
+/**
+ * Makes Sonarr stop wanting these episodes, and nothing else: no files
+ * touched, no queue emptied. The healer's give-up (see searchGiveUpRules.ts).
+ */
+export async function unmonitorSonarrEpisodes(episodeIds: number[]): Promise<void> {
+  if (!isSonarrConfigured() || episodeIds.length === 0) return;
+  await sonarrFetch(`/api/v3/episode/monitor`, {
+    method: "PUT",
+    body: JSON.stringify({ episodeIds, monitored: false }),
+  });
 }
 
 /**

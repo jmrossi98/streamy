@@ -55,6 +55,9 @@ export type DownloadRow = {
   /** Searched and found nothing. Shown as an error, not a spinner -- the two
    *  used to look the same, so a dead end read as a search still in progress. */
   noRelease?: boolean;
+  /** Searched for a day or more and given up on: no longer wanted, so there
+   *  is nothing to cancel. Always with noRelease. */
+  gaveUp?: boolean;
   /** Why the finished payload is unusable (e.g. "executable"), while it is
    *  still in the queue waiting to be removed. Only ever set on a queue entry. */
   unsafe?: string;
@@ -391,6 +394,8 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
             >
               {d.completed
                 ? "Downloaded"
+                : d.gaveUp
+                  ? "Gave up"
                 : d.noRelease
                   ? "No release found"
                   : d.unsafe
@@ -405,14 +410,16 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                           ? `${d.progress}%`
                           : "metadata…"}
             </span>
-            <button
-              type="button"
-              onClick={() => handleManage(d)}
-              disabled={isManaging}
-              className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
-            >
-              {isManaging ? "…" : d.completed ? "Delete" : "Cancel"}
-            </button>
+            {!d.gaveUp && (
+              <button
+                type="button"
+                onClick={() => handleManage(d)}
+                disabled={isManaging}
+                className="text-xs font-medium text-white/50 hover:text-netflix-red disabled:opacity-50"
+              >
+                {isManaging ? "…" : d.completed ? "Delete" : "Cancel"}
+              </button>
+            )}
           </div>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
