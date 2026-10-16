@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { filledValues, isServerUrl, maskSecret, maskUsername, providerAlert } from "../credentialRules";
+import { filledValues, iptvUpdateMessage, isServerUrl, maskSecret, maskUsername, providerAlert } from "../credentialRules";
 
 describe("maskSecret", () => {
   it("shows only the tail of a long key, and nothing of a short password", () => {
@@ -46,5 +46,15 @@ describe("providerAlert", () => {
   it("says nothing about a healthy login or one it knows nothing about", () => {
     expect(providerAlert({ daysLeft: 30, detail: "1 connection" })).toBeNull();
     expect(providerAlert(undefined)).toBeNull();
+  });
+});
+
+describe("iptvUpdateMessage", () => {
+  it("reports what moved, a rejected login, or a slow refresh", () => {
+    expect(iptvUpdateMessage({ refresh: "success", epgUpdated: 1, relinked: 34 })).toBe(
+      "Saved and live: 34 channel streams moved to the new login, guide updated."
+    );
+    expect(iptvUpdateMessage({ refresh: "error", epgUpdated: 0, relinked: 0 })).toMatch(/rejected the new login/);
+    expect(iptvUpdateMessage({ refresh: "timeout", epgUpdated: 0, relinked: 0 })).toMatch(/still refreshing/);
   });
 });

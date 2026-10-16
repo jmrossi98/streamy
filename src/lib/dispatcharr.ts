@@ -21,6 +21,7 @@ import { looksLikeNetworkFeed, looksLikePlaceholder } from "@/lib/liveTimeline";
 import { cleanText } from "./text";
 import { cached } from "./ttlCache";
 import { sliceStreamPage } from "./streamSearch";
+import { epgUrlFor, relinkChannelStreams, type RelinkStream } from "./iptvRelinkRules";
 
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
@@ -869,25 +870,108 @@ export async function listIptvAccounts(): Promise<IptvAccount[] | null> {
     .map((a) => ({ id: a.id, name: a.name, serverUrl: a.server_url ?? "", username: a.username ?? "", hasPassword: !!a.password }));
 }
 
+/** What a saved login change did, for the admin panel to report. */
+export type IptvUpdateResult = {
+  ok: boolean;
+  /** The playlist refresh under the new login: "success", "error" or "timeout". */
+  refresh: string;
+  epgUpdated: number;
+  relinked: number;
+};
+
+type RawAccount = { id: number; name: string; status?: string; updated_at?: string; server_url?: string; username?: string; password?: string };
+type RawEpgSource = { id: number; name: string; url?: string | null };
+type RawChannel = { id: number; streams?: number[] };
+
+/** Every item of a Dispatcharr list, whether it answers paginated or as a bare array. */
+async function listAll<T>(path: string): Promise<T[] | null> {
+  const items: T[] = [];
+  let next: string | null = path;
+  while (next) {
+    const page: T[] | { results?: T[]; next?: string | null } | null = await api(next);
+    if (!page) return items.length ? items : null;
+    if (Array.isArray(page)) return page;
+    items.push(...(page.results ?? []));
+    next = page.next ? page.next.slice(page.next.indexOf("/api/")) : null;
+  }
+  return items;
+}
+
+const REFRESH_WAIT_MS = 120_000;
+
 /**
- * Replaces a provider's login and refreshes its playlist at once.
+ * Replaces a provider's login and carries everything that depended on the
+ * old one across, before answering: the playlist refreshed under the new
+ * login, the guide URL rewritten, and every channel moved onto the new copy
+ * of each of its streams (see iptvRelinkRules.ts for why they don't follow by
+ * themselves). Takes as long as the refresh -- about half a minute.
  *
- * The rest of a login change -- EPG URLs that embed the login, and channels
- * moved onto the new copy of each stream (Dispatcharr keys streams by URL,
- * which carries the login) -- is mediabox-infra's iptv-credentials-sync.py,
- * which notices the change within ten minutes.
+ * mediabox-infra's iptv-credentials-sync.py does the same every ten minutes
+ * as a safety net, for a login changed in Dispatcharr's own UI.
  */
 export async function updateIptvAccount(
   id: number,
   values: { serverUrl?: string; username?: string; password?: string }
-): Promise<boolean> {
+): Promise<IptvUpdateResult | null> {
   const body: Record<string, string> = {};
   if (values.serverUrl) body.server_url = values.serverUrl;
   if (values.username) body.username = values.username;
   if (values.password) body.password = values.password;
-  if (Object.keys(body).length === 0) return false;
-  const saved = await api<{ id: number }>(`/api/m3u/accounts/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
-  if (!saved) return false;
+  if (Object.keys(body).length === 0) return null;
+  const saved = await api<RawAccount>(`/api/m3u/accounts/${id}/`, { method: "PATCH", body: JSON.stringify(body) });
+  if (!saved) return null;
+
+  // 1. The playlist under the new login, waited for: relinking against the
+  //    old one would find nothing to move to.
+  const started = new Date().toISOString();
   await api(`/api/m3u/refresh/${id}/`, { method: "POST", body: "{}" });
-  return true;
+  let account: RawAccount | null = saved;
+  let refresh = "timeout";
+  for (const deadline = Date.now() + REFRESH_WAIT_MS; Date.now() < deadline; ) {
+    await new Promise((r) => setTimeout(r, 3000));
+    account = await api<RawAccount>(`/api/m3u/accounts/${id}/`);
+    if (account && (account.updated_at ?? "") > started && (account.status === "success" || account.status === "error")) {
+      refresh = account.status;
+      break;
+    }
+  }
+  account ??= saved;
+
+  // 2. The guide, whose URL carries the login as well.
+  let epgUpdated = 0;
+  for (const src of (await api<RawEpgSource[]>("/api/epg/sources/")) ?? []) {
+    if (src.name.trim().toLowerCase() !== account.name.trim().toLowerCase()) continue;
+    const url = epgUrlFor(src.url, {
+      serverUrl: account.server_url ?? "",
+      username: account.username ?? "",
+      password: account.password ?? "",
+    });
+    if (url && url !== src.url) {
+      await api(`/api/epg/sources/${src.id}/`, { method: "PATCH", body: JSON.stringify({ url }) });
+      await api("/api/epg/import/", { method: "POST", body: JSON.stringify({ id: src.id }) });
+      epgUpdated++;
+    }
+  }
+
+  // 3. Channels onto the new copy of each of their streams from this provider.
+  let relinked = 0;
+  if (refresh === "success") {
+    const [streams, channels] = await Promise.all([
+      listAll<RelinkStream>(`/api/channels/streams/?m3u_account=${id}&page_size=1000`),
+      listAll<RawChannel>("/api/channels/channels/?page_size=1000"),
+    ]);
+    if (streams && channels) {
+      const byId = new Map(streams.map((st) => [st.id, st]));
+      const pools = new Map([[id, streams]]);
+      for (const ch of channels) {
+        const before = ch.streams ?? [];
+        const after = relinkChannelStreams(before, byId, pools);
+        const moved = after.filter((sid, i) => sid !== before[i]).length;
+        if (moved === 0) continue;
+        const ok = await api(`/api/channels/channels/${ch.id}/`, { method: "PATCH", body: JSON.stringify({ streams: after }) });
+        if (ok) relinked += moved;
+      }
+    }
+  }
+  return { ok: true, refresh, epgUpdated, relinked };
 }
