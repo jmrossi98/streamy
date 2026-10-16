@@ -34,7 +34,9 @@ type Stream = {
  * "found something worth watching" action whoever does it, and the API
  * routes behind it (GET, promote) are open the same way. Only removing a
  * channel is open to any signed-in viewer now -- here, on the channel's own
- * page, and in bulk from the Live TV page. It was admin-gated, and on
+ * page, and in bulk from /admin/live-tv (where this browser also lives since
+ * 2026-10-16: it is a maintenance surface, not something a viewer scrolls
+ * past on the way to a channel). It was admin-gated, and on
  * the server (the demote route still checks requireAdmin) -- since taking a
  * channel away can interrupt someone else mid-game, a different and higher
  * blast radius than adding one.

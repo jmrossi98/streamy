@@ -10,8 +10,11 @@
  *   - Select: always the `.streamy-select` class (globals.css), which draws the
  *     arrow and sets `color-scheme: dark` so the option popup isn't light.
  *   - Badge: status, not action. Clickable things are Buttons.
+ *   - TabBar / TabLink: one page split into sections, each with its own URL
+ *     (the admin area, Live TV). A Chip row is for filters within one view.
  */
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import Link from "next/link";
 import { PanelBoundary } from "@/components/PanelBoundary";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
@@ -112,6 +115,44 @@ export function Chip({
       )}
       {...rest}
     />
+  );
+}
+
+// -------------------------------------------------------------------- Tabs
+
+/**
+ * The underlined tab strip the admin area has always had, extracted so Live
+ * TV's tabs look the same rather than a second interpretation of "tabs".
+ *
+ * Scrolls rather than wraps: neither set fits a phone, and a wrapped second
+ * row pushes the page content down on every screen.
+ */
+export function TabBar({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <nav aria-label={label} className={cx("-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0", className)}>
+      <ul className="flex min-w-max gap-1 border-b border-white/10 pb-px">{children}</ul>
+    </nav>
+  );
+}
+
+/**
+ * One tab. A link, not a button: every tab is a URL, so it can be opened in
+ * a new tab, bookmarked, and returned to with the back button.
+ */
+export function TabLink({ href, active, children }: { href: string; active: boolean; children: ReactNode }) {
+  return (
+    <li>
+      <Link
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className={cx(
+          "block whitespace-nowrap rounded-t px-3 py-2 text-sm font-medium transition-colors",
+          active ? "border-b-2 border-netflix-red text-white" : "border-b-2 border-transparent text-white/50 hover:text-white/80"
+        )}
+      >
+        {children}
+      </Link>
+    </li>
   );
 }
 

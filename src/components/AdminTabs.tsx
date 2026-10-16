@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { TabBar, TabLink } from "@/components/ui";
 
 /**
  * The admin sections, in one place.
@@ -22,6 +22,11 @@ export const ADMIN_TABS = [
   // is filling up are the same question from two sides. Named for the
   // downloads, which are what the tab is opened for.
   { href: "/admin/downloads", label: "Downloads" },
+  // Channel management, moved here from /live on 2026-10-16: select/hide/
+  // delete and the stream catalogue were sitting above the channels on the
+  // viewing page. Next to Downloads because both are "what is in the
+  // library" rather than "is anything wrong".
+  { href: "/admin/live-tv", label: "Live TV" },
   { href: "/admin/spend", label: "Subscriptions" },
   { href: "/admin/approvals", label: "Accounts" },
   { href: "/admin/jobs", label: "Job search" },
@@ -42,28 +47,12 @@ export function AdminTabs() {
   const pathname = usePathname();
 
   return (
-    // Scrolls rather than wraps: seven tabs do not fit a phone, and a wrapped
-    // second row pushes the page content down on every admin screen.
-    <nav className="mt-6 -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-      <ul className="flex min-w-max gap-1 border-b border-white/10 pb-px">
-        {ADMIN_TABS.map((tab) => {
-          const active = isActiveTab(tab.href, pathname);
-          return (
-            <li key={tab.href}>
-              <Link
-                href={tab.href}
-                className={`block whitespace-nowrap rounded-t px-3 py-2 text-sm font-medium transition-colors ${
-                  active
-                    ? "border-b-2 border-netflix-red text-white"
-                    : "border-b-2 border-transparent text-white/50 hover:text-white/80"
-                }`}
-              >
-                {tab.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
+    <TabBar label="Admin sections" className="mt-6">
+      {ADMIN_TABS.map((tab) => (
+        <TabLink key={tab.href} href={tab.href} active={isActiveTab(tab.href, pathname)}>
+          {tab.label}
+        </TabLink>
+      ))}
+    </TabBar>
   );
 }
