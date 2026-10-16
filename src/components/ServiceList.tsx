@@ -111,6 +111,10 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
           const cancelled = s?.active === false;
           const name = s?.name ?? r?.name ?? c?.name ?? "";
           const daysLeft = s?.daysLeft ?? r?.daysLeft ?? null;
+          const dateIso = s?.renewsAt ?? r?.expiresUtc ?? null;
+          const renewsOn = dateIso
+            ? new Date(dateIso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+            : null;
           return (
             <li key={item.key} className={"px-4 py-3 " + (cancelled ? "opacity-40" : "")}>
               <div className="flex flex-wrap items-start gap-3">
@@ -145,11 +149,19 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                     <p className="text-xs tabular-nums text-white/40">{typeof s.actual === "number" ? formatUsd(s.actual) + " MTD" : "no data"}</p>
                   )}
                 </div>
-                {!cancelled && daysLeft !== null && (
-                  <div className="w-20 shrink-0 text-right">
-                    <p className={`text-sm tabular-nums ${dueUrgencyClass(daysLeft)}`}>{describeDue(daysLeft, r?.problem)}</p>
-                  </div>
-                )}
+                {/* Every row's date the same way, whichever source it came
+                    from: an entered date wins over a detected one, and either
+                    is changed through Edit. */}
+                <div className="w-28 shrink-0 text-right">
+                  {!cancelled && daysLeft !== null ? (
+                    <>
+                      <p className={`text-sm tabular-nums ${dueUrgencyClass(daysLeft)}`}>{describeDue(daysLeft, r?.problem)}</p>
+                      {renewsOn && <p className="text-[11px] tabular-nums text-white/35">{renewsOn}</p>}
+                    </>
+                  ) : (
+                    !cancelled && <p className="text-xs text-white/30">no date</p>
+                  )}
+                </div>
                 <div className="flex shrink-0 gap-1">
                   <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "info" })} disabled={busy}>
                     Edit

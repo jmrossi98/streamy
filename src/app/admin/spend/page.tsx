@@ -30,7 +30,19 @@ export default async function AdminSpendPage() {
     else meteredActuals[sub.name] = null;
   }
 
-  const spendTotals = computeTotals(subscriptions, meteredActuals);
+  // AWS bills monthly whether or not anyone entered it as a subscription,
+  // and the card above always shows its figure -- so the total counts it
+  // too. On 2026-10-16 the total read $20.57 (subscriptions only) beside an
+  // AWS card it silently left out. An entry named AWS still works as before
+  // and is then not counted twice. OpenRouter is not added: its figure is
+  // lifetime use of prepaid credit, not this month's bill.
+  const hasAwsEntry = subscriptions.some((s) => s.active && s.cadence === "metered" && s.name.toLowerCase().includes("aws"));
+  const spendTotals = computeTotals(
+    hasAwsEntry || !aws.ok
+      ? subscriptions
+      : [...subscriptions, { name: "AWS", cost: 0, cadence: "metered", active: true }],
+    hasAwsEntry || !aws.ok ? meteredActuals : { ...meteredActuals, AWS: aws.monthToDate }
+  );
   const spendRows = subscriptions.map((sub) => ({
     id: sub.id,
     name: sub.name,
