@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Movie } from "@/lib/tmdb";
 import { ScrollableRow } from "@/components/ScrollableRow";
-import { PosterWatchlistButton } from "@/components/PosterWatchlistButton";
+import { PosterActions } from "@/components/PosterActions";
 import { setMovieInCache } from "@/lib/movieCache";
 
 /** Warm movie cache on hover so /watch/[id] play loads fast when they click. */
@@ -75,10 +75,7 @@ export function MovieCard({
           />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-        <PosterWatchlistButton
-          movieId={idStr}
-          className="absolute top-2 right-2 z-[5] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-        />
+        <PosterActions movieId={idStr} />
         {showProgress && (
           <div className="absolute bottom-0 left-0 right-0 z-[2] h-1 bg-white/30">
             <div className="h-full bg-netflix-red transition-all" style={{ width: `${pct}%` }} />

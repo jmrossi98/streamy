@@ -2,6 +2,7 @@
 
 import { MovieRow } from "@/components/MovieRow";
 import type { MovieProgress } from "@/components/MovieRow";
+import type { ShowProgress } from "@/lib/showProgressRules";
 import { TVRow } from "@/components/TVRow";
 import { GameCard } from "@/components/GameCard";
 import { FlashCard } from "@/components/FlashCard";
@@ -12,6 +13,7 @@ import type { GameListItem } from "@/lib/games";
 import type { LiveChannel } from "@/lib/liveTv";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
 import { watchlistShelfHref } from "@/lib/browseShelfRules";
+import { useWatchlist } from "@/contexts/WatchlistContext";
 
 type WatchlistData = {
   movies: Movie[];
@@ -21,13 +23,28 @@ type WatchlistData = {
   channels: LiveChannel[];
   flashGames: FlashGameSummary[];
   progressMap: Record<string, MovieProgress>;
+  showProgress: Record<string, ShowProgress>;
 };
 
 type WatchlistContentProps = {
   data: WatchlistData;
 };
 
-export function WatchlistContent({ data }: WatchlistContentProps) {
+export function WatchlistContent({ data: server }: WatchlistContentProps) {
+  // A removal takes the tile off right away, from the shared My List state,
+  // instead of waiting on a re-render of the whole page from the server.
+  // Both sets empty means that state failed to load, not that the list is
+  // empty, so the server's list stands.
+  const { movieIds, showIds } = useWatchlist();
+  const live = movieIds.size > 0 || showIds.size > 0;
+  const data = live
+    ? {
+        ...server,
+        movies: server.movies.filter((m) => movieIds.has(String(m.id))),
+        shows: server.shows.filter((s) => showIds.has(String(s.id))),
+        anime: server.anime.filter((s) => showIds.has(String(s.id))),
+      }
+    : server;
   const hasAny =
     data.movies.length > 0 ||
     data.shows.length > 0 ||
@@ -55,8 +72,8 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
           href={watchlistShelfHref("movies")}
         />
       )}
-      {data.shows.length > 0 && <TVRow title="TV Shows" shows={data.shows} href={watchlistShelfHref("shows")} />}
-      {data.anime.length > 0 && <TVRow title="Anime" shows={data.anime} href={watchlistShelfHref("anime")} />}
+      {data.shows.length > 0 && <TVRow title="TV Shows" shows={data.shows} progressMap={data.showProgress} href={watchlistShelfHref("shows")} />}
+      {data.anime.length > 0 && <TVRow title="Anime" shows={data.anime} progressMap={data.showProgress} href={watchlistShelfHref("anime")} />}
       {data.channels.length > 0 && (
         // A vertical list, like /live's own "My Stations" section, rather
         // than a horizontal poster row -- a channel card is a wide list item

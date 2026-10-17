@@ -51,8 +51,8 @@ export default async function WatchlistShelfPage({ params }: { params: Promise<{
       }))}
     >
       {kind === "movies" && <MovieShelfGrid movies={data.movies} progressMap={data.progressMap} />}
-      {kind === "shows" && <ShowShelfGrid shows={data.shows} />}
-      {kind === "anime" && <ShowShelfGrid shows={data.anime} />}
+      {kind === "shows" && <ShowShelfGrid shows={data.shows} progressMap={data.showProgress} />}
+      {kind === "anime" && <ShowShelfGrid shows={data.anime} progressMap={data.showProgress} />}
       {kind === "games" && <GameShelfGrid games={data.games} />}
       {kind === "flash" && <FlashShelfGrid games={data.flashGames} />}
     </ShelfPage>

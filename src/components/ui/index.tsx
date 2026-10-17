@@ -10,6 +10,7 @@
  *   - Select: always the `.streamy-select` class (globals.css), which draws the
  *     arrow and sets `color-scheme: dark` so the option popup isn't light.
  *   - Badge: status, not action. Clickable things are Buttons.
+ *   - PosterIconButton: the round controls laid over poster artwork.
  *   - TabBar / TabLink: one page split into sections, each with its own URL
  *     (the admin area, Live TV). A Chip row is for filters within one view.
  */
@@ -50,6 +51,23 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonV
 
 export function Button({ variant, size, className, type = "button", ...rest }: ButtonProps) {
   return <button type={type} className={buttonClass(variant, size, className)} {...rest} />;
+}
+
+/**
+ * The round overlay control on poster tiles (My List +/−, the admin's
+ * download). Sits on artwork, so it carries its own dark backing.
+ */
+export function PosterIconButton({ className, type = "button", ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type={type}
+      className={cx(
+        "pointer-events-auto flex h-9 w-9 min-h-[36px] min-w-[36px] items-center justify-center rounded-full border border-white/35 bg-black/75 text-white shadow-lg transition-all hover:scale-105 hover:bg-black/90 active:scale-100 disabled:opacity-60",
+        className
+      )}
+      {...rest}
+    />
+  );
 }
 
 type ButtonLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: ButtonVariant; size?: ButtonSize };

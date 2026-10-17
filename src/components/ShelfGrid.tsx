@@ -1,6 +1,7 @@
 "use client";
 
 import type { Movie, PersonTitle, TVShow } from "@/lib/tmdb";
+import type { ShowProgress } from "@/lib/showProgressRules";
 import type { GameListItem } from "@/lib/games";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
 import { MovieCard, type MovieProgress } from "@/components/MovieRow";
@@ -75,7 +76,13 @@ export function MovieShelfGrid({
   );
 }
 
-export function ShowShelfGrid({ shows }: { shows: TVShow[] }) {
+export function ShowShelfGrid({
+  shows,
+  progressMap = {},
+}: {
+  shows: TVShow[];
+  progressMap?: Record<string, ShowProgress>;
+}) {
   const { shown, bar, empty } = useShelfFilter(shows, describeShow, "shows");
   return (
     <>
@@ -83,7 +90,7 @@ export function ShowShelfGrid({ shows }: { shows: TVShow[] }) {
       {empty}
       <div className={GRID_CLASS}>
         {shown.map((show) => (
-          <ShowCard key={show.id} show={show} widthClass="w-full" />
+          <ShowCard key={show.id} show={show} progress={progressMap[String(show.id)]} widthClass="w-full" />
         ))}
       </div>
     </>

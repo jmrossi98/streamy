@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useWatchlist } from "@/contexts/WatchlistContext";
+import { PosterIconButton } from "@/components/ui";
 
 type Props = {
   movieId?: string;
@@ -17,7 +18,6 @@ type Props = {
  */
 export function PosterWatchlistButton({ movieId, showId, className = "" }: Props) {
   const pathname = usePathname();
-  const router = useRouter();
   const { status } = useSession();
   const { movieIds, showIds, toggleMovie, toggleShow } = useWatchlist();
   const [busy, setBusy] = useState(false);
@@ -37,10 +37,9 @@ export function PosterWatchlistButton({ movieId, showId, className = "" }: Props
     if (busy) return;
     setBusy(true);
     try {
-      if (onWatchlistPage) {
-        const ok = isMovie ? await toggleMovie(id, false) : await toggleShow(id, false);
-        if (ok) router.refresh();
-      } else if (inList) {
+      // On My List the tile leaves as soon as the shared state drops it (see
+      // WatchlistContent); no server round trip for the whole page.
+      if (onWatchlistPage || inList) {
         await (isMovie ? toggleMovie(id, false) : toggleShow(id, false));
       } else {
         await (isMovie ? toggleMovie(id, true) : toggleShow(id, true));
@@ -51,12 +50,11 @@ export function PosterWatchlistButton({ movieId, showId, className = "" }: Props
   }
 
   return (
-    <button
-      type="button"
+    <PosterIconButton
       onClick={handleClick}
       disabled={busy}
       aria-label={showMinus ? "Remove from My List" : "Add to My List"}
-      className={`pointer-events-auto min-w-[36px] min-h-[36px] w-9 h-9 rounded-full bg-black/75 border border-white/35 text-white text-xl font-light leading-none flex items-center justify-center shadow-lg hover:bg-black/90 hover:scale-105 active:scale-100 transition-all disabled:opacity-60 ${className}`}
+      className={`text-xl font-light leading-none ${className}`}
     >
       {busy ? (
         <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
@@ -69,6 +67,6 @@ export function PosterWatchlistButton({ movieId, showId, className = "" }: Props
           +
         </span>
       )}
-    </button>
+    </PosterIconButton>
   );
 }
