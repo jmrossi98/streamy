@@ -6,6 +6,7 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
 import { pickNextAvatarColor } from "./userAvatarColors";
+import { emailApprovalRequest } from "./approvalEmail";
 import { checkPasswordStrength } from "./passwordPolicy";
 import { isSessionStale, passwordStamp } from "./sessionFreshness";
 import { syncJellyfinAccount } from "./jellyfinAccounts";
@@ -163,6 +164,8 @@ export const authOptions: NextAuthOptions = {
           await recordLoginAttempt({ name, ip, outcome: "signup" });
 
           if (!claimsAdmin) {
+            // Not awaited: the person signing up should not wait on SNS.
+            void emailApprovalRequest(user.id, user.name);
             throw new Error("Your account is pending approval.");
           }
           console.warn(`[auth] admin account "${name}" created (no admin existed)`);
