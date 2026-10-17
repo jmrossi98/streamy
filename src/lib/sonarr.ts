@@ -2525,6 +2525,17 @@ export async function requestShow(
         // alone would silently report "requested" with nothing actually
         // searching, so kick off a fresh search here. "noReleaseFound" is an
         // old search's answer, not this click's (see requestMovie).
+        // An admin's ask moves a series with no files yet onto 4K (see requestMovie).
+        if (tier === "uhd") {
+          const uhd = resolveQualityProfileId("uhd", SONARR_QUALITY_PROFILE_ID, SONARR_QUALITY_PROFILE_ID_4K);
+          const series = await sonarrFetch<Record<string, unknown>>(`/api/v3/series/${existing[0].id}`);
+          if (uhd && series.qualityProfileId !== uhd) {
+            await sonarrFetch(`/api/v3/series/${existing[0].id}`, {
+              method: "PUT",
+              body: JSON.stringify({ ...series, qualityProfileId: uhd }),
+            });
+          }
+        }
         await searchSeriesInEpisodeOrder(existing[0].id);
         return { ok: true, sonarrId: existing[0].id, tvdbId, status: "requested" };
       }

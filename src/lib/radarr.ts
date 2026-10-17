@@ -605,13 +605,15 @@ async function stopWantingMovie(radarrId: number): Promise<void> {
 /** Flips a movie's monitored flag -- Radarr's own notion of "do I still want this". */
 export async function setRadarrMovieMonitored(
   radarrId: number,
-  monitored: boolean
+  monitored: boolean,
+  /** Also move it to this quality profile, when given. */
+  qualityProfileId: number | null = null
 ): Promise<void> {
   if (!isRadarrConfigured()) return;
   const movie = await radarrFetch<Record<string, unknown>>(`/api/v3/movie/${radarrId}`);
   await radarrFetch(`/api/v3/movie/${radarrId}`, {
     method: "PUT",
-    body: JSON.stringify({ ...movie, monitored }),
+    body: JSON.stringify({ ...movie, monitored, ...(qualityProfileId ? { qualityProfileId } : {}) }),
   });
 }
 
@@ -1125,7 +1127,12 @@ export async function requestMovie(
         // straight back for movies with plenty of releases (Andrei Rublev,
         // The Hunt, 2026-10-17). The caller restarts the give-up count, or
         // the healer would give up again on its next pass.
-        await setRadarrMovieMonitored(existing[0].id, true);
+        //
+        // An admin's ask also moves a title nobody has downloaded yet onto
+        // the 4K profile, whoever asked first. Never the other way: someone
+        // else re-asking for an admin's title leaves it on 4K.
+        const uhd = tier === "uhd" ? resolveQualityProfileId("uhd", RADARR_QUALITY_PROFILE_ID, RADARR_QUALITY_PROFILE_ID_4K) : null;
+        await setRadarrMovieMonitored(existing[0].id, true, uhd);
         await radarrFetch(`/api/v3/command`, {
           method: "POST",
           body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
