@@ -24,10 +24,11 @@ export default async function WatchlistShelfPage({ params }: { params: Promise<{
   const session = await getSession();
   if (!session?.user?.id) redirect(`/login?callbackUrl=${watchlistShelfHref(kind)}`);
 
-  const data = await getWatchlist(session.user.id);
+  const data = await getWatchlist(session.user.id, { splitAnime: !!session.user.isAdmin });
   const shelves: Record<WatchlistShelf, { title: string; count: number; noun: [string, string] }> = {
     movies: { title: "Movies", count: data.movies.length, noun: ["movie", "movies"] },
     shows: { title: "TV Shows", count: data.shows.length, noun: ["show", "shows"] },
+    anime: { title: "Anime", count: data.anime.length, noun: ["show", "shows"] },
     games: { title: "Games", count: data.games.length, noun: ["game", "games"] },
     flash: { title: "Flash Games", count: data.flashGames.length, noun: ["game", "games"] },
   };
@@ -51,6 +52,7 @@ export default async function WatchlistShelfPage({ params }: { params: Promise<{
     >
       {kind === "movies" && <MovieShelfGrid movies={data.movies} progressMap={data.progressMap} />}
       {kind === "shows" && <ShowShelfGrid shows={data.shows} />}
+      {kind === "anime" && <ShowShelfGrid shows={data.anime} />}
       {kind === "games" && <GameShelfGrid games={data.games} />}
       {kind === "flash" && <FlashShelfGrid games={data.flashGames} />}
     </ShelfPage>
