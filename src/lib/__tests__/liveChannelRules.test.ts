@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanChannelName,
   channelVerdict,
   liveAliases,
   STATE_RANK,
@@ -152,5 +153,21 @@ describe("STATE_RANK", () => {
     expect(STATE_RANK.live).toBeLessThan(STATE_RANK["no-event"]);
     expect(STATE_RANK["no-event"]).toBeLessThan(STATE_RANK.down);
     expect(Math.max(...Object.values(STATE_RANK))).toBe(STATE_RANK.down);
+  });
+});
+
+describe("cleanChannelName", () => {
+  it("drops country and group prefixes", () => {
+    expect(cleanChannelName("USA - FOX 29 BUFFALO NY (WUTV)")).toBe("FOX 29 BUFFALO NY (WUTV)");
+    expect(cleanChannelName("USA -  PEACOCK EEVNT 2")).toBe("PEACOCK EEVNT 2");
+    expect(cleanChannelName("US: MSG HD")).toBe("MSG HD");
+    expect(cleanChannelName("US| NBC SPORTS PHILADELFIA")).toBe("NBC SPORTS PHILADELFIA");
+    expect(cleanChannelName("U.S| NBA TV HD")).toBe("NBA TV HD");
+    expect(cleanChannelName("SP - NHL NETWORK HD")).toBe("NHL NETWORK HD");
+  });
+  it("keeps league prefixes and names that only start with US", () => {
+    expect(cleanChannelName("NBA: NEW YORK KNICKS")).toBe("NBA: NEW YORK KNICKS");
+    expect(cleanChannelName("USA Network")).toBe("USA Network");
+    expect(cleanChannelName("US (Peacock 085) | Celtics vs. 76ers")).toBe("US (Peacock 085) | Celtics vs. 76ers");
   });
 });
