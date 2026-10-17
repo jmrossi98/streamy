@@ -139,7 +139,7 @@ export function shouldAskStillWatching(unattendedAdvances: number): boolean {
  */
 export function isFinished(seconds: number, runtimeSeconds: number | null, segs: EpisodeSegments): boolean {
   if (seconds <= 0) return false;
-  if (segs.credits && seconds >= segs.credits.start) return true;
+  if (segs.credits) return seconds >= segs.credits.start;
   return !!runtimeSeconds && seconds >= runtimeSeconds * 0.9;
 }
 
