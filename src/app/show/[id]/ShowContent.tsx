@@ -1,5 +1,6 @@
 "use client";
 
+import { takeShowWatched } from "@/lib/showResumeFreshness";
 import { releaseLabel } from "@/lib/releaseDateRules";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
@@ -154,15 +155,29 @@ export function ShowContent({
   // URL, which Next would render as the standalone player.
   const overlayEntryRef = useRef(false);
 
+  // After watching, the resume button must reflect it (showResumeFreshness.ts):
+  // on coming back to this page, and once the player closes and the URL is
+  // the show's again -- refreshing while the episode URL is up would render
+  // the episode page instead.
+  const refreshIfWatched = useCallback(() => {
+    if (takeShowWatched(String(show.id))) router.refresh();
+  }, [show.id, router]);
+  useEffect(() => {
+    refreshIfWatched();
+  }, [refreshIfWatched]);
+
   const closeOverlay = useCallback(() => {
     setOverlayEpisode(null);
     if (overlayEntryRef.current) {
       overlayEntryRef.current = false;
+      window.addEventListener("popstate", refreshIfWatched, { once: true });
       // Pops the overlay's entry, returning to the show URL (with ?season=,
       // set when the episode was opened) that is already underneath it.
       window.history.back();
+    } else {
+      refreshIfWatched();
     }
-  }, []);
+  }, [refreshIfWatched]);
 
   const overlayOpen = overlayEpisode != null;
   const overlaySeason = overlayEpisode?.seasonNumber;
@@ -185,10 +200,11 @@ export function ShowContent({
     const handlePopState = () => {
       overlayEntryRef.current = false;
       setOverlayEpisode(null);
+      refreshIfWatched();
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [overlayOpen]);
+  }, [overlayOpen, refreshIfWatched]);
 
   const openResumeOverlay = useCallback(() => {
     router.replace(`${pathname}?season=${resumeSeason}`, { scroll: false });

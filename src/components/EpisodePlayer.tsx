@@ -1,5 +1,6 @@
 "use client";
 
+import { markShowWatched } from "@/lib/showResumeFreshness";
 import { useFreshResume, useResumeRecheck } from "@/lib/useFreshResume";
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
@@ -77,6 +78,7 @@ export function EpisodePlayer({
 
   // Stable across renders (see usePlayerEngine's saveProgress doc).
   const saveProgress = useCallback((sec: number) => {
+    markShowWatched(showId);
     fetch("/api/episode-progress", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
