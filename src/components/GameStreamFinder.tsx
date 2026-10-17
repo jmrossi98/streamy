@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import {
@@ -8,12 +8,13 @@ import {
   canAdd,
   normalizeProbe,
   partitionByVerify,
+  pickAutoAdd,
   streamsToVerify,
   verifyLabel,
   type VerifyState,
 } from "@/lib/streamVerifyRules";
 
-type Candidate = { id: number; name: string; provider: string | null; logoUrl: string | null };
+type Candidate = { id: number; name: string; provider: string | null; logoUrl: string | null; score?: number | null };
 
 /**
  * "More streams for this game": provider streams that might carry it but are
@@ -27,7 +28,13 @@ type Candidate = { id: number; name: string; provider: string | null; logoUrl: s
  * mediabox's stream probe (streamVerifyRules.ts). The list shows immediately
  * and the checks fill in; one with no video is hidden and cannot be added.
  */
-export function GameStreamFinder({ fixtureId }: { fixtureId: string }) {
+/**
+ * `autoAdd`: the viewer pressed Watch in Live Now and no channel is confirmed
+ * for the game, so the best stream that names the game and passes the video
+ * check is added without a click (pickAutoAdd). One per game, enforced by
+ * the promote route.
+ */
+export function GameStreamFinder({ fixtureId, autoAdd = false }: { fixtureId: string; autoAdd?: boolean }) {
   const router = useRouter();
   const [streams, setStreams] = useState<Candidate[] | null>(null);
   const [verify, setVerify] = useState(false);
@@ -35,6 +42,7 @@ export function GameStreamFinder({ fixtureId }: { fixtureId: string }) {
   const [showHidden, setShowHidden] = useState(false);
   const [adding, setAdding] = useState<number | null>(null);
   const [added, setAdded] = useState<Record<number, string>>({});
+  const autoTried = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -80,7 +88,17 @@ export function GameStreamFinder({ fixtureId }: { fixtureId: string }) {
     return () => ctrl.abort();
   }, [verify, streams]);
 
-  async function add(s: Candidate) {
+  useEffect(() => {
+    if (!autoAdd || autoTried.current || !streams) return;
+    const pick = pickAutoAdd(streams, checks);
+    if (!pick) return;
+    autoTried.current = true;
+    void add(pick, true);
+    // add is recreated each render; the pick only depends on these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoAdd, streams, checks]);
+
+  async function add(s: Candidate, auto = false) {
     if (adding !== null || !canAdd(checks[s.id])) return;
     setAdding(s.id);
     try {
@@ -88,10 +106,11 @@ export function GameStreamFinder({ fixtureId }: { fixtureId: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // fixtureId marks it as a one-game channel, removed after the game.
-        body: JSON.stringify({ streamId: s.id, name: s.name, logoUrl: s.logoUrl, fixtureId }),
+        body: JSON.stringify({ streamId: s.id, name: s.name, logoUrl: s.logoUrl, fixtureId, auto }),
       });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setAdded((a) => ({ ...a, [s.id]: res.ok ? "Added. It joins the list above in a few seconds." : body.error ?? "Couldn't add it." }));
+      const body = (await res.json().catch(() => ({}))) as { error?: string; note?: string; existing?: boolean };
+      const okNote = auto ? "Added automatically. It joins the list above in a few seconds." : "Added. It joins the list above in a few seconds.";
+      setAdded((a) => ({ ...a, [s.id]: res.ok ? (body.existing && body.note) || okNote : body.error ?? "Couldn't add it." }));
       // Jellyfin picks the new channel up on its guide refresh, which the
       // promote route starts; give it a moment, then reload the options.
       if (res.ok) setTimeout(() => router.refresh(), 8000);

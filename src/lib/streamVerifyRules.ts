@@ -111,3 +111,26 @@ export function partitionByVerify<C extends { id: number }>(
   for (const c of candidates) (states[c.id]?.status === "dead" ? hidden : shown).push(c);
   return { shown, hidden };
 }
+
+/**
+ * The stream to add on its own when a viewer pressed Watch in Live Now and the
+ * guide confirms no channel for the game. Only a stream that names the game
+ * (score 0 both teams, 1 a team plus the league or carrying network) and has
+ * passed the video check: never one that is unchecked, dead or busy. Waits
+ * (null) while a better-ranked strong candidate is still being checked, so a
+ * weaker stream that finished first doesn't win.
+ */
+export function pickAutoAdd<C extends { id: number; score?: number | null }>(
+  ranked: C[],
+  checks: Record<number, VerifyState | undefined>,
+  maxScore = 1
+): C | null {
+  for (const c of ranked) {
+    if (c.score == null || c.score > maxScore) continue;
+    const s = checks[c.id];
+    if (!s) return null; // not checked (yet, or beyond the verify limit)
+    if (s.status === "queued" || s.status === "checking") return null;
+    if (s.status === "ok" && s.video) return c;
+  }
+  return null;
+}

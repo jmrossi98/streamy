@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  pickAutoAdd,
   applyResult,
   canAdd,
   normalizeProbe,
@@ -120,5 +121,27 @@ describe("partitionByVerify", () => {
     const { shown, hidden } = partitionByVerify(candidates, states);
     expect(shown.map((c) => c.id)).toEqual([1, 4, 5, 6]);
     expect(hidden.map((c) => c.id)).toEqual([2, 3]);
+  });
+});
+
+describe("pickAutoAdd", () => {
+  const ok = { status: "ok" as const, bytes: 1e6, mbps: 8, video: true };
+  const dead = { status: "dead" as const, bytes: 91, mbps: 0, video: false };
+  const ranked = [
+    { id: 1, score: 0 },
+    { id: 2, score: 0 },
+    { id: 3, score: 2 },
+  ];
+
+  it("takes the best-ranked strong stream with video", () => {
+    expect(pickAutoAdd(ranked, { 1: dead, 2: ok, 3: ok })?.id).toBe(2);
+  });
+  it("waits while a better-ranked one is still being checked", () => {
+    expect(pickAutoAdd(ranked, { 1: { status: "checking" }, 2: ok })).toBeNull();
+  });
+  it("never adds a weak match, a busy stream, or an unchecked one", () => {
+    expect(pickAutoAdd(ranked, { 1: dead, 2: dead, 3: ok })).toBeNull();
+    expect(pickAutoAdd(ranked, { 1: { status: "busy" }, 2: { status: "error" } })).toBeNull();
+    expect(pickAutoAdd([{ id: 9, score: 0 }], {})).toBeNull();
   });
 });

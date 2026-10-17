@@ -56,6 +56,22 @@ export async function POST(request: Request) {
   // adding the same game feed from its game page left two "Patriots at
   // Bills" channels in the lineup (2026-10-16). Unreadable lineup: carry on
   // and add; a duplicate is cheaper than a refused add.
+  // An automatic add (Live Now's Watch) is one per game: the first viewer's
+  // page adds it, everyone after finds it already there.
+  const autoFixtureId = body?.auto === true && typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
+  if (autoFixtureId) {
+    const already = await prisma.gameChannel.findFirst({ where: { fixtureId: autoFixtureId } }).catch(() => null);
+    if (already) {
+      return NextResponse.json({
+        id: already.channelId,
+        channelNumber: null,
+        refreshing: false,
+        existing: true,
+        note: `Already added for this game as "${already.name}".`,
+      });
+    }
+  }
+
   const existing = (await listChannels().catch(() => null))?.find(
     (c) => c.streamIds.includes(streamId) || c.name.trim().toLowerCase() === name.toLowerCase()
   );
