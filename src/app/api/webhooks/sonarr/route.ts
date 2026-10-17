@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requestJellyfinLibraryScan } from "@/lib/jellyfin";
+import { requestJellyfinLibraryScan, requestJellyfinPathScan } from "@/lib/jellyfin";
 
 /**
  * Inbound webhook from Sonarr (Settings -> Connect -> Webhook).
@@ -48,8 +48,10 @@ export async function POST(request: Request) {
       data: { status: "available" },
     });
     // See the Radarr twin -- Sonarr's own Jellyfin notification doesn't
-    // always land either.
-    requestJellyfinLibraryScan();
+    // always land either. Just the series folder, not the whole library.
+    const seriesPath = (body?.series as { path?: string } | undefined)?.path;
+    if (typeof seriesPath === "string" && seriesPath) requestJellyfinPathScan(seriesPath);
+    else requestJellyfinLibraryScan();
   }
   // Unrecognized event types (Test, SeriesDelete, Health, etc.) no-op so
   // Sonarr's "Test" button and other lifecycle events don't error out.
