@@ -11,6 +11,7 @@ import { dedupeById, SHELF_PAGE_SIZE } from "./browseShelfRules";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { cached } from "./ttlCache";
+import type { SeasonCounts } from "./episodeNumbering";
 // Lazy-load mock module only when needed (dev without API key) — avoids
 // compiling 200 lines of mock data on every page in dev when using real API.
 let _mock: typeof import("./tmdb-mock") | null = null;
@@ -539,6 +540,31 @@ export async function getShowBrowseMeta(id: string): Promise<{ keywords: string[
           keywords: (data.keywords?.results ?? []).map((k) => k.name),
           popularity: data.popularity ?? 0,
         };
+      } catch {
+        return null;
+      }
+    },
+    { skipCacheIf: (v) => v === null }
+  );
+}
+
+/**
+ * How many episodes each of a show's regular seasons has on TMDB, which is
+ * what translating to Sonarr's and Jellyfin's numbering needs (see
+ * episodeNumbering.ts). Its own lookup, like getOriginalLanguage, so the
+ * day-cached ShowDetail doesn't grow a field. Null when TMDB can't say.
+ */
+export async function getTmdbSeasonCounts(id: string): Promise<SeasonCounts | null> {
+  if (USE_MOCK) return null;
+  return cached(
+    `tmdb-season-counts:${id}`,
+    ONE_DAY_MS,
+    async () => {
+      try {
+        const data = await fetchTmdb<{ seasons?: { season_number: number; episode_count: number }[] }>(`tv/${id}`);
+        const counts: SeasonCounts = {};
+        for (const s of data.seasons ?? []) if (s.season_number > 0) counts[s.season_number] = s.episode_count;
+        return Object.keys(counts).length > 0 ? counts : null;
       } catch {
         return null;
       }
