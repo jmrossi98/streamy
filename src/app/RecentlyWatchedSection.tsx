@@ -1,4 +1,5 @@
 import { getMovieById, getShowById } from "@/lib/tmdb";
+import { toCardMovie, toCardShow } from "@/lib/cardData";
 import { RecentlyWatchedRow, type RecentItem } from "@/components/RecentlyWatchedRow";
 
 type WatchProgressRow = { movieId: string | number; progressSeconds: number; updatedAt: Date };
@@ -42,7 +43,7 @@ export async function RecentlyWatchedSection({
       return {
         kind: "movie",
         sortAt: new Date(p.updatedAt).getTime(),
-        movie,
+        movie: toCardMovie(movie),
         progressSeconds: p.progressSeconds,
         runtimeMinutes: movie.runtime ?? null,
       };
@@ -54,7 +55,7 @@ export async function RecentlyWatchedSection({
       const show = showDetails[i];
       if (!show) return null;
       const lastWatched = recentEpisodeProgress.find((p) => p.showId === id)?.updatedAt;
-      return { kind: "show", sortAt: lastWatched ? new Date(lastWatched).getTime() : 0, show };
+      return { kind: "show", sortAt: lastWatched ? new Date(lastWatched).getTime() : 0, show: toCardShow(show) };
     })
     .filter((item): item is RecentItem => item != null);
 

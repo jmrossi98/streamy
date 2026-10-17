@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  ROW_WINDOW,
+  rowWindow,
   clampPages,
   dedupeById,
   hasMore,
@@ -67,5 +69,17 @@ describe("My List shelves", () => {
       "/watchlist/games",
       "/watchlist/flash",
     ]);
+  });
+});
+
+describe("rowWindow", () => {
+  const items = Array.from({ length: 100 }, (_, i) => i);
+  it("caps a row that has a shelf", () => {
+    expect(rowWindow(items, true)).toHaveLength(ROW_WINDOW);
+    expect(rowWindow(items, true)[0]).toBe(0);
+  });
+  it("leaves a row without a shelf, or a short one, whole", () => {
+    expect(rowWindow(items, false)).toHaveLength(100);
+    expect(rowWindow(items.slice(0, 10), true)).toHaveLength(10);
   });
 });

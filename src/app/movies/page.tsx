@@ -2,6 +2,7 @@ import { unstable_noStore } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { pullJellyfinProgressForPage } from "@/lib/progressSync";
+import { ROW_WINDOW } from "@/lib/browseShelfRules";
 import { getWatchlistMovies } from "@/lib/watchlist";
 import { MoviesContent } from "@/components/MoviesContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -24,7 +25,7 @@ export default async function MoviesPage() {
     // In the same wave rather than after it: the My List row renders above
     // everything else, so making it wait on the rows below would delay the
     // top of the page behind the bottom of it.
-    session?.user?.id ? getWatchlistMovies(session.user.id) : Promise.resolve([]),
+    session?.user?.id ? getWatchlistMovies(session.user.id, ROW_WINDOW) : Promise.resolve([]),
   ]);
 
   const movieIdsOnPage = new Set([

@@ -5,6 +5,8 @@ import Link from "next/link";
 import type { TVShow } from "@/lib/tmdb";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
+import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
+import { rowWindow } from "@/lib/browseShelfRules";
 import { showProgressLabel, showProgressPercent, type ShowProgress } from "@/lib/showProgressRules";
 
 type TVRowProps = {
@@ -30,12 +32,14 @@ export function ShowCard({
   widthClass?: string;
 }) {
   const pct = progress ? showProgressPercent(progress) : null;
+  const showHref = `/show/${show.id}`;
+  const onHover = useHoverPrefetch([showHref]);
   return (
     <div
       className={`movie-card group relative block ${widthClass} overflow-hidden rounded bg-netflix-dark max-md:rounded-2xl max-md:shadow-lg max-md:shadow-black/40 max-md:ring-1 max-md:ring-white/5`}
     >
       <div className="relative aspect-video w-full">
-        <Link href={`/show/${show.id}`} className="absolute inset-0 z-0 block">
+        <Link href={showHref} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
           <Image
             src={show.poster}
             alt={show.name}
@@ -53,7 +57,7 @@ export function ShowCard({
           </div>
         )}
       </div>
-      <Link href={`/show/${show.id}`} className="block p-2">
+      <Link href={showHref} prefetch={false} onMouseEnter={onHover} className="block p-2">
         <p className="text-white font-medium text-sm truncate">{show.name}</p>
         <p className="text-white/60 text-xs">
           {progress ? showProgressLabel(progress) : `${show.year} · ${show.rating}`}
@@ -66,7 +70,7 @@ export function ShowCard({
 export function TVRow({ title, shows, progressMap = {}, href }: TVRowProps) {
   return (
     <ScrollableRow title={title} href={href}>
-      {shows.map((show) => (
+      {rowWindow(shows, Boolean(href)).map((show) => (
         <ShowCard key={show.id} show={show} progress={progressMap[String(show.id)]} />
       ))}
     </ScrollableRow>

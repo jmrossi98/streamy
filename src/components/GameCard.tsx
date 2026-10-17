@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { GameListItem } from "@/lib/games";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
+import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
 
 /**
  * Portrait poster tile for a game -- same card shape/hover behavior as
@@ -25,6 +26,7 @@ export function GameCard({
   fixedWidth?: boolean;
 }) {
   const href = `/games/${encodeURIComponent(item.gameKey)}`;
+  const onHover = useHoverPrefetch([href]);
   const statusLabel =
     item.status === "downloading"
       ? item.progress != null
@@ -43,7 +45,7 @@ export function GameCard({
       }`}
     >
       <div className="relative aspect-[2/3] w-full">
-        <Link href={href} prefetch className="absolute inset-0 z-0 block">
+        <Link href={href} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
           {item.posterUrl ? (
             <Image
               src={item.posterUrl}
@@ -97,7 +99,7 @@ export function GameCard({
           </div>
         )}
       </div>
-      <Link href={href} prefetch className="block p-2">
+      <Link href={href} prefetch={false} onMouseEnter={onHover} className="block p-2">
         {/* Single-line truncate in the narrow grid (10 columns at xl) cut
             titles off right around "Super Mario Bros." for both 1, 2, and 3
             -- the ellipsis landed before the one character that actually

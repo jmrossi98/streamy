@@ -1,12 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Image from "next/image";
-import Link from "next/link";
 import { MovieRow } from "@/components/MovieRow";
-import { TVRow } from "@/components/TVRow";
+import { ShowCard, TVRow } from "@/components/TVRow";
 import { ScrollableRow } from "@/components/ScrollableRow";
-import { PosterActions } from "@/components/PosterActions";
 import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import { shelfHref } from "@/lib/browseShelfRules";
@@ -88,28 +85,7 @@ export function HomeMoviesSection({
       {trendingTV.length > 0 && (
         <ScrollableRow title="Trending TV" href={shelfHref("tv", { kind: "trending" })}>
           {trendingTV.map((show) => (
-            <div
-              key={show.id}
-              className="movie-card group relative block w-[160px] sm:w-[180px] md:w-[240px] overflow-hidden rounded bg-netflix-dark touch-manipulation max-md:rounded-2xl max-md:shadow-lg max-md:shadow-black/40 max-md:ring-1 max-md:ring-white/5"
-            >
-              <div className="relative aspect-video w-full">
-                <Link href={`/show/${show.id}`} className="absolute inset-0 z-0 block">
-                  <Image
-                    src={show.poster}
-                    alt={show.name}
-                    fill
-                    className="object-cover"
-                    sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
-                  />
-                </Link>
-                <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-                <PosterActions showId={String(show.id)} />
-              </div>
-              <Link href={`/show/${show.id}`} className="block p-2">
-                <p className="text-white font-medium text-sm truncate">{show.name}</p>
-                <p className="text-white/60 text-xs">{show.year} · {show.rating}</p>
-              </Link>
-            </div>
+            <ShowCard key={show.id} show={show} widthClass="w-[160px] sm:w-[180px] md:w-[240px]" />
           ))}
         </ScrollableRow>
       )}
