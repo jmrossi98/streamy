@@ -247,6 +247,18 @@ function easternDate(ms: number): { y: number; m: number; d: number } {
   return { y, m, d };
 }
 
+/**
+ * Whether a channel or stream name carries a date, and none of them is the
+ * game's day. Peacock's "Celtics vs. 76ers (2026-11-10 19:00:05)" names both
+ * teams of tonight's game too, but it is next month's.
+ */
+export function namesOtherDate(name: string, gameStartMs: number): boolean {
+  const dates = namedDates(name);
+  if (dates.length === 0 || !Number.isFinite(gameStartMs)) return false;
+  const day = easternDate(gameStartMs);
+  return !dates.some((d) => d.m === day.m && d.d === day.d && (d.y == null || d.y === day.y));
+}
+
 function wordsIn(name: string, phrase: string): boolean {
   const escaped = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`, "i").test(name);
@@ -275,15 +287,11 @@ export function fixtureGuidePrograms(
   for (const name of channelNames) {
     const key = guideKey(name);
     if (already[key]?.length) continue;
-    const dates = namedDates(name);
     const games: GuideProgram[] = [];
     for (const f of fixtures) {
       const start = f.startUtc ? Date.parse(f.startUtc) : NaN;
       if (!Number.isFinite(start) || !f.awayTeam || !f.homeTeam) continue;
-      if (dates.length > 0) {
-        const day = easternDate(start);
-        if (!dates.some((d) => d.m === day.m && d.d === day.d && (d.y == null || d.y === day.y))) continue;
-      }
+      if (namesOtherDate(name, start)) continue;
       const nicks = [nickname(f.awayTeam), nickname(f.homeTeam)];
       const both = nicks.every((n) => n != null && wordsIn(name, n));
       const oneTeam = wordsIn(name, f.awayTeam) || wordsIn(name, f.homeTeam);

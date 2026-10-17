@@ -123,7 +123,7 @@ export function AdminLiveTvLineup({
         const res = await fetch("/api/live/streams/demote", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channelId: Number(channel.id) }),
+          body: JSON.stringify({ channelName: channel.name }),
         });
         if (!res.ok) failed.push(channel.name);
       }

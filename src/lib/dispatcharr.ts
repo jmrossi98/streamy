@@ -513,7 +513,10 @@ export async function activeChannelKeys(): Promise<Set<string> | null> {
  */
 export async function findChannelIdByName(name: string): Promise<number | null> {
   const channels = await listChannels();
-  return channels?.find((c) => c.name === name)?.id ?? null;
+  // Jellyfin collapses doubled spaces on the way in ("USA -  PEACOCK EEVNT 2"),
+  // so an exact compare missed those channels and hid their Remove button.
+  const key = (n: string) => n.trim().replace(/\s+/g, " ").toLowerCase();
+  return channels?.find((c) => c.name === name)?.id ?? channels?.find((c) => key(c.name) === key(name))?.id ?? null;
 }
 
 /**
