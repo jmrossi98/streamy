@@ -7,6 +7,8 @@ import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { ChannelCard } from "@/components/ChannelCard";
+import { LiveGuideGrid } from "@/components/LiveGuideGrid";
+import { guideKey, programsForChannel, type GuideProgram } from "@/lib/liveGuideGrid";
 import { SportsTab } from "@/components/SportsTab";
 import { RecordingsTab } from "@/components/RecordingsTab";
 import { LiveNowGames } from "@/components/LiveNowGames";
@@ -38,6 +40,8 @@ type Props = {
   statusByChannel: Record<string, ChannelVerdict>;
   /** Channel name -> a logo to use when the channel has none of its own. */
   logoFallbacks: Record<string, string>;
+  /** guideKey(channel name) -> EPG listings for the Guide grid. Empty off the Guide tab. */
+  guidePrograms: Record<string, GuideProgram[]>;
 };
 
 /** What every tab needs to draw a channel card. */
@@ -68,7 +72,7 @@ function numberValue(number: string | null): number {
  */
 export function LiveTvContent({
   envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
-  statusByChannel, logoFallbacks,
+  statusByChannel, logoFallbacks, guidePrograms,
 }: Props) {
   // The page is force-dynamic, so this is available on the server render too
   // and the tab arrives in the first HTML rather than after hydration.
@@ -161,7 +165,15 @@ export function LiveTvContent({
 
       {tab === "guide" &&
         (emptyPanel ?? (
-          <GuideTab lineup={lineup} listed={listed} truncated={truncated} total={channels.length} isAdmin={isAdmin} {...lookups} />
+          <GuideTab
+            lineup={lineup}
+            listed={listed}
+            truncated={truncated}
+            total={channels.length}
+            isAdmin={isAdmin}
+            guidePrograms={guidePrograms}
+            {...lookups}
+          />
         ))}
 
       {/* Both rendered whether or not the lineup loaded: the schedule comes
@@ -239,15 +251,21 @@ function NowTab({
 }
 
 /**
- * Guide: every channel, searchable, sortable, filterable by type.
- *
- * For now this is the flat grid /live always had; the only place search,
- * the category select and the sort select live. A real time-grid guide
- * (channels down, half-hours across) comes in a later PR.
+ * Guide: a real TV guide -- channels down, half-hours across, programmes as
+ * blocks sized by how long they run (see LiveGuideGrid). Still the only place
+ * search, the category select and the sort select live; they narrow which
+ * rows the grid draws.
  */
 function GuideTab({
-  lineup, listed, truncated, total, isAdmin, infoByChannel, statusByChannel, logoFallbacks,
-}: { lineup: LiveChannel[]; listed: Set<string>; truncated: boolean; total: number; isAdmin: boolean } & CardLookups) {
+  lineup, listed, truncated, total, isAdmin, guidePrograms, infoByChannel, statusByChannel, logoFallbacks,
+}: {
+  lineup: LiveChannel[];
+  listed: Set<string>;
+  truncated: boolean;
+  total: number;
+  isAdmin: boolean;
+  guidePrograms: Record<string, GuideProgram[]>;
+} & CardLookups) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
   const [sortBy, setSortBy] = useState<"name" | "number">("name");
@@ -299,15 +317,27 @@ function GuideTab({
     if (!q) return inCategory;
     // Number as well as name: on a broadcast lineup people reach for "7.1"
     // as readily as for the call sign.
+    // And what is on: in a guide, "where's the game" is as natural a search
+    // as a channel name.
     return inCategory.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.number ?? "").toLowerCase().includes(q) ||
-        (c.now?.name ?? "").toLowerCase().includes(q)
+        (c.now?.name ?? "").toLowerCase().includes(q) ||
+        (guidePrograms[guideKey(c.name)] ?? []).some((p) => p.title.toLowerCase().includes(q))
     );
-  }, [inCategory, query]);
+  }, [inCategory, query, guidePrograms]);
 
   const visible = filtered.slice(0, shown);
+
+  // A grid of nothing but "No guide info" rows is a worse channel list than
+  // the channel list, so with no listings for any channel at all (the EPG
+  // fetch failed, or nothing is mapped) the Guide falls back to the cards it
+  // used to be. One channel with listings is enough to make the grid worth it.
+  const hasGuide = useMemo(
+    () => lineup.some((c) => programsForChannel(c, guidePrograms).length > 0),
+    [lineup, guidePrograms]
+  );
 
   return (
     <>
@@ -326,7 +356,7 @@ function GuideTab({
             // long.
             setShown(PAGE_SIZE);
           }}
-          placeholder="Search channels…"
+          placeholder="Search channels or shows…"
           aria-label="Search channels"
           // text-base on mobile: iOS zooms the viewport on a focused input
           // under 16px and there is no way back out without pinching.
@@ -376,18 +406,31 @@ function GuideTab({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {visible.map((c) => (
-          <ChannelCard
-            key={c.id}
-            channel={c}
-            inList={listed.has(c.id)}
-            info={infoByChannel[c.name]}
-            status={statusByChannel[c.name]}
-            logoFallback={logoFallbacks[c.name]}
+      {visible.length > 0 &&
+        (hasGuide ? (
+          <LiveGuideGrid
+            channels={visible}
+            guidePrograms={guidePrograms}
+            statusByChannel={statusByChannel}
+            logoFallbacks={logoFallbacks}
           />
+        ) : (
+          <>
+            <p className="mb-3 text-xs text-white/40">No guide listings right now, so here are the channels.</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {visible.map((c) => (
+                <ChannelCard
+                  key={c.id}
+                  channel={c}
+                  inList={listed.has(c.id)}
+                  info={infoByChannel[c.name]}
+                  status={statusByChannel[c.name]}
+                  logoFallback={logoFallbacks[c.name]}
+                />
+              ))}
+            </div>
+          </>
         ))}
-      </div>
 
       {filtered.length === 0 && (
         <p className="py-10 text-center text-sm text-white/40">
