@@ -43,11 +43,16 @@ describe("parseSegments", () => {
   });
 
   it("reads an early, short 'Credits' chapter as the opening titles (Clone High)", () => {
-    // S1E5 and S1E9 as Jellyfin reports them.
-    const e5 = parseSegments(null, [{ Name: "Chapter 1", StartPositionTicks: 0 }, { Name: "Credits", StartPositionTicks: 0 }, { Name: "Chapter 2", StartPositionTicks: 22 * T }], 1290 * T);
-    expect(e5).toEqual({ intro: { start: 0, end: 22 }, recap: null, credits: null });
+    // S1E1 and S1E9 as Jellyfin reports them.
+    const e1 = parseSegments(null, [{ Name: "Credits", StartPositionTicks: 0 }, { Name: "Chapter 2", StartPositionTicks: 38 * T }], 1290 * T);
+    expect(e1).toEqual({ intro: { start: 0, end: 38 }, recap: null, credits: null });
     const e9 = parseSegments(null, [{ Name: "Chapter 1", StartPositionTicks: 0 }, { Name: "Credits", StartPositionTicks: 64 * T }, { Name: "Chapter 2", StartPositionTicks: 98 * T }], 1291 * T);
     expect(e9.intro).toEqual({ start: 64, end: 98 });
+  });
+
+  it("ignores chapters that share a start time (Clone High S1E5: its theme is really 0:22-0:56)", () => {
+    const e5 = parseSegments(null, [{ Name: "Chapter 1", StartPositionTicks: 0 }, { Name: "Credits", StartPositionTicks: 0 }, { Name: "Chapter 2", StartPositionTicks: 22 * T }], 1290 * T);
+    expect(e5).toEqual(NO_SEGMENTS);
   });
 
   it("still reads late credits as credits, and a long early chapter as neither", () => {
