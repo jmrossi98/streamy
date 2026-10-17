@@ -63,6 +63,7 @@ describe("My List shelves", () => {
     expect(WATCHLIST_SHELVES.map(watchlistShelfHref)).toEqual([
       "/watchlist/movies",
       "/watchlist/shows",
+      "/watchlist/anime",
       "/watchlist/games",
       "/watchlist/flash",
     ]);

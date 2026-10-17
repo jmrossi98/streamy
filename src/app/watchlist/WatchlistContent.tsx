@@ -16,6 +16,7 @@ import { watchlistShelfHref } from "@/lib/browseShelfRules";
 type WatchlistData = {
   movies: Movie[];
   shows: (TVShow & { numberOfSeasons: number })[];
+  anime: (TVShow & { numberOfSeasons: number })[];
   games: GameListItem[];
   channels: LiveChannel[];
   flashGames: FlashGameSummary[];
@@ -30,6 +31,7 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
   const hasAny =
     data.movies.length > 0 ||
     data.shows.length > 0 ||
+    data.anime.length > 0 ||
     data.games.length > 0 ||
     data.channels.length > 0 ||
     data.flashGames.length > 0;
@@ -54,6 +56,7 @@ export function WatchlistContent({ data }: WatchlistContentProps) {
         />
       )}
       {data.shows.length > 0 && <TVRow title="TV Shows" shows={data.shows} href={watchlistShelfHref("shows")} />}
+      {data.anime.length > 0 && <TVRow title="Anime" shows={data.anime} href={watchlistShelfHref("anime")} />}
       {data.channels.length > 0 && (
         // A vertical list, like /live's own "My Stations" section, rather
         // than a horizontal poster row -- a channel card is a wide list item

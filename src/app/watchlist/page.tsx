@@ -8,7 +8,7 @@ export default async function WatchlistPage() {
   const session = await getSession();
   if (!session?.user?.id) redirect("/login?callbackUrl=/watchlist");
 
-  const data = await getWatchlist(session.user.id);
+  const data = await getWatchlist(session.user.id, { splitAnime: !!session.user.isAdmin });
 
   return (
     <div className={BROWSE_PAGE_CLASS}>

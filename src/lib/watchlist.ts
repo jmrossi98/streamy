@@ -2,7 +2,8 @@
  * Server-only watchlist helpers for the My List page.
  */
 import { prisma } from "@/lib/db";
-import { getMovieById, getShowById } from "@/lib/tmdb";
+import { getMovieById, getOriginalLanguage, getShowById } from "@/lib/tmdb";
+import { isAnime } from "@/lib/animeRules";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import type { MovieProgress } from "@/components/MovieRow";
 import { getGamesList, type GameListItem } from "@/lib/games";
@@ -13,6 +14,8 @@ import type { FlashGameSummary } from "@/lib/flashGameRules";
 export type WatchlistData = {
   movies: Movie[];
   shows: (TVShow & { numberOfSeasons: number })[];
+  /** Saved anime, pulled out of `shows`. Only filled when splitAnime is asked for (the admin's list). */
+  anime: (TVShow & { numberOfSeasons: number })[];
   games: GameListItem[];
   channels: LiveChannel[];
   flashGames: FlashGameSummary[];
@@ -58,7 +61,10 @@ export async function getWatchlistShows(
 
 /** Loads all saved movies, TV shows, games, live channels, and Flash games;
  *  poster rows scroll horizontally (ScrollableRow) like Home/Movies. */
-export async function getWatchlist(userId: string): Promise<WatchlistData> {
+export async function getWatchlist(
+  userId: string,
+  { splitAnime = false }: { splitAnime?: boolean } = {}
+): Promise<WatchlistData> {
   const [movieItems, showItems, gameItems, channelItems, flashItems, allProgress] =
     await Promise.all([
       prisma.watchlistItem.findMany({
@@ -133,13 +139,28 @@ export async function getWatchlist(userId: string): Promise<WatchlistData> {
     }
   });
 
-  const shows = showDetails
+  const allShows = showDetails
     .filter((s): s is NonNullable<typeof s> => s != null)
     .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons }));
+
+  // Only animated shows need the language lookup, so most of the list costs nothing extra.
+  const animeIds = new Set<string>();
+  if (splitAnime) {
+    await Promise.all(
+      allShows
+        .filter((s) => s.genres.includes("Animation"))
+        .map(async (s) => {
+          if (isAnime(s.genres, await getOriginalLanguage("tv", s.id))) animeIds.add(s.id);
+        })
+    );
+  }
+  const shows = allShows.filter((s) => !animeIds.has(s.id));
+  const anime = allShows.filter((s) => animeIds.has(s.id));
 
   return {
     movies,
     shows,
+    anime,
     games,
     channels,
     flashGames,
