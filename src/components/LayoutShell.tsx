@@ -22,6 +22,8 @@ function isFullscreenRoute(pathname: string | null): boolean {
   return (
     /^\/watch\/[^/]+\/play\/?$/.test(pathname) ||
     /^\/show\/[^/]+\/episode\/[^/]+\/[^/]+\/?$/.test(pathname) ||
+    // A game recording: same full-screen player, so no navbar over its X.
+    /^\/live\/recordings\/[^/]+\/?$/.test(pathname) ||
     // A tailored resume: a printable page, so no site chrome to print.
     /^\/resume\/[^/]+\/?$/.test(pathname)
   );
