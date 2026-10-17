@@ -41,7 +41,6 @@ export default async function ShowPage({ params, searchParams }: Props) {
     initialSeasonDataRaw,
     episodeProgressList,
     latestProgress,
-    watchlistShowItem,
     hasVideo,
     requestStatus,
     initialEpisodeStatuses,
@@ -60,11 +59,6 @@ export default async function ShowPage({ params, searchParams }: Props) {
         ? prisma.episodeProgress.findFirst({
             where: { userId: session.user.id, showId: id },
             orderBy: { updatedAt: "desc" },
-          })
-        : null,
-      session?.user?.id
-        ? prisma.watchlistShowItem.findUnique({
-            where: { userId_showId: { userId: session.user.id, showId: id } },
           })
         : null,
       isJellyfinShowAvailable(id),
@@ -148,7 +142,6 @@ export default async function ShowPage({ params, searchParams }: Props) {
       initialSeasonNum={initialSeasonNum}
       initialSeasonData={initialSeasonData}
       episodeProgress={episodeProgressList}
-      initialInList={!!watchlistShowItem}
       resumePlayHref={`/show/${id}/episode/${resumeSeason}/${resumeEpisode}`}
       resumePlayLabel={resumePlayLabel}
       resumeSeason={resumeSeason}

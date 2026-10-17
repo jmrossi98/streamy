@@ -15,7 +15,6 @@ const FALLBACK_BACKDROP = "https://placehold.co/1920x1080/1a1a1a/444?text=No+Bac
 
 type Props = {
   id: string;
-  initialInList: boolean;
   progressSeconds?: number;
   hasVideo?: boolean;
   requestConfigured?: boolean;
@@ -38,7 +37,6 @@ function buildMetaLine(movie: Movie | MovieDetail): string {
 
 export function WatchPageContent({
   id,
-  initialInList,
   progressSeconds = 0,
   hasVideo = true,
   requestConfigured = false,
@@ -100,9 +98,9 @@ export function WatchPageContent({
   );
 
   const listMobile = (
-    <WatchlistButton movieId={movie.id} initialInList={initialInList} variant="circle" compact />
+    <WatchlistButton movieId={movie.id} variant="circle" compact />
   );
-  const listDesktop = <WatchlistButton movieId={movie.id} initialInList={initialInList} />;
+  const listDesktop = <WatchlistButton movieId={movie.id} />;
 
   const showRequestFlow = !hasVideo && requestConfigured;
 
