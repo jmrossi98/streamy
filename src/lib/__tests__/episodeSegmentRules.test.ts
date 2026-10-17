@@ -41,6 +41,21 @@ describe("parseSegments", () => {
     expect(segs.credits).toEqual({ start: 1280, end: 1320 });
   });
 
+  it("reads an early, short 'Credits' chapter as the opening titles (Clone High)", () => {
+    // S1E5 and S1E9 as Jellyfin reports them.
+    const e5 = parseSegments(null, [{ Name: "Chapter 1", StartPositionTicks: 0 }, { Name: "Credits", StartPositionTicks: 0 }, { Name: "Chapter 2", StartPositionTicks: 22 * T }], 1290 * T);
+    expect(e5).toEqual({ intro: { start: 0, end: 22 }, recap: null, credits: null });
+    const e9 = parseSegments(null, [{ Name: "Chapter 1", StartPositionTicks: 0 }, { Name: "Credits", StartPositionTicks: 64 * T }, { Name: "Chapter 2", StartPositionTicks: 98 * T }], 1291 * T);
+    expect(e9.intro).toEqual({ start: 64, end: 98 });
+  });
+
+  it("still reads late credits as credits, and a long early chapter as neither", () => {
+    const late = parseSegments(null, [{ Name: "Chapter 1", StartPositionTicks: 0 }, { Name: "Credits", StartPositionTicks: 1250 * T }], RUNTIME);
+    expect(late).toEqual({ intro: null, recap: null, credits: { start: 1250, end: 1320 } });
+    const long = parseSegments(null, [{ Name: "Credits", StartPositionTicks: 0 }, { Name: "Chapter 2", StartPositionTicks: 300 * T }], RUNTIME);
+    expect(long).toEqual(NO_SEGMENTS);
+  });
+
   it("prefers segments over chapters", () => {
     const segs = parseSegments(
       [{ Type: "Intro", StartTicks: 10 * T, EndTicks: 50 * T }],
