@@ -7,6 +7,7 @@ import {
   jellyfinTrickplaySheetUrl,
   getJellyfinTrickplay,
 } from "./jellyfin";
+import { trickplayVersion } from "./trickplayRules";
 
 // Headers that must survive the hop for video playback to behave: the browser
 // relies on them for seeking (Range/Content-Range/Accept-Ranges), for knowing
@@ -259,7 +260,7 @@ export async function proxyJellyfinTrickplay(itemId: string, sheet: number | nul
   if (!manifest) return new Response("Not available", { status: 404 });
   if (sheet == null) {
     const { mediaSourceId: _id, ...body } = manifest;
-    return Response.json(body, { headers: { "cache-control": "no-store" } });
+    return Response.json({ ...body, version: trickplayVersion(manifest) }, { headers: { "cache-control": "no-store" } });
   }
   const sheets = Math.ceil(manifest.thumbnailCount / (manifest.tileWidth * manifest.tileHeight));
   if (!(sheet >= 0 && sheet < sheets)) return new Response("Not found", { status: 404 });

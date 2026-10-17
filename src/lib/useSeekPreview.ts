@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { nearestFrame, prewarmTimes, PREVIEW_HEIGHT, PREVIEW_WIDTH } from "./seekHoverRules";
-import { trickplayCell, type TrickplayManifest } from "./trickplayRules";
+import { trickplayCell, trickplaySheetUrl, type TrickplayManifest } from "./trickplayRules";
 
 /** Frames kept per title. 160x90 each, so a few megabytes at most. */
 const MAX_FRAMES = 300;
@@ -92,7 +92,7 @@ export function useSeekPreview(
       const paint = (at: number) => {
         const cell = trickplayCell(at, tp);
         if (!cell) return;
-        const img = sheets.current.get(`${trickplaySrc}/${cell.sheet}`);
+        const img = sheets.current.get(trickplaySheetUrl(trickplaySrc, cell.sheet, tp));
         const ctx = canvasRef.current?.getContext("2d");
         if (!ctx || !img || !img.complete || img.naturalWidth === 0) return;
         const scale = Math.min(PREVIEW_WIDTH / tp.width, PREVIEW_HEIGHT / tp.height);
@@ -105,7 +105,7 @@ export function useSeekPreview(
       };
       const cell = trickplayCell(t, tp);
       if (!cell) return;
-      const url = `${trickplaySrc}/${cell.sheet}`;
+      const url = trickplaySheetUrl(trickplaySrc, cell.sheet, tp);
       if (!sheets.current.has(url)) {
         const img = new Image();
         img.decoding = "async";

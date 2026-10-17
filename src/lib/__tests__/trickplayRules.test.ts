@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickTrickplay, trickplayCell, type TrickplayManifest } from "@/lib/trickplayRules";
+import { pickTrickplay, trickplayCell, trickplaySheetUrl, trickplayVersion, type TrickplayManifest } from "@/lib/trickplayRules";
 
 const m: TrickplayManifest = { width: 320, height: 180, tileWidth: 10, tileHeight: 10, thumbnailCount: 250, interval: 10000 };
 
@@ -34,5 +34,20 @@ describe("pickTrickplay", () => {
   it("is null when the title has none yet", () => {
     expect(pickTrickplay({})).toBeNull();
     expect(pickTrickplay(undefined)).toBeNull();
+  });
+});
+
+describe("trickplay sheet versions", () => {
+  const base = { mediaSourceId: "a", ...m };
+
+  it("changes when the file or layout changes, not otherwise", () => {
+    expect(trickplayVersion(base)).toBe(trickplayVersion({ ...base }));
+    expect(trickplayVersion({ ...base, mediaSourceId: "b" })).not.toBe(trickplayVersion(base));
+    expect(trickplayVersion({ ...base, height: 240 })).not.toBe(trickplayVersion(base));
+  });
+
+  it("tags sheet URLs with it", () => {
+    expect(trickplaySheetUrl("/api/x/trickplay", 2, { ...m, version: "abc" })).toBe("/api/x/trickplay/2?v=abc");
+    expect(trickplaySheetUrl("/api/x/trickplay", 2, m)).toBe("/api/x/trickplay/2");
   });
 });
