@@ -578,6 +578,11 @@ const NETWORK_ALIASES: Record<string, string> = {
   "nbcs ba": "nbc sports bay area",
   "nbc sports ca": "nbc sports california",
   "nbcs ca": "nbc sports california",
+  // 76ers. ESPN has written all of these for the same channel.
+  nbcsp: "nbc sports philadelphia",
+  "nbcs-ph": "nbc sports philadelphia",
+  "nbcs ph": "nbc sports philadelphia",
+  "nbc sports ph": "nbc sports philadelphia",
 };
 
 export function channelCarriesNetwork(channelName: string, network: string): boolean {

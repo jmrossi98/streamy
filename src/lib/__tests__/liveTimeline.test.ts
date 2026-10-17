@@ -656,3 +656,16 @@ describe("networksOnOtherGames", () => {
     expect(findCandidateChannels({ ...heat, networksOnOtherGames: busy }, channels)).toEqual([]);
   });
 });
+
+describe("channelCarriesNetwork regional aliases", () => {
+  it("matches ESPN's NBC Sports Philadelphia abbreviations", () => {
+    for (const net of ["NBCSP", "NBCS-PH", "NBC Sports PH"]) {
+      expect(channelCarriesNetwork("NBC Sports Philadelphia", net)).toBe(true);
+    }
+  });
+  it("matches MSG without MSG 2 or MSG+", () => {
+    expect(channelCarriesNetwork("MSG New York", "MSG")).toBe(true);
+    expect(channelCarriesNetwork("US: MSG 2 HD", "MSG")).toBe(false);
+    expect(channelCarriesNetwork("US: MSG PLUS HD", "MSG")).toBe(false);
+  });
+});
