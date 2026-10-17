@@ -17,6 +17,7 @@
  * so a normal request costs one round trip and an expiry costs two.
  */
 
+import { cleanChannelName } from "./liveChannelRules";
 import { looksLikeNetworkFeed, looksLikePlaceholder } from "@/lib/liveTimeline";
 import { cleanText } from "./text";
 import { cached } from "./ttlCache";
@@ -823,7 +824,7 @@ export async function promoteStreamToChannel(input: {
   logoUrl?: string | null;
 }): Promise<{ id: number } | null> {
   const body: Record<string, unknown> = {
-    name: input.name,
+    name: cleanChannelName(input.name),
     streams: [input.streamId],
   };
   if (typeof input.channelNumber === "number") body.channel_number = input.channelNumber;

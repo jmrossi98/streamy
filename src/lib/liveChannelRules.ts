@@ -240,3 +240,17 @@ export const STATE_RANK: Record<ChannelState, number> = {
   filler: 3,
   down: 4,
 };
+
+/**
+ * A channel name without the provider's country or group prefix:
+ * "USA - FOX 29 BUFFALO NY (WUTV)" -> "FOX 29 BUFFALO NY (WUTV)", "US: MSG HD" ->
+ * "MSG HD", "SP - NBA TV HD" -> "NBA TV HD". Every channel here is a US one,
+ * so the prefix says nothing. League prefixes ("NBA: NEW YORK KNICKS") stay.
+ */
+export function cleanChannelName(name: string): string {
+  const cleaned = name
+    .replace(/^\s*(?:USA|U\.?S\.?|SP)\s*[:|\-]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || name.trim();
+}
