@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isAtLiveEdge,
+  networksOnOtherGames,
   liveSeekTarget,
   looksLikeEventFeed,
   looksLikeNetworkFeed,
@@ -630,5 +631,28 @@ describe("Sharks at Predators, 2026-10-15", () => {
   it("needs both teams, not one", () => {
     expect(namesBothTeams("Sharks vs Predators (Sharks Broadcast)", fixture)).toBe(true);
     expect(namesBothTeams("NHL SAN JOSE SHARKS", fixture)).toBe(false);
+  });
+});
+
+describe("networksOnOtherGames", () => {
+  const base = { league: "NBA", startUtc: "2026-10-16T23:00:00Z", state: "in" };
+  const heat = { ...base, id: "heat-magic", awayTeam: "Miami Heat", homeTeam: "Orlando Magic", broadcasts: [] };
+  const celtics = { ...base, id: "bos-phi", broadcasts: ["NBA TV"] };
+  const lakers = { ...base, id: "den-lal", startUtc: "2026-10-17T02:30:00Z", state: "pre", broadcasts: ["ESPN"] };
+  const fox = { ...base, id: "fox-game", broadcasts: ["FOX"] };
+
+  it("lists a national network busy with a concurrent game", () => {
+    expect(networksOnOtherGames(heat, [heat, celtics, lakers, fox])).toEqual(["NBA TV"]);
+  });
+
+  it("keeps a network the fixture itself is listed on", () => {
+    expect(networksOnOtherGames({ ...heat, broadcasts: ["NBA TV"] }, [heat, celtics])).toEqual([]);
+  });
+
+  it("stops NBA TV being guessed for a game it is not showing", () => {
+    const channels = [{ id: "1", name: "NBA TV" }];
+    expect(findCandidateChannels(heat, channels)).toHaveLength(1);
+    const busy = networksOnOtherGames(heat, [heat, celtics]);
+    expect(findCandidateChannels({ ...heat, networksOnOtherGames: busy }, channels)).toEqual([]);
   });
 });

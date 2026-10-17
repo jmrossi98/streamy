@@ -616,6 +616,37 @@ function channelCarriesNetworkExact(channelName: string, network: string): boole
 }
 
 /**
+ * National networks ESPN lists for *another* game in the same league at the
+ * same time, and not for this one. A national feed shows one game at a time,
+ * so it is not a guess worth making for this fixture: on 2026-10-16 Heat at
+ * Magic (no broadcaster listed) defaulted to NBA TV, which was showing
+ * Celtics at 76ers -- the game ESPN listed it for.
+ *
+ * Local networks are left out: ESPN's "FOX" means many affiliates, each of
+ * which can carry a different game.
+ */
+export function networksOnOtherGames(
+  fixture: { id: string; league: string; startUtc: string | null; broadcasts?: string[] },
+  fixtures: readonly { id: string; league: string; startUtc: string | null; state?: string; broadcasts?: string[] }[],
+  overlapMs = 2.5 * 60 * 60 * 1000
+): string[] {
+  const own = new Set((fixture.broadcasts ?? []).map((b) => b.trim().toLowerCase()));
+  const start = fixture.startUtc ? Date.parse(fixture.startUtc) : NaN;
+  const busy = new Set<string>();
+  for (const other of fixtures) {
+    if (other.id === fixture.id || other.league !== fixture.league || other.state === "post") continue;
+    const otherStart = other.startUtc ? Date.parse(other.startUtc) : NaN;
+    if (!Number.isFinite(start) || !Number.isFinite(otherStart) || Math.abs(start - otherStart) > overlapMs) continue;
+    for (const net of other.broadcasts ?? []) {
+      const key = net.trim().toLowerCase();
+      if (!key || own.has(key) || LOCAL_NETWORKS.has(key.replace(/[^a-z0-9+]+/g, ""))) continue;
+      busy.add(net);
+    }
+  }
+  return [...busy];
+}
+
+/**
  * Channels plausibly carrying a fixture's league, for when
  * `findChannelForFixture` (and, above it, real EPG confirmation -- see
  * `resolveChannelForFixture`) both find nothing to link to.
@@ -641,7 +672,14 @@ function channelCarriesNetworkExact(channelName: string, network: string): boole
  * list tracks.
  */
 export function findCandidateChannels<C extends { id: string; name: string }>(
-  fixture: { league: string; awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] },
+  fixture: {
+    league: string;
+    awayTeam?: string | null;
+    homeTeam?: string | null;
+    broadcasts?: string[];
+    /** From `networksOnOtherGames`: national feeds busy with another game. */
+    networksOnOtherGames?: string[];
+  },
   channels: C[],
   limit = 4,
   homeMarkets: readonly string[] = HOME_MARKETS,
@@ -676,6 +714,12 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
       continue;
     }
     if (looksLikeEventFeed(n)) continue;
+
+    // Showing a different game right now, by ESPN's own listing.
+    const carriesThisGame = (fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channel.name, net));
+    if (!carriesThisGame && (fixture.networksOnOtherGames ?? []).some((net) => channelCarriesNetwork(channel.name, net))) {
+      continue;
+    }
 
     const brand = NETWORK_BRANDS.find((b) => b.pattern.test(n));
     if (brand && brand.leagues.includes(fixture.league)) {

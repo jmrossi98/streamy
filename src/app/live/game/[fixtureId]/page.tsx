@@ -14,6 +14,7 @@ import {
   findEpgConfirmedChannelNames,
   HOME_MARKETS,
   findEpgElsewhereChannelNames,
+  networksOnOtherGames,
   resolveChannelForFixture,
 } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
@@ -163,7 +164,13 @@ export default async function GamePage({
   // switch to when the best stream of the moment stops being the best.
   const networkOrMarketCandidates = channelConfirmed
     ? findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf).filter((c) => c.id !== resolved?.id)
-    : findCandidateChannels(fixture, channels, 8, HOME_MARKETS, qualityOf).filter(
+    : findCandidateChannels(
+        { ...fixture, networksOnOtherGames: networksOnOtherGames(fixture, fixtures) },
+        channels,
+        8,
+        HOME_MARKETS,
+        qualityOf
+      ).filter(
         (c) => c.id !== resolved?.id
       );
 
