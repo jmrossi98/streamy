@@ -25,6 +25,14 @@ describe("newestReplacement", () => {
     const old = s(3, "ESPN", 501, "2026-10-15", true);
     expect(newestReplacement(old, [old, s(4, "ESPN2", 502, "2026-10-16")])).toBeNull();
   });
+  it("never trusts a provider id that now names a different channel", () => {
+    // Trex's new panel, 2026-10-16: the old CBS Chiefs id was reused for a Finnish Disney+ feed.
+    const old = s(1, "NFL TEAMS| CBS CHIEFS KANSAS CITY MO", 660785, "2026-10-15", true, 5);
+    const reused = s(2, "FIN| DISNEY+ LAPSET 5 FHD", 660785, "2026-10-17", false, 5);
+    expect(newestReplacement(old, [old, reused])).toBeNull();
+    const relabelled = s(3, "US| CBS CHIEFS KANSAS CITY MO HD", 660785, "2026-10-17", false, 5);
+    expect(newestReplacement(old, [old, reused, relabelled])?.id).toBe(3);
+  });
 });
 
 describe("relinkChannelStreams", () => {

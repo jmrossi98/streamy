@@ -23,14 +23,36 @@ export type RelinkStream = {
 };
 
 /**
+ * A stream's name without the provider's category prefix ("US| ", "USA - "),
+ * quality tag or superscript marks. The same rule as base_name in
+ * mediabox-infra's iptv-credentials-sync.py.
+ */
+export function baseName(name: string): string {
+  let n = (name ?? "").replace(/[ᴬ-ᶿ⁰-₟]+/g, " ").toUpperCase();
+  n = n.replace(/^s*[^|]{1,24}|s*|^s*[A-Z0-9+ ]{1,10}s-s+/, "");
+  n = n.replace(/s+/g, " ").trim();
+  const quality = /s+(?:F?HD|HDTV|SD|4K|UHD|RAW)$/;
+  while (quality.test(n)) n = n.replace(quality, "").trim();
+  return n;
+}
+
+/**
  * The newest non-stale copy of the same stream, if there is a newer one.
  * Matched by provider stream id first, else by exact name (a provider that
- * moved to a new panel renumbers everything).
+ * moved to a new panel renumbers everything). An id match only counts when
+ * the names agree too: trex's 2026-10 renewal moved it to a panel that reused
+ * ids for other channels, and id-alone matching put "CBS CHIEFS KANSAS CITY"
+ * on a Finnish Disney+ feed.
  */
 export function newestReplacement(stream: RelinkStream, pool: RelinkStream[]): RelinkStream | null {
   const sid = stream.stream_id;
+  const base = baseName(stream.name);
   const same = pool.filter(
-    (s) => s.id !== stream.id && !s.is_stale && ((sid != null && s.stream_id === sid) || s.name === stream.name)
+    (s) =>
+      s.id !== stream.id &&
+      !s.is_stale &&
+      ((sid != null && s.stream_id === sid && (s.name === stream.name || (!!base && baseName(s.name) === base))) ||
+        s.name === stream.name)
   );
   same.sort((a, b) => {
     const byId = Number(sid != null && b.stream_id === sid) - Number(sid != null && a.stream_id === sid);
