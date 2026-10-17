@@ -4,6 +4,7 @@
 import { prisma } from "@/lib/db";
 import { getMovieById, getOriginalLanguage, getSeason, getShowById } from "@/lib/tmdb";
 import { ANIME, tagAnime } from "@/lib/animeRules";
+import { toCardMovie, toCardShow } from "@/lib/cardData";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import type { MovieProgress } from "@/components/MovieRow";
 import { latestEpisodePerShow, type ShowProgress } from "@/lib/showProgressRules";
@@ -35,17 +36,18 @@ export type WatchlistData = {
  * Flash library, and making the Movies tab wait on all three to render a
  * poster row would be a poor trade.
  */
-export async function getWatchlistMovies(userId: string): Promise<Movie[]> {
+export async function getWatchlistMovies(userId: string, limit?: number): Promise<Movie[]> {
   const items = await prisma.watchlistItem.findMany({
     where: { userId },
     orderBy: { addedAt: "desc" },
+    take: limit,
   });
   if (items.length === 0) return [];
 
   const details = await Promise.all(items.map((item) => getMovieById(item.movieId)));
   // Narrowed to NonNullable rather than to Movie: these are MovieDetail, which
   // is a superset, and a predicate has to be assignable to what it narrows.
-  return details.filter((m): m is NonNullable<typeof m> => m != null);
+  return details.filter((m): m is NonNullable<typeof m> => m != null).map(toCardMovie);
 }
 
 /** One show TMDB won't answer for right now leaves a gap, not an error page. */
@@ -55,11 +57,13 @@ function showOrNull(id: string) {
 
 /** Just the saved shows. Same reasoning as getWatchlistMovies. */
 export async function getWatchlistShows(
-  userId: string
+  userId: string,
+  limit?: number
 ): Promise<(TVShow & { numberOfSeasons: number })[]> {
   const items = await prisma.watchlistShowItem.findMany({
     where: { userId },
     orderBy: { addedAt: "desc" },
+    take: limit,
   });
   if (items.length === 0) return [];
 
@@ -67,7 +71,7 @@ export async function getWatchlistShows(
   return tagAnime(
     details
       .filter((s): s is NonNullable<typeof s> => s != null)
-      .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons })),
+      .map(toCardShow),
     showLanguage
   );
 }
@@ -76,7 +80,19 @@ export async function getWatchlistShows(
  *  poster rows scroll horizontally (ScrollableRow) like Home/Movies. */
 export async function getWatchlist(
   userId: string,
-  { splitAnime = false }: { splitAnime?: boolean } = {}
+  {
+    splitAnime = false,
+    rowLimit,
+  }: {
+    splitAnime?: boolean;
+    /**
+     * For the rows page: look up and return only this many of each kind,
+     * newest first. The shelf pages leave it unset and get everything.
+     * Shows are all looked up when splitting anime, since the split needs
+     * each show's genres; only what is returned is cut.
+     */
+    rowLimit?: number;
+  } = {}
 ): Promise<WatchlistData> {
   const [movieItems, showItems, gameItems, channelItems, flashItems, allProgress, episodeProgress] =
     await Promise.all([
@@ -135,15 +151,17 @@ export async function getWatchlist(
     .filter((g): g is FlashGameSummary => g != null);
 
   const [movieDetails, showDetails] = await Promise.all([
-    Promise.all(movieItems.map((item) => getMovieById(item.movieId))),
-    Promise.all(showItems.map((item) => showOrNull(item.showId))),
+    Promise.all(movieItems.slice(0, rowLimit).map((item) => getMovieById(item.movieId))),
+    Promise.all(
+      (splitAnime ? showItems : showItems.slice(0, rowLimit)).map((item) => showOrNull(item.showId))
+    ),
   ]);
 
   const movies: Movie[] = [];
   const progressMap: Record<string, MovieProgress> = {};
   movieDetails.forEach((m) => {
     if (m) {
-      movies.push(m);
+      movies.push(toCardMovie(m));
       const p = allProgress.find((x) => x.movieId === m.id);
       if (p)
         progressMap[m.id] = {
@@ -157,11 +175,11 @@ export async function getWatchlist(
   const allShows = await tagAnime(
     showDetails
       .filter((s): s is NonNullable<typeof s> => s != null)
-      .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons })),
+      .map(toCardShow),
     showLanguage
   );
-  const anime = splitAnime ? allShows.filter((s) => s.genres.includes(ANIME)) : [];
-  const shows = splitAnime ? allShows.filter((s) => !s.genres.includes(ANIME)) : allShows;
+  const anime = (splitAnime ? allShows.filter((s) => s.genres.includes(ANIME)) : []).slice(0, rowLimit);
+  const shows = (splitAnime ? allShows.filter((s) => !s.genres.includes(ANIME)) : allShows).slice(0, rowLimit);
 
   const savedShowIds = new Set(showItems.map((i) => i.showId));
   const showProgress = await resolveShowProgress(

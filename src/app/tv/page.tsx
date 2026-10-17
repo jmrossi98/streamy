@@ -2,7 +2,7 @@ import { getSession } from "@/lib/auth";
 import { getWatchlistShows } from "@/lib/watchlist";
 import { TVRow } from "@/components/TVRow";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
-import { shelfHref } from "@/lib/browseShelfRules";
+import { shelfHref, ROW_WINDOW } from "@/lib/browseShelfRules";
 import { getShowBrowse } from "@/lib/browseRows";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export default async function TVPage() {
   const session = await getSession();
   const [browse, myList] = await Promise.all([
     getShowBrowse(),
-    session?.user?.id ? getWatchlistShows(session.user.id) : Promise.resolve([]),
+    session?.user?.id ? getWatchlistShows(session.user.id, ROW_WINDOW) : Promise.resolve([]),
   ]);
 
   return (

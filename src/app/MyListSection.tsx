@@ -1,7 +1,7 @@
 import { getWatchlistMovies, getWatchlistShows } from "@/lib/watchlist";
 import { MovieRow } from "@/components/MovieRow";
 import { TVRow } from "@/components/TVRow";
-import { shelfHref } from "@/lib/browseShelfRules";
+import { shelfHref, ROW_WINDOW } from "@/lib/browseShelfRules";
 
 /**
  * The viewer's saved titles, below Continue Watching on Home.
@@ -20,8 +20,8 @@ import { shelfHref } from "@/lib/browseShelfRules";
  */
 export async function MyListSection({ userId }: { userId: string }) {
   const [movies, shows] = await Promise.all([
-    getWatchlistMovies(userId),
-    getWatchlistShows(userId),
+    getWatchlistMovies(userId, ROW_WINDOW),
+    getWatchlistShows(userId, ROW_WINDOW),
   ]);
 
   if (movies.length === 0 && shows.length === 0) return null;

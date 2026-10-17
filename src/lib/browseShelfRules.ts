@@ -35,6 +35,19 @@ export function shelfHref(media: ShelfMedia, shelf: Shelf): string {
 
 /** TMDB serves lists twenty at a time. */
 export const SHELF_PAGE_SIZE = 20;
+
+/**
+ * How many tiles a sideways row renders when it has a shelf to open. My List
+ * rendered all ~680 saved titles as tiles at once, and the page paid to build
+ * and hydrate every one; nobody scrolls a row that far when the heading opens
+ * the whole list as a grid.
+ */
+export const ROW_WINDOW = 40;
+
+/** A row's tiles: the first ROW_WINDOW when a shelf holds the rest, else all. */
+export function rowWindow<T>(items: T[], hasShelf: boolean): T[] {
+  return hasShelf && items.length > ROW_WINDOW ? items.slice(0, ROW_WINDOW) : items;
+}
 /** As far as "Load more" goes: 200 titles, by which point search is the better tool. */
 export const MAX_SHELF_PAGES = 10;
 

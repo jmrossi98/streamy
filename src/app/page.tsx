@@ -92,14 +92,13 @@ export default async function HomePage() {
   const featuredProgressSeconds =
     allWatchProgress.find((p) => String(p.movieId) === String(featured.id))?.progressSeconds ?? 0;
 
-  const prefetchIds = Array.from(
-    new Set([
-      String(featured.id),
-      ...trending.slice(0, 5).map((m) => String(m.id)),
-      ...(genreRows[0]?.movies.slice(0, 4).map((m) => String(m.id)) ?? []),
-    ])
-  );
-  const prefetchShowIds = trendingTV.slice(0, 6).map((s) => String(s.id));
+  // Only the hero is warmed ahead of time. This used to be ten movies (their
+  // title and play pages) and six shows on every home visit: ~30 server
+  // renders, each with Jellyfin/Radarr lookups on the media box, competing
+  // with the page the viewer is actually loading. Tiles now prefetch on hover
+  // (useHoverPrefetch), which is when someone is about to click.
+  const prefetchIds = [String(featured.id)];
+  const prefetchShowIds: string[] = [];
   const runtimeIds = progressList.map((p) => String(p.movieId));
 
   return (

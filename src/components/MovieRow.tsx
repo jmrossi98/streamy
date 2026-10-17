@@ -3,11 +3,12 @@
 import { useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
 import type { Movie } from "@/lib/tmdb";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
 import { setMovieInCache } from "@/lib/movieCache";
+import { rowWindow } from "@/lib/browseShelfRules";
 
 /** Warm movie cache on hover so /watch/[id] play loads fast when they click. */
 function prefetchMovie(id: string) {
@@ -46,11 +47,11 @@ export function MovieCard({
   progress?: MovieProgress;
   widthClass?: string;
 }) {
-  const router = useRouter();
   const pct = progress ? progressPercent(progress.progressSeconds, progress.runtimeMinutes) : 0;
   const showProgress = progress && progress.progressSeconds > 0;
   const watchHref = `/watch/${movie.id}`;
   const idStr = String(movie.id);
+  const onHover = useHoverPrefetch([watchHref], () => prefetchMovie(idStr));
   return (
     <div
       className={`movie-card group relative block ${widthClass} overflow-hidden rounded bg-netflix-dark touch-manipulation max-md:rounded-2xl max-md:shadow-lg max-md:shadow-black/40 max-md:ring-1 max-md:ring-white/5`}
@@ -58,12 +59,9 @@ export function MovieCard({
       <div className="relative aspect-video w-full">
         <Link
           href={watchHref}
-          prefetch
+          prefetch={false}
           className="absolute inset-0 z-0 block"
-          onMouseEnter={() => {
-            prefetchMovie(idStr);
-            router.prefetch(watchHref);
-          }}
+          onMouseEnter={onHover}
         >
           <Image
             src={movie.poster}
@@ -84,11 +82,8 @@ export function MovieCard({
       </div>
       <Link
         href={watchHref}
-        prefetch
-        onMouseEnter={() => {
-          prefetchMovie(idStr);
-          router.prefetch(watchHref);
-        }}
+        prefetch={false}
+        onMouseEnter={onHover}
         className="block p-2"
       >
         <p className="text-white font-medium text-sm truncate">{movie.title}</p>
@@ -103,12 +98,13 @@ export function MovieCard({
 }
 
 export function MovieRow({ title, movies, progressMap = {}, href }: MovieRowProps) {
+  const shown = rowWindow(movies, Boolean(href));
   useEffect(() => {
-    movies.forEach((m) => setMovieInCache(m.id, m));
-  }, [movies]);
+    shown.forEach((m) => setMovieInCache(m.id, m));
+  }, [shown]);
   return (
     <ScrollableRow title={title} href={href}>
-      {movies.map((movie) => (
+      {shown.map((movie) => (
         <MovieCard key={movie.id} movie={movie} progress={progressMap[movie.id]} />
       ))}
     </ScrollableRow>
