@@ -17,6 +17,13 @@ import { isAllowedSubtitleLanguage, type AudioTrack } from "./audioLanguageRules
 import { targetCovers, type HistoryTarget } from "./watchHistoryRules";
 import { containerBlocksDirectPlay } from "./directPlayRules";
 import { pickTrickplay, type TrickplayManifest } from "./trickplayRules";
+import {
+  NO_SEGMENTS,
+  parseSegments,
+  type EpisodeSegments,
+  type JellyfinChapter,
+  type JellyfinSegment,
+} from "./episodeSegmentRules";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -848,5 +855,27 @@ export async function getJellyfinActiveTranscodeCount(): Promise<number | null> 
   } catch (err) {
     console.error("[jellyfin] getJellyfinActiveTranscodeCount failed:", err);
     return null;
+  }
+}
+
+/**
+ * The item's intro, recap and credits times -- see episodeSegmentRules.ts.
+ * Never throws: a lookup that fails just means no skip buttons.
+ */
+export async function getJellyfinSegments(itemId: string): Promise<EpisodeSegments> {
+  if (!isJellyfinConfigured()) return NO_SEGMENTS;
+  try {
+    // List route for the chapters, for the reason given in getJellyfinSubtitleTracks.
+    const [segments, items] = await Promise.all([
+      jellyfinFetch<{ Items?: JellyfinSegment[] }>(`/MediaSegments/${itemId}`).catch(() => ({ Items: [] })),
+      jellyfinFetch<{ Items: { RunTimeTicks?: number; Chapters?: JellyfinChapter[] }[] }>(
+        `/Items?Ids=${itemId}&Fields=Chapters`
+      ),
+    ]);
+    const item = items.Items[0];
+    return parseSegments(segments.Items, item?.Chapters, item?.RunTimeTicks);
+  } catch (err) {
+    console.error(`[jellyfin] getJellyfinSegments failed for item ${itemId}:`, err);
+    return NO_SEGMENTS;
   }
 }

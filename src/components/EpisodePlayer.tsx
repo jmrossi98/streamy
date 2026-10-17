@@ -2,14 +2,25 @@
 
 import { markShowWatched } from "@/lib/showResumeFreshness";
 import { useFreshResume, useResumeRecheck } from "@/lib/useFreshResume";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type RefObject } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { VideoChrome } from "./VideoChrome";
 import { type SubtitleOption } from "./SubtitleSelector";
 import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
+import { Button } from "./ui";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import type { EpisodePlayback } from "@/lib/episodePlayback";
+import {
+  continuingStart,
+  CREDITS_COUNTDOWN_SECONDS,
+  inCredits,
+  NO_SEGMENTS,
+  shouldAskStillWatching,
+  skipOfferAt,
+  type EpisodeSegments,
+} from "@/lib/episodeSegmentRules";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -25,7 +36,7 @@ type EpisodePlayerProps = {
   initialProgressSeconds: number;
   runtimeMinutes?: number | null;
   autoPlay?: boolean;
-  /** When set, show "Next episode" overlay when video ends and link to this href. */
+  /** The episode after this one; the player rolls on to it by itself. */
   nextEpisodeHref?: string | null;
   nextEpisodeLabel?: string;
   videoUrl?: string | null;
@@ -42,39 +53,263 @@ type EpisodePlayerProps = {
   audioTracks?: AudioOption[];
   /** The track playing at start. */
   defaultAudio?: number | null;
+  /** Intro/recap/credits times when the caller already has them; otherwise asked for. */
+  segments?: EpisodeSegments | null;
 };
 
-const NEXT_EPISODE_COUNTDOWN_SEC = 15;
+type Next = { seasonNumber: number; episodeNumber: number; href: string; label: string };
 
-export function EpisodePlayer({
+/** The episode being played, whichever way it was reached. */
+type Episode = {
+  seasonNumber: number;
+  episodeNumber: number;
+  episodeName: string;
+  runtimeMinutes: number | null;
+  videoUrl: string | null;
+  subtitleTracks: SubtitleOption[];
+  forceTranscode: boolean;
+  defaultSubtitle: number | null;
+  audioTracks: AudioOption[];
+  defaultAudio: number | null;
+  progressSeconds: number;
+  segments: EpisodeSegments | null;
+  next: Next | null;
+};
+
+function parseNext(href: string | null | undefined, label: string | undefined): Next | null {
+  const m = href?.match(/\/episode\/(\d+)\/(\d+)/);
+  if (!href || !m) return null;
+  return { seasonNumber: Number(m[1]), episodeNumber: Number(m[2]), href, label: label ?? `S${m[1]} E${m[2]}` };
+}
+
+/**
+ * The episode player. A frame that stays put for the whole viewing, holding
+ * one player per episode: rolling on to the next episode swaps the player
+ * inside it rather than going to that episode's page. Going to the page
+ * replaced the element in fullscreen, which is what dropped the viewer out of
+ * fullscreen at every episode (and made them click through). The frame is
+ * what fullscreen enlarges, so it carries straight on.
+ *
+ * Each episode still gets a fresh engine (keyed by episode): the engine holds
+ * a lot of per-title state -- the transcode fallback, its play session, the
+ * chosen audio -- and starting clean is far safer than resetting all of it.
+ */
+export function EpisodePlayer(props: EpisodePlayerProps) {
+  const { showId, showName, backdropUrl, closeHref, onClose, autoPlay = true } = props;
+  const router = useRouter();
+  const frameRef = useRef<HTMLDivElement>(null);
+
+  const fromProps: Episode = {
+    seasonNumber: props.seasonNumber,
+    episodeNumber: props.episodeNumber,
+    episodeName: props.episodeName,
+    runtimeMinutes: props.runtimeMinutes ?? null,
+    videoUrl: props.videoUrl ?? null,
+    subtitleTracks: props.subtitleTracks ?? [],
+    forceTranscode: props.forceTranscode ?? false,
+    defaultSubtitle: props.defaultSubtitle ?? null,
+    audioTracks: props.audioTracks ?? [],
+    defaultAudio: props.defaultAudio ?? null,
+    progressSeconds: props.initialProgressSeconds,
+    segments: props.segments ?? null,
+    next: parseNext(props.nextEpisodeHref, props.nextEpisodeLabel),
+  };
+  // Episodes reached by rolling on, tied to the episode the caller asked
+  // for: when the caller picks another one (the show page's own episode
+  // list), that wins again.
+  const propsKey = `${props.seasonNumber}-${props.episodeNumber}`;
+  const [rolled, setRolled] = useState<{ from: string; episode: Episode } | null>(null);
+  const episode = rolled && rolled.from === propsKey ? rolled.episode : fromProps;
+  const continuing = !!rolled && rolled.from === propsKey;
+
+  // The next episode's playback, asked for once this one is under way so
+  // rolling on is instant.
+  const nextRef = useRef<{ key: string; data: Promise<EpisodePlayback | null> } | null>(null);
+  const loadNext = useCallback(
+    (next: Next) => {
+      const key = `${next.seasonNumber}-${next.episodeNumber}`;
+      if (nextRef.current?.key !== key) {
+        const data = fetch(`/api/stream/episode/${showId}/${next.seasonNumber}/${next.episodeNumber}/playback`, { cache: "no-store" })
+          .then((r) => (r.ok ? (r.json() as Promise<EpisodePlayback>) : null))
+          .catch(() => null);
+        nextRef.current = { key, data };
+      }
+      return nextRef.current.data;
+    },
+    [showId]
+  );
+  useEffect(() => {
+    const next = episode.next;
+    if (!next) return;
+    const t = setTimeout(() => void loadNext(next), 20_000);
+    return () => clearTimeout(t);
+  }, [episode.next, loadNext]);
+
+  // Episodes rolled on to with nobody touching anything (see shouldAskStillWatching).
+  const unattendedRef = useRef(0);
+  const [askStillWatching, setAskStillWatching] = useState(false);
+  useEffect(() => {
+    const touched = () => {
+      unattendedRef.current = 0;
+    };
+    window.addEventListener("pointerdown", touched);
+    window.addEventListener("keydown", touched);
+    return () => {
+      window.removeEventListener("pointerdown", touched);
+      window.removeEventListener("keydown", touched);
+    };
+  }, []);
+
+  const advancingRef = useRef(false);
+  const advance = useCallback(
+    async (how: "auto" | "manual") => {
+      const next = episode.next;
+      if (!next || advancingRef.current) return;
+      if (how === "auto") {
+        if (shouldAskStillWatching(unattendedRef.current)) {
+          setAskStillWatching(true);
+          return;
+        }
+        unattendedRef.current += 1;
+      }
+      advancingRef.current = true;
+      const data = await loadNext(next);
+      advancingRef.current = false;
+      if (!data) {
+        // Could not learn about it here; the episode's own page still can.
+        router.push(next.href);
+        return;
+      }
+      setAskStillWatching(false);
+      setRolled({ from: propsKey, episode: data });
+      // The address follows along, so a refresh, Back or a shared link lands
+      // on this episode. Replaced, not pushed: one entry for the viewing.
+      window.history.replaceState(window.history.state, "", next.href);
+    },
+    [episode.next, loadNext, propsKey, router]
+  );
+
+  return (
+    <div
+      ref={frameRef}
+      // Fixed full-viewport always -- both callers (the standalone episode
+      // page and ShowContent's click-to-play overlay) use this as the whole
+      // screen. inset-0 alone, no h-screen/w-screen: those are a static
+      // 100vh/100vw snapshot, and mobile browsers resize the real viewport
+      // as their address bar collapses, which left the scrubber below the
+      // fold. And no `relative` alongside `fixed`: Tailwind orders position
+      // utilities so `relative` wins regardless of class order, collapsing
+      // the frame to ~0px at the top of the page.
+      className="bg-black fixed inset-0 z-30"
+    >
+      <EpisodeView
+        key={`${episode.seasonNumber}-${episode.episodeNumber}`}
+        showId={showId}
+        showName={showName}
+        backdropUrl={backdropUrl}
+        episode={episode}
+        autoPlay={autoPlay || continuing}
+        continuing={continuing}
+        closeHref={closeHref}
+        onClose={onClose}
+        frameRef={frameRef}
+        onAdvance={advance}
+      />
+      {askStillWatching && episode.next && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-5 bg-black/85 px-6 text-center">
+          <p className="text-xl font-semibold text-white">Still watching {showName}?</p>
+          <p className="text-sm text-white/70">Up next: {episode.next.label}</p>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => {
+                unattendedRef.current = 0;
+                void advance("manual");
+              }}
+            >
+              Keep watching
+            </Button>
+            {closeHref ? (
+              <Link href={closeHref} className="rounded border border-white/20 px-3 py-1.5 text-sm text-white/80 hover:bg-white/10">
+                I&apos;m done
+              </Link>
+            ) : (
+              <Button variant="secondary" size="md" onClick={onClose}>
+                I&apos;m done
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type EpisodeViewProps = {
+  showId: string;
+  showName: string;
+  backdropUrl: string;
+  episode: Episode;
+  autoPlay: boolean;
+  continuing: boolean;
+  closeHref?: string;
+  onClose?: () => void;
+  frameRef: RefObject<HTMLDivElement | null>;
+  onAdvance: (how: "auto" | "manual") => void;
+};
+
+/** One episode's player, inside EpisodePlayer's frame. */
+function EpisodeView({
   showId,
   showName,
-  seasonNumber,
-  episodeNumber,
-  episodeName,
   backdropUrl,
-  initialProgressSeconds,
-  runtimeMinutes,
-  autoPlay = true,
-  nextEpisodeHref,
-  nextEpisodeLabel,
-  videoUrl,
+  episode,
+  autoPlay,
+  continuing,
   closeHref,
   onClose,
-  subtitleTracks = [],
-  forceTranscode = false,
-  defaultSubtitle = null,
-  audioTracks = [],
-  defaultAudio = null,
-}: EpisodePlayerProps) {
-  const router = useRouter();
+  frameRef,
+  onAdvance,
+}: EpisodeViewProps) {
+  const {
+    seasonNumber,
+    episodeNumber,
+    episodeName,
+    runtimeMinutes,
+    videoUrl,
+    subtitleTracks,
+    forceTranscode,
+    defaultSubtitle,
+    audioTracks,
+    defaultAudio,
+    next,
+  } = episode;
+
+  // The caller's segments, or asked for (the show page's overlay has none).
+  const [fetchedSegments, setFetchedSegments] = useState<EpisodeSegments | null>(null);
+  useEffect(() => {
+    if (episode.segments || !videoUrl) return;
+    let live = true;
+    fetch(`${videoUrl}/segments`)
+      .then((r) => (r.ok ? (r.json() as Promise<EpisodeSegments>) : null))
+      .then((s) => {
+        if (live && s) setFetchedSegments(s);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [episode.segments, videoUrl]);
+  const segments = episode.segments ?? fetchedSegments ?? NO_SEGMENTS;
+
   // The page's resume point can be minutes old; this re-asks on open.
   const resumeQuery = videoUrl
     ? `showId=${encodeURIComponent(showId)}&season=${seasonNumber}&episode=${episodeNumber}`
     : null;
-  const { seconds: resumeFrom, settled: resumeSettled } = useFreshResume(resumeQuery, initialProgressSeconds);
-  const [showNextOverlay, setShowNextOverlay] = useState(false);
-  const [nextCountdown, setNextCountdown] = useState(NEXT_EPISODE_COUNTDOWN_SEC);
+  const { seconds: resumeFrom, settled: resumeSettled } = useFreshResume(resumeQuery, episode.progressSeconds);
+  const runtimeSeconds = runtimeMinutes ? runtimeMinutes * 60 : null;
+  const startFrom = continuing ? continuingStart(resumeFrom, runtimeSeconds, segments) : resumeFrom;
 
   // Stable across renders (see usePlayerEngine's saveProgress doc).
   const saveProgress = useCallback((sec: number) => {
@@ -110,7 +345,7 @@ export function EpisodePlayer({
     onVideoPlay,
   } = usePlayerEngine({
     videoUrl,
-    initialProgressSeconds: resumeFrom,
+    initialProgressSeconds: startFrom,
     resumeSettled,
     runtimeMinutes,
     autoPlay,
@@ -121,63 +356,25 @@ export function EpisodePlayer({
     subtitleTracks,
     identityKey: `${showId}-${seasonNumber}-${episodeNumber}`,
     saveProgress,
+    fullscreenRef: frameRef,
+    continuing,
   });
   // Back to a paused player after watching elsewhere: pick up that spot.
   useResumeRecheck(resumeQuery, videoRef);
 
-  useEffect(() => {
-    if (!showNextOverlay || !nextEpisodeHref) return;
-    const t = setInterval(() => {
-      setNextCountdown((c) => {
-        if (c <= 1) {
-          clearInterval(t);
-          return 0;
-        }
-        return c - 1;
-      });
-    }, 1000);
-    return () => clearInterval(t);
-  }, [showNextOverlay, nextEpisodeHref]);
+  const showVideo = playing && !showOverlay;
+  const t = chrome.currentTime;
+  const skip = showVideo ? skipOfferAt(t, segments) : null;
 
-  useEffect(() => {
-    if (showNextOverlay && nextEpisodeHref && nextCountdown === 0) {
-      router.push(nextEpisodeHref);
-    }
-  }, [showNextOverlay, nextEpisodeHref, nextCountdown, router]);
-
-  const showVideo = playing && !showOverlay && !showNextOverlay;
+  // Credits: offer the next episode and roll on after a short count, unless
+  // the viewer chose to watch them. The count holds while paused.
+  const [watchCredits, setWatchCredits] = useState(false);
+  const creditsCard = showVideo && !!next && !watchCredits && inCredits(t, segments);
 
   return (
     <div
       ref={containerRef}
-      // Fixed full-viewport always, not just once playback starts -- both
-      // callers (the standalone episode watch page and ShowContent's
-      // click-to-play overlay) use this as the whole screen, never as an
-      // inline preview embedded in more page. A pre-play "min-h-[400px]
-      // h-[60vh]" placeholder size used to apply here, which put the play
-      // button/spinner in a small box pinned near the top of the page
-      // instead of centered in it -- there's nothing below it to make the
-      // smaller size meaningful, just empty background (in the overlay
-      // case, empty background stacked on top of the show page underneath).
-      // inset-0 alone (no h-screen/w-screen) is deliberate -- those are a
-      // static 100vh/100vw snapshot, and mobile browsers resize the *real*
-      // viewport as their address bar collapses/expands, which is what left
-      // the scrubber and expand button sitting below the visible fold on
-      // first load.
-      //
-      // fixed/inset-0 ONLY -- no relative, no w-full. Tailwind's own
-      // generated stylesheet orders the position utilities as static, fixed,
-      // absolute, relative, sticky, so a `relative` class alongside `fixed`
-      // on the same element wins the cascade regardless of which comes first
-      // in the class string -- position collapses back to relative, inset-0
-      // becomes a no-op (it only affects absolute/fixed/sticky), and with no
-      // explicit height and every child absolutely positioned (nothing left
-      // to size the box from), the whole element collapsed to ~0px tall,
-      // pinned at the top of the page -- exactly the "clipped to top center"
-      // regression this introduced. `fixed` alone already establishes a
-      // positioning context for the absolutely-positioned children, so
-      // `relative` was never actually needed here.
-      className="bg-black fixed inset-0 z-30"
+      className="absolute inset-0"
       onMouseMove={() => showVideo && chrome.revealControls()}
       onTouchStart={() => showVideo && chrome.revealControls()}
     >
@@ -195,16 +392,18 @@ export function EpisodePlayer({
           if (chrome.controlsVisible) chrome.togglePlay();
           else chrome.revealControls();
         }}
-        className={`absolute inset-0 w-full h-full object-contain ${showOverlay || showNextOverlay ? "invisible" : ""}`}
+        className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={`${showName} - ${episodeName}`}
         onError={onVideoError}
         onPlay={onVideoPlay}
         onEnded={() => {
-          if (nextEpisodeHref) setShowNextOverlay(true);
+          // Straight on to the next episode -- the credits card already
+          // offered it, and anyone who wanted to stop has had the chance.
+          if (next) onAdvance("auto");
         }}
       >
-        {subtitleTracks.map((t) => (
-          <track key={t.index} kind="subtitles" src={`${videoUrl}/subtitles/${t.index}`} label={t.label} data-sub-index={t.index} />
+        {subtitleTracks.map((st) => (
+          <track key={st.index} kind="subtitles" src={`${videoUrl}/subtitles/${st.index}`} label={st.label} data-sub-index={st.index} />
         ))}
       </video>
       {showVideo && buffering && (
@@ -230,81 +429,64 @@ export function EpisodePlayer({
           trickplaySrc={videoUrl ? `${videoUrl}/trickplay` : null}
           extraBottomRight={
             <>
-            <PlaybackOptionsMenu
-              audioTracks={audioTracks}
-              selectedAudio={selectedAudio}
-              onAudio={selectAudio}
-              subtitleTracks={subtitleTracks}
-              selectedSubtitle={selectedSubtitle}
-              onSubtitle={setSelectedSubtitle}
-            />
-            {nextEpisodeHref ? (
-              <Link
-                href={nextEpisodeHref}
-                prefetch
-                title={nextEpisodeLabel ? `Next: ${nextEpisodeLabel}` : "Next episode"}
-                aria-label={nextEpisodeLabel ? `Next episode: ${nextEpisodeLabel}` : "Next episode"}
-                className="shrink-0 touch-manipulation"
-              >
-                <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path d="M6 5v14l8.5-7L6 5zm10 0v14h2V5h-2z" />
-                </svg>
-              </Link>
-            ) : null}
+              <PlaybackOptionsMenu
+                audioTracks={audioTracks}
+                selectedAudio={selectedAudio}
+                onAudio={selectAudio}
+                subtitleTracks={subtitleTracks}
+                selectedSubtitle={selectedSubtitle}
+                onSubtitle={setSelectedSubtitle}
+              />
+              {next ? (
+                <button
+                  type="button"
+                  onClick={() => onAdvance("manual")}
+                  title={`Next: ${next.label}`}
+                  aria-label={`Next episode: ${next.label}`}
+                  className="shrink-0 touch-manipulation"
+                >
+                  <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path d="M6 5v14l8.5-7L6 5zm10 0v14h2V5h-2z" />
+                  </svg>
+                </button>
+              ) : null}
             </>
           }
         />
       )}
-      {showNextOverlay && nextEpisodeHref && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80">
-          <p className="text-white text-lg mb-2">Next episode</p>
-          {nextEpisodeLabel && (
-            <p className="text-white/80 text-sm mb-4">{nextEpisodeLabel}</p>
-          )}
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              onClick={() => setShowNextOverlay(false)}
-              className="px-4 py-2 rounded bg-white/20 text-white hover:bg-white/30"
-            >
-              Cancel
-            </button>
-            <Link
-              href={nextEpisodeHref}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-white text-netflix-black font-semibold rounded hover:bg-white/90"
-            >
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-              Play next
-              {nextCountdown > 0 && (
-                <span className="text-sm opacity-80">({nextCountdown}s)</span>
-              )}
-            </Link>
-          </div>
-        </div>
+      {skip && (
+        // Shown whether or not the controls are, like any streaming service's.
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => chrome.seek(skip.to)}
+          className="absolute bottom-24 right-[max(1.5rem,env(safe-area-inset-right,0px))] z-20 border-white/60 bg-black/60 px-5 py-2.5 text-base font-semibold text-white backdrop-blur-sm hover:bg-white hover:text-black"
+        >
+          {skip.label}
+        </Button>
       )}
-      {showOverlay && !showNextOverlay && (
+      {creditsCard && next && (
+        <CreditsCard
+          label={next.label}
+          counting={chrome.isPlaying}
+          onPlay={() => onAdvance("manual")}
+          onDone={() => onAdvance("auto")}
+          onWatchCredits={() => setWatchCredits(true)}
+        />
+      )}
+      {showOverlay && (
         <>
-          <Image
-            src={backdropUrl}
-            alt=""
-            fill
-            className="object-cover"
-            sizes="100vw"
-          />
+          <Image src={backdropUrl} alt="" fill className="object-cover" sizes="100vw" />
           <div className="hero-overlay absolute inset-0" />
-          {(closeHref || onClose) && (
-            closeHref ? (
+          {(closeHref || onClose) &&
+            (closeHref ? (
               <Link
                 href={closeHref}
                 prefetch
                 aria-label="Close"
                 className="absolute top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
               >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <CloseIcon />
               </Link>
             ) : (
               <button
@@ -313,22 +495,13 @@ export function EpisodePlayer({
                 aria-label="Close"
                 className="absolute top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-[max(0.75rem,env(safe-area-inset-right,0px))] z-20 flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 active:bg-black/80 touch-manipulation"
               >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <CloseIcon />
               </button>
-            )
-          )}
+            ))}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             {!hasSource ? (
               <div className="z-10 flex max-w-sm flex-col items-center gap-2 px-6 text-center">
-                <svg
-                  className="h-10 w-10 text-white/50"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden
-                >
+                <svg className="h-10 w-10 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -369,6 +542,66 @@ export function EpisodePlayer({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+/**
+ * "Next episode" over the credits, counting down to rolling on. Mounted only
+ * while shown, so each appearance starts the count afresh; it holds while
+ * the video is paused.
+ */
+function CreditsCard({
+  label,
+  counting,
+  onPlay,
+  onDone,
+  onWatchCredits,
+}: {
+  label: string;
+  counting: boolean;
+  onPlay: () => void;
+  onDone: () => void;
+  onWatchCredits: () => void;
+}) {
+  const [left, setLeft] = useState(CREDITS_COUNTDOWN_SECONDS);
+  useEffect(() => {
+    if (!counting) return;
+    const id = setInterval(() => setLeft((c) => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(id);
+  }, [counting]);
+  const doneRef = useRef(onDone);
+  useEffect(() => {
+    doneRef.current = onDone;
+  }, [onDone]);
+  useEffect(() => {
+    if (left === 0) doneRef.current();
+  }, [left]);
+  return (
+    <div className="absolute bottom-24 right-[max(1.5rem,env(safe-area-inset-right,0px))] z-20 flex max-w-xs flex-col gap-3 rounded-lg bg-black/75 p-4 text-white shadow-xl backdrop-blur-sm">
+      <div>
+        <p className="text-xs uppercase tracking-wide text-white/60">Next episode</p>
+        <p className="truncate text-sm font-medium">{label}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button variant="primary" size="md" onClick={onPlay} className="bg-white text-black hover:bg-white/90">
+          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          Play now ({left})
+        </Button>
+        <Button variant="secondary" size="md" onClick={onWatchCredits}>
+          Watch credits
+        </Button>
+      </div>
     </div>
   );
 }

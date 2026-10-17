@@ -1,19 +1,8 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { prisma } from "@/lib/db";
-import { resumeSeconds } from "@/lib/progressSyncRules";
-import { jellyfinUserIdFor } from "@/lib/jellyfinAccounts";
-import { getShowById, getSeason } from "@/lib/tmdb";
-import {
-  findJellyfinEpisodeItemId,
-  getJellyfinUserData,
-  getJellyfinSubtitleTracks,
-  needsForcedTranscode,
-} from "@/lib/jellyfin";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
-import { getLanguagePlan } from "@/lib/playbackLanguage";
-import { nextEpisode } from "@/lib/nextEpisodeRules";
+import { getEpisodePlayback } from "@/lib/episodePlayback";
 
 type Props = {
   params: Promise<{ id: string; season: string; episode: string }>;
@@ -26,82 +15,35 @@ export default async function EpisodeWatchPage({ params }: Props) {
   if (Number.isNaN(seasonNum) || Number.isNaN(episodeNum)) notFound();
 
   const session = await getSession();
-  const [show, season, nextSeason, progressRow, jellyfinItemId] = await Promise.all([
-    getShowById(showId),
-    getSeason(showId, seasonNum),
-    getSeason(showId, seasonNum + 1),
-    session?.user?.id
-      ? prisma.episodeProgress.findUnique({
-          where: {
-            userId_showId_seasonNumber_episodeNumber: {
-              userId: session.user.id,
-              showId,
-              seasonNumber: seasonNum,
-              episodeNumber: episodeNum,
-            },
-          },
-        })
-      : null,
-    findJellyfinEpisodeItemId(showId, seasonNum, episodeNum),
-  ]);
-
-  if (!show || !season) notFound();
-  const ep = season.episodes.find((e) => e.episodeNumber === episodeNum);
-  if (!ep) notFound();
-
-  // Proxied through our own origin -- see the note in lib/jellyfin.ts.
-  const videoUrl = jellyfinItemId
-    ? `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}`
-    : null;
-  const [subtitles, codecForcesTranscode] = jellyfinItemId
-    ? await Promise.all([getJellyfinSubtitleTracks(jellyfinItemId), needsForcedTranscode(jellyfinItemId, (await headers()).get("user-agent"))])
-    : [null, false];
-  // Original-language audio (subbed, not dubbed) -- a non-default track can
-  // only be selected by transcoding. See audioLanguageRules.ts.
-  const language = jellyfinItemId
-    ? await getLanguagePlan(jellyfinItemId, "tv", showId, subtitles?.tracks)
-    : null;
-  const forceTranscode = codecForcesTranscode || !!language?.needsTranscode;
-
-  // Newest wins between Streamy and the Roku -- see progressSyncRules.ts.
-  const jellyfinState = jellyfinItemId
-    ? await getJellyfinUserData(jellyfinItemId, await jellyfinUserIdFor(session?.user?.id))
-    : null;
-  const initialProgressSeconds = resumeSeconds(
-    progressRow ? { seconds: progressRow.progressSeconds, updatedAt: progressRow.updatedAt } : null,
-    jellyfinState
-  );
-
-  const next = nextEpisode(showId, seasonNum, episodeNum, season.episodes, {
-    numberOfSeasons: show.numberOfSeasons,
-    nextSeasonEpisodes: nextSeason?.episodes,
+  const found = await getEpisodePlayback(showId, seasonNum, episodeNum, {
+    userId: session?.user?.id ?? null,
+    userAgent: (await headers()).get("user-agent"),
   });
-  const nextEpisodeHref = next?.href ?? null;
-  const nextEpisodeLabel = next?.label ?? null;
-
-  const backHref = `/show/${showId}?season=${seasonNum}`;
+  if (!found) notFound();
+  const { show, playback } = found;
 
   return (
     <div className="min-h-screen bg-netflix-black relative">
       <EpisodePlayer
         showId={show.id}
         showName={show.name}
-        seasonNumber={seasonNum}
-        episodeNumber={episodeNum}
-        episodeName={ep.name}
         backdropUrl={show.backdrop}
-        initialProgressSeconds={initialProgressSeconds}
-        runtimeMinutes={ep.runtime}
+        seasonNumber={playback.seasonNumber}
+        episodeNumber={playback.episodeNumber}
+        episodeName={playback.episodeName}
+        initialProgressSeconds={playback.progressSeconds}
+        runtimeMinutes={playback.runtimeMinutes}
         autoPlay
-        nextEpisodeHref={nextEpisodeHref}
-        nextEpisodeLabel={nextEpisodeLabel ?? undefined}
-        videoUrl={videoUrl}
-        closeHref={backHref}
-        subtitleTracks={subtitles?.tracks}
-        forceTranscode={forceTranscode}
-        defaultSubtitle={language?.defaultSubtitle ?? null}
-        audioTracks={language?.audioTracks ?? []}
-        defaultAudio={language?.defaultAudio ?? null}
+        nextEpisodeHref={playback.next?.href ?? null}
+        nextEpisodeLabel={playback.next?.label}
+        videoUrl={playback.videoUrl}
+        closeHref={`/show/${showId}?season=${seasonNum}`}
+        subtitleTracks={playback.subtitleTracks}
+        forceTranscode={playback.forceTranscode}
+        defaultSubtitle={playback.defaultSubtitle}
+        audioTracks={playback.audioTracks}
+        defaultAudio={playback.defaultAudio}
+        segments={playback.segments}
       />
     </div>
   );
