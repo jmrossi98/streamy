@@ -60,6 +60,14 @@ function chapterSpans(chapters: JellyfinChapter[], runtimeTicks: number | null):
     .filter((c) => typeof c.StartPositionTicks === "number")
     .sort((a, b) => a.StartPositionTicks! - b.StartPositionTicks!);
   return sorted.flatMap((c, i) => {
+    // Two chapters starting at the same moment means the file's chapter
+    // times can't be trusted: Clone High S1E5 has "Chapter 1" and "Credits"
+    // both at 0:00 and "Chapter 2" at 0:22, while its theme actually runs
+    // 0:22-0:56, so reading "Credits" as 0:00-0:22 skipped only the cold
+    // open (2026-10-17). Episodes with clean chapter times lined up with
+    // Intro Skipper to within 2 s.
+    const shared = sorted.some((o, j) => j !== i && o.StartPositionTicks === c.StartPositionTicks);
+    if (shared) return [];
     const end = sorted[i + 1]?.StartPositionTicks ?? runtimeTicks;
     return end == null ? [] : [{ name: c.Name ?? "", start: c.StartPositionTicks!, end }];
   });
