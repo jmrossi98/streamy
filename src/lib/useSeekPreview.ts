@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { nearestFrame, prewarmTimes, PREVIEW_HEIGHT, PREVIEW_WIDTH } from "./seekHoverRules";
+import { trickplayCell, type TrickplayManifest } from "./trickplayRules";
 
 /** Frames kept per title. 160x90 each, so a few megabytes at most. */
 const MAX_FRAMES = 300;
@@ -27,10 +28,18 @@ const MAX_FRAMES = 300;
  *
  * One seek at a time; what the pointer is on always goes ahead of the
  * background fill.
+ *
+ * Jellyfin's trickplay thumbnails come first when the title has them
+ * (`trickplaySrc`, see trickplayRules.ts): they are plain JPEG sheets, so they
+ * work for every file -- including the HEVC/MKV ones this browser cannot
+ * decode, which the raw-file approach above can never show and which are most
+ * of the library. The second <video> is only the fallback for a title whose
+ * thumbnails have not been made yet.
  */
 export function useSeekPreview(
-  src: string | null | undefined,
-  duration: number
+  rawSrc: string | null | undefined,
+  duration: number,
+  trickplaySrc?: string | null
 ): {
   videoRef: RefObject<HTMLVideoElement>;
   canvasRef: RefObject<HTMLCanvasElement>;
@@ -38,10 +47,34 @@ export function useSeekPreview(
   failed: boolean;
   /** A frame is on the canvas. */
   hasFrame: boolean;
+  /** Frames come from trickplay sheets; the second <video> is not needed. */
+  trickplay: boolean;
   /** Call with the pointed-at time, or null when the pointer leaves. */
   point: (seconds: number | null) => void;
   onError: () => void;
 } {
+  const [manifest, setManifest] = useState<{ base: string; m: TrickplayManifest } | null>(null);
+  const tp = trickplaySrc && manifest?.base === trickplaySrc ? manifest.m : null;
+  // With thumbnails in hand there is no file to open.
+  const src = tp ? null : rawSrc;
+  const sheets = useRef(new Map<string, HTMLImageElement>());
+
+  useEffect(() => {
+    if (!trickplaySrc) return;
+    let cancelled = false;
+    fetch(trickplaySrc)
+      .then((r) => (r.ok ? (r.json() as Promise<TrickplayManifest>) : null))
+      .then((m) => {
+        if (!cancelled && m) setManifest({ base: trickplaySrc, m });
+      })
+      .catch(() => {
+        /* none yet: the raw file, or the time alone */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [trickplaySrc]);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frames = useRef(new Map<number, HTMLCanvasElement>());
@@ -51,6 +84,42 @@ export function useSeekPreview(
   const filled = useRef(false);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [frameSrc, setFrameSrc] = useState<string | null>(null);
+
+  /** Draws the trickplay frame for a time, loading its sheet first if needed. */
+  const drawSheet = useCallback(
+    (t: number) => {
+      if (!tp || !trickplaySrc) return;
+      const paint = (at: number) => {
+        const cell = trickplayCell(at, tp);
+        if (!cell) return;
+        const img = sheets.current.get(`${trickplaySrc}/${cell.sheet}`);
+        const ctx = canvasRef.current?.getContext("2d");
+        if (!ctx || !img || !img.complete || img.naturalWidth === 0) return;
+        const scale = Math.min(PREVIEW_WIDTH / tp.width, PREVIEW_HEIGHT / tp.height);
+        const w = tp.width * scale;
+        const h = tp.height * scale;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        ctx.drawImage(img, cell.x, cell.y, tp.width, tp.height, (PREVIEW_WIDTH - w) / 2, (PREVIEW_HEIGHT - h) / 2, w, h);
+        setFrameSrc(trickplaySrc);
+      };
+      const cell = trickplayCell(t, tp);
+      if (!cell) return;
+      const url = `${trickplaySrc}/${cell.sheet}`;
+      if (!sheets.current.has(url)) {
+        const img = new Image();
+        img.decoding = "async";
+        // Wherever the pointer has moved to by the time the sheet lands.
+        img.onload = () => {
+          if (pointed.current != null) paint(pointed.current);
+        };
+        img.src = url;
+        sheets.current.set(url, img);
+      }
+      paint(t);
+    },
+    [tp, trickplaySrc]
+  );
 
   const show = useCallback((t: number) => {
     const canvas = canvasRef.current;
@@ -140,6 +209,10 @@ export function useSeekPreview(
     (seconds: number | null) => {
       pointed.current = seconds;
       if (seconds == null) return;
+      if (tp) {
+        drawSheet(seconds);
+        return;
+      }
       if (!filled.current && duration > 0) {
         filled.current = true;
         backlog.current = prewarmTimes(duration);
@@ -147,7 +220,7 @@ export function useSeekPreview(
       show(seconds);
       next();
     },
-    [duration, show, next]
+    [duration, show, next, tp, drawSheet]
   );
 
   const onError = useCallback(() => setFailedSrc(src ?? null), [src]);
@@ -155,8 +228,9 @@ export function useSeekPreview(
   return {
     videoRef,
     canvasRef,
-    failed: !!src && failedSrc === src,
-    hasFrame: !!src && frameSrc === src,
+    failed: !tp && !!src && failedSrc === src,
+    hasFrame: tp ? frameSrc === trickplaySrc : !!src && frameSrc === src,
+    trickplay: !!tp,
     point,
     onError,
   };

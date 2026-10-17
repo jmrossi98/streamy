@@ -225,6 +225,7 @@ export function EpisodePlayer({
           // browser has just been found unable to play -- and Safari, rather
           // than failing, downloads all of it (see directPlayRules.ts).
           previewSrc={transcoding ? null : videoUrl}
+          trickplaySrc={videoUrl ? `${videoUrl}/trickplay` : null}
           extraBottomRight={
             <>
             <PlaybackOptionsMenu

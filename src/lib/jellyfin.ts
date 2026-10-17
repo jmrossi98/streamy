@@ -16,6 +16,7 @@ import { toOtherNumbering } from "./episodeNumbering";
 import { isAllowedSubtitleLanguage, type AudioTrack } from "./audioLanguageRules";
 import { targetCovers, type HistoryTarget } from "./watchHistoryRules";
 import { containerBlocksDirectPlay } from "./directPlayRules";
+import { pickTrickplay, type TrickplayManifest } from "./trickplayRules";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -449,6 +450,31 @@ export async function getJellyfinSubtitleTracks(
     console.error(`[jellyfin] getJellyfinSubtitleTracks failed for item ${itemId}:`, err);
     return null;
   }
+}
+
+/**
+ * The title's trickplay thumbnails -- see trickplayRules.ts -- or null when
+ * Jellyfin has not made them yet. They are generated in the background
+ * (library option + the "Generate Trickplay Images" task), so a new download
+ * has none for a while.
+ */
+export async function getJellyfinTrickplay(itemId: string): Promise<(TrickplayManifest & { mediaSourceId: string }) | null> {
+  if (!isJellyfinConfigured()) return null;
+  try {
+    // The list route, for the reason given in getJellyfinSubtitleTracks.
+    const result = await jellyfinFetch<{
+      Items: { Trickplay?: Record<string, Record<string, Partial<Record<string, number>>>> }[];
+    }>(`/Items?Ids=${itemId}&Fields=Trickplay`);
+    return pickTrickplay(result.Items[0]?.Trickplay);
+  } catch (err) {
+    console.error(`[jellyfin] getJellyfinTrickplay failed for item ${itemId}:`, err);
+    return null;
+  }
+}
+
+/** One sheet of trickplay frames. */
+export function jellyfinTrickplaySheetUrl(itemId: string, mediaSourceId: string, width: number, sheet: number): string {
+  return `${JELLYFIN_URL}/Videos/${itemId}/Trickplay/${width}/${sheet}.jpg?mediaSourceId=${encodeURIComponent(mediaSourceId)}&api_key=${JELLYFIN_API_KEY}`;
 }
 
 /** Jellyfin transcodes any subtitle format to WebVTT on request -- a plain <track> element can use this directly. */

@@ -4,6 +4,8 @@ import {
   jellyfinHlsMasterUrl,
   jellyfinHlsResourceUrl,
   jellyfinSubtitleStreamUrl,
+  jellyfinTrickplaySheetUrl,
+  getJellyfinTrickplay,
 } from "./jellyfin";
 
 // Headers that must survive the hop for video playback to behave: the browser
@@ -244,6 +246,38 @@ export async function proxyJellyfinSubtitle(
     status: 200,
     headers: { "content-type": "text/vtt; charset=utf-8", "cache-control": "no-store" },
   });
+}
+
+/**
+ * A trickplay sheet, or its manifest when `sheet` is null. Shared by the movie
+ * and episode routes. The sheets never change once made, so the browser keeps
+ * them for a day; the manifest is not cached, because a title still being
+ * processed gains one partway through a viewing.
+ */
+export async function proxyJellyfinTrickplay(itemId: string, sheet: number | null, request: Request): Promise<Response> {
+  const manifest = await getJellyfinTrickplay(itemId);
+  if (!manifest) return new Response("Not available", { status: 404 });
+  if (sheet == null) {
+    const { mediaSourceId: _id, ...body } = manifest;
+    return Response.json(body, { headers: { "cache-control": "no-store" } });
+  }
+  const sheets = Math.ceil(manifest.thumbnailCount / (manifest.tileWidth * manifest.tileHeight));
+  if (!(sheet >= 0 && sheet < sheets)) return new Response("Not found", { status: 404 });
+  const got = await fetchUpstream(jellyfinTrickplaySheetUrl(itemId, manifest.mediaSourceId, manifest.width, sheet), request);
+  if ("error" in got) return got.error;
+  const { upstream } = got;
+  try {
+    if (!upstream.ok) return new Response("Not available", { status: 404 });
+    const body = await upstream.arrayBuffer();
+    return new Response(body, {
+      status: 200,
+      headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" },
+    });
+  } catch {
+    return new Response("Not available", { status: 502 });
+  } finally {
+    got.done();
+  }
 }
 
 /** Exported for testing -- see proxyJellyfinHlsResource for why this exists. */
