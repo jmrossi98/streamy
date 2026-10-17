@@ -32,6 +32,20 @@ const CREDITS_CHAPTER = /(^|\s)(credits?|end credits|ed|ending|outro)(?![\s:]+en
 const MIN_CREDITS_SECONDS = 10;
 const CREDITS_EARLIEST_SHARE = 0.5;
 const MIN_SKIP_SECONDS = 5;
+/** A "Credits" chapter this early and this short is the opening titles. */
+const OPENING_LATEST_SHARE = 0.25;
+const OPENING_MAX_SECONDS = 180;
+
+/**
+ * Some releases name the opening theme "Credits" -- opening credits. Clone
+ * High's do, every episode (a 15-40 s "Credits" chapter near the start), and
+ * reading it only as end credits found it too early and dropped it, so no
+ * Skip intro appeared (2026-10-17).
+ */
+function isOpeningCredits(c: { name: string; start: number; end: number }, runtimeTicks: number | null): boolean {
+  if (!CREDITS_CHAPTER.test(c.name) || !runtimeTicks) return false;
+  return c.start < runtimeTicks * OPENING_LATEST_SHARE && c.end - c.start <= OPENING_MAX_SECONDS * TICKS_PER_SECOND;
+}
 
 function span(startTicks: number | undefined, endTicks: number | undefined): Span | null {
   if (typeof startTicks !== "number" || typeof endTicks !== "number") return null;
@@ -71,8 +85,11 @@ export function parseSegments(
     else if (s.Type === "Outro" && !out.credits) out.credits = sp;
   }
   for (const c of chapterSpans(chapters ?? [], runtimeTicks ?? null)) {
-    if (!out.intro && INTRO_CHAPTER.test(c.name)) out.intro = span(c.start, c.end);
-    else if (!out.credits && CREDITS_CHAPTER.test(c.name)) out.credits = span(c.start, c.end);
+    if (!out.intro && (INTRO_CHAPTER.test(c.name) || isOpeningCredits(c, runtimeTicks ?? null))) {
+      out.intro = span(c.start, c.end);
+    } else if (!out.credits && CREDITS_CHAPTER.test(c.name)) {
+      out.credits = span(c.start, c.end);
+    }
   }
   const runtime = runtimeTicks ? runtimeTicks / TICKS_PER_SECOND : null;
   if (out.credits) {
