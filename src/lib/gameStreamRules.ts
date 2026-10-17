@@ -11,9 +11,16 @@
  */
 import { channelCarriesNetwork, looksLikePlaceholder } from "./liveTimeline";
 import { eventSlotState } from "./eventSlotRules";
+import { namesOtherDate } from "./liveGuideGrid";
 
 export type GameStreamCandidate = { id: number; name: string; stale?: boolean; provider?: string | null };
-export type GameFixture = { league: string; awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] };
+export type GameFixture = {
+  league: string;
+  awayTeam?: string | null;
+  homeTeam?: string | null;
+  broadcasts?: string[];
+  startUtc?: string | null;
+};
 
 /** The team's nickname -- its last word ("Sharks" from "San Jose Sharks"). */
 function nickname(team: string | null | undefined): string | null {
@@ -71,6 +78,9 @@ export function rankGameStreams<S extends GameStreamCandidate>(
       seen.add(s.id);
       // A per-game slot whose game is over is a slate -- see eventSlotRules.
       if (eventSlotState(s.name, now) === "over") return false;
+      // A feed for another day's game between the same teams (2026-10-16:
+      // a Peacock feed for Nov 10 was offered, and added, for that night's game).
+      if (f.startUtc && namesOtherDate(s.name, Date.parse(f.startUtc))) return false;
       return !s.stale && !opts.promoted?.has(s.id) && !(s.provider && opts.expiredProviders?.has(s.provider.toLowerCase()));
     })
     .map((s) => ({ s, score: gameStreamScore(s.name, f) }))

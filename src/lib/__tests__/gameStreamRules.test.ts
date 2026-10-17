@@ -52,3 +52,15 @@ describe("gameStreamQueries", () => {
     expect(gameStreamQueries(sharks)).toEqual(["Sharks", "Predators", "San Jose", "Nashville", "ESPN+", "NBC Sports BA", "Scripps Sports"]);
   });
 });
+
+describe("rankGameStreams other-date feeds", () => {
+  it("drops a feed named for another day's game between the same teams", () => {
+    const fixture = { league: "NBA", awayTeam: "Boston Celtics", homeTeam: "Philadelphia 76ers", startUtc: "2026-10-16T23:00:00Z" };
+    const streams = [
+      { id: 1, name: "US (Peacock 085) | Celtics vs. 76ers (2026-11-10 19:00:05)" },
+      { id: 2, name: "NEXT | PHI - 76ERS VS BOS - CELTICS | Fri 16 Oct 18:00 EDT (US)" },
+    ];
+    const ids = rankGameStreams(streams, fixture, { now: Date.parse("2026-10-16T23:30:00Z") }).map((s) => s.id);
+    expect(ids).toEqual([2]);
+  });
+});

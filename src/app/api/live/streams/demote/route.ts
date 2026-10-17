@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { logAudit } from "@/lib/auditLog";
 import { refreshGuide } from "@/lib/liveTv";
-import { demoteChannel, isDispatcharrConfigured } from "@/lib/dispatcharr";
+import { demoteChannel, findChannelIdByName, isDispatcharrConfigured } from "@/lib/dispatcharr";
 
 /**
  * Removes a channel from the published lineup.
@@ -41,9 +41,16 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const channelId = Number(body?.channelId);
+  // Callers holding a Jellyfin channel (the admin lineup) only know it by
+  // name; Jellyfin's id is not Dispatcharr's. Sending that id as a number was
+  // NaN, so the lineup's Remove never removed anything.
+  let channelId = Number(body?.channelId);
   if (!Number.isInteger(channelId) || channelId <= 0) {
-    return NextResponse.json({ error: "channelId required" }, { status: 400 });
+    const name = typeof body?.channelName === "string" ? body.channelName : "";
+    channelId = (name && (await findChannelIdByName(name))) || NaN;
+  }
+  if (!Number.isInteger(channelId) || channelId <= 0) {
+    return NextResponse.json({ error: "Channel not found" }, { status: 404 });
   }
 
   const removed = await demoteChannel(channelId);
