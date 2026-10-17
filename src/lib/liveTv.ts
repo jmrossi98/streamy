@@ -503,7 +503,7 @@ export async function getLiveChannel(channelId: string): Promise<LiveChannel | n
  * chooses, never as a fact displayed about a channel.
  */
 export const CHANNEL_CATEGORIES = [
-  "Sports", "News", "Movies", "Kids", "Music", "Faith", "Lifestyle",
+  "Sports", "News", "Movies", "Cartoons", "Music", "Faith", "Lifestyle",
   "Broadcast", "Community",
 ] as const;
 
@@ -515,7 +515,7 @@ export type ChannelCategory = (typeof CHANNEL_CATEGORIES)[number] | "Other";
  * Bounded on both sides so "Loomered TV" doesn't match on "more", and ordered
  * so the more specific category wins where two could apply: "ABC 25 News" is
  * more usefully News than Broadcast, and a kids' sports channel is more
- * usefully Kids than Sports.
+ * usefully Cartoons than Sports.
  *
  * Measured against this lineup's 1,477 real channel names, this files 36% of
  * them and leaves the rest as "Other". That is the honest ceiling for reading
@@ -524,7 +524,7 @@ export type ChannelCategory = (typeof CHANNEL_CATEGORIES)[number] | "Other";
  * would just be overfitting to one playlist.
  */
 const CATEGORY_PATTERNS: [ChannelCategory, RegExp][] = [
-  ["Kids", /\b(kids?|cartoons?|toons?|junior|nick\w*|disney|baby|teen)\b/i],
+  ["Cartoons", /\b(kids?|cartoons?|toons?|junior|nick\w*|disney|baby|teen)\b/i],
   ["Faith", /\b(faith|church|gospel|bible|christian|catholic|3abn|ewtn|cbn|praise|worship|islam|quran|jewish|llbn|blessing)\b/i],
   ["Sports", /\b(sports?|espn|nfl|nba|mlb|nhl|golf|soccer|football|basketball|baseball|hockey|tennis|boxing|ufc|mma|wrestl\w*|racing|nascar|motogp|cycling|rugby|cricket|fight\w*|outdoors?|fish\w*|hunt\w*)\b/i],
   ["News", /\b(news\w*|cnn|msnbc|cnbc|bbc|weather|headlines?|politics?|c-?span)\b/i],

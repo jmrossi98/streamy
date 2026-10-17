@@ -23,12 +23,30 @@ describe("shelfFor", () => {
 
   it("files the genres", () => {
     expect(key("MeTV")).toBe("classics");
-    expect(key("Cartoon Network")).toBe("kids");
+    expect(key("Cartoon Network")).toBe("cartoons");
     expect(key("ABC 7 News")).toBe("news");
     expect(key("CBS 13 Baltimore")).toBe("network");
     expect(key("70s Cinema (720p)")).toBe("classics");
     expect(key("HBO")).toBe("movies");
     expect(key("Burbank Channel")).toBe("other");
+  });
+
+  it("files the provider's names for the genre channels in their rows", () => {
+    const rows: Record<string, string[]> = {
+      cartoons: ["CARTOON NETWORK HD", "NICK JR HD", "NICKTOONS", "DISNEY CHANNEL HD", "DISNEY JR HD", "DISNEY XD HD", "BOOMERANG HD", "ADULT SWIM HD"],
+      classics: ["MeTV", "TV LAND HD", "ANTENNA TV", "COZI", "CATCHY COMEDY"],
+      news: ["CNN HD", "FOX NEWS HD", "MS NOW HD", "CNBC HD", "THE WEATHER CHANNEL HD", "BBC WORLD NEWS"],
+      movies: ["AMC HD", "TCM HD", "FX HD", "HBO HD", "SHOWTIME HD", "STARZ HD"],
+      music: ["MTV HD", "MTV LIVE HD", "CMT HD", "BET HD"],
+      lifestyle: ["FOOD NETWORK HD", "HGTV HD", "DISCOVERY HD", "HISTORY HD", "NAT GEO HD", "COMEDY CENTRAL HD", "TLC HD"],
+    };
+    for (const [row, names] of Object.entries(rows)) {
+      for (const n of names) expect([n, key(n)]).toEqual([n, row]);
+    }
+  });
+
+  it("titles the cartoon row just Cartoons", () => {
+    expect(shelfFor("Cartoon Network").title).toBe("Cartoons");
   });
 });
 

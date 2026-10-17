@@ -38,15 +38,15 @@ const SHELF_PATTERNS: [Shelf, RegExp][] = [
   [{ key: "golf-tennis", title: "Golf & Tennis" }, word("golf|pga|lpga|tennis|atp|wta")],
   [{ key: "sports", title: "More Sports" }, word("sports?|espn\\w*|fs1|fs2|fox sports|nbcs\\w*|cbs sports|tnt sports|bally|msg|yes network|marquee|sny|nesn|root sports|outdoors?|fish\\w*|hunt\\w*|cricket|rugby|cycling")],
   [{ key: "classics", title: "Classics" }, word("classic\\w*|retro|vintage|oldies|metv|me tv|cozi|antenna|tv land|decades|buzzr|grit|start tv|catchy comedy|heroes ?& ?icons|[5-9]0s|golden")],
-  [{ key: "kids", title: "Cartoons & Kids" }, word("cartoons?|toons?|kids?|junior|nick\\w*|disney\\w*|boomerang|baby|teen|pbs kids|anime")],
-  [{ key: "news", title: "News" }, word("news\\w*|cnn|msnbc|cnbc|bbc|weather|headlines?|politics?|c-?span|newsmax|bloomberg")],
+  [{ key: "cartoons", title: "Cartoons" }, word("cartoons?|toons?|kids?|junior|nick\\w*|disney\\w*|boomerang|adult swim|baby|teen|pbs kids|anime")],
+  [{ key: "news", title: "News" }, word("news\\w*|cnn|msnbc|cnbc|bbc|weather|headlines?|politics?|c-?span|newsmax|bloomberg|ms ?now")],
   // Network names, or a station call sign -- written in capitals (WJZ, KTVU),
   // so matched case-sensitively: as a plain word it would catch "Wave" or "Work".
   [{ key: "network", title: "Network" }, /\b(?:cbs|nbc|abc|fox|pbs|cw|telemundo|univision|ion|mytv|my ?network)\b/i],
-  [{ key: "movies", title: "Movies" }, word("cinema|cine|movies?|films?|flix|thriller|horror|western|sci-?fi|drama|hbo|showtime|starz|cinemax|amc|tcm")],
+  [{ key: "movies", title: "Movies" }, word("cinema|cine|movies?|films?|flix|thriller|horror|western|sci-?fi|drama|hbo|showtime|starz|cinemax|amc|tcm|fx|fxx|fxm")],
   [{ key: "music", title: "Music" }, word("music|mtv|vevo|radio|hits|country|rock|jazz|hip-?hop|rap|classical|karaoke|cmt|bet")],
   [{ key: "faith", title: "Faith" }, word("faith|church|gospel|bible|christian|catholic|3abn|ewtn|cbn|praise|worship|tbn|daystar")],
-  [{ key: "lifestyle", title: "Lifestyle" }, word("food|cook\\w*|travel|home|garden|hgtv|fashion|beauty|health|fitness|auto|cars?|comedy|game ?show|reality|documentar\\w*|history|science|nature|animals?|discovery|nat ?geo|shop\\w*|qvc|hsn")],
+  [{ key: "lifestyle", title: "Lifestyle" }, word("food|cook\\w*|travel|home|garden|hgtv|tlc|fashion|beauty|health|fitness|auto|cars?|comedy|game ?show|reality|documentar\\w*|history|science|nature|animals?|discovery|nat ?geo|shop\\w*|qvc|hsn")],
   [{ key: "community", title: "Community" }, word("community|public|government|county|municipal|city|town|borough|access")],
 ];
 
