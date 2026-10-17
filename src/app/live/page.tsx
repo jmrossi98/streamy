@@ -12,7 +12,9 @@ import {
   isJellyfinReachable,
   MAX_CHANNELS,
 } from "@/lib/liveTv";
-import { getChannelInfo, type ChannelInfo } from "@/lib/dispatcharr";
+import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
+import { trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
+import { parseLiveTab } from "@/lib/liveTabs";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -25,8 +27,14 @@ import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
  */
 export const dynamic = "force-dynamic";
 
-export default async function LivePage() {
+export default async function LivePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   unstable_noStore();
+  const rawTab = (await searchParams).tab;
+  const tab = parseLiveTab(Array.isArray(rawTab) ? rawTab[0] : rawTab);
   const session = await getSession();
   if (!session) redirect("/login?callbackUrl=/live");
 
@@ -72,6 +80,21 @@ export default async function LivePage() {
     console.error("[live] channelStatuses failed:", err);
   }
 
+  // The Guide tab's time grid. Only fetched for that tab: it is three
+  // Dispatcharr lists (one ~10k rows) that no other tab draws from, and a tab
+  // switch is a fresh server render anyway, so the Now tab never pays for it.
+  // Best effort like the rest: no EPG means every row reads "No guide info"
+  // (or Jellyfin's own now/next where it has one), never a broken page.
+  let guidePrograms: Record<string, GuideProgram[]> = {};
+  if (tab === "guide" && channels.length > 0) {
+    try {
+      const programs = await getMappedChannelPrograms();
+      if (programs) guidePrograms = trimGuidePrograms(programs);
+    } catch (err) {
+      console.error("[live] getMappedChannelPrograms failed:", err);
+    }
+  }
+
   // Only decides whether the Guide tab shows a "Manage channels" link to
   // /admin/live-tv, which has its own gate. Re-checked against the database
   // rather than read from the session token, like every other admin surface.
@@ -104,6 +127,7 @@ export default async function LivePage() {
         infoByChannel={infoByChannel}
         statusByChannel={statusByChannel}
         logoFallbacks={logoFallbacks}
+        guidePrograms={guidePrograms}
       />
     </div>
   );
