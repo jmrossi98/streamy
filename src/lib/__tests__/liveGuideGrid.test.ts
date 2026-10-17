@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  fixtureGuidePrograms,
   GUIDE_SLOT_MS,
   guideKey,
   guideSlots,
@@ -189,5 +190,32 @@ describe("trimGuidePrograms", () => {
     expect(out["cbs 8"]).toEqual([
       { title: "Now", subtitle: "News at eight", startUtc: "2026-10-16T20:00:00Z", endUtc: "2026-10-16T21:00:00Z" },
     ]);
+  });
+});
+
+describe("fixtureGuidePrograms", () => {
+  const celtics = { league: "NBA", name: "Celtics at 76ers", startUtc: "2026-10-16T23:00:00Z", awayTeam: "Boston Celtics", homeTeam: "Philadelphia 76ers" };
+  const knicks = { league: "NBA", name: "Raptors at Knicks", startUtc: "2026-10-16T23:30:00Z", awayTeam: "Toronto Raptors", homeTeam: "New York Knicks" };
+
+  it("fills a team feed and a both-teams feed from today's games", () => {
+    const out = fixtureGuidePrograms(
+      ["NBA: NEW YORK KNICKS (NYK) ᴴᴰ", "NEXT | PHI - 76ERS VS BOS - CELTICS | Fri 16 Oct 18:00 EDT (US)"],
+      [celtics, knicks]
+    );
+    expect(out["nba: new york knicks (nyk) ᴴᴰ"][0].title).toBe("Raptors at Knicks");
+    expect(out["next | phi - 76ers vs bos - celtics | fri 16 oct 18:00 edt (us)"][0]).toMatchObject({
+      title: "Celtics at 76ers",
+      startUtc: "2026-10-16T23:00:00.000Z",
+      endUtc: "2026-10-17T01:30:00.000Z",
+    });
+  });
+
+  it("skips a feed whose name carries another date", () => {
+    expect(fixtureGuidePrograms(["US (Peacock 085) | Celtics vs. 76ers (2026-11-10 19:00:05)"], [celtics])).toEqual({});
+  });
+
+  it("leaves channels the guide already lists alone", () => {
+    const already = { "nba: new york knicks": [{ title: "x", subtitle: null, startUtc: "a", endUtc: "b" }] };
+    expect(fixtureGuidePrograms(["NBA: NEW YORK KNICKS"], [knicks], already)).toEqual({});
   });
 });

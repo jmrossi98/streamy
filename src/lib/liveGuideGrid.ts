@@ -208,3 +208,94 @@ function shortLine(text: string): string | null {
   if (!t) return null;
   return t.length > 120 ? `${t.slice(0, 117).trimEnd()}…` : t;
 }
+
+/** A game from today's schedule, as much of one as the guide needs. */
+export type GuideFixture = {
+  league: string;
+  name: string;
+  startUtc: string | null;
+  awayTeam: string | null;
+  homeTeam: string | null;
+};
+
+/** About how long a broadcast runs, pre-game and overtime slack included. */
+const GAME_MS: Record<string, number> = {
+  NFL: 3.5 * 60 * 60 * 1000,
+  "College Football": 3.5 * 60 * 60 * 1000,
+  MLB: 3 * 60 * 60 * 1000,
+};
+const DEFAULT_GAME_MS = 2.5 * 60 * 60 * 1000;
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** Dates a channel name carries, as YYYY-MM-DD (no year: matched on month and day). */
+function namedDates(name: string): { y: number | null; m: number; d: number }[] {
+  const out: { y: number | null; m: number; d: number }[] = [];
+  for (const m of name.matchAll(/(20\d{2})-(\d{2})-(\d{2})/g)) out.push({ y: +m[1], m: +m[2], d: +m[3] });
+  for (const m of name.matchAll(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi)) {
+    out.push({ y: null, m: MONTHS.indexOf(m[2].toLowerCase()) + 1, d: +m[1] });
+  }
+  return out;
+}
+
+/** The game's date in the eastern time zone the providers' names use. */
+function easternDate(ms: number): { y: number; m: number; d: number } {
+  const [y, m, d] = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" })
+    .format(ms)
+    .split("-")
+    .map(Number);
+  return { y, m, d };
+}
+
+function wordsIn(name: string, phrase: string): boolean {
+  const escaped = phrase.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`, "i").test(name);
+}
+
+function nickname(team: string): string | null {
+  const words = team.trim().split(/\s+/);
+  return words.length >= 2 ? words[words.length - 1] : null;
+}
+
+/**
+ * Guide blocks for channels no guide source lists, built from today's games.
+ *
+ * Game feeds ("NFL | 03 - 1pm Patriots at Bills", "NBA: NEW YORK KNICKS")
+ * have no EPG anywhere -- the channel name is their whole schedule. A name
+ * with both teams' nicknames, or one team's full name, is that team's game.
+ * A name carrying a date (Peacock's "Celtics vs. 76ers (2026-11-10 ...)") only
+ * matches a game on that date, so next month's feed doesn't claim tonight's.
+ */
+export function fixtureGuidePrograms(
+  channelNames: string[],
+  fixtures: GuideFixture[],
+  already: Record<string, GuideProgram[]> = {}
+): Record<string, GuideProgram[]> {
+  const out: Record<string, GuideProgram[]> = {};
+  for (const name of channelNames) {
+    const key = guideKey(name);
+    if (already[key]?.length) continue;
+    const dates = namedDates(name);
+    const games: GuideProgram[] = [];
+    for (const f of fixtures) {
+      const start = f.startUtc ? Date.parse(f.startUtc) : NaN;
+      if (!Number.isFinite(start) || !f.awayTeam || !f.homeTeam) continue;
+      if (dates.length > 0) {
+        const day = easternDate(start);
+        if (!dates.some((d) => d.m === day.m && d.d === day.d && (d.y == null || d.y === day.y))) continue;
+      }
+      const nicks = [nickname(f.awayTeam), nickname(f.homeTeam)];
+      const both = nicks.every((n) => n != null && wordsIn(name, n));
+      const oneTeam = wordsIn(name, f.awayTeam) || wordsIn(name, f.homeTeam);
+      if (!both && !oneTeam) continue;
+      games.push({
+        title: f.name,
+        subtitle: f.league,
+        startUtc: new Date(start).toISOString(),
+        endUtc: new Date(start + (GAME_MS[f.league] ?? DEFAULT_GAME_MS)).toISOString(),
+      });
+    }
+    if (games.length > 0) out[key] = games.sort((a, b) => a.startUtc.localeCompare(b.startUtc));
+  }
+  return out;
+}
