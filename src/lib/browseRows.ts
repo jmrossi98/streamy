@@ -27,6 +27,12 @@ import { getLibraryMovies, getLibraryShows, type LibraryMovie, type LibraryShow 
 import { shelfHref, type Shelf } from "./browseShelfRules";
 import { alphabetical, byPopularity, genreBuckets, inGenre } from "./libraryRowRules";
 import { holidayNow, pickHolidayTitles } from "./holidayRules";
+import { ANIME_GENRE } from "./animeRules";
+
+/** TMDB's TV genres plus Anime, which only the library can fill (see animeRules.ts). */
+async function libraryTVGenres() {
+  return [...(await getTVGenres()), ANIME_GENRE];
+}
 
 /**
  * How many cards a row holds. The heading opens the whole shelf, and nobody
@@ -162,7 +168,7 @@ export async function getShowBrowse({ genreRows = true }: { genreRows?: boolean 
 
   const holiday = holidayNow();
   const holidayShows = holiday ? pickHolidayTitles(holiday, library) : [];
-  const buckets = genreRows ? genreBuckets(library, await getTVGenres()) : [];
+  const buckets = genreRows ? genreBuckets(library, await libraryTVGenres()) : [];
 
   return {
     trending: library.slice(0, ROW_LIMIT).map(showCard),
@@ -224,11 +230,13 @@ export async function getMovieShelf(shelf: LibraryShelf, pages: number): Promise
 }
 
 export async function getShowShelf(shelf: LibraryShelf, pages: number): Promise<ShelfContents<TVShow> | null> {
-  const [library, genres] = await Promise.all([showLibrary(), getTVGenres()]);
+  const [library, genres] = await Promise.all([showLibrary(), libraryTVGenres()]);
 
   if (shelf.kind === "genre") {
     const genre = genres.find((g) => g.id === shelf.genreId);
     if (!genre) return null;
+    // TMDB cannot discover by a genre it does not have.
+    if (!library && genre.id === ANIME_GENRE.id) return null;
     return library
       ? { title: genre.name, items: inGenre(library, genre.name).map(showCard), paged: false }
       : { title: genre.name, items: await getDiscoverTVByGenrePages(genre.id, pages), paged: true };
@@ -274,7 +282,7 @@ export async function getMovieShelfLinks(): Promise<ShelfLink[]> {
 export async function getShowShelfLinks(): Promise<ShelfLink[]> {
   const [library, genres] = await Promise.all([showLibrary(), getTVGenres()]);
   const holiday = holidayNow();
-  const offered = library ? genreBuckets(library, genres).map((b) => b.genre) : genres;
+  const offered = library ? genreBuckets(library, [...genres, ANIME_GENRE]).map((b) => b.genre) : genres;
   return [
     ...(library ? [{ shelf: { kind: "all" as const }, label: ALL_SHOWS }] : []),
     { shelf: { kind: "trending" }, label: "Trending TV" },
