@@ -6,7 +6,7 @@ import Link from "next/link";
 import { MovieRow } from "@/components/MovieRow";
 import { TVRow } from "@/components/TVRow";
 import { ScrollableRow } from "@/components/ScrollableRow";
-import { PosterWatchlistButton } from "@/components/PosterWatchlistButton";
+import { PosterActions } from "@/components/PosterActions";
 import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import { shelfHref } from "@/lib/browseShelfRules";
@@ -103,10 +103,7 @@ export function HomeMoviesSection({
                   />
                 </Link>
                 <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-                <PosterWatchlistButton
-                  showId={String(show.id)}
-                  className="absolute top-2 right-2 z-[5] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                />
+                <PosterActions showId={String(show.id)} />
               </div>
               <Link href={`/show/${show.id}`} className="block p-2">
                 <p className="text-white font-medium text-sm truncate">{show.name}</p>

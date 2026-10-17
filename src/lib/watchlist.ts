@@ -2,10 +2,11 @@
  * Server-only watchlist helpers for the My List page.
  */
 import { prisma } from "@/lib/db";
-import { getMovieById, getOriginalLanguage, getShowById } from "@/lib/tmdb";
+import { getMovieById, getOriginalLanguage, getSeason, getShowById } from "@/lib/tmdb";
 import { ANIME, tagAnime } from "@/lib/animeRules";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import type { MovieProgress } from "@/components/MovieRow";
+import { latestEpisodePerShow, type ShowProgress } from "@/lib/showProgressRules";
 import { getGamesList, type GameListItem } from "@/lib/games";
 import { getLiveChannels, type LiveChannel } from "@/lib/liveTv";
 import { listFlashGames } from "@/lib/flashGames";
@@ -22,6 +23,8 @@ export type WatchlistData = {
   channels: LiveChannel[];
   flashGames: FlashGameSummary[];
   progressMap: Record<string, MovieProgress>;
+  /** The episode each saved show is partway through, for the tile's red bar. */
+  showProgress: Record<string, ShowProgress>;
 };
 
 /**
@@ -75,7 +78,7 @@ export async function getWatchlist(
   userId: string,
   { splitAnime = false }: { splitAnime?: boolean } = {}
 ): Promise<WatchlistData> {
-  const [movieItems, showItems, gameItems, channelItems, flashItems, allProgress] =
+  const [movieItems, showItems, gameItems, channelItems, flashItems, allProgress, episodeProgress] =
     await Promise.all([
       prisma.watchlistItem.findMany({
         where: { userId },
@@ -107,6 +110,7 @@ export async function getWatchlist(
         select: { slug: true },
       }),
       prisma.watchProgress.findMany({ where: { userId } }),
+      prisma.episodeProgress.findMany({ where: { userId } }),
     ]);
 
   const gameKeys = new Set(gameItems.map((i) => i.gameKey));
@@ -159,6 +163,11 @@ export async function getWatchlist(
   const anime = splitAnime ? allShows.filter((s) => s.genres.includes(ANIME)) : [];
   const shows = splitAnime ? allShows.filter((s) => !s.genres.includes(ANIME)) : allShows;
 
+  const savedShowIds = new Set(showItems.map((i) => i.showId));
+  const showProgress = await resolveShowProgress(
+    latestEpisodePerShow(episodeProgress.filter((p) => savedShowIds.has(p.showId)))
+  );
+
   return {
     movies,
     shows,
@@ -167,5 +176,20 @@ export async function getWatchlist(
     channels,
     flashGames,
     progressMap,
+    showProgress,
   };
+}
+
+/** Adds each in-progress episode's runtime (from its TMDB season) so the bar has a length. */
+async function resolveShowProgress(
+  latest: Record<string, { seasonNumber: number; episodeNumber: number; progressSeconds: number }>
+): Promise<Record<string, ShowProgress>> {
+  const entries = await Promise.all(
+    Object.entries(latest).map(async ([showId, p]) => {
+      const season = await getSeason(showId, p.seasonNumber).catch(() => null);
+      const ep = season?.episodes.find((e) => e.episodeNumber === p.episodeNumber);
+      return [showId, { ...p, runtimeMinutes: ep?.runtime ?? null }] as const;
+    })
+  );
+  return Object.fromEntries(entries);
 }
