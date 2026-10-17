@@ -45,6 +45,11 @@ export async function getWatchlistMovies(userId: string): Promise<Movie[]> {
   return details.filter((m): m is NonNullable<typeof m> => m != null);
 }
 
+/** One show TMDB won't answer for right now leaves a gap, not an error page. */
+function showOrNull(id: string) {
+  return getShowById(id).catch(() => null);
+}
+
 /** Just the saved shows. Same reasoning as getWatchlistMovies. */
 export async function getWatchlistShows(
   userId: string
@@ -55,7 +60,7 @@ export async function getWatchlistShows(
   });
   if (items.length === 0) return [];
 
-  const details = await Promise.all(items.map((item) => getShowById(item.showId)));
+  const details = await Promise.all(items.map((item) => showOrNull(item.showId)));
   return tagAnime(
     details
       .filter((s): s is NonNullable<typeof s> => s != null)
@@ -127,7 +132,7 @@ export async function getWatchlist(
 
   const [movieDetails, showDetails] = await Promise.all([
     Promise.all(movieItems.map((item) => getMovieById(item.movieId))),
-    Promise.all(showItems.map((item) => getShowById(item.showId))),
+    Promise.all(showItems.map((item) => showOrNull(item.showId))),
   ]);
 
   const movies: Movie[] = [];

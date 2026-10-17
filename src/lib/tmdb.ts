@@ -11,6 +11,7 @@ import { dedupeById, SHELF_PAGE_SIZE } from "./browseShelfRules";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { cached } from "./ttlCache";
+import { isRetryable, tmdbFetch, TmdbTransientError } from "./tmdbThrottle";
 import type { SeasonCounts } from "./episodeNumbering";
 // Lazy-load mock module only when needed (dev without API key) — avoids
 // compiling 200 lines of mock data on every page in dev when using real API.
@@ -197,10 +198,13 @@ async function fetchTmdb<T>(path: string, params: Record<string, string> = {}): 
   url.searchParams.set("language", "en-US");
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-  const res = await fetch(url.toString(), {
-    next: { revalidate: ONE_DAY_SEC },
-    signal: AbortSignal.timeout(TMDB_TIMEOUT_MS),
-  });
+  const res = await tmdbFetch(() =>
+    fetch(url.toString(), {
+      next: { revalidate: ONE_DAY_SEC },
+      signal: AbortSignal.timeout(TMDB_TIMEOUT_MS),
+    })
+  );
+  if (isRetryable(res.status)) throw new TmdbTransientError(`TMDB API error: ${res.status}`);
   if (!res.ok) throw new Error(`TMDB API error: ${res.status}`);
   return res.json();
 }
@@ -736,16 +740,23 @@ export async function getSimilarTV(id: string, limit = 12): Promise<TVShow[]> {
 async function getMovieByIdUncached(id: string): Promise<MovieDetail | null> {
   const key = getApiKey();
   const [movieRes, providersRes] = await Promise.all([
-    fetch(
-      `${TMDB_BASE}/movie/${id}?api_key=${key}&language=en-US&append_to_response=credits`,
-      { next: { revalidate: CACHE_REVALIDATE }, signal: AbortSignal.timeout(TMDB_TIMEOUT_MS) }
+    tmdbFetch(() =>
+      fetch(
+        `${TMDB_BASE}/movie/${id}?api_key=${key}&language=en-US&append_to_response=credits`,
+        { next: { revalidate: CACHE_REVALIDATE }, signal: AbortSignal.timeout(TMDB_TIMEOUT_MS) }
+      )
     ),
-    fetch(
-      `${TMDB_BASE}/movie/${id}/watch/providers?api_key=${key}`,
-      { next: { revalidate: CACHE_REVALIDATE }, signal: AbortSignal.timeout(TMDB_TIMEOUT_MS) }
+    tmdbFetch(() =>
+      fetch(
+        `${TMDB_BASE}/movie/${id}/watch/providers?api_key=${key}`,
+        { next: { revalidate: CACHE_REVALIDATE }, signal: AbortSignal.timeout(TMDB_TIMEOUT_MS) }
+      )
     ),
   ]);
 
+  // A refusal (rate limit, outage) is thrown, not returned: null is cached for
+  // a day as "no such movie", which once hid 339 titles from My List.
+  if (isRetryable(movieRes.status)) throw new TmdbTransientError(`TMDB API error: ${movieRes.status}`);
   if (!movieRes.ok) return null;
   const movie = await movieRes.json();
   let flatrate: WatchProviderItem[] = [];
@@ -795,8 +806,14 @@ export const getMovieById = cache(async (id: string) =>
     : withMemoryCache(
         ["tmdb-movie", id],
         ONE_DAY_MS,
-        () => unstable_cache(() => getMovieByIdUncached(id), ["tmdb-movie", id], { revalidate: CACHE_REVALIDATE })()
-      )
+        // v2: v1 holds rate-limit refusals cached as "no such movie" (2026-10-17).
+        () => unstable_cache(() => getMovieByIdUncached(id), ["tmdb-movie-v2", id], { revalidate: CACHE_REVALIDATE })()
+        // Neither cache stores a throw, so a refused lookup is retried next
+        // time; this render just goes without the movie.
+      ).catch((e) => {
+        if (e instanceof TmdbTransientError) return null;
+        throw e;
+      })
 );
 
 // --- People ---
