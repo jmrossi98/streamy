@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  continuingStart,
   inCredits,
+  isFinished,
   NO_SEGMENTS,
   parseSegments,
   shouldAskStillWatching,
   skipOfferAt,
+  startPoint,
 } from "../episodeSegmentRules";
 
 const T = 10_000_000;
@@ -105,15 +106,15 @@ describe("inCredits", () => {
   });
 });
 
-describe("continuingStart", () => {
+describe("startPoint", () => {
   const segs = { ...NO_SEGMENTS, credits: { start: 1260, end: 1320 } };
   it("keeps a spot partway through", () => {
-    expect(continuingStart(400, 1320, segs)).toBe(400);
+    expect(startPoint(400, 1320, segs)).toBe(400);
   });
   it("starts a finished episode over", () => {
-    expect(continuingStart(1270, 1320, segs)).toBe(0);
-    expect(continuingStart(1200, 1320, NO_SEGMENTS)).toBe(0);
-    expect(continuingStart(0, 1320, segs)).toBe(0);
+    expect(startPoint(1270, 1320, segs)).toBe(0);
+    expect(startPoint(1200, 1320, NO_SEGMENTS)).toBe(0);
+    expect(startPoint(0, 1320, segs)).toBe(0);
   });
 });
 
@@ -121,5 +122,19 @@ describe("shouldAskStillWatching", () => {
   it("asks after three episodes nobody touched", () => {
     expect(shouldAskStillWatching(2)).toBe(false);
     expect(shouldAskStillWatching(3)).toBe(true);
+  });
+});
+
+describe("isFinished", () => {
+  const segs = { ...NO_SEGMENTS, credits: { start: 1260, end: 1320 } };
+  it("is finished from the credits' start, or past 90% without credits", () => {
+    expect(isFinished(1259, 1320, segs)).toBe(false);
+    expect(isFinished(1260, 1320, segs)).toBe(true);
+    expect(isFinished(1187, 1320, NO_SEGMENTS)).toBe(false);
+    expect(isFinished(1190, 1320, NO_SEGMENTS)).toBe(true);
+  });
+  it("is never finished at 0 or with nothing to measure against", () => {
+    expect(isFinished(0, 1320, segs)).toBe(false);
+    expect(isFinished(1300, null, NO_SEGMENTS)).toBe(false);
   });
 });

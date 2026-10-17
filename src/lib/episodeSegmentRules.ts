@@ -131,13 +131,19 @@ export function shouldAskStillWatching(unattendedAdvances: number): boolean {
 }
 
 /**
- * Where an episode reached by rolling on starts. Its saved spot, unless that
- * is in its credits or past 90% -- an episode already finished once starts
- * over rather than ending again the moment it opens.
+ * Whether a position counts as having finished the episode: in its credits,
+ * or past 90% when it has no credits marker. A finished episode is saved as
+ * 0, so going back to it starts it over -- a spot saved in the credits made
+ * reopening it play the credits and roll straight on to the next episode
+ * (reported 2026-10-17).
  */
-export function continuingStart(savedSeconds: number, runtimeSeconds: number | null, segs: EpisodeSegments): number {
-  if (savedSeconds <= 0) return 0;
-  if (segs.credits && savedSeconds >= segs.credits.start) return 0;
-  if (runtimeSeconds && savedSeconds >= runtimeSeconds * 0.9) return 0;
-  return savedSeconds;
+export function isFinished(seconds: number, runtimeSeconds: number | null, segs: EpisodeSegments): boolean {
+  if (seconds <= 0) return false;
+  if (segs.credits && seconds >= segs.credits.start) return true;
+  return !!runtimeSeconds && seconds >= runtimeSeconds * 0.9;
+}
+
+/** Where an episode starts: its saved spot, or the beginning if that spot finished it. */
+export function startPoint(savedSeconds: number, runtimeSeconds: number | null, segs: EpisodeSegments): number {
+  return savedSeconds > 0 && !isFinished(savedSeconds, runtimeSeconds, segs) ? savedSeconds : 0;
 }

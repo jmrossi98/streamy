@@ -13,7 +13,8 @@ import { Button } from "./ui";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
 import type { EpisodePlayback } from "@/lib/episodePlayback";
 import {
-  continuingStart,
+  isFinished,
+  startPoint,
   CREDITS_COUNTDOWN_SECONDS,
   inCredits,
   NO_SEGMENTS,
@@ -309,15 +310,26 @@ function EpisodeView({
     : null;
   const { seconds: resumeFrom, settled: resumeSettled } = useFreshResume(resumeQuery, episode.progressSeconds);
   const runtimeSeconds = runtimeMinutes ? runtimeMinutes * 60 : null;
-  const startFrom = continuing ? continuingStart(resumeFrom, runtimeSeconds, segments) : resumeFrom;
+  // A spot that finished the episode starts it over (see isFinished) --
+  // including ones saved before finished episodes were saved as 0.
+  const startFrom = startPoint(resumeFrom, runtimeSeconds, segments);
+
+  // What the save below measures "finished" against: the file's own length
+  // once known (TMDB's runtime is often a minute off), and the segments.
+  const finishRef = useRef({ duration: runtimeSeconds, segments });
+  useEffect(() => {
+    finishRef.current.segments = segments;
+  }, [segments]);
 
   // Stable across renders (see usePlayerEngine's saveProgress doc).
   const saveProgress = useCallback((sec: number) => {
     markShowWatched(showId);
+    const { duration, segments: segs } = finishRef.current;
+    const progressSeconds = isFinished(sec, duration, segs) ? 0 : sec;
     fetch("/api/episode-progress", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ showId, seasonNumber, episodeNumber, progressSeconds: sec }),
+      body: JSON.stringify({ showId, seasonNumber, episodeNumber, progressSeconds }),
       // Survives the page going away -- the save on leaving is the one that matters most.
       keepalive: true,
     }).catch(() => {});
@@ -361,6 +373,16 @@ function EpisodeView({
   });
   // Back to a paused player after watching elsewhere: pick up that spot.
   useResumeRecheck(resumeQuery, videoRef);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onDuration = () => {
+      if (Number.isFinite(v.duration) && v.duration > 0) finishRef.current.duration = v.duration;
+    };
+    onDuration();
+    v.addEventListener("durationchange", onDuration);
+    return () => v.removeEventListener("durationchange", onDuration);
+  }, [videoRef]);
 
   const showVideo = playing && !showOverlay;
   const t = chrome.currentTime;
