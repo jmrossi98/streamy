@@ -29,9 +29,9 @@ export type RelinkStream = {
  */
 export function baseName(name: string): string {
   let n = (name ?? "").replace(/[ᴬ-ᶿ⁰-₟]+/g, " ").toUpperCase();
-  n = n.replace(/^s*[^|]{1,24}|s*|^s*[A-Z0-9+ ]{1,10}s-s+/, "");
-  n = n.replace(/s+/g, " ").trim();
-  const quality = /s+(?:F?HD|HDTV|SD|4K|UHD|RAW)$/;
+  n = n.replace(/^\s*[^|]{1,24}\|\s*|^\s*[A-Z0-9+ ]{1,10}\s-\s+/, "");
+  n = n.replace(/\s+/g, " ").trim();
+  const quality = /\s+(?:F?HD|HDTV|SD|4K|UHD|RAW)$/;
   while (quality.test(n)) n = n.replace(quality, "").trim();
   return n;
 }
