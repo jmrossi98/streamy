@@ -1,72 +1,46 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signOutIfStaleSession } from "@/lib/staleSession";
-import { watchlistAddRequest, watchlistRemoveRequest } from "@/lib/watchlistKinds";
+import { useWatchlist } from "@/contexts/WatchlistContext";
 
 export type WatchlistButtonProps = {
   movieId?: string;
   showId?: string;
-  /** When set, skips the client-side watchlist check on mount (faster info page load). */
-  initialInList?: boolean;
   /** Circle-only icon button for hero (no text). */
   variant?: "default" | "circle";
-  /** When `variant` is circle: fixed size (no hover expand) — for info page icon row. */
+  /** When `variant` is circle: fixed size (no hover expand) -- for info page icon row. */
   compact?: boolean;
 };
 
-export function WatchlistButton({
-  movieId,
-  showId,
-  initialInList,
-  variant = "default",
-  compact = false,
-}: WatchlistButtonProps) {
+/**
+ * The My List button on a title's own page.
+ *
+ * Reads and writes the same WatchlistContext as every poster's + button.
+ * It used to keep its own copy, seeded from the server render -- and the
+ * client router can hand back a cached render of the page, so saving a title
+ * from a person's page (a poster button) left this one still showing "Add"
+ * until it was tapped again.
+ */
+export function WatchlistButton({ movieId, showId, variant = "default", compact = false }: WatchlistButtonProps) {
   const id = movieId ?? showId ?? "";
   const type = movieId ? "movie" : "show";
   const router = useRouter();
   const { data: session, status } = useSession();
-  const [inList, setInList] = useState(initialInList ?? false);
+  const { movieIds, showIds, toggleMovie, toggleShow } = useWatchlist();
+  const inList = type === "movie" ? movieIds.has(id) : showIds.has(id);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (initialInList !== undefined || !session?.user || !id) return;
-    const param = movieId ? `movieId=${encodeURIComponent(movieId)}` : `showId=${encodeURIComponent(showId!)}`;
-    fetch(`/api/watchlist/check?${param}`)
-      .then((r) => r.json())
-      .then((data) => setInList(!!data.inList))
-      .catch(() => setInList(false));
-  }, [session?.user, id, movieId, showId, initialInList]);
 
   async function toggle() {
     if (!session?.user || loading || !id) return;
-
-    // Flipped before the request, matching WatchlistToggle and the three kinds
-    // it replaced. This one still waited for the round trip, which on a page
-    // whose data already comes from the home server is exactly where the delay
-    // is most noticeable -- and the state it was waiting for is one boolean it
-    // can already predict.
-    const next = !inList;
-    setInList(next);
     setLoading(true);
     try {
-      const [url, init] = next
-        ? watchlistAddRequest(type, id)
-        : watchlistRemoveRequest(type, id);
-      const res = await fetch(url, init);
-
-      if (await signOutIfStaleSession(res)) return;
-      if (!res.ok) {
-        setInList(!next);
-        return;
-      }
-      // My List is server-rendered, so it only follows on a re-render.
-      router.refresh();
-    } catch {
-      setInList(!next);
+      // The context flips first and reverts on failure.
+      const ok = await (type === "movie" ? toggleMovie(id, !inList) : toggleShow(id, !inList));
+      // My List rows are server-rendered, so they only follow on a re-render.
+      if (ok) router.refresh();
     } finally {
       setLoading(false);
     }

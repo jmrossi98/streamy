@@ -27,7 +27,6 @@ type ShowContentProps = {
   initialSeasonNum: number;
   initialSeasonData: TVSeason | null;
   episodeProgress: { seasonNumber: number; episodeNumber: number; progressSeconds: number }[];
-  initialInList?: boolean;
   resumePlayHref: string;
   resumePlayLabel: string;
   resumeSeason: number;
@@ -76,7 +75,6 @@ export function ShowContent({
   initialSeasonNum,
   initialSeasonData,
   episodeProgress,
-  initialInList,
   resumePlayHref,
   resumePlayLabel,
   resumeSeason,
@@ -325,9 +323,9 @@ export function ShowContent({
           </>
         }
         addToMyListMobile={
-          <WatchlistButton showId={show.id} initialInList={initialInList} variant="circle" compact />
+          <WatchlistButton showId={show.id} variant="circle" compact />
         }
-        addToMyListDesktop={<WatchlistButton showId={show.id} initialInList={initialInList} />}
+        addToMyListDesktop={<WatchlistButton showId={show.id} />}
         playHref={resumePlayHref}
         playLabel={resumePlayLabel}
         playNode={
