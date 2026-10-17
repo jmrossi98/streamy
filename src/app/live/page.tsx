@@ -13,7 +13,8 @@ import {
   MAX_CHANNELS,
 } from "@/lib/liveTv";
 import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
-import { trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
+import { fixtureGuidePrograms, trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
+import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { parseLiveTab } from "@/lib/liveTabs";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -92,6 +93,20 @@ export default async function LivePage({
       if (programs) guidePrograms = trimGuidePrograms(programs);
     } catch (err) {
       console.error("[live] getMappedChannelPrograms failed:", err);
+    }
+    // Game feeds have no guide anywhere; today's schedule fills them in.
+    try {
+      const fixtures = await getTodaysFixtures();
+      guidePrograms = {
+        ...guidePrograms,
+        ...fixtureGuidePrograms(
+          channels.map((c) => c.name),
+          fixtures,
+          guidePrograms
+        ),
+      };
+    } catch (err) {
+      console.error("[live] schedule for the guide failed:", err);
     }
   }
 
