@@ -144,10 +144,17 @@ export type PlayerEngineOptions = {
    * (wrap in useCallback) or the progress-tracking effect resubscribes on
    * every render. */
   saveProgress: (seconds: number) => void;
+  /** See usePlayerChrome's option of the same name. */
+  fullscreenRef?: RefObject<HTMLElement | null>;
+  /** Reached by rolling on from the previous episode, not by a tap: plays
+   * straight away on mobile too, where a fresh open waits for a tap so it can
+   * enter fullscreen. The page has had a tap by now, so play() is allowed;
+   * if a browser refuses anyway, the play button shows as usual. */
+  continuing?: boolean;
 };
 
 export function usePlayerEngine(opts: PlayerEngineOptions) {
-  const { videoUrl, initialProgressSeconds, resumeSettled = true, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, audioTracks = [], defaultAudio = null, identityKey, saveProgress } = opts;
+  const { videoUrl, initialProgressSeconds, resumeSettled = true, runtimeMinutes, autoPlay, forceTranscode = false, subtitleTracks, defaultSubtitle = null, audioTracks = [], defaultAudio = null, identityKey, saveProgress, fullscreenRef, continuing = false } = opts;
   const hasSource = !!videoUrl;
   // Always direct-plays and falls back to a transcode only if the browser
   // can't decode the source -- no manual quality picker. That picker (4K/
@@ -304,6 +311,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     // Behind the start overlay, playback has to begin through the overlay's
     // own button, which also resumes from the saved position.
     keysEnabled: !showOverlay,
+    fullscreenRef,
   });
 
   // On mobile, hold at the play button instead of autoplaying. Fullscreen can
@@ -311,11 +319,11 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // one -- so autoplaying there guarantees an inline video that never
   // maximises. Making the tap the trigger is what lets it open fullscreen.
   useEffect(() => {
-    if (!isMobileViewport()) return;
+    if (continuing || !isMobileViewport()) return;
     setIsMobile(true);
     setPlaying(false);
     setShowOverlay(true);
-  }, []);
+  }, [continuing]);
 
   // Buffering indicator, independent of which delivery mechanism is active
   // (direct play, hls.js, or native HLS all fire these same native
@@ -589,7 +597,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // yank the playhead back on the next stall or scrub. A late answer is now
   // handled by the small effect below this one.
   useEffect(() => {
-    if (!hasSource || !playing || !videoRef.current || isMobile || isMobileViewport()) return;
+    if (!hasSource || !playing || !videoRef.current || isMobile || (!continuing && isMobileViewport())) return;
     const v = videoRef.current;
     setVideoLoading(true);
     // Nothing to start yet: the transcode is waiting on the resume point, and
@@ -645,7 +653,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     }
     doPlay();
     return () => cancelSeek();
-  }, [hasSource, playing, isMobile, needsHlsJs, transcoding, holdTranscode]);
+  }, [hasSource, playing, isMobile, needsHlsJs, transcoding, holdTranscode, continuing]);
 
   // A resume point that settles after the start sequence has already sought:
   // move there once, without another play() or another listener -- unless

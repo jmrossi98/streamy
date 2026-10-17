@@ -21,8 +21,13 @@ export function usePlayerChrome(
     knownDurationSeconds?: number | null;
     /** False while something covers the picture (the start or error overlay): keys are left alone. */
     keysEnabled?: boolean;
+    /** What fullscreen enlarges, when not containerRef -- the episode player's
+     * frame, which outlives each episode's own player so fullscreen survives
+     * rolling on to the next one. */
+    fullscreenRef?: RefObject<HTMLElement | null>;
   } = {}
 ) {
+  const fullscreenRef = opts.fullscreenRef ?? containerRef;
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -258,7 +263,7 @@ export function usePlayerChrome(
   );
 
   const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current;
+    const el = fullscreenRef.current;
     const v = videoRef.current;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
@@ -283,7 +288,7 @@ export function usePlayerChrome(
       const iosVideo = v as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
       iosVideo?.webkitEnterFullscreen?.();
     }
-  }, [containerRef, videoRef]);
+  }, [fullscreenRef, videoRef]);
 
   return {
     isPlaying,

@@ -207,3 +207,48 @@ test("a title that is still loading shows a spinner, not a play button", async (
   release();
   await expect(page.getByLabel("Buffering")).toBeHidden({ timeout: 10_000 });
 });
+
+/**
+ * Rolling on to the next episode keeps fullscreen. Moving to the next
+ * episode's page used to replace the element in fullscreen, dropping the
+ * viewer out of it at every episode; the player now swaps episodes inside a
+ * frame that stays put (see EpisodePlayer).
+ */
+test("skips the intro, then rolls on to the next episode without leaving fullscreen", async ({ page }) => {
+  await page.route("**/api/stream/episode/harness/1/2/playback", (route) =>
+    route.fulfill({
+      json: {
+        seasonNumber: 1,
+        episodeNumber: 2,
+        episodeName: "Second",
+        runtimeMinutes: null,
+        videoUrl: "/test-assets/pause-test-clip.mp4",
+        subtitleTracks: [],
+        forceTranscode: false,
+        defaultSubtitle: null,
+        audioTracks: [],
+        defaultAudio: null,
+        progressSeconds: 0,
+        segments: { intro: null, recap: null, credits: null },
+        next: null,
+      },
+    })
+  );
+  await page.goto("/dev/episode-harness");
+  const video = page.locator("video:not([aria-hidden])");
+
+  await clickWhenHydrated(page, page.getByRole("button", { name: /^play/i }).first());
+  await expect(video).toHaveJSProperty("paused", false);
+
+  await page.getByRole("button", { name: "Fullscreen" }).click();
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+
+  await page.getByRole("button", { name: "Skip intro" }).click();
+  expect(await video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThanOrEqual(2.4);
+
+  // The clip ends inside its credits, and the next episode starts by itself.
+  await expect(page.getByText("S1 E2 · Second")).toBeVisible({ timeout: 10_000 });
+  await expect(page).toHaveURL(/\/show\/harness\/episode\/1\/2$/);
+  await expect(video).toHaveJSProperty("paused", false);
+  expect(await page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+});
