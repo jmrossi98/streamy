@@ -279,7 +279,7 @@ function GuideTab({
   );
 
   // Only offer categories this lineup actually has, with counts. An empty
-  // "Kids" option that filters to nothing is worse than no option.
+  // "Cartoons" option that filters to nothing is worse than no option.
   const availableCategories = useMemo(() => {
     const counts = new Map<string, number>();
     for (const cat of categoryById.values()) {

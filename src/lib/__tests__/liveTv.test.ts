@@ -116,7 +116,7 @@ describe("classifyChannel", () => {
   // XMLTV behind it: every channel reports empty Genres and Tags and no
   // CurrentProgram, so the name is the only genre signal there is.
   it("files the real names it can recognise", () => {
-    expect(classifyChannel("3ABN Kids Network")).toBe("Kids");
+    expect(classifyChannel("3ABN Kids Network")).toBe("Cartoons");
     expect(classifyChannel("30A Golf Kingdom (720p)")).toBe("Sports");
     expect(classifyChannel("Bellator MMA")).toBe("Sports");
     expect(classifyChannel("ABC News Live 1 (720p)")).toBe("News");
