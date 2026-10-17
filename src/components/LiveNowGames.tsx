@@ -6,7 +6,7 @@ import { ButtonLink } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import { pickLiveNow, type NowFixture } from "@/lib/liveNowRules";
 import { liveTabHref } from "@/lib/liveTabs";
-import { findCandidateChannels, resolveChannelForFixture } from "@/lib/liveTimeline";
+import { findCandidateChannels, networksOnOtherGames, resolveChannelForFixture } from "@/lib/liveTimeline";
 
 type Fixture = NowFixture & {
   awayTeam: string | null;
@@ -54,7 +54,7 @@ export function LiveNowGames({ channels }: { channels: ScheduleChannel[] }) {
         .filter(
           (f) =>
             resolveChannelForFixture(f, channels, f.epgConfirmedChannelNames) != null ||
-            findCandidateChannels(f, channels, 1).length > 0
+            findCandidateChannels({ ...f, networksOnOtherGames: networksOnOtherGames(f, fixtures) }, channels, 1).length > 0
         )
         .map((f) => f.id)
     );
