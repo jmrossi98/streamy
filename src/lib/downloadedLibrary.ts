@@ -11,7 +11,8 @@
  * keyed on its own item ids, so using it would mean a name-matching step that
  * fails on exactly the titles that are hardest to match.
  */
-import { getMovieById, getShowById, getShowBrowseMeta, type Movie, type TVShow } from "./tmdb";
+import { getMovieById, getOriginalLanguage, getShowById, getShowBrowseMeta, type Movie, type TVShow } from "./tmdb";
+import { withAnimeGenre } from "./animeRules";
 import { cached } from "./ttlCache";
 
 const PROBE_TIMEOUT_MS = 8_000;
@@ -120,10 +121,15 @@ async function loadShows(): Promise<LibraryShow[] | null> {
 
   const ids = all.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0 && s.tmdbId).map((s) => String(s.tmdbId));
   const resolved = await Promise.all(
-    ids.map((id) => Promise.all([getShowById(id).catch(() => null), getShowBrowseMeta(id)]))
+    ids.map(async (id) => {
+      const [d, meta] = await Promise.all([getShowById(id).catch(() => null), getShowBrowseMeta(id)]);
+      // The language only matters for animated shows: it decides "Anime".
+      const lang = d?.genres.includes("Animation") ? await getOriginalLanguage("tv", id) : null;
+      return [d, meta, lang] as const;
+    })
   );
 
-  return resolved.flatMap(([d, meta]) => {
+  return resolved.flatMap(([d, meta, lang]) => {
     if (!d) return [];
     return [
       {
@@ -135,7 +141,7 @@ async function loadShows(): Promise<LibraryShow[] | null> {
         year: d.year,
         releaseDate: d.releaseDate,
         rating: d.rating,
-        genres: d.genres,
+        genres: withAnimeGenre(d.genres, lang),
         popularity: meta?.popularity ?? 0,
         keywords: meta?.keywords ?? [],
       },

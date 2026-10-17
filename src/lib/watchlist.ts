@@ -3,13 +3,15 @@
  */
 import { prisma } from "@/lib/db";
 import { getMovieById, getOriginalLanguage, getShowById } from "@/lib/tmdb";
-import { isAnime } from "@/lib/animeRules";
+import { ANIME, tagAnime } from "@/lib/animeRules";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import type { MovieProgress } from "@/components/MovieRow";
 import { getGamesList, type GameListItem } from "@/lib/games";
 import { getLiveChannels, type LiveChannel } from "@/lib/liveTv";
 import { listFlashGames } from "@/lib/flashGames";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
+
+const showLanguage = (id: string) => getOriginalLanguage("tv", id);
 
 export type WatchlistData = {
   movies: Movie[];
@@ -54,9 +56,12 @@ export async function getWatchlistShows(
   if (items.length === 0) return [];
 
   const details = await Promise.all(items.map((item) => getShowById(item.showId)));
-  return details
-    .filter((s): s is NonNullable<typeof s> => s != null)
-    .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons }));
+  return tagAnime(
+    details
+      .filter((s): s is NonNullable<typeof s> => s != null)
+      .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons })),
+    showLanguage
+  );
 }
 
 /** Loads all saved movies, TV shows, games, live channels, and Flash games;
@@ -139,23 +144,15 @@ export async function getWatchlist(
     }
   });
 
-  const allShows = showDetails
-    .filter((s): s is NonNullable<typeof s> => s != null)
-    .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons }));
-
-  // Only animated shows need the language lookup, so most of the list costs nothing extra.
-  const animeIds = new Set<string>();
-  if (splitAnime) {
-    await Promise.all(
-      allShows
-        .filter((s) => s.genres.includes("Animation"))
-        .map(async (s) => {
-          if (isAnime(s.genres, await getOriginalLanguage("tv", s.id))) animeIds.add(s.id);
-        })
-    );
-  }
-  const shows = allShows.filter((s) => !animeIds.has(s.id));
-  const anime = allShows.filter((s) => animeIds.has(s.id));
+  // Tagged for everyone, so any list's genre filter can offer Anime.
+  const allShows = await tagAnime(
+    showDetails
+      .filter((s): s is NonNullable<typeof s> => s != null)
+      .map((s) => ({ ...s, numberOfSeasons: s.numberOfSeasons })),
+    showLanguage
+  );
+  const anime = splitAnime ? allShows.filter((s) => s.genres.includes(ANIME)) : [];
+  const shows = splitAnime ? allShows.filter((s) => !s.genres.includes(ANIME)) : allShows;
 
   return {
     movies,
