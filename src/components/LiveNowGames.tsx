@@ -96,7 +96,8 @@ export function LiveNowGames({ channels }: { channels: ScheduleChannel[] }) {
               {f.name}
             </p>
             <ButtonLink
-              href={`/live/game/${encodeURIComponent(f.id)}`}
+              // ?auto=1: the game page may add a verified stream for it (GameStreamFinder).
+              href={`/live/game/${encodeURIComponent(f.id)}${live ? "?auto=1" : ""}`}
               variant={live ? "primary" : "secondary"}
               size="sm"
               className="self-start"

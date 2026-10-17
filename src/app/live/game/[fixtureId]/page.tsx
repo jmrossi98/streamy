@@ -39,11 +39,15 @@ export const dynamic = "force-dynamic";
 
 export default async function GamePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ fixtureId: string }>;
+  searchParams: Promise<{ auto?: string }>;
 }) {
   unstable_noStore();
   const { fixtureId: encodedFixtureId } = await params;
+  // Live Now's Watch: add a verified stream for the game if nothing is confirmed.
+  const autoRequested = (await searchParams).auto === "1";
   const fixtureId = decodeURIComponent(encodedFixtureId);
 
   const session = await getSession();
@@ -274,7 +278,7 @@ export default async function GamePage({
         />
         {/* Below the lineup's options: what the catalogue has that the lineup
             doesn't, one click from being a channel. */}
-        <GameStreamFinder fixtureId={fixtureId} />
+        <GameStreamFinder fixtureId={fixtureId} autoAdd={autoRequested && !channelConfirmed && fixture.state === "in"} />
       </div>
     </div>
   );
