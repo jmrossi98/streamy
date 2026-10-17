@@ -106,18 +106,19 @@ export function isPlayable(item: JellyfinItem): boolean {
 // invisible to Jellyfin, and the title shows "Downloaded" with no way to
 // play it. Asking Jellyfin to rescan when we come up empty closes that gap
 // on its own. Rate-limited because scans are not free and every viewer polls.
-const SCAN_COOLDOWN_MS = 60 * 1000;
+//
+// A full scan is expensive here: it walks every file and starts trickplay
+// thumbnails for anything new, reading whole files off the disk streams play
+// from. On 2026-10-17 lookups for titles that simply were not downloaded --
+// most of a 500-movie My List, each tile prefetching its page -- asked for one
+// every minute. So a lookup only asks when the title IS downloaded (see
+// scanIfDownloaded), and imports scan just their own folder (requestJellyfinPathScan).
+const SCAN_COOLDOWN_MS = 5 * 60 * 1000;
 let lastScanRequestedAt = 0;
 
-// Exported so the Radarr/Sonarr webhooks can call this the moment a
-// download actually completes, rather than only reactively the next time
-// someone happens to load a page and findJellyfinMovieItemId/
-// findJellyfinEpisodeItemId comes up empty. Radarr/Sonarr are *supposed* to
-// notify Jellyfin themselves on import, but when that notification doesn't
-// land, waiting on a viewer to visit the page (and eat the 60s cooldown
-// below every time) is what let a fully-downloaded title sit unplayable for
-// a long stretch -- reported live as "Downloaded -- tap to refresh" doing
-// nothing, repeatedly, including after a real full page reload.
+// Exported so the Radarr/Sonarr webhooks can fall back to it when an import
+// carries no path. Jellyfin's realtime monitor normally sees new files on its
+// own; this is the backstop.
 export function requestJellyfinLibraryScan(): void {
   if (!isJellyfinConfigured()) return;
   if (Date.now() - lastScanRequestedAt < SCAN_COOLDOWN_MS) return;
@@ -130,6 +131,33 @@ export function requestJellyfinLibraryScan(): void {
   }).catch((err) => console.error("[jellyfin] library refresh failed:", err));
 }
 
+/**
+ * Tells Jellyfin one folder changed (a fresh import), which it scans on its
+ * own instead of the whole library. Radarr/Sonarr and Jellyfin see the media
+ * at the same paths (/data/movies, /data/tv).
+ */
+export function requestJellyfinPathScan(path: string): void {
+  if (!isJellyfinConfigured() || !path) return;
+  fetch(`${JELLYFIN_URL}/Library/Media/Updated`, {
+    method: "POST",
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY!, "Content-Type": "application/json" },
+    body: JSON.stringify({ Updates: [{ Path: path, UpdateType: "Created" }] }),
+    signal: AbortSignal.timeout(JELLYFIN_TIMEOUT_MS),
+    cache: "no-store",
+  }).catch((err) => console.error(`[jellyfin] scan of ${path} failed:`, err));
+}
+
+/** Rescans only when Radarr/Sonarr hold the title: a miss for anything else is just "not downloaded". */
+function scanIfDownloaded(kind: "movie" | "show", tmdbId: string): void {
+  // Loaded lazily: downloadedLibrary pulls in the TMDB client.
+  void import("./downloadedLibrary")
+    .then(async ({ getLibraryMovies, getLibraryShows }) => {
+      const library = kind === "movie" ? await getLibraryMovies() : await getLibraryShows();
+      if (library?.some((t) => String(t.id) === tmdbId)) requestJellyfinLibraryScan();
+    })
+    .catch(() => {});
+}
+
 /** Jellyfin item id for a movie, by TMDB id. Null until it's actually scanned in with a real file. */
 export async function findJellyfinMovieItemId(tmdbId: string): Promise<string | null> {
   if (!isJellyfinConfigured()) return null;
@@ -138,7 +166,7 @@ export async function findJellyfinMovieItemId(tmdbId: string): Promise<string | 
       `/Items?IncludeItemTypes=Movie&Recursive=true&fields=ProviderIds`
     );
     const item = result.Items.find((i) => matchesTmdbId(i, tmdbId) && isPlayable(i));
-    if (!item) requestJellyfinLibraryScan();
+    if (!item) scanIfDownloaded("movie", tmdbId);
     return item?.Id ?? null;
   } catch (err) {
     console.error(`[jellyfin] findJellyfinMovieItemId failed for tmdbId ${tmdbId}:`, err);
@@ -197,7 +225,7 @@ export async function findJellyfinEpisodeItemId(
       const hit = tmdb ? toOtherNumbering(tmdb, refs, { season: seasonNumber, episode: episodeNumber }) : null;
       if (hit && isPlayable(hit.item)) episode = hit.item;
     }
-    if (!episode) requestJellyfinLibraryScan();
+    if (!episode) scanIfDownloaded("show", showTmdbId);
     return episode?.Id ?? null;
   } catch (err) {
     console.error(
@@ -214,14 +242,14 @@ export async function isJellyfinShowAvailable(showTmdbId: string): Promise<boole
   try {
     const seriesId = await findJellyfinSeriesId(showTmdbId);
     if (!seriesId) {
-      requestJellyfinLibraryScan();
+      scanIfDownloaded("show", showTmdbId);
       return false;
     }
     const episodes = await jellyfinFetch<{ Items: JellyfinItem[] }>(
       `/Shows/${seriesId}/Episodes?fields=ProviderIds`
     );
     const available = episodes.Items.some(isPlayable);
-    if (!available) requestJellyfinLibraryScan();
+    if (!available) scanIfDownloaded("show", showTmdbId);
     return available;
   } catch (err) {
     console.error(`[jellyfin] isJellyfinShowAvailable failed for tmdbId ${showTmdbId}:`, err);

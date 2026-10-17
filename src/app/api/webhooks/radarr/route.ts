@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requestJellyfinLibraryScan } from "@/lib/jellyfin";
+import { requestJellyfinLibraryScan, requestJellyfinPathScan } from "@/lib/jellyfin";
 
 /**
  * Inbound webhook from Radarr (Settings -> Connect -> Webhook).
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const movie = body?.movie as { tmdbId?: number } | undefined;
+  const movie = body?.movie as { tmdbId?: number; folderPath?: string } | undefined;
   const tmdbId = movie?.tmdbId != null ? String(movie.tmdbId) : null;
   if (!tmdbId) {
     return NextResponse.json({ ok: true, skipped: "no tmdbId in payload" });
@@ -49,7 +49,9 @@ export async function POST(request: Request) {
     // but that notification doesn't always land -- ask Jellyfin to rescan
     // right away rather than waiting on a viewer's page load to notice the
     // gap and trigger the same (cooldown-limited) request reactively.
-    requestJellyfinLibraryScan();
+    // Just the movie's folder: a full scan walks the whole library.
+    if (movie?.folderPath) requestJellyfinPathScan(movie.folderPath);
+    else requestJellyfinLibraryScan();
   }
   // Unrecognized event types (Test, MovieDelete, Health, etc.) no-op so
   // Radarr's "Test" button and other lifecycle events don't error out.
