@@ -2519,12 +2519,14 @@ export async function requestShow(
     >(`/api/v3/series?tvdbId=${tvdbId}`);
     if (existing[0]) {
       const status = await resolveSonarrStatus(existing[0]);
-      if (status === "requested") {
+      if (status === "requested" || status === "noReleaseFound") {
         // Already in Sonarr but neither downloading nor available -- e.g. a
         // prior download was cancelled outside Streamy. resolveSonarrStatus
         // alone would silently report "requested" with nothing actually
-        // searching, so kick off a fresh search here.
+        // searching, so kick off a fresh search here. "noReleaseFound" is an
+        // old search's answer, not this click's (see requestMovie).
         await searchSeriesInEpisodeOrder(existing[0].id);
+        return { ok: true, sonarrId: existing[0].id, tvdbId, status: "requested" };
       }
       return { ok: true, sonarrId: existing[0].id, tvdbId, status };
     }

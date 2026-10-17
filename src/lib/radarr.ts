@@ -89,7 +89,7 @@ export type MediaRequestStatus = "requested" | "noReleaseFound" | "downloading" 
 // of minutes. 3 minutes was tight enough to flip to "no release found" right
 // before that natural retry landed, reading as flapping rather than one
 // continuous search.
-const SEARCH_GRACE_MS = 5 * 60 * 1000;
+export const SEARCH_GRACE_MS = 5 * 60 * 1000;
 
 export function isSearchStale(lastSearchTime?: string | null): boolean {
   if (!lastSearchTime) return false;
@@ -1115,16 +1115,22 @@ export async function requestMovie(
     );
     if (existing[0]) {
       const status = await resolveRadarrStatus(existing[0]);
-      if (status === "requested") {
+      if (status === "requested" || status === "noReleaseFound") {
         // Already in Radarr but neither downloading nor available -- e.g. a
-        // prior download was cancelled. Cancelling unmonitors the movie, and
-        // Radarr won't grab anything it isn't monitoring, so re-monitor
-        // before searching or the request would quietly do nothing.
+        // prior download was cancelled, or the healer gave up on it. Both
+        // unmonitor the movie, and Radarr won't grab anything it isn't
+        // monitoring, so re-monitor before searching or the request would
+        // quietly do nothing. "noReleaseFound" counts too: that is only an
+        // old search's answer, and skipping it here sent "no release found"
+        // straight back for movies with plenty of releases (Andrei Rublev,
+        // The Hunt, 2026-10-17). The caller restarts the give-up count, or
+        // the healer would give up again on its next pass.
         await setRadarrMovieMonitored(existing[0].id, true);
         await radarrFetch(`/api/v3/command`, {
           method: "POST",
           body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
         });
+        return { ok: true, radarrId: existing[0].id, status: "requested" };
       }
       return { ok: true, radarrId: existing[0].id, status };
     }

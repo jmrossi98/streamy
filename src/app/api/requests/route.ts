@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { tierForUser } from "@/lib/qualityTier";
 import { prisma } from "@/lib/db";
-import { requestMovie, isRadarrConfigured, searchRadarrMovie } from "@/lib/radarr";
+import { requestMovie, isRadarrConfigured, searchRadarrMovie, setRadarrMovieMonitored } from "@/lib/radarr";
+import { movieKey, resetSearches } from "@/lib/wantedSearches";
 import { requestShow, isSonarrConfigured, searchSonarrSeries } from "@/lib/sonarr";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { logAudit } from "@/lib/auditLog";
@@ -54,8 +55,12 @@ export async function POST(request: Request) {
     `${mediaType} ${tmdbId}`;
 
   if (existing && existing.externalId != null) {
-    if (mediaType === "movie") await searchRadarrMovie(existing.externalId);
-    else await searchSonarrSeries(existing.externalId);
+    if (mediaType === "movie") {
+      // A given-up movie is unmonitored, and Radarr ignores a search for one.
+      await setRadarrMovieMonitored(existing.externalId, true);
+      await resetSearches([movieKey(existing.externalId)]);
+      await searchRadarrMovie(existing.externalId);
+    } else await searchSonarrSeries(existing.externalId);
     await prisma.mediaRequest.update({
       where: { tmdbId_mediaType: { tmdbId, mediaType } },
       data: { status: "requested" },
@@ -74,6 +79,8 @@ export async function POST(request: Request) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 502 });
     }
+    // A fresh ask: the healer's give-up count for this movie starts over.
+    if (result.status === "requested") await resetSearches([movieKey(result.radarrId)]);
     status = result.status;
     await prisma.mediaRequest.create({
       data: { tmdbId, mediaType, externalId: result.radarrId, status },
