@@ -13,7 +13,29 @@ export type TrickplayManifest = {
   thumbnailCount: number;
   /** Milliseconds between frames. */
   interval: number;
+  /**
+   * Changes whenever the thumbnails do. Sheets are cached by the browser for
+   * a day, and their URLs are otherwise the same for whatever file is at
+   * that episode now: after Clone High's reboot files were replaced by the
+   * original, the browser kept drawing the reboot's 16:9 sheets with the new
+   * 4:3 frame size -- the wrong show, and each preview half one frame, half
+   * the next.
+   */
+  version?: string;
 };
+
+/** A stable tag for one set of thumbnails: its source file and layout. */
+export function trickplayVersion(m: TrickplayManifest & { mediaSourceId: string }): string {
+  const key = [m.mediaSourceId, m.width, m.height, m.tileWidth, m.tileHeight, m.thumbnailCount, m.interval].join(":");
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (Math.imul(h, 31) + key.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/** Where one sheet is served, tagged with the manifest's version. */
+export function trickplaySheetUrl(base: string, sheet: number, m: TrickplayManifest): string {
+  return `${base}/${sheet}${m.version ? `?v=${m.version}` : ""}`;
+}
 
 /** Which sheet holds the frame for a time, and where in that sheet it sits. */
 export function trickplayCell(
