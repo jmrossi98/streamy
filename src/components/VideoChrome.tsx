@@ -69,6 +69,7 @@ export function VideoChrome({
   live,
   busy,
   previewSrc,
+  trickplaySrc,
   extraTopRight,
   extraBottomRight,
 }: {
@@ -92,6 +93,12 @@ export function VideoChrome({
    * hover. Without it the hover shows the time alone.
    */
   previewSrc?: string | null;
+  /**
+   * Where the title's Jellyfin trickplay thumbnails are served. Preferred over
+   * `previewSrc`, and given even while transcoding: they are images, not the
+   * file, so they work for anything Jellyfin could index.
+   */
+  trickplaySrc?: string | null;
   extraTopRight?: React.ReactNode;
   /** Rendered in the bottom bar, left of fullscreen -- e.g. a "next episode" button. */
   extraBottomRight?: React.ReactNode;
@@ -142,7 +149,13 @@ export function VideoChrome({
     hasFrame: previewHasFrame,
     point: previewPoint,
     onError: onPreviewError,
-  } = useSeekPreview(live || !hasMouse ? null : previewSrc, duration);
+    trickplay: previewTrickplay,
+  } = useSeekPreview(
+    live || !hasMouse ? null : previewSrc,
+    duration,
+    live || !hasMouse ? null : trickplaySrc
+  );
+  const previewOn = (!!previewSrc || previewTrickplay) && !previewFailed;
 
   const pct = dragging ? along(dragValue) : along(currentTime);
   const bufPct = along(buffered);
@@ -258,7 +271,7 @@ export function VideoChrome({
               className={`pointer-events-none absolute bottom-full z-20 mb-3 -translate-x-1/2 overflow-hidden rounded border border-white/20 bg-black/90 shadow-lg ${hover ? "" : "hidden"}`}
               style={{ left: hover?.x ?? 0 }}
             >
-              {previewSrc && !previewFailed && (
+              {previewOn && (
                 <canvas
                   ref={previewCanvasRef}
                   width={PREVIEW_WIDTH}
@@ -269,7 +282,7 @@ export function VideoChrome({
               )}
               <div className="px-2 py-0.5 text-center text-xs tabular-nums text-white">{formatTime(hover?.t ?? 0)}</div>
             </div>
-            {previewSrc && hasMouse && !previewFailed && (
+            {previewSrc && hasMouse && !previewFailed && !previewTrickplay && (
               <video
                 ref={previewVideoRef}
                 src={previewSrc}
