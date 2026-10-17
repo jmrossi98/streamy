@@ -21,22 +21,28 @@ const MLB_TEAMS = "angels|astros|athletics|blue jays|braves|brewers|cubs|diamond
 const word = (alts: string) => new RegExp(`\\b(?:${alts})\\b`, "i");
 
 /**
- * Rows in display order, each with the pattern that claims a channel.
- * Order matters twice: it is the order on the page, and the first match wins,
- * so the specific (a league) is tried before the general (any sports name),
- * and "ABC 7 News" is News rather than Network.
+ * Rows in display order, each with the pattern that claims a channel and,
+ * for the leagues, a separate list of team nicknames.
+ *
+ * Display order and match order differ -- see MATCH_ORDER below. Within the
+ * genres the order still decides, so "ABC 7 News" is News rather than Network.
  */
-const SHELF_PATTERNS: [Shelf, RegExp][] = [
-  [{ key: "nfl", title: "NFL" }, word(`nfl|redzone|red zone|${NFL_TEAMS}`)],
-  [{ key: "nba", title: "NBA" }, word(`nba|wnba|${NBA_TEAMS}`)],
-  [{ key: "nhl", title: "NHL" }, word(`nhl|hockey|${NHL_TEAMS}`)],
-  [{ key: "mlb", title: "MLB" }, word(`mlb|baseball|${MLB_TEAMS}`)],
-  [{ key: "college", title: "College Sports" }, word("ncaa|ncaaf|ncaab|college|sec network|secn|big ten|btn|acc network|accn|pac-?12|longhorn network")],
-  [{ key: "soccer", title: "Soccer" }, word("soccer|mls|premier league|epl|la ?liga|serie a|bundesliga|ligue 1|uefa|champions league|fifa|futbol|f[uú]tbol|bein|tudn")],
-  [{ key: "combat", title: "Fights" }, word("ufc|mma|boxing|wwe|aew|wrestl\\w*|fight\\w*|pfl|bellator")],
-  [{ key: "motor", title: "Motorsports" }, word("nascar|f1|formula 1|indycar|motogp|racing|speed|motor\\w*")],
+const SHELF_PATTERNS: [Shelf, RegExp, RegExp?][] = [
+  [{ key: "nfl", title: "NFL" }, word("nfl|redzone|red zone"), word(NFL_TEAMS)],
+  [{ key: "nba", title: "NBA" }, word("nba|wnba"), word(NBA_TEAMS)],
+  [{ key: "nhl", title: "NHL" }, word("nhl|hockey"), word(NHL_TEAMS)],
+  [{ key: "soccer", title: "Soccer" }, word("soccer|mls|premier league|epl|la ?liga|serie a|bundesliga|ligue 1|uefa|champions league|fifa|futbol|f[uú]tbol|bein|tudn|deportes|golazo|gol ?tv")],
+  [{ key: "combat", title: "Fights" }, word("ufc|mma|boxing|wwe|aew|wrestl\\w*|fight\\w*|pfl|bellator|combat")],
+  [{ key: "f1", title: "F1" }, word("f1|formula ?1|formula one|fm1 ?tv|grand prix")],
+  // A conference network can't say which sport it is showing, so the generic
+  // college channels live in Football; Basketball needs a basketball word.
+  [{ key: "college-football", title: "College Football" }, word("ncaa|ncaaf|college|sec network|secn|big ten|btn|acc network|accn|pac-?12|longhorn network|espnu|cbs sports network|cbssn")],
+  [{ key: "college-basketball", title: "College Basketball" }, word("ncaab|ncaam|ncaaw|march madness|college basketball|college hoops")],
+  // YES and SNY are the Yankees' and Mets' networks first.
+  [{ key: "mlb", title: "Baseball" }, word("mlb|baseball|strike zone|yes network|sny"), word(MLB_TEAMS)],
+  [{ key: "motor", title: "Motorsports" }, word("nascar|indycar|motogp|racing|speed|motor\\w*")],
   [{ key: "golf-tennis", title: "Golf & Tennis" }, word("golf|pga|lpga|tennis|atp|wta")],
-  [{ key: "sports", title: "More Sports" }, word("sports?|espn\\w*|fs1|fs2|fox sports|nbcs\\w*|cbs sports|tnt sports|bally|msg|yes network|marquee|sny|nesn|root sports|outdoors?|fish\\w*|hunt\\w*|cricket|rugby|cycling")],
+  [{ key: "sports", title: "More Sports" }, word("sports?|espn\\w*|fs1|fs2|fox sports|nbcs\\w*|cbs sports|tnt sports|bally|msg|marquee|nesn|root sports|outdoors?|fish\\w*|hunt\\w*|cricket|rugby|cycling")],
   [{ key: "classics", title: "Classics" }, word("classic\\w*|retro|vintage|oldies|metv|me tv|cozi|antenna|tv land|decades|buzzr|grit|start tv|catchy comedy|heroes ?& ?icons|[5-9]0s|golden")],
   [{ key: "cartoons", title: "Cartoons" }, word("cartoons?|toons?|kids?|junior|nick\\w*|disney\\w*|boomerang|adult swim|baby|teen|pbs kids|anime")],
   [{ key: "news", title: "News" }, word("news\\w*|cnn|msnbc|cnbc|bbc|weather|headlines?|politics?|c-?span|newsmax|bloomberg|ms ?now")],
@@ -55,11 +61,32 @@ const CALL_SIGN = /\b[KW][A-Z]{2,3}(?:-(?:TV|DT|LD|CD))?\b/;
 export const OTHER_SHELF: Shelf = { key: "other", title: "Everything Else" };
 export const SHELVES: Shelf[] = [...SHELF_PATTERNS.map(([s]) => s), OTHER_SHELF];
 
+/**
+ * The order rows get to claim a channel, most specific first:
+ *
+ * 1. College basketball, college football, fights and F1, whose names are
+ *    unambiguous but often carry a team word ("Boston College Eagles",
+ *    "Panthers" in a college game) a pro league would otherwise take.
+ * 2. A league named outright -- "MLB SAN FRANCISCO GIANTS" is baseball and
+ *    "NHL TEAM| FLORIDA PANTHERS" hockey, whatever the nickname says.
+ * 3. Team nicknames alone, for game feeds like "Sharks vs Predators".
+ * 4. Everything else, in display order.
+ */
+const FIRST = ["college-basketball", "college-football", "combat", "f1"];
+const LEAGUES = ["nfl", "nba", "nhl", "mlb"];
+const byKey = new Map(SHELF_PATTERNS.map((row) => [row[0].key, row]));
+const MATCH_ORDER: [Shelf, RegExp][] = [
+  ...FIRST.map((k) => byKey.get(k)!).map(([s, p]): [Shelf, RegExp] => [s, p]),
+  ...LEAGUES.map((k) => byKey.get(k)!).map(([s, p]): [Shelf, RegExp] => [s, p]),
+  ...LEAGUES.map((k) => byKey.get(k)!).map(([s, , teams]): [Shelf, RegExp] => [s, teams!]),
+  ...SHELF_PATTERNS.filter(([s]) => !FIRST.includes(s.key) && !LEAGUES.includes(s.key)).map(([s, p]): [Shelf, RegExp] => [s, p]),
+];
+
 /** The row a channel belongs in. */
 export function shelfFor(name: string): Shelf {
   // Quality tags ("(720p)", "4K") carry no genre and "4K" would read as a word.
   const n = name.replace(/\((?:\d{3,4}p|4k|hd|sd|fhd|uhd)\)/gi, " ").replace(/\b(?:hd|fhd|uhd|4k|raw)\b/gi, " ");
-  for (const [shelf, pattern] of SHELF_PATTERNS) {
+  for (const [shelf, pattern] of MATCH_ORDER) {
     if (pattern.test(n) || (shelf.key === "network" && CALL_SIGN.test(n))) return shelf;
   }
   return OTHER_SHELF;
