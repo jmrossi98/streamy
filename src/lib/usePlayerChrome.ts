@@ -11,6 +11,9 @@ import { spaceTogglesPlayback } from "./playerKeyRules";
 //
 // The hook owns only chrome state (play/seek/volume/fullscreen/visibility). The
 // player keeps its own source, quality, progress-saving and error handling.
+/** How long the controls stay up after the last mouse move, tap or play. */
+const HIDE_AFTER_MS = 3200;
+
 export function usePlayerChrome(
   videoRef: RefObject<HTMLVideoElement | null>,
   containerRef: RefObject<HTMLElement | null>,
@@ -38,10 +41,23 @@ export function usePlayerChrome(
   const known = opts.knownDurationSeconds && opts.knownDurationSeconds > 0 ? opts.knownDurationSeconds : 0;
   const duration = known || (Number.isFinite(videoDuration) ? videoDuration : 0);
 
+  // Starts the countdown that fades the controls out. Playback starting arms
+  // it too, not only a mouse move: live TV and autoplay start on their own,
+  // and with nothing to arm the timer the controls never left the picture.
+  const armHide = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => {
+      if (videoRef.current && !videoRef.current.paused) setControlsVisible(false);
+    }, HIDE_AFTER_MS);
+  }, [videoRef]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onPlay = () => setIsPlaying(true);
+    const onPlay = () => {
+      setIsPlaying(true);
+      armHide();
+    };
     const onPause = () => setIsPlaying(false);
     const onTime = () => setCurrentTime(v.currentTime);
     const onDur = () => setVideoDuration(v.duration);
@@ -65,6 +81,7 @@ export function usePlayerChrome(
     v.addEventListener("progress", onProgress);
     // Seed from current element state (source may already be playing).
     setIsPlaying(!v.paused);
+    if (!v.paused) armHide();
     setMuted(v.muted);
     setVolumeState(v.volume);
     return () => {
@@ -76,7 +93,7 @@ export function usePlayerChrome(
       v.removeEventListener("volumechange", onVol);
       v.removeEventListener("progress", onProgress);
     };
-  }, [videoRef]);
+  }, [videoRef, armHide]);
 
   // Two different fullscreens. The button's own is the Fullscreen API, which
   // the page can enter and leave. F11 is the browser's: the page can see it
@@ -108,11 +125,8 @@ export function usePlayerChrome(
   // Show the controls and arm the auto-hide. Held open while paused.
   const revealControls = useCallback(() => {
     setControlsVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) setControlsVisible(false);
-    }, 3200);
-  }, [videoRef]);
+    armHide();
+  }, [armHide]);
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
