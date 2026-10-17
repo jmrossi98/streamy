@@ -13,6 +13,8 @@ import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BadReleaseReason, type BlocklistRecord } from "./downloadHealthRules";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import { cached } from "./ttlCache";
+import { movieQueries, pushTitle, rankTextResults, TEXT_SEARCH_EVERY_MS } from "./textSearchRules";
+import { prowlarrTextSearch, PROWLARR_MOVIES } from "./prowlarr";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 
 const RADARR_URL = process.env.RADARR_URL?.replace(/\/$/, "");
@@ -759,6 +761,65 @@ export async function searchRadarrMovie(radarrId: number): Promise<void> {
   });
 }
 
+const lastTextSearch = new Map<number, number>();
+
+/**
+ * The last resort for a movie: a plain text search across every indexer, each
+ * hit checked by Radarr's parser and the best pushed to Radarr -- see
+ * textSearchRules.ts. Returns the title pushed, or null. At most once per
+ * TEXT_SEARCH_EVERY_MS per movie.
+ */
+async function textSearchRadarrMovie(radarrId: number): Promise<string | null> {
+  const last = lastTextSearch.get(radarrId);
+  if (last && Date.now() - last < TEXT_SEARCH_EVERY_MS) return null;
+  lastTextSearch.set(radarrId, Date.now());
+
+  const movie = await radarrFetch<{ id: number; title: string; year?: number; runtime?: number; hasFile?: boolean }>(
+    `/api/v3/movie/${radarrId}`
+  );
+  if (movie.hasFile) return null;
+  for (const query of movieQueries(movie.title, movie.year)) {
+    let results;
+    try {
+      results = await prowlarrTextSearch(query, PROWLARR_MOVIES);
+    } catch (err) {
+      console.error(`[radarr] text search "${query}" failed:`, err);
+      return null;
+    }
+    for (const r of rankTextResults(results).slice(0, 10)) {
+      const parsed = await radarrFetch<{
+        movie?: { id: number };
+        parsedMovieInfo?: { quality?: { quality?: { name?: string } } };
+      }>(`/api/v3/parse?title=${encodeURIComponent(r.title)}`).catch(() => null);
+      if (parsed?.movie?.id !== radarrId) continue;
+      const title = pushTitle(r.title, parsed.parsedMovieInfo?.quality?.quality?.name, r.size, movie.runtime);
+      // Seeders and size left out on purpose, as for an episode (sonarr.ts);
+      // the blocklist still applies.
+      const decision = await radarrFetch<{ approved?: boolean; rejections?: string[] }[] | { approved?: boolean; rejections?: string[] }>(
+        `/api/v3/release/push`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            downloadUrl: r.downloadUrl,
+            protocol: r.protocol === "usenet" ? "usenet" : "torrent",
+            publishDate: r.publishDate ?? new Date().toISOString(),
+            indexer: `${r.indexer ?? "Prowlarr"} (text search)`,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        }
+      );
+      const d = Array.isArray(decision) ? decision[0] : decision;
+      if (d?.approved) {
+        console.log(`[radarr] text search grabbed "${title}" (${r.indexer}) for movie ${radarrId}`);
+        return title;
+      }
+      console.log(`[radarr] text search: Radarr refused "${title}": ${(d?.rejections ?? []).join("; ")}`);
+    }
+  }
+  return null;
+}
+
 /** A deep search asks every indexer, slow ones included; allow for it. */
 const DEEP_SEARCH_TIMEOUT_MS = 180_000;
 const deepSearching = new Set<number>();
@@ -776,7 +837,8 @@ export async function deepSearchRadarrMovie(radarrId: number): Promise<string | 
       signal: AbortSignal.timeout(DEEP_SEARCH_TIMEOUT_MS),
     });
     const pick = pickDeepRelease(releases);
-    if (!pick) return null;
+    // Nothing Radarr's own search found will do: last, ask every indexer by text.
+    if (!pick) return await textSearchRadarrMovie(radarrId);
     // Grabbing by guid is Radarr's manual grab: it takes the release as chosen.
     await radarrFetch(`/api/v3/release`, {
       method: "POST",

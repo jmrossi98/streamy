@@ -39,6 +39,8 @@ import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules"
 import { sharedDownloadRouting, TITLE_HISTORY_HOLD_MS, type DownloadRouting } from "./radarr";
 import { forgetShared, sharedRead } from "./sharedRead";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
+import { episodeQueries, namesEpisode, pushTitle, rankTextResults, TEXT_SEARCH_EVERY_MS } from "./textSearchRules";
+import { prowlarrTextSearch, PROWLARR_TV } from "./prowlarr";
 import type {
   MediaRequestStatus,
   LiveStatus,
@@ -2007,7 +2009,10 @@ export async function deepSearchSonarrEpisode(seriesId: number, episodeId: numbe
     };
     const single = pickUnmatchedEpisode(releases, target);
     const pick = single ?? pickUnmatchedSeasonPack(releases, target);
-    if (!pick) return null;
+    if (!pick) {
+      // Nothing Sonarr's own search found will do: last, ask every indexer by text.
+      return await textSearchSonarrEpisode(series, episode, seriesId, stillMissing);
+    }
     if (!(await stillMissing())) return null;
 
     let episodeIds = [episodeId];
@@ -2039,6 +2044,77 @@ export async function deepSearchSonarrEpisode(seriesId: number, episodeId: numbe
   } finally {
     seasonDeepSearching.delete(key);
   }
+}
+
+const lastTextSearch = new Map<number, number>();
+
+/**
+ * The last resort for one episode: a plain text search across every indexer,
+ * each hit checked by Sonarr's parser and the best pushed to Sonarr -- see
+ * textSearchRules.ts. Returns the title pushed, or null. At most once per
+ * TEXT_SEARCH_EVERY_MS per episode.
+ */
+async function textSearchSonarrEpisode(
+  series: { title: string; alternateTitles?: { title?: string }[]; runtime?: number },
+  episode: SonarrEpisode & { title?: string },
+  seriesId: number,
+  stillMissing: () => Promise<SonarrEpisode | null>
+): Promise<string | null> {
+  const last = lastTextSearch.get(episode.id);
+  if (last && Date.now() - last < TEXT_SEARCH_EVERY_MS) return null;
+  lastTextSearch.set(episode.id, Date.now());
+
+  for (const query of episodeQueries(series.title, episode.seasonNumber, episode.episodeNumber, episode.title)) {
+    let results;
+    try {
+      results = await prowlarrTextSearch(query, PROWLARR_TV);
+    } catch (err) {
+      console.error(`[sonarr] text search "${query}" failed:`, err);
+      return null;
+    }
+    // A by-title query returns the episode's name rather than its number;
+    // the parser below is what decides either way.
+    const byNumber = query.endsWith(`E${String(episode.episodeNumber).padStart(2, "0")}`);
+    const candidates = rankTextResults(
+      byNumber ? results.filter((r) => namesEpisode(r.title, episode.seasonNumber, episode.episodeNumber)) : results
+    ).slice(0, 10);
+    for (const r of candidates) {
+      const parsed = await sonarrFetch<{
+        series?: { id: number };
+        episodes?: { id: number }[];
+        parsedEpisodeInfo?: { quality?: { quality?: { name?: string } } };
+      }>(`/api/v3/parse?title=${encodeURIComponent(r.title)}`).catch(() => null);
+      const ids = (parsed?.episodes ?? []).map((e) => e.id);
+      if (parsed?.series?.id !== seriesId || ids.length !== 1 || ids[0] !== episode.id) continue;
+      if (!(await stillMissing())) return null;
+      const title = pushTitle(r.title, parsed.parsedEpisodeInfo?.quality?.quality?.name, r.size, series.runtime);
+      // Seeders and size are left out on purpose: the deep search already
+      // overlooks a low seed count (at least one, checked in rankTextResults)
+      // and the size cap. The blocklist still applies -- a push is judged
+      // like any other release.
+      const decision = await sonarrFetch<{ approved?: boolean; rejections?: string[] }[] | { approved?: boolean; rejections?: string[] }>(
+        `/api/v3/release/push`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title,
+            downloadUrl: r.downloadUrl,
+            protocol: r.protocol === "usenet" ? "usenet" : "torrent",
+            publishDate: r.publishDate ?? new Date().toISOString(),
+            indexer: `${r.indexer ?? "Prowlarr"} (text search)`,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        }
+      );
+      const d = Array.isArray(decision) ? decision[0] : decision;
+      if (d?.approved) {
+        console.log(`[sonarr] text search grabbed "${title}" (${r.indexer}) for episode ${episode.id}`);
+        return title;
+      }
+      console.log(`[sonarr] text search: Sonarr refused "${title}": ${(d?.rejections ?? []).join("; ")}`);
+    }
+  }
+  return null;
 }
 
 /** Monitors and searches every episode in one season. */
