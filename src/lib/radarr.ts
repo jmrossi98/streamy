@@ -89,7 +89,7 @@ export type MediaRequestStatus = "requested" | "noReleaseFound" | "downloading" 
 // of minutes. 3 minutes was tight enough to flip to "no release found" right
 // before that natural retry landed, reading as flapping rather than one
 // continuous search.
-const SEARCH_GRACE_MS = 5 * 60 * 1000;
+export const SEARCH_GRACE_MS = 5 * 60 * 1000;
 
 export function isSearchStale(lastSearchTime?: string | null): boolean {
   if (!lastSearchTime) return false;
@@ -605,13 +605,15 @@ async function stopWantingMovie(radarrId: number): Promise<void> {
 /** Flips a movie's monitored flag -- Radarr's own notion of "do I still want this". */
 export async function setRadarrMovieMonitored(
   radarrId: number,
-  monitored: boolean
+  monitored: boolean,
+  /** Also move it to this quality profile, when given. */
+  qualityProfileId: number | null = null
 ): Promise<void> {
   if (!isRadarrConfigured()) return;
   const movie = await radarrFetch<Record<string, unknown>>(`/api/v3/movie/${radarrId}`);
   await radarrFetch(`/api/v3/movie/${radarrId}`, {
     method: "PUT",
-    body: JSON.stringify({ ...movie, monitored }),
+    body: JSON.stringify({ ...movie, monitored, ...(qualityProfileId ? { qualityProfileId } : {}) }),
   });
 }
 
@@ -1115,16 +1117,27 @@ export async function requestMovie(
     );
     if (existing[0]) {
       const status = await resolveRadarrStatus(existing[0]);
-      if (status === "requested") {
+      if (status === "requested" || status === "noReleaseFound") {
         // Already in Radarr but neither downloading nor available -- e.g. a
-        // prior download was cancelled. Cancelling unmonitors the movie, and
-        // Radarr won't grab anything it isn't monitoring, so re-monitor
-        // before searching or the request would quietly do nothing.
-        await setRadarrMovieMonitored(existing[0].id, true);
+        // prior download was cancelled, or the healer gave up on it. Both
+        // unmonitor the movie, and Radarr won't grab anything it isn't
+        // monitoring, so re-monitor before searching or the request would
+        // quietly do nothing. "noReleaseFound" counts too: that is only an
+        // old search's answer, and skipping it here sent "no release found"
+        // straight back for movies with plenty of releases (Andrei Rublev,
+        // The Hunt, 2026-10-17). The caller restarts the give-up count, or
+        // the healer would give up again on its next pass.
+        //
+        // An admin's ask also moves a title nobody has downloaded yet onto
+        // the 4K profile, whoever asked first. Never the other way: someone
+        // else re-asking for an admin's title leaves it on 4K.
+        const uhd = tier === "uhd" ? resolveQualityProfileId("uhd", RADARR_QUALITY_PROFILE_ID, RADARR_QUALITY_PROFILE_ID_4K) : null;
+        await setRadarrMovieMonitored(existing[0].id, true, uhd);
         await radarrFetch(`/api/v3/command`, {
           method: "POST",
           body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
         });
+        return { ok: true, radarrId: existing[0].id, status: "requested" };
       }
       return { ok: true, radarrId: existing[0].id, status };
     }

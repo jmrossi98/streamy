@@ -2519,12 +2519,25 @@ export async function requestShow(
     >(`/api/v3/series?tvdbId=${tvdbId}`);
     if (existing[0]) {
       const status = await resolveSonarrStatus(existing[0]);
-      if (status === "requested") {
+      if (status === "requested" || status === "noReleaseFound") {
         // Already in Sonarr but neither downloading nor available -- e.g. a
         // prior download was cancelled outside Streamy. resolveSonarrStatus
         // alone would silently report "requested" with nothing actually
-        // searching, so kick off a fresh search here.
+        // searching, so kick off a fresh search here. "noReleaseFound" is an
+        // old search's answer, not this click's (see requestMovie).
+        // An admin's ask moves a series with no files yet onto 4K (see requestMovie).
+        if (tier === "uhd") {
+          const uhd = resolveQualityProfileId("uhd", SONARR_QUALITY_PROFILE_ID, SONARR_QUALITY_PROFILE_ID_4K);
+          const series = await sonarrFetch<Record<string, unknown>>(`/api/v3/series/${existing[0].id}`);
+          if (uhd && series.qualityProfileId !== uhd) {
+            await sonarrFetch(`/api/v3/series/${existing[0].id}`, {
+              method: "PUT",
+              body: JSON.stringify({ ...series, qualityProfileId: uhd }),
+            });
+          }
+        }
         await searchSeriesInEpisodeOrder(existing[0].id);
+        return { ok: true, sonarrId: existing[0].id, tvdbId, status: "requested" };
       }
       return { ok: true, sonarrId: existing[0].id, tvdbId, status };
     }

@@ -3,6 +3,7 @@ import {
   getRadarrLiveStatus,
   getRadarrQueueDetail,
   getRadarrStatusByTmdbId,
+  SEARCH_GRACE_MS,
   type MediaRequestStatus,
   type RadarrQueueDetail,
 } from "./radarr";
@@ -154,6 +155,20 @@ export async function resolveMediaRequestStatus(
   // should show up the moment it's true rather than after another wait.
   // The row stays (not cleared) so a later auto-heal re-search can still
   // resolve it forward if a release shows up.
+  // A search asked for in the last few minutes is still running: Radarr and
+  // Sonarr only move lastSearchTime once it finishes, so until then their
+  // answer is the previous search's. Without this a fresh click on a title
+  // searched days ago read "no release found" the instant it was made.
+  const justAsked =
+    storedStatus === "requested" && Date.now() - row.updatedAt.getTime() < SEARCH_GRACE_MS;
+  if (liveStatus === "noReleaseFound" && justAsked) {
+    return {
+      status: "requested",
+      progress: null,
+      detail: await buildDetail(mediaType, externalId, "requested"),
+    };
+  }
+
   if (liveStatus === "noReleaseFound") {
     if (storedStatus !== "noReleaseFound") {
       await prisma.mediaRequest.update({
