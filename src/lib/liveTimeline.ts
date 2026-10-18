@@ -387,7 +387,7 @@ export type ChannelProgramme = {
  * any one league or channel, so it applies to whatever gets mapped next.
  */
 export function findEpgConfirmedChannelNames(
-  fixture: { awayTeam: string | null; homeTeam: string | null; startUtc?: string | null },
+  fixture: { awayTeam: string | null; homeTeam: string | null; startUtc?: string | null; league?: string },
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): string[] {
@@ -396,6 +396,10 @@ export function findEpgConfirmedChannelNames(
   if (!away && !home) return [];
   const now = gameReferenceTime(fixture.startUtc, nowUtc);
   if (!Number.isFinite(now)) return [];
+  const sport = fixture.league ? LEAGUE_GUIDE_WORDS[fixture.league] : undefined;
+  const nicknames = [teamNickname(fixture.awayTeam), teamNickname(fixture.homeTeam)]
+    .filter((n): n is string => n != null)
+    .map((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
 
   const confirmed: string[] = [];
   for (const [channelName, programmes] of programsByChannelName) {
@@ -409,9 +413,39 @@ export function findEpgConfirmedChannelNames(
     const text = `${current.title} ${current.description}`.toLowerCase();
     const mentions =
       away && home ? text.includes(away) && text.includes(home) : text.includes((away ?? home)!);
-    if (mentions) confirmed.push(channelName);
+    if (mentions || (sport && sport.test(text) && bracketedByTeamShow(current, programmes, nicknames))) {
+      confirmed.push(channelName);
+    }
   }
   return confirmed;
+}
+
+/** How far apart two programmes can be and still count as back to back. */
+const ADJACENT_MS = 30 * 60_000;
+
+/**
+ * Whether the show right before or right after `game` is one team's own.
+ *
+ * Regional sports networks list a game as "Live: NHL Hockey", naming nobody,
+ * so the both-teams check above can't confirm them. The shows either side
+ * can: on 2026-10-17 NBC Sports California ran "Sharks Pregame", "Live: NHL
+ * Hockey", "Sharks Postgame" -- ESPN had listed the game on NBC Sports Bay
+ * Area, which was showing water polo, and with nothing confirmed the page
+ * fell back to CW 36 San Jose, which was showing soccer. Only the immediate
+ * neighbours count: a team's show three hours earlier says nothing about now.
+ */
+function bracketedByTeamShow(game: ChannelProgramme, programmes: ChannelProgramme[], nicknames: RegExp[]): boolean {
+  if (nicknames.length === 0) return false;
+  const start = Date.parse(game.startUtc);
+  const end = Date.parse(game.endUtc);
+  return programmes.some((p) => {
+    if (p === game) return false;
+    const pStart = Date.parse(p.startUtc);
+    const pEnd = Date.parse(p.endUtc);
+    const before = Number.isFinite(pEnd) && pEnd <= start && start - pEnd <= ADJACENT_MS;
+    const after = Number.isFinite(pStart) && pStart >= end && pStart - end <= ADJACENT_MS;
+    return (before || after) && nicknames.some((n) => n.test(p.title));
+  });
 }
 
 /**
@@ -481,7 +515,7 @@ export function findEpgElsewhereChannelNames(
 }
 
 export function matchFixturesToEpgProgrammes(
-  fixtures: { id: string; awayTeam: string | null; homeTeam: string | null; startUtc?: string | null }[],
+  fixtures: { id: string; awayTeam: string | null; homeTeam: string | null; startUtc?: string | null; league?: string }[],
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): Map<string, string[]> {

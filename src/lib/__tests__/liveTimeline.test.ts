@@ -468,6 +468,57 @@ describe("findEpgConfirmedChannelNames", () => {
   });
 });
 
+describe("findEpgConfirmedChannelNames: a game bracketed by a team's own shows", () => {
+  // 2026-10-17: ESPN listed Sharks at Red Wings on NBC Sports Bay Area (water
+  // polo that night); the game was on NBC Sports California, listed only as
+  // "Live: NHL Hockey" between the Sharks' own pre- and postgame shows.
+  const fixture = {
+    league: "NHL",
+    awayTeam: "San Jose Sharks",
+    homeTeam: "Detroit Red Wings",
+    startUtc: "2026-10-17T23:00:00Z",
+  };
+  const show = (title: string, start: string, end: string): ChannelProgramme => ({
+    title,
+    description: "",
+    startUtc: `2026-10-17T${start}:00Z`,
+    endUtc: `2026-10-${end >= start ? "17" : "18"}T${end}:00Z`,
+  });
+  const nbcsCalifornia = [
+    show("Kings Season Preview", "22:00", "22:30"),
+    show("Live: Sharks Pregame", "22:30", "23:00"),
+    show("Live: NHL Hockey", "23:00", "01:30"),
+    show("Live: Sharks Postgame", "01:30", "02:00"),
+  ];
+  const now = "2026-10-17T23:30:00Z";
+
+  it("confirms the regional network", () => {
+    const programs = new Map([["NBC SPORTS CALIFORNIA", nbcsCalifornia]]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now)).toEqual(["NBC SPORTS CALIFORNIA"]);
+  });
+
+  it("needs the sport on now, not just a team show nearby", () => {
+    const programs = new Map([
+      ["NBC Sports Bay Area", [show("Live: Sharks Pregame", "22:30", "23:00"), show("Live: Women's College Water Polo", "23:00", "23:30")]],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now)).toEqual([]);
+  });
+
+  it("needs the team show right next to the game, and for one of these teams", () => {
+    const programs = new Map([
+      ["NHL NETWORK HD", [show("Top Shelf", "22:00", "22:30"), show("Live: NHL Hockey Central Saturday", "22:30", "23:00"), show("Live: NHL Hockey", "23:00", "02:00")]],
+      ["FAR APART", [show("Sharks Classics", "19:00", "20:00"), show("Live: NHL Hockey", "23:00", "02:00")]],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, now)).toEqual([]);
+  });
+
+  it("does nothing without the fixture's league", () => {
+    const { league: _league, ...noLeague } = fixture;
+    const programs = new Map([["NBC SPORTS CALIFORNIA", nbcsCalifornia]]);
+    expect(findEpgConfirmedChannelNames(noLeague, programs, now)).toEqual([]);
+  });
+});
+
 describe("matchFixturesToEpgProgrammes", () => {
   const programme: ChannelProgramme = {
     title: "NFL Football",
