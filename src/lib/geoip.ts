@@ -20,18 +20,21 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
-import { open as openMmdb, type Reader, type CityResponse } from "maxmind";
+import { open as openMmdb, type Reader, type CityResponse, type AsnResponse } from "maxmind";
 import { extract } from "tar";
 
 const EDITION = "GeoLite2-City";
+// Who owns an address (Amazon, Comcast, ...). Same free license key, separate
+// file. Used to tell data-center traffic from people on home/mobile networks.
+const ASN_EDITION = "GeoLite2-ASN";
 const REFRESH_MS = 7 * 24 * 60 * 60 * 1000; // MaxMind updates weekly.
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 
 function dataDir(): string {
   return process.env.GEOIP_DIR || "/app/data/geoip";
 }
-function mmdbPath(): string {
-  return join(dataDir(), `${EDITION}.mmdb`);
+function mmdbPath(edition: string = EDITION): string {
+  return join(dataDir(), `${edition}.mmdb`);
 }
 
 export function isGeoipConfigured(): boolean {
@@ -82,9 +85,9 @@ export async function geoStatus(): Promise<GeoStatus> {
 }
 
 /** Age of the database file in ms, or Infinity when it isn't there. */
-async function mmdbAge(): Promise<number> {
+async function mmdbAge(edition: string = EDITION): Promise<number> {
   try {
-    const s = await stat(mmdbPath());
+    const s = await stat(mmdbPath(edition));
     return Date.now() - s.mtimeMs;
   } catch {
     return Infinity;
@@ -99,14 +102,14 @@ async function mmdbAge(): Promise<number> {
  * so the file lands flat. Written to a temp path and renamed into place, so a
  * failed or partial download never replaces a working database.
  */
-async function download(): Promise<void> {
+async function download(edition: string = EDITION): Promise<void> {
   const key = process.env.MAXMIND_LICENSE_KEY;
   if (!key) return;
 
   await mkdir(dataDir(), { recursive: true });
   const url =
     `https://download.maxmind.com/app/geoip_download` +
-    `?edition_id=${EDITION}&license_key=${encodeURIComponent(key)}&suffix=tar.gz`;
+    `?edition_id=${edition}&license_key=${encodeURIComponent(key)}&suffix=tar.gz`;
 
   const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   if (!res.ok || !res.body) {
@@ -114,14 +117,14 @@ async function download(): Promise<void> {
     throw new Error(`GeoLite2 download failed: HTTP ${res.status}`);
   }
 
-  const tmp = join(dataDir(), `.${EDITION}.download`);
+  const tmp = join(dataDir(), `.${edition}.download`);
   await rm(tmp, { recursive: true, force: true });
   await mkdir(tmp, { recursive: true });
   await pipeline(
     Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
     extract({ cwd: tmp, strip: 1, filter: (p) => p.endsWith(".mmdb") })
   );
-  await rename(join(tmp, `${EDITION}.mmdb`), mmdbPath());
+  await rename(join(tmp, `${edition}.mmdb`), mmdbPath(edition));
   await rm(tmp, { recursive: true, force: true });
 }
 
@@ -233,8 +236,76 @@ export async function locateMany(ips: Iterable<string>): Promise<Map<string, Geo
   return out;
 }
 
+// The ASN database, handled the same way as the city one: never blocks a
+// request, downloads in the background, answers null until it is there.
+let asnReader: Reader<AsnResponse> | null = null;
+let asnDownloading: Promise<void> | null = null;
+
+async function getAsnReader(): Promise<Reader<AsnResponse> | null> {
+  if (!isGeoipConfigured()) return null;
+  const age = await mmdbAge(ASN_EDITION);
+  if (age === Infinity) {
+    startAsnDownload();
+    return null;
+  }
+  if (!asnReader) {
+    try {
+      asnReader = await openMmdb<AsnResponse>(mmdbPath(ASN_EDITION));
+    } catch {
+      return null;
+    }
+  }
+  if (age > REFRESH_MS) startAsnDownload();
+  return asnReader;
+}
+
+function startAsnDownload(): void {
+  if (asnDownloading) return;
+  asnDownloading = download(ASN_EDITION)
+    .then(async () => {
+      try {
+        asnReader = await openMmdb<AsnResponse>(mmdbPath(ASN_EDITION));
+      } catch {
+        asnReader = null;
+      }
+    })
+    .catch((err) => {
+      console.error("[geoip] ASN refresh failed:", err instanceof Error ? err.message : err);
+    })
+    .finally(() => {
+      asnDownloading = null;
+    });
+}
+
+export type NetworkOwner = { asn: number; org: string | null };
+
+/** The network that owns an address, or null when unknown. */
+export async function networkOf(ip: string): Promise<NetworkOwner | null> {
+  const r = await getAsnReader();
+  if (!r || !ip) return null;
+  try {
+    const rec = r.get(ip);
+    if (!rec?.autonomous_system_number) return null;
+    return { asn: rec.autonomous_system_number, org: rec.autonomous_system_organization ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** networkOf for many addresses, each distinct one looked up once. */
+export async function networkOfMany(ips: Iterable<string>): Promise<Map<string, NetworkOwner>> {
+  const out = new Map<string, NetworkOwner>();
+  for (const ip of new Set(ips)) {
+    const n = await networkOf(ip);
+    if (n) out.set(ip, n);
+  }
+  return out;
+}
+
 /** Test seam: drop the cached reader so a changed env is picked up. */
 export function _resetForTest(): void {
   reader = null;
   downloading = null;
+  asnReader = null;
+  asnDownloading = null;
 }
