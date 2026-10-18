@@ -122,6 +122,19 @@ export function presenceOf(lastSeenAt: number, now = Date.now()): "online" | "id
   return "offline";
 }
 
+/**
+ * Longest a session's last heartbeat can be stale and still count as playing.
+ * A foreground tab beats every 20s; this covers one missed beat. Past it, a
+ * tab that closed without its "stopped" beat landing stops being shown as
+ * playing rather than lingering for the full idle window.
+ */
+export const PLAYING_FRESH_MS = 45_000;
+
+/** Whether a session's "playing" is current, not a value left behind by a closed tab. */
+export function isActivelyPlaying(lastSeenAt: number, now = Date.now()): boolean {
+  return now - lastSeenAt <= PLAYING_FRESH_MS;
+}
+
 /** The shortest stall that counts against a session. */
 export const NOTICEABLE_STALL_MS = 1_000;
 

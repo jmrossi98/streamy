@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import type { PlaybackKind } from "./viewerActivityRules";
-import { queuePlaybackEvent, setPlayingNow, updatePlayingState } from "./presenceClient";
+import { flushPresenceSoon, queuePlaybackEvent, setPlayingNow, updatePlayingState } from "./presenceClient";
 
 /**
  * Reports how a player is doing to the admin Viewers panel: when it started,
@@ -95,6 +95,10 @@ export function usePlaybackTelemetry(
       if (stallAt != null) queuePlaybackEvent("stall", media, "still stalled when stopped", Date.now() - stallAt);
       queuePlaybackEvent("stop", media, played ? null : "stopped before the picture started", Date.now() - startedAt);
       setPlayingNow(null);
+      // Tell the server now, not at the next 20s beat: a tab that navigated
+      // away or closed should stop showing as "playing" right away, which is
+      // what left several dead "playing" sessions on the Viewers panel.
+      flushPresenceSoon();
     };
     // media is derived from kind and title.
     // eslint-disable-next-line react-hooks/exhaustive-deps

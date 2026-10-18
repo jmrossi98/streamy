@@ -32,6 +32,9 @@ export function usePlayerChrome(
   const [buffered, setBuffered] = useState(0);
   const [muted, setMuted] = useState(false);
   const [volume, setVolumeState] = useState(1);
+  // The last level the viewer actually heard, so unmuting from a zero volume
+  // has something to come back to rather than staying silent.
+  const lastVolumeRef = useRef(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -71,6 +74,7 @@ export function usePlayerChrome(
     const onVol = () => {
       setMuted(v.muted);
       setVolumeState(v.volume);
+      if (v.volume > 0) lastVolumeRef.current = v.volume;
     };
     const onProgress = () => {
       try {
@@ -249,7 +253,15 @@ export function usePlayerChrome(
   const toggleMute = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.muted = !v.muted;
+    // The icon shows "silent" for two states: muted, and volume at 0. A plain
+    // !muted flip unmuted a zero-volume element to no sound and the struck-out
+    // icon stayed, so the button looked dead. Unmuting restores a level.
+    if (v.muted || v.volume === 0) {
+      v.muted = false;
+      if (v.volume === 0) v.volume = lastVolumeRef.current > 0 ? lastVolumeRef.current : 1;
+    } else {
+      v.muted = true;
+    }
     revealControls();
   }, [videoRef, revealControls]);
 

@@ -18,8 +18,12 @@ type Props = {
    * Called once the retries are spent and the channel is given up on. A game
    * page uses it to move on to the next channel that might carry the game,
    * rather than leave the viewer on an error with other options unused.
+   *
+   * `reason` says why, so the caller can react: "busy" means the provider had
+   * no free line (a 503 from the tuner) -- a sign its other channels won't work
+   * either -- and "offline" means the stream itself never delivered.
    */
-  onGiveUp?: () => void;
+  onGiveUp?: (reason?: "busy" | "offline") => void;
 };
 
 /**
@@ -195,6 +199,8 @@ function Spinner({ label }: { label: string }) {
 export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Props) {
   // Read through a ref so a new callback each render doesn't re-run the tune effect.
   const onGiveUpRef = useRef(onGiveUp);
+  /** Set when the last fatal error was a 503 -- the provider had no free line. */
+  const lastFailWasBusyRef = useRef(false);
   useEffect(() => {
     onGiveUpRef.current = onGiveUp;
   }, [onGiveUp]);
@@ -326,6 +332,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     if (retryChannelIdRef.current !== channelId) {
       retryChannelIdRef.current = channelId;
       retryCountRef.current = 0;
+      lastFailWasBusyRef.current = false;
       // error and loading are otherwise only ever set once and never
       // cleared -- reasonable for a single tune, wrong the moment a caller
       // (GameChannelPicker's channel switcher) reuses one LivePlayer
@@ -413,7 +420,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       if (!retryable || retryCountRef.current >= MAX_RETRIES) {
         setError(finalError);
         setLoading(false);
-        onGiveUpRef.current?.();
+        onGiveUpRef.current?.(lastFailWasBusyRef.current ? "busy" : "offline");
         return;
       }
       retryCountRef.current += 1;
@@ -737,9 +744,11 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
         clearTuneTimer();
+        const busy = data.response?.code === 503;
+        lastFailWasBusyRef.current = busy;
         scheduleRetry(
-          data.response?.code === 503
-            ? "This channel couldn’t be tuned. The stream may be offline."
+          busy
+            ? "This channel couldn’t be tuned — the provider’s lines are all in use."
             : "Playback failed."
         );
       });

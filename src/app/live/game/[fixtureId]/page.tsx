@@ -7,7 +7,8 @@ import { prisma } from "@/lib/db";
 import type { StoredChoice } from "@/lib/gameChannelChoice";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
-import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
+import { getChannelInfo, getMappedChannelPrograms, listIptvAccounts, type ChannelInfo } from "@/lib/dispatcharr";
+import { isLineDead } from "@/lib/iptvLineRules";
 import {
   findCandidateChannels,
   namesBothTeams,
@@ -17,8 +18,9 @@ import {
   findEpgElsewhereChannelNames,
   networksOnOtherGames,
   resolveChannelForFixture,
-  channelCarriesNetwork,
-  isLocalNetwork,
+  contestedLocalNetworks,
+  networkConfirmsFixture,
+  channelMarketTeam,
 } from "@/lib/liveTimeline";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
@@ -186,12 +188,17 @@ export default async function GamePage({
     );
   const gameFeed = gameFeeds[0] ?? null;
 
-  const atHome = (name: string) => HOME_MARKETS.some((m) => new RegExp(`\\b${m}\\b`, "i").test(name));
-  const networkConfirmed = channels.filter(
-    (c) =>
-      !isStale(c.name) &&
-      (fixture.broadcasts ?? []).some((b) => channelCarriesNetwork(c.name, b) && (!isLocalNetwork(b) || atHome(c.name)))
-  );
+  // An over-the-air affiliate only confirms when it is in a participating
+  // team's market, or the window is national (the network carries the one game
+  // everywhere). A national cable or regional-sports feed confirms by carrying
+  // the game. A channel in the viewer's own market but neither team's --
+  // Rochester CBS for Panthers at Eagles -- is NOT confirmed: it shows whatever
+  // that region was assigned, which on a Sunday afternoon is a different game.
+  // Reported 2026-10-18: Rochester CBS was confirmed for Panthers/Eagles while
+  // showing the Bills, and Baltimore CBS confirmed for Bills/Raiders showing
+  // Steelers/Bucs.
+  const contested = contestedLocalNetworks(fixture, fixtures);
+  const networkConfirmed = channels.filter((c) => !isStale(c.name) && networkConfirmsFixture(c.name, fixture, contested));
   const confirmed = [...findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf), ...networkConfirmed].filter(
     (c, i, all) => all.findIndex((x) => x.id === c.id) === i
   );
@@ -277,6 +284,35 @@ export default async function GamePage({
     ? [...liveCandidates, primary!, ...deadCandidates]
     : [...liveCandidates, ...deadCandidates];
 
+  // Free lines per provider right now, so the player can skip a provider at
+  // capacity instead of spinning on a channel that can't start, and say so when
+  // every provider is full. Best effort: a stale snapshot costs the hint, not
+  // the page.
+  let providerFreeLines: Record<string, number> = {};
+  try {
+    const accounts = await listIptvAccounts();
+    if (accounts) {
+      for (const a of accounts) {
+        const capacity = a.lines.filter((l) => l.active && !isLineDead(l)).reduce((n, l) => n + (l.maxStreams || 0), 0);
+        const used = a.lines.reduce((n, l) => n + (l.viewers || 0), 0);
+        providerFreeLines[a.name] = Math.max(0, capacity - used);
+      }
+    }
+  } catch (err) {
+    console.error("[live/game] provider capacity lookup failed:", err);
+  }
+
+  // Every channel we actually know carries this game (not just the primary),
+  // so the picker badges each honestly, and the team whose market each
+  // in-market affiliate belongs to, for the badge's wording.
+  const confirmedIds = confirmed.map((c) => c.id);
+  const marketTeamByName: Record<string, string> = {};
+  for (const c of [channel, ...candidates]) {
+    if (!c) continue;
+    const team = channelMarketTeam(c.name, fixture);
+    if (team) marketTeamByName[c.name] = team;
+  }
+
   return (
     <div className={BROWSE_PAGE_CLASS}>
       <div className="mx-auto w-full max-w-5xl px-4 md:px-6">
@@ -311,8 +347,11 @@ export default async function GamePage({
         <GameChannelPicker
           channel={channel}
           channelConfirmed={channelConfirmed}
+          confirmedIds={confirmedIds}
+          marketTeamByName={marketTeamByName}
           candidates={candidates}
           infoByChannel={infoByChannel}
+          providerFreeLines={providerFreeLines}
           speedByChannel={Object.fromEntries(
             [channel, ...candidates]
               .filter((c): c is NonNullable<typeof c> => c != null)

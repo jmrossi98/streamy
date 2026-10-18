@@ -53,3 +53,12 @@ export function takePresence(): { playing: PlayingNow | null; events: IncomingEv
 export function onUrgentPresence(fn: (() => void) | null): void {
   onUrgent = fn;
 }
+
+/**
+ * Nudge the next heartbeat out early -- used when a player stops, so a closed
+ * or navigated-away tab reports it is no longer playing within a couple of
+ * seconds instead of lingering as "playing" until the next 20s beat.
+ */
+export function flushPresenceSoon(): void {
+  onUrgent?.();
+}
