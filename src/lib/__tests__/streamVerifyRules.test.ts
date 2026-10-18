@@ -151,3 +151,17 @@ describe("pickAutoAdd", () => {
     expect(pickAutoAdd([{ id: 9, score: 0 }], {})).toBeNull();
   });
 });
+
+describe("pickAutoAdd: a feed carrying the game's date", () => {
+  const ok = { status: "ok" as const, bytes: 1e6, mbps: 8, video: true };
+  it("waits for a dated feed still being checked over an undated one that passed", () => {
+    // 2026-10-18: the undated "NHL | 12 - 9pm Bruins at Kings" slot showed soccer.
+    const ranked = [{ id: 1, score: 0, dated: true }, { id: 2, score: 0, dated: false }];
+    expect(pickAutoAdd(ranked, { 1: { status: "checking" }, 2: ok })).toBeNull();
+    expect(pickAutoAdd(ranked, { 1: ok, 2: ok })?.id).toBe(1);
+  });
+  it("still takes an undated feed once no dated one is left to wait for", () => {
+    const ranked = [{ id: 1, score: 0, dated: true }, { id: 2, score: 0, dated: false }];
+    expect(pickAutoAdd(ranked, { 1: { status: "dead", bytes: 0, mbps: 0, video: false }, 2: ok })?.id).toBe(2);
+  });
+});

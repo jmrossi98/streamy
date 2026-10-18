@@ -15,7 +15,7 @@ import {
   type VerifyState,
 } from "@/lib/streamVerifyRules";
 
-type Candidate = { id: number; name: string; provider: string | null; logoUrl: string | null; score?: number | null };
+type Candidate = { id: number; name: string; provider: string | null; logoUrl: string | null; score?: number | null; dated?: boolean };
 
 /**
  * "More streams for this game": provider streams that might carry it but are
@@ -39,11 +39,14 @@ export function GameStreamFinder({
   fixtureId,
   autoAdd = false,
   autoAddMaxScore = 1,
+  autoAddDatedOnly = false,
 }: {
   fixtureId: string;
   autoAdd?: boolean;
   /** The weakest gameStreamScore auto-add will take: 0 = names both teams. */
   autoAddMaxScore?: number;
+  /** Only a feed whose name carries the game's date: the lineup already has an undated one. */
+  autoAddDatedOnly?: boolean;
 }) {
   const router = useRouter();
   const [streams, setStreams] = useState<Candidate[] | null>(null);
@@ -106,7 +109,7 @@ export function GameStreamFinder({
 
   useEffect(() => {
     if (!autoAdd || autoTried.current || !streams) return;
-    const pick = pickAutoAdd(streams, checks, autoAddMaxScore);
+    const pick = pickAutoAdd(autoAddDatedOnly ? streams.filter((s) => s.dated) : streams, checks, autoAddMaxScore);
     if (!pick) {
       // Nothing to add, and nothing left that could change that: tell the
       // player it can stop holding for a feed and play its best guess.
@@ -127,7 +130,7 @@ export function GameStreamFinder({
       .then((ok) => announceGameFeedSearch({ fixtureId, outcome: ok ? "added" : "none" }));
     // add is recreated each render; the pick only depends on these.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoAdd, autoAddMaxScore, streams, checks, verify]);
+  }, [autoAdd, autoAddMaxScore, autoAddDatedOnly, streams, checks, verify]);
 
   async function add(s: Candidate, auto = false): Promise<boolean> {
     if (adding !== null || !canAdd(checks[s.id])) return false;

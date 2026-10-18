@@ -5,6 +5,7 @@ import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
 import { gameStreamQueries, gameStreamScore, rankGameStreams } from "@/lib/gameStreamRules";
+import { namesGameDate } from "@/lib/liveGuideGrid";
 import { isStreamProbeConfigured } from "@/lib/streamProbe";
 import { cached } from "@/lib/ttlCache";
 
@@ -54,6 +55,8 @@ export async function GET(request: Request) {
       provider: s.provider,
       logoUrl: s.logoUrl,
       score: gameStreamScore(s.name, fixture),
+      // Carries the game's own date: auto-add waits for these (pickAutoAdd).
+      dated: !!fixture.startUtc && namesGameDate(s.name, Date.parse(fixture.startUtc)),
     })),
     // Whether the page should check the top candidates with
     // /api/live/game-streams/verify. Off when the probe is not set up, which

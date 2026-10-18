@@ -11,7 +11,7 @@
  */
 import { channelCarriesNetwork, looksLikePlaceholder } from "./liveTimeline";
 import { eventSlotState } from "./eventSlotRules";
-import { namesOtherDate } from "./liveGuideGrid";
+import { namesGameDate, namesOtherDate } from "./liveGuideGrid";
 
 export type GameStreamCandidate = { id: number; name: string; stale?: boolean; provider?: string | null };
 export type GameFixture = {
@@ -83,10 +83,18 @@ export function rankGameStreams<S extends GameStreamCandidate>(
       if (f.startUtc && namesOtherDate(s.name, Date.parse(f.startUtc))) return false;
       return !s.stale && !opts.promoted?.has(s.id) && !(s.provider && opts.expiredProviders?.has(s.provider.toLowerCase()));
     })
-    .map((s) => ({ s, score: gameStreamScore(s.name, f) }))
-    .filter((x): x is { s: S; score: number } => x.score !== null)
-    // A slot that is not open yet ranks behind one that is, within a score.
-    .sort((a, b) => a.score - b.score || Number(eventSlotState(a.s.name, now) === "upcoming") - Number(eventSlotState(b.s.name, now) === "upcoming"))
+    .map((s) => ({ s, score: gameStreamScore(s.name, f), dated: !!f.startUtc && namesGameDate(s.name, Date.parse(f.startUtc)) }))
+    .filter((x): x is { s: S; score: number; dated: boolean } => x.score !== null)
+    // Within a score, a name carrying the game's own date first: it was
+    // labelled for this game, where a standing slot's label may be a day old
+    // and its content something else (namesGameDate). Then a slot that is not
+    // open yet behind one that is.
+    .sort(
+      (a, b) =>
+        a.score - b.score ||
+        Number(b.dated) - Number(a.dated) ||
+        Number(eventSlotState(a.s.name, now) === "upcoming") - Number(eventSlotState(b.s.name, now) === "upcoming")
+    )
     .slice(0, opts.limit ?? 12)
     .map((x) => x.s);
 }

@@ -235,7 +235,24 @@ function namedDates(name: string): { y: number | null; m: number; d: number }[] 
   for (const m of name.matchAll(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi)) {
     out.push({ y: null, m: MONTHS.indexOf(m[2].toLowerCase()) + 1, d: +m[1] });
   }
+  // Month first, as ESPN+ writes it: "Oct 17 8:30PM ET". Not "Oct 17:30".
+  for (const m of name.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b(?!:)/gi)) {
+    out.push({ y: null, m: MONTHS.indexOf(m[1].toLowerCase()) + 1, d: +m[2] });
+  }
   return out;
+}
+
+/**
+ * Whether a name carries the game's own date -- proof it was labelled for
+ * this game, not a standing slot that may since carry something else. On
+ * 2026-10-18 "NHL | 12 - 9pm Bruins at Kings", labelled a day earlier, was
+ * showing soccer, while "US (ESPN+ 435) | Boston Bruins vs. Los Angeles Kings
+ * Oct 17 8:30PM ET (2026-10-17 ...)" was the game.
+ */
+export function namesGameDate(name: string, gameStartMs: number): boolean {
+  if (!Number.isFinite(gameStartMs)) return false;
+  const day = easternDate(gameStartMs);
+  return namedDates(name).some((d) => d.m === day.m && d.d === day.d && (d.y == null || d.y === day.y));
 }
 
 /** The game's date in the eastern time zone the providers' names use. */
