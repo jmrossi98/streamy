@@ -73,6 +73,12 @@ function badgeLabel(v: VisitorRow): string {
   }
 }
 
+const TRAFFIC_STYLE: Record<NonNullable<VisitorRow["traffic"]>["class"], { label: string; cls: string }> = {
+  human: { label: "human", cls: "bg-green-500/15 text-green-300" },
+  "likely-bot": { label: "likely bot", cls: "bg-amber-500/15 text-amber-300" },
+  bot: { label: "bot", cls: "bg-white/10 text-white/50" },
+};
+
 function hostOf(referrer: string): string {
   if (referrer === "(direct)") return referrer;
   try {
@@ -152,9 +158,11 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                 <tr>
                   <th className="px-3 py-2 font-medium">When</th>
                   <th className="px-3 py-2 font-medium">Site</th>
+                  <th className="px-3 py-2 font-medium">Traffic</th>
                   <th className="px-3 py-2 font-medium">Page</th>
                   <th className="px-3 py-2 font-medium">Location</th>
                   <th className="px-3 py-2 font-medium">IP</th>
+                  <th className="px-3 py-2 font-medium">Network</th>
                   <th className="px-3 py-2 font-medium">From</th>
                 </tr>
               </thead>
@@ -166,6 +174,22 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                       <span className={`rounded px-1.5 py-0.5 text-xs ${badgeClass(v)}`}>
                         {badgeLabel(v)}
                       </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      {/* Why, written out rather than in a tooltip: this
+                          panel is mostly read on a phone. */}
+                      {v.traffic ? (
+                        <div className="flex flex-col gap-0.5" title={v.userAgent ?? undefined}>
+                          <span
+                            className={`w-fit whitespace-nowrap rounded px-1.5 py-0.5 text-xs ${TRAFFIC_STYLE[v.traffic.class].cls}`}
+                          >
+                            {TRAFFIC_STYLE[v.traffic.class].label}
+                          </span>
+                          <span className="max-w-[10rem] truncate text-xs text-white/35">{v.traffic.reason}</span>
+                        </div>
+                      ) : (
+                        <span className="text-white/25">-</span>
+                      )}
                     </td>
                     {/* Assistant rows are the one kind allowed to grow.
                         A prompt is the content -- truncated to twelve
@@ -202,6 +226,9 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                           dash, not a blank cell. */}
                       {v.ip || <span className="text-white/25">-</span>}
                     </td>
+                    <td className="max-w-[10rem] truncate px-3 py-2 text-xs text-white/50">
+                      {v.network ?? <span className="text-white/25">-</span>}
+                    </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/50">
                       {/* For something watched, this column is the device. */}
                       {v.kind === "jellyfin-play"
@@ -219,8 +246,9 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
       </div>
 
       <p className="text-xs text-white/30">
-        Beacon-based, so only clients that run JavaScript appear here - bots and scanners
-        do not.
+        Beacon-based, so only clients that run JavaScript appear here. Headless browsers
+        still do: the traffic tag is a best guess from the user agent and the network the
+        address belongs to, and nothing is hidden because of it.
       </p>
     </div>
   );

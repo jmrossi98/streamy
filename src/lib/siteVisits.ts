@@ -8,7 +8,8 @@
  */
 
 import { prisma } from "./db";
-import { locateMany } from "./geoip";
+import { locateMany, networkOfMany } from "./geoip";
+import { classifyTraffic, type TrafficVerdict } from "./trafficClass";
 import { getJellyfinPlays } from "./jellyfinPlayback";
 import { getJellyfinLoginSummary } from "./jellyfinLogins";
 
@@ -123,6 +124,12 @@ export type VisitorSummary = {
     success?: boolean;
     /** Assistant rows only: what it answered, when that was recorded. */
     reply?: string | null;
+    /** Page visits only: the user agent as sent. */
+    userAgent?: string | null;
+    /** Who owns the address (e.g. "AMAZON-AES"), when the ASN database knows. */
+    network?: string | null;
+    /** Page visits only: person or automated client, and why we think so. */
+    traffic?: TrafficVerdict;
     at: string;
   }[];
   /** Total rows across both tables, so the panel can say if the log is capped. */
@@ -172,7 +179,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     prisma.siteVisit.findMany({
       orderBy: { at: "desc" },
       take: LOG_CAP,
-      select: { id: true, site: true, path: true, ip: true, referrer: true, at: true },
+      select: { id: true, site: true, path: true, ip: true, referrer: true, userAgent: true, at: true },
     }),
     prisma.loginAttempt.findMany({
       orderBy: { at: "desc" },
@@ -209,6 +216,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       ip: v.ip,
       location: null,
       referrer: v.referrer,
+      userAgent: v.userAgent,
       at: v.at.toISOString(),
       _at: v.at,
     })),
@@ -274,7 +282,10 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     .sort((a, b) => b._at.getTime() - a._at.getTime())
     .slice(0, LOG_CAP);
 
-  const located = await locateMany(rows.map((r) => r._locateIp ?? r.ip));
+  const [located, networks] = await Promise.all([
+    locateMany(rows.map((r) => r._locateIp ?? r.ip)),
+    networkOfMany(rows.map((r) => r.ip).filter(Boolean)),
+  ]);
   const locationOf = (ip: string): string | null => {
     const loc = located.get(ip);
     if (!loc) return null;
@@ -291,7 +302,18 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       referrer: r.referrer ?? "(direct)",
       count: r._count.referrer,
     })),
-    recent: rows.map(({ _at, _locateIp, ...r }) => ({ ...r, location: locationOf(_locateIp ?? r.ip) })),
+    recent: rows.map(({ _at, _locateIp, ...r }) => {
+      const net = networks.get(r.ip) ?? null;
+      return {
+        ...r,
+        location: locationOf(_locateIp ?? r.ip),
+        network: net?.org ?? null,
+        // Tagged, never filtered: every visit stays in the log.
+        ...(r.kind === "visit"
+          ? { traffic: classifyTraffic({ userAgent: r.userAgent ?? null, asn: net?.asn ?? null, org: net?.org }) }
+          : {}),
+      };
+    }),
     totalActivity:
       visitTotal + loginTotal + assistantTotal + jellyfinLogins.attempts.length + jellyfinPlays.length,
   };
