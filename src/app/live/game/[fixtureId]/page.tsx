@@ -177,17 +177,24 @@ export default async function GamePage({
   // When the guide confirms more than one channel, the others are offered
   // too: all of them are certainly this game, so they are the right things to
   // switch to when the best stream of the moment stops being the best.
-  const networkOrMarketCandidates = channelConfirmed
-    ? findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf).filter((c) => c.id !== resolved?.id)
-    : findCandidateChannels(
-        { ...fixture, networksOnOtherGames: networksOnOtherGames(fixture, fixtures) },
-        channels,
-        8,
-        HOME_MARKETS,
-        qualityOf
-      ).filter(
-        (c) => c.id !== resolved?.id
-      );
+  /*
+    Guide-confirmed channels first, then the guesses -- always both. A
+    confirmed channel used to hide every other option, which on 2026-10-17
+    left only NBC Sports California (in an ad break) on the Sharks page, with
+    the provider's own game feed nowhere to be seen. Confirmation is a strong
+    reason to rank first, not a reason to take the alternatives away.
+  */
+  const confirmedChannels = findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf);
+  const networkOrMarketCandidates = [
+    ...confirmedChannels,
+    ...findCandidateChannels(
+      { ...fixture, networksOnOtherGames: networksOnOtherGames(fixture, fixtures) },
+      channels,
+      8,
+      HOME_MARKETS,
+      qualityOf
+    ),
+  ].filter((c, i, all) => c.id !== resolved?.id && all.findIndex((x) => x.id === c.id) === i);
 
   /*
     An unconfirmed `resolved` is, by construction, exactly the category
