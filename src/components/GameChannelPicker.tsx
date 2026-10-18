@@ -166,10 +166,12 @@ export function GameChannelPicker({
       )}
       {fallbackNote && <p className="mt-3 text-sm text-amber-300/90">{fallbackNote}</p>}
 
-      {options.length > 1 && (
+      {/* Shown even with one option, so the channel playing is always named
+          here -- an auto-added feed used to appear nowhere (2026-10-18). */}
+      {options.length > 0 && (
         <div className="mt-6">
           <h2 className="mb-2 text-sm font-semibold text-white/70">
-            {channel ? "Also on" : "Might be on"}
+            {options.length === 1 ? "Channel" : channel ? "Also on" : "Might be on"}
           </h2>
           <ul className="space-y-1.5">
             {options.map((c, i) => {

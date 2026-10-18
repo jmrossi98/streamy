@@ -686,6 +686,11 @@ describe("Sharks at Predators, 2026-10-15", () => {
     const tonight = { awayTeam: "San Jose Sharks", homeTeam: "Detroit Red Wings" };
     expect(namesBothTeams("NHL | 07 - 7pm Sharks at Red Wings", tonight)).toBe(true);
     expect(namesBothTeams("NHL TEAM| DETROIT RED WINGS", tonight)).toBe(false);
+    // Clubs ending in FC: matched by the rest of the name.
+    const mls = { awayTeam: "San Diego FC", homeTeam: "LA Galaxy" };
+    expect(namesBothTeams("LA Galaxy vs San Diego FC @ Oct 17 10:30 PM :MLS 14", mls)).toBe(true);
+    expect(namesBothTeams("San Diego Padres vs LA Dodgers", mls)).toBe(false);
+    expect(namesBothTeams("Houston Dynamo FC vs FC Dallas", { awayTeam: "Houston Dynamo FC", homeTeam: "FC Dallas" })).toBe(true);
   });
 });
 
