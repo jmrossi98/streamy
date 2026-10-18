@@ -19,6 +19,7 @@ import {
   resolveChannelForFixture,
 } from "@/lib/liveTimeline";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
+import { namesGameDate, namesOtherDate } from "@/lib/liveGuideGrid";
 import { GameStreamFinder } from "@/components/GameStreamFinder";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 import { getAutomaticRenewals } from "@/lib/renewals";
@@ -155,7 +156,14 @@ export default async function GamePage({
     are only ever added after the stream probe sees video in them, and
     they're removed after the game, so this is not a name-only guess.
   */
-  const gameFeed = channels.find((c) => namesBothTeams(c.name, fixture) && !isStale(c.name)) ?? null;
+  // Of several, the one whose name carries the game's date (namesGameDate):
+  // a standing slot labelled the day before showed soccer for the Bruins.
+  // Never one that names another date.
+  const startMs = fixture.startUtc ? Date.parse(fixture.startUtc) : NaN;
+  const gameFeeds = channels.filter(
+    (c) => namesBothTeams(c.name, fixture) && !isStale(c.name) && !namesOtherDate(c.name, startMs)
+  );
+  const gameFeed = gameFeeds.find((c) => namesGameDate(c.name, startMs)) ?? gameFeeds[0] ?? null;
   const resolved = gameFeed ?? resolveChannelForFixture(fixture, channels, epgConfirmedNames, qualityOf);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);
   /*
@@ -310,8 +318,10 @@ export default async function GamePage({
             only takes a feed naming both teams (score 0). */}
         <GameStreamFinder
           fixtureId={fixtureId}
-          autoAdd={fixture.state === "in" && !gameFeed}
+          autoAdd={fixture.state === "in" && !(gameFeed && namesGameDate(gameFeed.name, startMs))}
           autoAddMaxScore={autoRequested && !channelConfirmed ? 1 : 0}
+          // An undated game feed is already in the lineup: only a dated one improves on it.
+          autoAddDatedOnly={!!gameFeed}
         />
       </div>
     </div>

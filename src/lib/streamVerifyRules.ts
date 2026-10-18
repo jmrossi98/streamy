@@ -125,7 +125,7 @@ export function partitionByVerify<C extends { id: number }>(
  * to add one (2026-10-18). It still waits (null) while a *stronger* candidate
  * is being checked, so a weaker stream that finished first doesn't win.
  */
-export function pickAutoAdd<C extends { id: number; score?: number | null }>(
+export function pickAutoAdd<C extends { id: number; score?: number | null; dated?: boolean }>(
   ranked: C[],
   checks: Record<number, VerifyState | undefined>,
   maxScore = 1
@@ -140,6 +140,9 @@ export function pickAutoAdd<C extends { id: number; score?: number | null }>(
     const s = checks[c.id];
     return !s || s.status === "queued" || s.status === "checking";
   };
-  const strongerPending = eligible.some((c) => c.score! < passed.score! && pending(c));
+  // Stronger: a better score, or the same score with the game's own date in
+  // the name when the one that passed has none (namesGameDate).
+  const stronger = (c: C) => c.score! < passed.score! || (c.score === passed.score && !!c.dated && !passed.dated);
+  const strongerPending = eligible.some((c) => stronger(c) && pending(c));
   return strongerPending ? null : passed;
 }

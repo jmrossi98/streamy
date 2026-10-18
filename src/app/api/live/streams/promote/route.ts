@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { refreshGuide, waitForLineupChannel } from "@/lib/liveTv";
+import { getTodaysFixtures } from "@/lib/sportsSchedule";
+import { namesGameDate } from "@/lib/liveGuideGrid";
 import {
   isDispatcharrConfigured,
   listChannels,
@@ -61,7 +63,14 @@ export async function POST(request: Request) {
   const autoFixtureId = body?.auto === true && typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
   if (autoFixtureId) {
     const already = await prisma.gameChannel.findFirst({ where: { fixtureId: autoFixtureId } }).catch(() => null);
-    if (already) {
+    // ...unless this one names the game's date and what's there doesn't: a
+    // standing slot's day-old label can be on another event entirely (the
+    // Bruins slot showed soccer, 2026-10-18), so the dated feed is added too
+    // and the game page defaults to it.
+    const start = already ? (await getTodaysFixtures().catch(() => [])).find((f) => f.id === autoFixtureId)?.startUtc : null;
+    const startMs = start ? Date.parse(start) : NaN;
+    const upgrade = !!already && namesGameDate(name, startMs) && !namesGameDate(already.name, startMs);
+    if (already && !upgrade) {
       return NextResponse.json({
         id: already.channelId,
         channelNumber: null,
