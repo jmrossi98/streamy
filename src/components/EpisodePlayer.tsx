@@ -321,11 +321,14 @@ function EpisodeView({
     finishRef.current.segments = segments;
   }, [segments]);
 
-  // Stable across renders (see usePlayerEngine's saveProgress doc).
-  const saveProgress = useCallback((sec: number) => {
+  // Stable across renders (see usePlayerEngine's saveProgress doc). A
+  // finished episode is saved as 0 only on leaving the player: saving 0 while
+  // it was still open -- paused in the credits, say -- had the resume recheck
+  // pull the paused player back to the start (reported 2026-10-17).
+  const saveProgress = useCallback((sec: number, opts?: { leaving: boolean }) => {
     markShowWatched(showId);
     const { duration, segments: segs } = finishRef.current;
-    const progressSeconds = isFinished(sec, duration, segs) ? 0 : sec;
+    const progressSeconds = opts?.leaving && isFinished(sec, duration, segs) ? 0 : sec;
     fetch("/api/episode-progress", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -391,7 +394,7 @@ function EpisodeView({
   // Credits: offer the next episode and roll on after a short count, unless
   // the viewer chose to watch them. The count holds while paused.
   const [watchCredits, setWatchCredits] = useState(false);
-  const creditsCard = showVideo && !!next && !watchCredits && inCredits(t, segments);
+  const creditsCard = showVideo && !!next && !watchCredits && inCredits(t, segments, chrome.duration || null);
 
   return (
     <div

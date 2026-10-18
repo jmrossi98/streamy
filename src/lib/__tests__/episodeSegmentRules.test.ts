@@ -109,6 +109,13 @@ describe("inCredits", () => {
     expect(inCredits(1260, segs)).toBe(true);
     expect(inCredits(1300, NO_SEGMENTS)).toBe(false);
   });
+  it("falls back to the last 30 s of the file when no credits are marked (Clone High E4)", () => {
+    expect(inCredits(1259, NO_SEGMENTS, 1290.5)).toBe(false);
+    expect(inCredits(1261, NO_SEGMENTS, 1290.5)).toBe(true);
+    expect(inCredits(100, NO_SEGMENTS, 120)).toBe(false);
+    // A marked span wins over the fallback.
+    expect(inCredits(1270, { ...NO_SEGMENTS, credits: { start: 1280, end: 1290 } }, 1290.5)).toBe(false);
+  });
 });
 
 describe("startPoint", () => {
