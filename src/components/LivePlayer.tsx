@@ -51,7 +51,11 @@ type Props = {
  * times four with the retries, ~4 minutes before a game page tried the next
  * option. 20s is still 2-3x the slowest measured tune.
  */
-const TUNE_TIMEOUT_MS = 20_000;
+//
+// 30s since 2026-10-18: under load (an Intro Skipper scan on mediabox's 4
+// cores) Jellyfin took up to 14.4s for the first playlist alone, and a tune
+// that delivered at ~21s showed "didn't start" over a game that was playing.
+const TUNE_TIMEOUT_MS = 30_000;
 
 /**
  * How far behind the live edge to sit, in seconds.
@@ -448,6 +452,10 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       setLoading(false);
       setRebuffering(false);
       setNeedsTap(false);
+      // It plays, so whatever said it wouldn't was wrong: a picture that
+      // arrived just after the tune timer gave up left "This channel didn't
+      // start" over a game that was playing (2026-10-18).
+      setError(null);
       // Undoes the muted fallback the instant real playback is confirmed --
       // not unconditionally, so this never fights a viewer's own deliberate
       // mute (toggleMute), only the one this component itself forced.
