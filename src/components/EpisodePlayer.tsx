@@ -623,7 +623,7 @@ function CreditsCard({
         <p className="truncate text-sm font-medium">{label}</p>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="primary" size="md" onClick={onPlay} className="bg-white text-black hover:bg-white/90">
+        <Button variant="primary" size="md" onClick={onPlay}>
           <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
             <path d="M8 5v14l11-7z" />
           </svg>
