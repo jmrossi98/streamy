@@ -682,6 +682,10 @@ describe("Sharks at Predators, 2026-10-15", () => {
   it("needs both teams, not one", () => {
     expect(namesBothTeams("Sharks vs Predators (Sharks Broadcast)", fixture)).toBe(true);
     expect(namesBothTeams("NHL SAN JOSE SHARKS", fixture)).toBe(false);
+    // The provider's per-game feed, the one that actually showed the game on 2026-10-17.
+    const tonight = { awayTeam: "San Jose Sharks", homeTeam: "Detroit Red Wings" };
+    expect(namesBothTeams("NHL | 07 - 7pm Sharks at Red Wings", tonight)).toBe(true);
+    expect(namesBothTeams("NHL TEAM| DETROIT RED WINGS", tonight)).toBe(false);
   });
 });
 
