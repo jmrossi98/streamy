@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { refreshGuide } from "@/lib/liveTv";
+import { refreshGuide, waitForLineupChannel } from "@/lib/liveTv";
 import {
   isDispatcharrConfigured,
   listChannels,
@@ -132,11 +132,15 @@ export async function POST(request: Request) {
   // "added, but you will have to wait" are different messages, and guessing
   // between them is how "I added it and nothing happened" gets reported.
   const refreshing = await refreshGuide();
+  // Answer once Jellyfin actually lists it, so the page can switch straight
+  // away instead of waiting a fixed time and hoping (see waitForLineupChannel).
+  const ready = refreshing ? (await waitForLineupChannel(name)) != null : false;
 
   return NextResponse.json({
     id: created.id,
     channelNumber,
     refreshing,
+    ready,
     note: refreshing
       ? "Added. Jellyfin is refreshing its guide now - it appears in Live TV in a moment."
       : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",

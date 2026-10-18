@@ -567,6 +567,35 @@ export function classifyChannel(name: string): ChannelCategory {
  * promote that succeeded, and the caller says "refreshing" either way because
  * Jellyfin will get there on its own schedule regardless.
  */
+/**
+ * Waits until Jellyfin's lineup has a channel by this name, polling, and
+ * returns its Jellyfin id -- or null at the deadline.
+ *
+ * A channel added to Dispatcharr reaches Jellyfin on the guide refresh
+ * refreshGuide starts. The game page used to wait a flat 8 seconds and hope;
+ * asking is faster when the refresh is quick and right when it is slow.
+ */
+export async function waitForLineupChannel(name: string, timeoutMs = 15_000, everyMs = 1_000): Promise<string | null> {
+  if (!isJellyfinConfiguredForLiveTv()) return null;
+  // Jellyfin collapses doubled spaces in names, so compare loosely.
+  const key = (n: string) => n.trim().replace(/\s+/g, " ").toLowerCase();
+  const want = key(name);
+  const params = new URLSearchParams({ EnableImages: "false", AddCurrentProgram: "false", Limit: String(MAX_CHANNELS) });
+  if (JELLYFIN_USER_ID) params.set("userId", JELLYFIN_USER_ID);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const data = await liveTvFetch<{ Items?: { Id?: string; Name?: string }[] }>(`/LiveTv/Channels?${params.toString()}`);
+      const hit = (data?.Items ?? []).find((c) => c.Id && c.Name && key(cleanText(c.Name)) === want);
+      if (hit?.Id) return hit.Id;
+    } catch {
+      // Keep asking until the deadline.
+    }
+    if (Date.now() + everyMs > deadline) return null;
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+}
+
 export async function refreshGuide(): Promise<boolean> {
   if (!isJellyfinConfiguredForLiveTv()) return false;
   try {

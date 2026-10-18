@@ -136,8 +136,14 @@ describe("pickAutoAdd", () => {
   it("takes the best-ranked strong stream with video", () => {
     expect(pickAutoAdd(ranked, { 1: dead, 2: ok, 3: ok })?.id).toBe(2);
   });
-  it("waits while a better-ranked one is still being checked", () => {
-    expect(pickAutoAdd(ranked, { 1: { status: "checking" }, 2: ok })).toBeNull();
+  it("takes the first to pass among equally strong ones, without waiting on the rest", () => {
+    // 2026-10-18: a dead top feed took 10.5s to fail while the next one was fine.
+    expect(pickAutoAdd(ranked, { 1: { status: "checking" }, 2: ok })?.id).toBe(2);
+  });
+  it("waits while a stronger one is still being checked", () => {
+    const mixed = [{ id: 1, score: 0 }, { id: 2, score: 1 }];
+    expect(pickAutoAdd(mixed, { 1: { status: "checking" }, 2: ok })).toBeNull();
+    expect(pickAutoAdd(mixed, { 1: dead, 2: ok })?.id).toBe(2);
   });
   it("never adds a weak match, a busy stream, or an unchecked one", () => {
     expect(pickAutoAdd(ranked, { 1: dead, 2: dead, 3: ok })).toBeNull();
