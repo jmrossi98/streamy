@@ -54,7 +54,8 @@ export function verifyLabel(s: VerifyState | undefined): { text: string; tone: "
     case "checking":
       return { text: "Checking…", tone: "info" };
     case "ok":
-      return { text: `Plays (${formatMbps(s.mbps)} Mbps)`, tone: "success" };
+      // No rate when the probe stopped early on having enough (mbps 0).
+      return { text: s.mbps > 0 ? `Plays (${formatMbps(s.mbps)} Mbps)` : "Plays", tone: "success" };
     case "dead":
       return { text: "No video — hidden", tone: "danger", title: s.reason };
     case "busy":
@@ -116,21 +117,29 @@ export function partitionByVerify<C extends { id: number }>(
  * The stream to add on its own when a viewer pressed Watch in Live Now and the
  * guide confirms no channel for the game. Only a stream that names the game
  * (score 0 both teams, 1 a team plus the league or carrying network) and has
- * passed the video check: never one that is unchecked, dead or busy. Waits
- * (null) while a better-ranked strong candidate is still being checked, so a
- * weaker stream that finished first doesn't win.
+ * passed the video check: never one that is unchecked, dead or busy.
+ *
+ * The first to pass wins among equally strong ones: two feeds that both name
+ * the game are as good as each other, and waiting on the one ranked higher
+ * -- a dead feed takes its whole pull to fail -- was most of the time it took
+ * to add one (2026-10-18). It still waits (null) while a *stronger* candidate
+ * is being checked, so a weaker stream that finished first doesn't win.
  */
 export function pickAutoAdd<C extends { id: number; score?: number | null }>(
   ranked: C[],
   checks: Record<number, VerifyState | undefined>,
   maxScore = 1
 ): C | null {
-  for (const c of ranked) {
-    if (c.score == null || c.score > maxScore) continue;
+  const eligible = ranked.filter((c) => c.score != null && c.score <= maxScore);
+  const passed = eligible.find((c) => {
     const s = checks[c.id];
-    if (!s) return null; // not checked (yet, or beyond the verify limit)
-    if (s.status === "queued" || s.status === "checking") return null;
-    if (s.status === "ok" && s.video) return c;
-  }
-  return null;
+    return s?.status === "ok" && s.video;
+  });
+  if (!passed) return null;
+  const pending = (c: C) => {
+    const s = checks[c.id];
+    return !s || s.status === "queued" || s.status === "checking";
+  };
+  const strongerPending = eligible.some((c) => c.score! < passed.score! && pending(c));
+  return strongerPending ? null : passed;
 }

@@ -68,16 +68,21 @@ export function GameStreamFinder({
     };
   }, [fixtureId]);
 
-  // One at a time, in rank order: the probe itself only runs one at a time,
-  // and every provider line takes a single connection.
+  // One queue per provider, run side by side: every provider line takes a
+  // single connection, so a provider's streams go one at a time, but two
+  // providers don't need to wait on each other -- the probe locks per
+  // provider (mediabox-infra stream-probe.py). In rank order within each.
   useEffect(() => {
     if (!verify || !streams || streams.length === 0) return;
     const ids = streamsToVerify(streams);
     const ctrl = new AbortController();
     // Queued shows nothing, so this is only published with the first check.
     let states: Record<number, VerifyState> = Object.fromEntries(ids.map((id) => [id, { status: "queued" } as VerifyState]));
-    (async () => {
-      for (const id of ids) {
+    const providerOf = (id: number) => streams.find((s) => s.id === id)?.provider ?? "?";
+    const queues = new Map<string, number[]>();
+    for (const id of ids) queues.set(providerOf(id), [...(queues.get(providerOf(id)) ?? []), id]);
+    const runQueue = async (queue: number[]) => {
+      for (const id of queue) {
         if (ctrl.signal.aborted) return;
         if (states[id]?.status !== "queued") continue; // already settled, e.g. its provider is busy
         states = { ...states, [id]: { status: "checking" } };
@@ -93,7 +98,8 @@ export function GameStreamFinder({
         states = applyResult(states, streams, id, result);
         setChecks(states);
       }
-    })();
+    };
+    for (const queue of queues.values()) void runQueue(queue);
     return () => ctrl.abort();
   }, [verify, streams]);
 
@@ -117,12 +123,18 @@ export function GameStreamFinder({
         // fixtureId marks it as a one-game channel, removed after the game.
         body: JSON.stringify({ streamId: s.id, name: s.name, logoUrl: s.logoUrl, fixtureId, auto }),
       });
-      const body = (await res.json().catch(() => ({}))) as { error?: string; note?: string; existing?: boolean };
+      const body = (await res.json().catch(() => ({}))) as { error?: string; note?: string; existing?: boolean; ready?: boolean };
       const okNote = auto ? "Added automatically. It joins the list above in a few seconds." : "Added. It joins the list above in a few seconds.";
       setAdded((a) => ({ ...a, [s.id]: res.ok ? (body.existing && body.note) || okNote : body.error ?? "Couldn't add it." }));
       // Jellyfin picks the new channel up on its guide refresh, which the
       // promote route starts; give it a moment, then reload the options.
-      if (res.ok) setTimeout(() => router.refresh(), 8000);
+      // The route answers once Jellyfin lists the channel (ready), or it was
+      // already there (existing): switch now. Otherwise give the guide
+      // refresh its old head start.
+      if (res.ok) {
+        if (body.ready || body.existing) router.refresh();
+        else setTimeout(() => router.refresh(), 8000);
+      }
     } finally {
       setAdding(null);
     }
