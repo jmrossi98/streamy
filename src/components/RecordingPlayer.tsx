@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { VideoChrome } from "./VideoChrome";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import { usePageScrollLock } from "@/lib/usePageScrollLock";
 import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 
 type Props = {
@@ -26,6 +27,7 @@ type Props = {
  * exists for one.
  */
 export function RecordingPlayer({ eventId, title, subtitle, videoUrl, closeHref, forceTranscode = false }: Props) {
+  usePageScrollLock();
   const storageKey = `recording-progress:${eventId}`;
   // Read once at mount. Only the video's start position depends on it, so
   // a server render that has no localStorage draws the same markup.
