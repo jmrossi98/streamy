@@ -32,7 +32,7 @@ export default async function MoviesPage() {
     ...browse.trending.map((m) => m.id),
     ...(browse.all?.movies.map((m) => m.id) ?? []),
     ...(browse.holiday?.movies.map((m) => m.id) ?? []),
-    ...browse.genreRows.flatMap((r) => r.movies.map((m) => m.id)),
+    ...browse.rows.flatMap((r) => r.movies.map((m) => m.id)),
     // My List too, or a half-watched title shows a progress bar in a genre row
     // and none in the row the viewer actually saved it to.
     ...myList.map((m) => m.id),
@@ -48,7 +48,7 @@ export default async function MoviesPage() {
         trending={browse.trending}
         holiday={browse.holiday}
         all={browse.all}
-        genreRows={browse.genreRows}
+        rows={browse.rows}
         progressList={progressList}
         myList={myList}
       />

@@ -37,9 +37,10 @@ export default async function HomePage() {
   // below is always something that plays.
   const [movieBrowse, showBrowse, allWatchProgress, recentEpisodeProgress] = await Promise.all([
     // Home shares the page between movies and TV, so it keeps to the lead
-    // genres and leaves the rest, and TV's genre rows, to the tabs.
-    getMovieBrowse({ leadOnly: true }),
-    getShowBrowse({ genreRows: false }),
+    // genres and a few rows among them, and leaves the rest, and TV's rows
+    // beyond what is new, to the tabs.
+    getMovieBrowse({ home: true }),
+    getShowBrowse({ home: true }),
     prisma.watchProgress.findMany({
       where: { userId: session.user.id },
       orderBy: { updatedAt: "desc" },
@@ -50,7 +51,7 @@ export default async function HomePage() {
       take: EPISODE_PROGRESS_TAKE,
     }),
   ]);
-  const { trending, genreRows } = movieBrowse;
+  const { trending, rows } = movieBrowse;
   const trendingTV = showBrowse.trending;
 
   const recentProgress = allWatchProgress.slice(0, RECENT_LIMIT);
@@ -65,7 +66,7 @@ export default async function HomePage() {
     ...trending.map((m) => m.id),
     ...(movieBrowse.all?.movies.map((m) => m.id) ?? []),
     ...(movieBrowse.holiday?.movies.map((m) => m.id) ?? []),
-    ...genreRows.flatMap((r) => r.movies.map((m) => m.id)),
+    ...rows.flatMap((r) => r.movies.map((m) => m.id)),
   ]);
   const progressList = allWatchProgress
     .filter((p) => movieIdsOnPage.has(String(p.movieId)))
@@ -126,7 +127,8 @@ export default async function HomePage() {
         </Suspense>
         <HomeMoviesSection
           trending={trending}
-          genreRows={genreRows}
+          rows={rows}
+          showRows={showBrowse.rows}
           trendingTV={trendingTV}
           progressList={progressList}
           holidayMovies={movieBrowse.holiday}

@@ -24,9 +24,13 @@ const PROBE_TIMEOUT_MS = 8_000;
  */
 const LIBRARY_TTL_MS = 60_000;
 
-/** A downloaded movie: its card, plus what the rows sort and match on. */
-export type LibraryMovie = Movie & { keywords: string[] };
-export type LibraryShow = TVShow & { keywords: string[] };
+/**
+ * A downloaded movie: its card, plus what the rows sort and match on.
+ * `addedAt` is when the file landed (ISO), for the Recently Added row; null
+ * when Radarr or Sonarr does not say.
+ */
+export type LibraryMovie = Movie & { keywords: string[]; addedAt: string | null };
+export type LibraryShow = TVShow & { keywords: string[]; addedAt: string | null };
 
 function radarrBase(): { url: string; key: string } | null {
   const url = process.env.RADARR_URL?.replace(/\/$/, "");
@@ -61,11 +65,16 @@ type RadarrMovie = {
   hasFile?: boolean;
   popularity?: number;
   keywords?: string[];
+  /** When the movie was added to Radarr; the file's own date is on movieFile. */
+  added?: string;
+  movieFile?: { dateAdded?: string } | null;
 };
 
 type SonarrSeries = {
   tmdbId?: number;
   statistics?: { episodeFileCount?: number } | null;
+  /** When the series was added to Sonarr: the nearest thing to when it arrived. */
+  added?: string;
 };
 
 async function loadMovies(): Promise<LibraryMovie[] | null> {
@@ -100,6 +109,7 @@ async function loadMovies(): Promise<LibraryMovie[] | null> {
         genres: d.genres,
         popularity: radarr.popularity ?? 0,
         keywords: radarr.keywords ?? [],
+        addedAt: radarr.movieFile?.dateAdded ?? radarr.added ?? null,
       },
     ];
   });
@@ -119,17 +129,18 @@ async function loadShows(): Promise<LibraryShow[] | null> {
   const all = await fetchJson<SonarrSeries[]>(`${base.url}/api/v3/series`, base.key);
   if (!all) return null;
 
-  const ids = all.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0 && s.tmdbId).map((s) => String(s.tmdbId));
+  const onDisk = all.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0 && s.tmdbId);
   const resolved = await Promise.all(
-    ids.map(async (id) => {
+    onDisk.map(async (series) => {
+      const id = String(series.tmdbId);
       const [d, meta] = await Promise.all([getShowById(id).catch(() => null), getShowBrowseMeta(id)]);
       // The language only matters for animated shows: it decides "Anime".
       const lang = d?.genres.includes("Animation") ? await getOriginalLanguage("tv", id) : null;
-      return [d, meta, lang] as const;
+      return [d, meta, lang, series.added ?? null] as const;
     })
   );
 
-  return resolved.flatMap(([d, meta, lang]) => {
+  return resolved.flatMap(([d, meta, lang, addedAt]) => {
     if (!d) return [];
     return [
       {
@@ -144,6 +155,7 @@ async function loadShows(): Promise<LibraryShow[] | null> {
         genres: withAnimeGenre(d.genres, lang),
         popularity: meta?.popularity ?? 0,
         keywords: meta?.keywords ?? [],
+        addedAt,
       },
     ];
   });

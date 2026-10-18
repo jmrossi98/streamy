@@ -14,19 +14,54 @@ export type Shelf =
   /** Everything downloaded, A to Z. */
   | { kind: "all" }
   | { kind: "my-list" }
-  | { kind: "genre"; genreId: number };
+  | { kind: "genre"; genreId: number }
+  /** The library cut other ways than genre; see libraryRowRules.ts. */
+  | { kind: "recent" }
+  | { kind: "top-rated" }
+  | { kind: "hidden-gems" }
+  /** Today's shuffle of the whole library. */
+  | { kind: "picks" }
+  /** Movies only: by runtime. */
+  | { kind: "short" }
+  | { kind: "long" }
+  | { kind: "decade"; decade: number }
+  | { kind: "collection"; slug: string };
 
 export type ShelfMedia = "movies" | "tv";
 
+const PLAIN_SHELVES = new Set<Shelf["kind"]>([
+  "trending",
+  "holiday",
+  "all",
+  "my-list",
+  "recent",
+  "top-rated",
+  "hidden-gems",
+  "picks",
+  "short",
+  "long",
+]);
+
+type PlainShelf = Exclude<Shelf, { kind: "genre" | "decade" | "collection" }>;
+
 export function shelfSlug(shelf: Shelf): string {
-  return shelf.kind === "genre" ? `genre-${shelf.genreId}` : shelf.kind;
+  if (shelf.kind === "genre") return `genre-${shelf.genreId}`;
+  if (shelf.kind === "decade") return `decade-${shelf.decade}`;
+  if (shelf.kind === "collection") return `collection-${shelf.slug}`;
+  return shelf.kind;
 }
 
 /** The shelf a URL segment names, or null for anything that is not one. */
 export function parseShelf(slug: string): Shelf | null {
-  if (slug === "trending" || slug === "holiday" || slug === "all" || slug === "my-list") return { kind: slug };
+  if (PLAIN_SHELVES.has(slug as Shelf["kind"])) return { kind: slug as PlainShelf["kind"] };
   const genre = /^genre-(\d{1,6})$/.exec(slug);
-  return genre ? { kind: "genre", genreId: Number(genre[1]) } : null;
+  if (genre) return { kind: "genre", genreId: Number(genre[1]) };
+  const decade = /^decade-(\d{4})$/.exec(slug);
+  if (decade) return { kind: "decade", decade: Number(decade[1]) };
+  // Any well-formed collection name parses; whether such a collection exists
+  // is for the shelf to answer (libraryCollections.ts), the way a genre id is.
+  const collection = /^collection-([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(slug);
+  return collection ? { kind: "collection", slug: collection[1] } : null;
 }
 
 export function shelfHref(media: ShelfMedia, shelf: Shelf): string {

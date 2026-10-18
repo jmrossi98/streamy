@@ -8,25 +8,30 @@ import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie, TVShow } from "@/lib/tmdb";
 import { shelfHref } from "@/lib/browseShelfRules";
 
-type GenreRow = { title: string; movies: Movie[]; href?: string };
+type Row = { title: string; movies: Movie[]; href?: string };
+type ShowRow = { title: string; shows: TVShow[]; href?: string };
 type ProgressItem = { movieId: number; progressSeconds: number };
 
 type Props = {
   trending: Movie[];
-  genreRows: GenreRow[];
+  /** Every movie row under Trending, in page order: the lead genres and the rows among them. */
+  rows: Row[];
+  /** The TV rows under Trending TV; Home has room for what is new. */
+  showRows?: ShowRow[];
   trendingTV: TVShow[];
   progressList: ProgressItem[];
   /** The holiday in season, by kind; either may be missing. */
-  holidayMovies?: GenreRow | null;
-  holidayShows?: { title: string; shows: TVShow[]; href?: string } | null;
+  holidayMovies?: Row | null;
+  holidayShows?: ShowRow | null;
   /** Everything downloaded, A to Z, by kind; each heading opens the full grid. */
-  allMovies?: GenreRow | null;
-  allShows?: { title: string; shows: TVShow[]; href?: string } | null;
+  allMovies?: Row | null;
+  allShows?: ShowRow | null;
 };
 
 export function HomeMoviesSection({
   trending,
-  genreRows,
+  rows,
+  showRows = [],
   trendingTV,
   progressList,
   holidayMovies = null,
@@ -35,6 +40,7 @@ export function HomeMoviesSection({
   allShows = null,
 }: Props) {
   const [progressMap, setProgressMap] = useState<Record<string, MovieProgress>>({});
+  const showRowTitles = new Set(showRows.map((row) => row.title));
 
   const progressKey = progressList.length ? progressList.map((p) => p.movieId).sort((a, b) => a - b).join(",") : "";
   useEffect(() => {
@@ -89,12 +95,21 @@ export function HomeMoviesSection({
           ))}
         </ScrollableRow>
       )}
-      {genreRows.map(
+      {/* TV's rows under its Trending, then the movie rows. A heading both
+          kinds use ("Recently Added") is titled by kind, as the holiday rows
+          are, so the page never shows two rows with one name. */}
+      {showRows.map(
+        (row) =>
+          row.shows.length > 0 && (
+            <TVRow key={`tv-${row.title}`} title={`${row.title} - Shows`} shows={row.shows} href={row.href} />
+          )
+      )}
+      {rows.map(
         (row) =>
           row.movies.length > 0 && (
             <MovieRow
               key={row.title}
-              title={row.title}
+              title={showRowTitles.has(row.title) ? `${row.title} - Movies` : row.title}
               movies={row.movies}
               progressMap={progressMap}
               href={row.href}
