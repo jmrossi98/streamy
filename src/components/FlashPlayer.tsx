@@ -75,7 +75,6 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   /** localStorage as it looked before this game ran -- the diff baseline. */
   const baselineRef = useRef<SaveBlob>({});
 
@@ -97,7 +96,6 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
     }
     if (!hasChanges(changed)) return;
 
-    setSaveState("saving");
     try {
       const res = await fetch(`/api/flash/save/${encodeURIComponent(slug)}`, {
         method: "PUT",
@@ -107,9 +105,9 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
         // routinely cancelled. keepalive is what lets it outlive the page.
         keepalive: true,
       });
-      setSaveState(res.ok ? "saved" : "failed");
+      if (!res.ok) console.warn(`flash save for ${slug} failed: ${res.status}`);
     } catch {
-      setSaveState("failed");
+      // Navigation can cancel the request; the next session re-saves anyway.
     }
   }, [slug]);
 
@@ -209,11 +207,6 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
         className="relative w-full overflow-hidden rounded-lg bg-black"
         aria-label={title}
       >
-        {saveState !== "idle" && !error && (
-          <p className="pointer-events-none absolute right-2 top-2 rounded bg-black/70 px-2 py-1 text-[11px] text-white/70">
-            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Progress saved" : "Save failed"}
-          </p>
-        )}
         {(loading || error) && (
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
             {error ? (
