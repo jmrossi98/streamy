@@ -24,6 +24,10 @@ describe("namesGameDate", () => {
     expect(namesGameDate("Bruins vs Kings (2026-11-10 19:00:05)", START)).toBe(false);
     expect(namesOtherDate("Bruins vs Kings (2026-11-10 19:00:05)", START)).toBe(true);
   });
+  it("reads day-first dates too", () => {
+    const leeds = Date.parse("2026-10-18T13:00:00Z");
+    expect(namesGameDate("Next | Leeds United vs Manchester United || English | Premier League | 18-10-2026 | 12:40 (GMT)", leeds)).toBe(true);
+  });
   it("doesn't read a time as a day", () => {
     expect(namesGameDate("Oct 17:30 replay", START)).toBe(false);
   });

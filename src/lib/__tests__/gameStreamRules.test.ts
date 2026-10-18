@@ -70,3 +70,14 @@ describe("rankGameStreams other-date feeds", () => {
     expect(ids).toEqual([2]);
   });
 });
+
+describe("feedLanguageRank", () => {
+  it("English first, other countries last", async () => {
+    const { feedLanguageRank } = await import("../gameStreamRules");
+    expect(feedLanguageRank("AU (STAN 34) | Leeds United v Manchester United")).toBe(0);
+    expect(feedLanguageRank("Next | Leeds United vs Manchester United || English | Premier League")).toBe(0);
+    expect(feedLanguageRank("Next | Leeds x Man. United | Premier League | 2026-10-18 | 13:00 (GMT) | 8K EXCLUSIVE | PT: DAZN PPV 42")).toBe(2);
+    expect(feedLanguageRank("NEXT | PREMIER LEAGUE LEEDS - MAN UNITED | Sun 18 Oct 14:00 CEST (DK) | 8K EXCLUSIVE | DK: VIAPLAY P")).toBe(2);
+    expect(feedLanguageRank("NHL | 12 - 9pm Bruins at Kings")).toBe(1);
+  });
+});

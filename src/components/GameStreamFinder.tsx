@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { announceGameFeedSearch } from "@/lib/gameFeedSearch";
+import { feedLanguageRank } from "@/lib/gameStreamRules";
 import { Badge, Button } from "@/components/ui";
 import {
   applyResult,
@@ -43,6 +44,7 @@ export function GameStreamFinder({
   autoAdd = false,
   autoAddMaxScore = 1,
   autoAddDatedOnly = false,
+  autoAddEnglishOnly = false,
 }: {
   fixtureId: string;
   autoAdd?: boolean;
@@ -50,6 +52,8 @@ export function GameStreamFinder({
   autoAddMaxScore?: number;
   /** Only a feed whose name carries the game's date: the lineup already has an undated one. */
   autoAddDatedOnly?: boolean;
+  /** Only an English-commentary feed: the lineup's dated feed is in another language. */
+  autoAddEnglishOnly?: boolean;
 }) {
   const router = useRouter();
   const [streams, setStreams] = useState<Candidate[] | null>(null);
@@ -121,7 +125,10 @@ export function GameStreamFinder({
 
   useEffect(() => {
     if (!autoAdd || autoTried.current || !streams) return;
-    const pick = pickAutoAdd(autoAddDatedOnly ? streams.filter((s) => s.dated) : streams, checks, autoAddMaxScore);
+    const eligible = streams.filter(
+      (s) => (!autoAddDatedOnly || s.dated) && (!autoAddEnglishOnly || feedLanguageRank(s.name) === 0)
+    );
+    const pick = pickAutoAdd(eligible, checks, autoAddMaxScore);
     if (!pick) {
       // Nothing to add, and nothing left that could change that: tell the
       // player it can stop holding for a feed and play its best guess.
@@ -145,7 +152,7 @@ export function GameStreamFinder({
       });
     // add is recreated each render; the pick only depends on these.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoAdd, autoAddMaxScore, autoAddDatedOnly, streams, checks, verify]);
+  }, [autoAdd, autoAddMaxScore, autoAddDatedOnly, autoAddEnglishOnly, streams, checks, verify]);
 
   async function add(s: Candidate, auto = false): Promise<boolean> {
     if (adding !== null || !canAdd(checks[s.id])) return false;

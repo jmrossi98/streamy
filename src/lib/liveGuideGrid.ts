@@ -232,6 +232,8 @@ const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 function namedDates(name: string): { y: number | null; m: number; d: number }[] {
   const out: { y: number | null; m: number; d: number }[] = [];
   for (const m of name.matchAll(/(20\d{2})-(\d{2})-(\d{2})/g)) out.push({ y: +m[1], m: +m[2], d: +m[3] });
+  // Day first, as the European soccer feeds write it: "18-10-2026".
+  for (const m of name.matchAll(/\b(\d{2})-(\d{2})-(20\d{2})\b/g)) out.push({ y: +m[3], m: +m[2], d: +m[1] });
   for (const m of name.matchAll(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi)) {
     out.push({ y: null, m: MONTHS.indexOf(m[2].toLowerCase()) + 1, d: +m[1] });
   }
