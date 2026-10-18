@@ -1,5 +1,5 @@
-import Image from "next/image";
 import Link from "next/link";
+import { backdropSrcSet } from "@/lib/tmdbImageRules";
 import { InfoShareButton } from "@/components/InfoShareButton";
 import { InfoDetailsLink } from "@/components/InfoDetailsLink";
 
@@ -16,6 +16,14 @@ type InfoHeroProps = {
   metaLine?: string | null;
   badgeNodes?: React.ReactNode;
 };
+
+/**
+ * TMDB jumps from w1280 straight to the 3840 px original, so a plain 100vw
+ * sent every desktop wider than 1280 px a 0.5-1.3 MB file (2026-10-18). Under
+ * the hero's dark gradient w1280 is indistinguishable at 1x; a 2x desktop
+ * still gets the original.
+ */
+const HERO_SIZES = "(min-width: 768px) 1280px, 100vw";
 
 export function InfoHero({
   backdropUrl,
@@ -41,13 +49,18 @@ export function InfoHero({
             sm:h-[48svh] sm:max-h-[600px] sm:min-h-[300px]
           "
         >
-          <Image
+          {/* TMDB's own sizes rather than next/image on the /original/ file
+              (tmdbImageRules.ts): the server's resizer took 0.6-1.8 s to
+              answer for a title nobody had opened yet (2026-10-18). */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={backdropUrl}
+            srcSet={backdropSrcSet(backdropUrl)}
+            sizes={HERO_SIZES}
             alt=""
-            fill
-            className="object-cover object-[center_20%]"
-            sizes="100vw"
-            priority
+            fetchPriority="high"
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover object-[center_20%]"
           />
           <div className="hero-overlay absolute inset-0" aria-hidden />
           <div
@@ -106,13 +119,17 @@ export function InfoHero({
           md:block
         "
       >
-        <Image
+        {/* Same srcset and sizes as the mobile hero, so the browser fetches
+            one file for both. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={backdropUrl}
+          srcSet={backdropSrcSet(backdropUrl)}
+          sizes={HERO_SIZES}
           alt=""
-          fill
-          className="object-cover"
-          sizes="100vw"
-          priority
+          fetchPriority="high"
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover"
         />
         <div className="hero-overlay absolute inset-0" />
         <div

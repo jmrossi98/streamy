@@ -486,6 +486,7 @@ export function ShowContent({
                         fill
                         className={`object-cover ${playable ? "" : "opacity-40"}`}
                         sizes="160px"
+                        unoptimized
                       />
                       {/* Only offer Play when there's actually something to
                           play -- a play button on an unfinished episode just
