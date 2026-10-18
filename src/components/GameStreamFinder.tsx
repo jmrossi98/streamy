@@ -35,6 +35,9 @@ type Candidate = { id: number; name: string; provider: string | null; logoUrl: s
  * check is added without a click (pickAutoAdd). One per game, enforced by
  * the promote route.
  */
+const BUSY_RETRIES = 2;
+const BUSY_RETRY_MS = 4_000;
+
 export function GameStreamFinder({
   fixtureId,
   autoAdd = false,
@@ -91,13 +94,22 @@ export function GameStreamFinder({
         if (states[id]?.status !== "queued") continue; // already settled, e.g. its provider is busy
         states = { ...states, [id]: { status: "checking" } };
         setChecks(states);
-        let result;
-        try {
-          const res = await fetch(`/api/live/game-streams/verify?streamId=${id}`, { cache: "no-store", signal: ctrl.signal });
-          result = normalizeProbe(res.ok ? await res.json() : { status: "error", reason: `HTTP ${res.status}` });
-        } catch {
+        let result = normalizeProbe({ status: "error", reason: "the check did not finish" });
+        // "Busy" is often the provider still counting the probe's own last
+        // pull for a few seconds: on 2026-10-18 that refused every feed for
+        // Man Utd at Leeds and the page fell back to a guess. Ask again
+        // before believing it.
+        for (let attempt = 0; attempt < BUSY_RETRIES + 1; attempt++) {
+          try {
+            const res = await fetch(`/api/live/game-streams/verify?streamId=${id}`, { cache: "no-store", signal: ctrl.signal });
+            result = normalizeProbe(res.ok ? await res.json() : { status: "error", reason: `HTTP ${res.status}` });
+          } catch {
+            if (ctrl.signal.aborted) return;
+            result = normalizeProbe({ status: "error", reason: "the check did not finish" });
+          }
+          if (result.status !== "busy" || attempt === BUSY_RETRIES) break;
+          await new Promise((r) => setTimeout(r, BUSY_RETRY_MS));
           if (ctrl.signal.aborted) return;
-          result = normalizeProbe({ status: "error", reason: "the check did not finish" });
         }
         states = applyResult(states, streams, id, result);
         setChecks(states);
@@ -127,7 +139,10 @@ export function GameStreamFinder({
     autoTried.current = true;
     void add(pick, true)
       .catch(() => false)
-      .then((ok) => announceGameFeedSearch({ fixtureId, outcome: ok ? "added" : "none" }));
+      .then((ok) => {
+        // "added" (with the channel) was announced by add(); only a miss is news here.
+        if (!ok) announceGameFeedSearch({ fixtureId, outcome: "none" });
+      });
     // add is recreated each render; the pick only depends on these.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoAdd, autoAddMaxScore, autoAddDatedOnly, streams, checks, verify]);
@@ -142,7 +157,13 @@ export function GameStreamFinder({
         // fixtureId marks it as a one-game channel, removed after the game.
         body: JSON.stringify({ streamId: s.id, name: s.name, logoUrl: s.logoUrl, fixtureId, auto }),
       });
-      const body = (await res.json().catch(() => ({}))) as { error?: string; note?: string; existing?: boolean; ready?: boolean };
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        note?: string;
+        existing?: boolean;
+        ready?: boolean;
+        jellyfinId?: string | null;
+      };
       const okNote = auto ? "Added automatically. It joins the list above in a few seconds." : "Added. It joins the list above in a few seconds.";
       setAdded((a) => ({ ...a, [s.id]: res.ok ? (body.existing && body.note) || okNote : body.error ?? "Couldn't add it." }));
       // Jellyfin picks the new channel up on its guide refresh, which the
@@ -151,6 +172,11 @@ export function GameStreamFinder({
       // already there (existing): switch now. Otherwise give the guide
       // refresh its old head start.
       if (res.ok) {
+        // Straight to the player and the list -- no reload to wait for. The
+        // refresh after only fills in what the page knows about it.
+        if (body.jellyfinId) {
+          announceGameFeedSearch({ fixtureId, outcome: "added", channel: { id: body.jellyfinId, name: s.name }, manual: !auto });
+        }
         if (body.ready || body.existing) router.refresh();
         else setTimeout(() => router.refresh(), 8000);
       }

@@ -5,7 +5,14 @@
  */
 export const GAME_FEED_SEARCH_EVENT = "streamy:game-feed-search";
 
-export type GameFeedSearchOutcome = { fixtureId: string; outcome: "added" | "none" };
+export type GameFeedSearchOutcome = {
+  fixtureId: string;
+  outcome: "added" | "none";
+  /** The channel added, by its Jellyfin id, once Jellyfin lists it. */
+  channel?: { id: string; name: string };
+  /** Added by the viewer from the list, not automatically: list it, don't switch to it. */
+  manual?: boolean;
+};
 
 export function announceGameFeedSearch(detail: GameFeedSearchOutcome): void {
   if (typeof window === "undefined") return;

@@ -12,6 +12,7 @@
 import { channelCarriesNetwork, looksLikePlaceholder } from "./liveTimeline";
 import { eventSlotState } from "./eventSlotRules";
 import { namesGameDate, namesOtherDate } from "./liveGuideGrid";
+import { nameHasTeam, teamSearchTerms } from "./teamNames";
 
 export type GameStreamCandidate = { id: number; name: string; stale?: boolean; provider?: string | null };
 export type GameFixture = {
@@ -22,10 +23,17 @@ export type GameFixture = {
   startUtc?: string | null;
 };
 
-/** The team's nickname -- its last word ("Sharks" from "San Jose Sharks"). */
-function nickname(team: string | null | undefined): string | null {
-  const last = team?.trim().split(/\s+/).pop();
-  return last && last.length >= 4 ? last : null;
+/**
+ * 0 for an English-language feed, 2 for one marked as another country's, 1
+ * when the name doesn't say. Read from the provider's country markers in the
+ * name ("US|", "AU (STAN", "| PT: DAZN", "DK: VIAPLAY"). Twelve feeds named
+ * Leeds - Man United on 2026-10-18 were Portuguese, Spanish, Danish and
+ * Swedish commentary bar one Australian.
+ */
+export function feedLanguageRank(name: string): number {
+  if (/(^|[\s|(])(US|USA|UK|CA|AU|IE|NZ)\s*[:|(]|\bENGLISH\b|\bESPN\+|\bPEACOCK\b|\bPARAMOUNT\+/i.test(name)) return 0;
+  if (/(^|[\s|(])(PT|ES|FR|DE|IT|NL|SE|DK|NO|FI|AR|BR|MX|PL|TR|GR|RO|HU|CZ|BE|CH|AT|RU|AL|EX|LA|LATAM)\s*[:|]|\b(SWEDEN|DENMARK|NORWAY|PORTUGAL|SPAIN|FRANCE|GERMANY|ITALY)\b/i.test(name)) return 2;
+  return 1;
 }
 
 /** Everything before the nickname ("San Jose"), for local stations and team channels. */
@@ -36,10 +44,20 @@ function city(team: string | null | undefined): string | null {
 
 const has = (name: string, phrase: string) => new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(name);
 
-/** What to search the catalogue for: each side, each city, each carrying network. */
+/**
+ * What to search the catalogue for: what tells each side apart (teamNames.ts
+ * -- "leeds", "man utd", not the "United" both share), each city, each
+ * carrying network.
+ */
 export function gameStreamQueries(f: GameFixture): string[] {
-  const out = [nickname(f.awayTeam), nickname(f.homeTeam), city(f.awayTeam), city(f.homeTeam), ...(f.broadcasts ?? [])];
-  return [...new Set(out.filter((q): q is string => !!q && q.length >= 3))];
+  const out = [
+    ...teamSearchTerms(f.awayTeam, f.homeTeam),
+    ...teamSearchTerms(f.homeTeam, f.awayTeam),
+    city(f.awayTeam),
+    city(f.homeTeam),
+    ...(f.broadcasts ?? []),
+  ];
+  return [...new Set(out.filter((q): q is string => !!q && q.length >= 3).map((q) => q.toLowerCase()))];
 }
 
 /**
@@ -49,10 +67,13 @@ export function gameStreamQueries(f: GameFixture): string[] {
  */
 export function gameStreamScore(name: string, f: GameFixture): number | null {
   if (looksLikePlaceholder(name)) return null;
-  const nicks = [nickname(f.awayTeam), nickname(f.homeTeam)].filter((n): n is string => !!n);
-  const teams = nicks.filter((n) => has(name, n)).length;
+  const sides = [
+    [f.awayTeam, f.homeTeam],
+    [f.homeTeam, f.awayTeam],
+  ].filter(([t]) => !!t);
+  const teams = sides.filter(([t, o]) => nameHasTeam(name, t, o)).length;
   const network = (f.broadcasts ?? []).some((b) => channelCarriesNetwork(name, b));
-  if (nicks.length === 2 && teams === 2) return 0;
+  if (sides.length === 2 && teams === 2) return 0;
   if (teams === 1 && (has(name, f.league) || network)) return 1;
   if (teams === 1) return 2;
   if (network) return 3;
@@ -85,13 +106,14 @@ export function rankGameStreams<S extends GameStreamCandidate>(
     })
     .map((s) => ({ s, score: gameStreamScore(s.name, f), dated: !!f.startUtc && namesGameDate(s.name, Date.parse(f.startUtc)) }))
     .filter((x): x is { s: S; score: number; dated: boolean } => x.score !== null)
-    // Within a score, a name carrying the game's own date first: it was
-    // labelled for this game, where a standing slot's label may be a day old
-    // and its content something else (namesGameDate). Then a slot that is not
-    // open yet behind one that is.
+    // Within a score: English commentary first (feedLanguageRank), then a
+    // name carrying the game's own date -- labelled for this game, where a
+    // standing slot's label may be a day old and its content something else
+    // (namesGameDate) -- then a slot that is not open yet behind one that is.
     .sort(
       (a, b) =>
         a.score - b.score ||
+        feedLanguageRank(a.s.name) - feedLanguageRank(b.s.name) ||
         Number(b.dated) - Number(a.dated) ||
         Number(eventSlotState(a.s.name, now) === "upcoming") - Number(eventSlotState(b.s.name, now) === "upcoming")
     )

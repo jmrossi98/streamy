@@ -75,30 +75,63 @@ export function GameChannelPicker({
   holdForFeed = false,
 }: Props) {
   const [held, setHeld] = useState(holdForFeed);
-  useEffect(() => {
-    if (!held) return;
-    const onOutcome = (e: Event) => {
-      const d = (e as CustomEvent<GameFeedSearchOutcome>).detail;
-      // "added" keeps holding: the page refresh brings the feed as the default.
-      if (d?.fixtureId === fixtureId && d.outcome === "none") setHeld(false);
-    };
-    window.addEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
-    const limit = setTimeout(() => setHeld(false), FEED_SEARCH_LIMIT_MS);
-    return () => {
-      window.removeEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
-      clearTimeout(limit);
-    };
-  }, [held, fixtureId]);
-  const options = channel ? [channel, ...candidates] : candidates;
+  /** Feeds added this visit, listed at once rather than after a reload. */
+  const [added, setAdded] = useState<LiveChannel[]>([]);
+  const serverOptions = channel ? [channel, ...candidates] : candidates;
+  const options = [...added.filter((a) => !serverOptions.some((o) => o.id === a.id)), ...serverOptions];
+  const remembered = resolveStoredChoice(serverOptions, storedChoice);
   const [selectedId, setSelectedId] = useState<string | null>(
     // The remembered pick if it's still in the lineup, otherwise the best
     // match. resolveStoredChoice returns null on a miss rather than guessing.
-    (resolveStoredChoice(options, storedChoice) ?? options[0])?.id ?? null
+    (remembered ?? serverOptions[0])?.id ?? null
   );
-  const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
   /** Channels that already failed to start this visit, so the fallback never loops. */
   const [failedIds, setFailedIds] = useState<string[]>([]);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
+  /** The viewer chose (now or on an earlier visit): nothing switches it for them after that. */
+  const [userPicked, setUserPicked] = useState(remembered != null);
+
+  // A better default from a refresh is taken up, unless the viewer chose.
+  const defaultId = channel?.id ?? null;
+  const [lastDefault, setLastDefault] = useState(defaultId);
+  if (defaultId !== lastDefault) {
+    setLastDefault(defaultId);
+    if (!userPicked && defaultId) {
+      setSelectedId(defaultId);
+      setHeld(false);
+    }
+  }
+
+  useEffect(() => {
+    const onOutcome = (e: Event) => {
+      const d = (e as CustomEvent<GameFeedSearchOutcome>).detail;
+      if (d?.fixtureId !== fixtureId) return;
+      if (d.outcome === "none") {
+        setHeld(false);
+        return;
+      }
+      if (!d.channel) return;
+      // Into the list now, and -- added automatically, with no choice of the
+      // viewer's in the way -- into the player now. No reload.
+      const ch: LiveChannel = { id: d.channel.id, name: d.channel.name, number: null, logoUrl: null, now: null, next: null };
+      setAdded((prev) => (prev.some((p) => p.id === ch.id) ? prev : [ch, ...prev]));
+      if (!d.manual && !userPicked) {
+        setSelectedId(ch.id);
+        setHeld(false);
+        setFallbackNote(null);
+      }
+    };
+    window.addEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
+    return () => window.removeEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
+  }, [fixtureId, userPicked]);
+
+  useEffect(() => {
+    if (!held) return;
+    const limit = setTimeout(() => setHeld(false), FEED_SEARCH_LIMIT_MS);
+    return () => clearTimeout(limit);
+  }, [held]);
+
+  const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
 
   /**
    * A channel that never started, after its own retries: try the next option
@@ -124,6 +157,7 @@ export function GameChannelPicker({
    */
   function pick(c: LiveChannel) {
     setHeld(false);
+    setUserPicked(true);
     setSelectedId(c.id);
     setFallbackNote(null);
     void fetch("/api/live/game-channel", {
@@ -234,7 +268,7 @@ export function GameChannelPicker({
                     {isBestMatch && channelConfirmed && (
                       <span
                         className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400"
-                        title="Dispatcharr's own schedule names both teams in what's airing right now"
+                        title="The guide names this game on it, or it's the network the game is listed on"
                       >
                         Confirmed
                       </span>
