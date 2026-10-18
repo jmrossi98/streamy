@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { PageWatchSummary } from "@/lib/pageWatch";
@@ -237,7 +238,7 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
             Nothing watched yet. Add a tour page above and it will be checked on the schedule.
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul className={scrollListClass({}, "space-y-2")}>
             {pages.map((p) => (
               <li
                 key={p.id}
@@ -334,7 +335,7 @@ export function PageWatchPanel({ summary }: { summary: PageWatchSummary }) {
           <h3 className="mb-3 text-xs font-medium uppercase tracking-wide text-white/30">
             Recent changes
           </h3>
-          <ul className="space-y-3">
+          <ul className={scrollListClass({}, "space-y-3")}>
             {recentChanges.map((c) => (
               <li key={c.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 text-sm">

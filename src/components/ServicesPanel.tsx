@@ -1,3 +1,4 @@
+import { scrollListClass } from "@/components/ui";
 import type { ServiceStatus, ServiceState } from "@/lib/serviceStatus";
 
 // Colour is always paired with a text label, so state is never carried by
@@ -83,7 +84,7 @@ export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
             <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-white/30">
               {group}
             </h3>
-            <ul className="space-y-1.5">
+            <ul className={scrollListClass({}, "space-y-1.5")}>
               {inGroup.map((s) => {
                 const style = STATE_STYLE[s.state];
                 return (

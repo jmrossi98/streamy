@@ -200,6 +200,25 @@ export function Badge({ tone = "neutral", className, children, title }: { tone?:
 // ------------------------------------------------------------ Panel/Section
 
 /** The admin card: dark, bordered, padded. */
+/**
+ * The one height at which an admin list stops growing and scrolls inside
+ * itself.
+ *
+ * Every long list on the dashboard uses this -- service rows, probe runs, the
+ * visitor log, sessions earlier today, accounts -- so a tab's length is set by
+ * how many panels it has, not by how busy the day was. Before 2026-10-18 there
+ * were nine different heights across the admin and several lists with none,
+ * and each one was asked for separately. `tall` is for a table that is the
+ * whole point of its panel (the visitor log, job listings), where more rows on
+ * screen earn the room.
+ */
+export const SCROLL_LIST_MAX_H = "max-h-80";
+export const SCROLL_LIST_MAX_H_TALL = "max-h-[32rem]";
+
+export function scrollListClass(opts: { tall?: boolean } = {}, extra?: string): string {
+  return cx(opts.tall ? SCROLL_LIST_MAX_H_TALL : SCROLL_LIST_MAX_H, "overflow-y-auto overscroll-contain pr-1", extra);
+}
+
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cx("rounded-lg border border-white/10 bg-netflix-dark/80 px-4 py-5 sm:px-6", className)}>{children}</div>;
 }

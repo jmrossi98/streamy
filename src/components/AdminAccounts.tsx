@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useState } from "react";
 
 export type AdminAccount = {
@@ -64,7 +65,7 @@ export function AdminAccounts({ accounts }: { accounts: AdminAccount[] }) {
 
   return (
     <div className="space-y-3">
-      <ul className="max-h-96 space-y-2 overflow-y-auto pr-1">
+      <ul className={scrollListClass({}, "space-y-2")}>
         {rows.map((account) => {
           const confirming = confirmingId === account.id;
           return (

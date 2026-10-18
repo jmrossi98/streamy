@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Field, Select, TextInput } from "@/components/ui";
+import { Badge, Button, Field, Select, TextInput, scrollListClass } from "@/components/ui";
 import { CredentialForm, IptvLines, useCredentialTargets } from "@/components/CredentialsPanel";
 import {
   buildServiceList,
@@ -103,7 +103,7 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
       )}
       {failed && <p className="px-4 pt-3 text-xs text-amber-200/70">Couldn&apos;t read the services&apos; logins; prices and renewals are still shown.</p>}
 
-      <ul className="divide-y divide-white/5">
+      <ul className={scrollListClass({}, "divide-y divide-white/5")}>
         {items.map((item) => {
           const s = item.sub;
           const r = item.renewal;

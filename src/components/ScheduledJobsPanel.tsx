@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useState } from "react";
 import type { ProbeLine } from "@/lib/scheduledJobs";
 
@@ -114,7 +115,7 @@ export function ScheduledJobsPanel({
             No probe run recorded yet. Runs every six hours via GitHub Actions.
           </p>
         ) : (
-          <ul className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+          <ul className={scrollListClass({}, "space-y-1.5")}>
             {probes.map((probe) => (
               <li
                 key={probe.name}
@@ -156,7 +157,7 @@ export function ScheduledJobsPanel({
         ) : jobs.length === 0 ? (
           <p className="text-sm text-white/50">mediabox reports nothing scheduled.</p>
         ) : (
-          <ul className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+          <ul className={scrollListClass({}, "space-y-1.5")}>
             {jobs.map((job) => (
               <li
                 key={`${job.user}:${job.name}:${job.schedule}`}

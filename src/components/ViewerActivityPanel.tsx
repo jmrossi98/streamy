@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, type BadgeTone } from "@/components/ui";
+import { Badge, type BadgeTone, scrollListClass } from "@/components/ui";
 import type { ViewerActivity, ViewerSessionView } from "@/lib/viewerActivity";
 
 const POLL_MS = 10_000;
@@ -76,7 +76,7 @@ export function ViewerActivityPanel() {
         {earlier.length === 0 ? (
           <p className="text-sm text-white/40">No other sessions in the last 24 hours.</p>
         ) : (
-          <ul className="divide-y divide-white/5 rounded border border-white/10">
+          <ul className={scrollListClass({}, "divide-y divide-white/5 rounded border border-white/10 pr-0")}>
             {earlier.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
                 <span className="font-medium text-white">{s.userName}</span>
@@ -106,7 +106,11 @@ function ProviderLines({ data }: { data: ViewerActivity }) {
           const busy = using.length > 0 || l.viewers > 0;
           return (
             <li key={`${l.provider}:${l.line}`} className="rounded border border-white/10 px-3 py-2 text-xs">
-              <span className="font-medium text-white">{l.line}</span>{" "}
+              {/* Provider first: a line named "Line 2" says nothing about whose
+                  it is, and the next free line matters per provider. */}
+              <span className="font-semibold text-white">{l.provider}</span>
+              <span className="text-white/40"> · </span>
+              <span className="font-medium text-white/80">{l.line}</span>{" "}
               <Badge tone={busy ? "warning" : "success"}>{busy ? `in use${l.maxStreams ? ` ${Math.max(using.length, l.viewers)}/${l.maxStreams}` : ""}` : "free"}</Badge>
               {using.map((c) => (
                 <span key={c.channelName} className="mt-1 block text-white/60">
@@ -149,8 +153,8 @@ function SessionCard({ s, now }: { s: ViewerSessionView; now: number }) {
         {s.location && <span className="text-white/40">{s.location}</span>}
         <span className="ml-auto"><HealthBadge s={s} /></span>
       </div>
-      <p className="mt-1 truncate text-xs text-white/40" title={s.ip}>
-        {s.path ?? "—"}
+      <p className="mt-1 truncate text-xs text-white/40">
+        {s.path ?? "—"} <span className="text-white/25">· {s.ip}</span>
       </p>
       {p ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -166,7 +170,7 @@ function SessionCard({ s, now }: { s: ViewerSessionView; now: number }) {
       {s.events.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-white/45 hover:text-white/70">Recent events ({s.events.length})</summary>
-          <ol className="mt-1 max-h-48 space-y-0.5 overflow-y-auto text-xs">
+          <ol className={scrollListClass({}, "mt-1 space-y-0.5 text-xs")}>
             {[...s.events].reverse().map((e, i) => (
               <li key={i} className={e.kind === "error" || e.kind === "retry" ? "text-red-300/90" : e.kind === "stall" ? "text-amber-300/90" : "text-white/55"}>
                 {new Date(e.at).toLocaleTimeString()} · {e.kind}

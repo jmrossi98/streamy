@@ -45,12 +45,30 @@ export function isLineLogin(value: string): boolean {
  * shapes a panel hands out are matched -- "/live/<user>/<pass>/<id>.ts" and
  * the bare "/<user>/<pass>/<id>" -- and the pattern never mentions the
  * account's own login, so a renewal of that one leaves the lines working.
+ *
+ * The kept prefix is a *named* group. Dispatcharr turns "$1" into Python's
+ * "" before substituting (apps/m3u/credentials.py), and a login that
+ * starts with digits then reads as "9...": group nineteen, "invalid group
+ * reference", and every tune on that line fails. That is exactly what
+ * happened to the trex line added on 2026-10-18. "$<base>" becomes
+ * "\g<base>", which no following character can change.
  */
+export const LINE_URL_GROUP = "base";
+
 export function lineProfilePatterns(username: string, password: string): { search: string; replace: string } {
   return {
-    search: "^(https?://[^/]+/(?:(?:live|movie|series|timeshift)/)?)[^/]+/[^/]+/",
-    replace: `$1${username}/${password}/`,
+    search: `^(?<${LINE_URL_GROUP}>https?://[^/]+/(?:(?:live|movie|series|timeshift)/)?)[^/]+/[^/]+/`,
+    replace: `$<${LINE_URL_GROUP}>${username}/${password}/`,
   };
+}
+
+/**
+ * Whether a stored line pattern is the old positional form ("$1..."), which
+ * breaks when the login starts with a digit. The sync script rewrites any it
+ * finds to the named-group form.
+ */
+export function lineReplaceIsPositional(replace: string | null | undefined): boolean {
+  return /^\$\d/.test(replace ?? "");
 }
 
 /** "Line 2", "Line 3"... the first name not already taken. */
