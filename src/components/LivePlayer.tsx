@@ -6,6 +6,7 @@ import { supportsNativeHls } from "@/lib/hlsSupport";
 import { liveSeekTarget } from "@/lib/liveTimeline";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
+import { Button } from "@/components/ui";
 
 type Props = {
   channelId: string;
@@ -112,6 +113,14 @@ const EDGE_STALL_RECOVERY_MS = 6_000;
 const MAX_RETRIES = 3;
 const RETRY_BACKOFF_MS = 3_000;
 
+/** How long hls.js waits on a live playlist -- see the Hls config below. */
+const LIVE_PLAYLIST_LOAD_POLICY = {
+  maxTimeToFirstByteMs: TUNE_TIMEOUT_MS,
+  maxLoadTimeMs: TUNE_TIMEOUT_MS,
+  timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 },
+  errorRetry: { maxNumRetry: 2, retryDelayMs: 1_000, maxRetryDelayMs: 8_000 },
+};
+
 /**
  * Moves playback to the live edge, minus the sync cushion.
  *
@@ -190,6 +199,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
   const [loading, setLoading] = useState(true);
   /** Playback started and then stalled, as opposed to never having started. */
   const [rebuffering, setRebuffering] = useState(false);
+  /** The stream is ready but the browser won't start it without a tap (iPhone Safari). */
+  const [needsTap, setNeedsTap] = useState(false);
   /**
    * Whether a blocked autoplay forced this tune to start muted.
    *
@@ -307,6 +318,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       // genuinely starting behind that stale message.
       setError(null);
       setLoading(true);
+      setNeedsTap(false);
     }
 
     /*
@@ -418,6 +430,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       clearStallTimer();
       setLoading(false);
       setRebuffering(false);
+      setNeedsTap(false);
       // Undoes the muted fallback the instant real playback is confirmed --
       // not unconditionally, so this never fights a viewer's own deliberate
       // mute (toggleMute), only the one this component itself forced.
@@ -470,6 +483,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       never triggers it.
     */
     let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Armed when Safari refuses the first play(); see startPlayback. */
+    let onCanPlay: (() => void) | null = null;
 
     const clearStallTimer = () => {
       if (stallTimer !== null) {
@@ -506,20 +521,54 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
      * Anything else, or the muted retry failing too, is a real failure and
      * goes through the normal retry-with-backoff path.
      */
-    const startPlayback = () => {
+    /*
+      A refused play() is not a dead channel.
+
+      Safari on iPhone refuses play() while a live stream is still loading
+      (AbortError), and without a tap (NotAllowedError) -- muted or not, until
+      there is something to play. This used to re-tune on that, and re-tuning
+      cancels the playlist request Jellyfin was still preparing (it holds it
+      ~7s, until three segments exist), so the next attempt was refused the
+      same way. On 2026-10-17 an iPhone looped like that for every channel it
+      tried -- master, playlist cancelled within 1-3s, stop, again -- and never
+      played anything.
+
+      So a refusal waits for `canplay` and tries once more, and if that is
+      refused too, asks for a tap. Whether the channel is actually dead is
+      still decided by the tune timer and hls.js's own errors.
+    */
+    const isRefusal = (err: unknown) => {
+      const name = err instanceof Error ? err.name : "";
+      return name === "NotAllowedError" || name === "AbortError";
+    };
+    const tryPlay = (): Promise<void> =>
       video.play().catch((err: unknown) => {
-        const name = err instanceof Error ? err.name : "";
-        if (name === "NotAllowedError" || name === "AbortError") {
-          autoMutedRef.current = true;
-          video.muted = true;
-          video.play().catch(() => {
-            clearTuneTimer();
-            scheduleRetry("Playback couldn’t start.");
-          });
+        if (!isRefusal(err)) throw err;
+        autoMutedRef.current = true;
+        video.muted = true;
+        return video.play();
+      });
+    const startPlayback = () => {
+      tryPlay().catch((err: unknown) => {
+        if (!isRefusal(err)) {
+          clearTuneTimer();
+          scheduleRetry("Playback couldn’t start.");
           return;
         }
-        clearTuneTimer();
-        scheduleRetry("Playback couldn’t start.");
+        if (onCanPlay) return;
+        // Offered straight away, not after `canplay`: Safari may not load a
+        // stream at all until it is tapped, and then `canplay` never comes.
+        setNeedsTap(true);
+        onCanPlay = () => {
+          video.removeEventListener("canplay", onCanPlay!);
+          tryPlay().catch(() => {
+            // The stream is there; only the browser is holding out for a tap.
+            clearTuneTimer();
+            setLoading(false);
+            setNeedsTap(true);
+          });
+        };
+        video.addEventListener("canplay", onCanPlay);
       });
     };
     // How far behind the live edge we are, recomputed as playback moves. This
@@ -622,6 +671,15 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         backBufferLength: BACK_BUFFER_SECONDS,
         enableWorker: true,
         lowLatencyMode: false,
+        /*
+          Jellyfin holds the first live playlist until three segments exist --
+          7.6s measured on 2026-10-17 -- and hls.js gives up at 10s by default.
+          A timeout cancels the request, and Jellyfin stops the transcode on a
+          cancelled request, so a slow tune never got a second chance. Same
+          budget as the tune timer, which stays the judge of a dead channel.
+        */
+        manifestLoadPolicy: { default: LIVE_PLAYLIST_LOAD_POLICY },
+        playlistLoadPolicy: { default: LIVE_PLAYLIST_LOAD_POLICY },
       });
       hls.loadSource(src);
       hls.attachMedia(video);
@@ -657,6 +715,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("waiting", onWaiting);
       video.removeEventListener("stalled", onWaiting);
+      if (onCanPlay) video.removeEventListener("canplay", onCanPlay);
       clearStallTimer();
       window.removeEventListener("pagehide", onPageHide);
       // hls.destroy() ends the *client* fetching and nothing more -- the
@@ -753,6 +812,24 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         {rebuffering && !loading && !error && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
             <Spinner label="Reconnecting…" />
+          </span>
+        )}
+        {needsTap && !error && (
+          <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <Button
+              variant="primary"
+              onClick={() => {
+                const v = videoRef.current;
+                if (!v) return;
+                setNeedsTap(false);
+                // A tap is the gesture the browser was waiting for, so sound can come too.
+                v.muted = false;
+                autoMutedRef.current = false;
+                void v.play().catch(() => setNeedsTap(true));
+              }}
+            >
+              Tap to play
+            </Button>
           </span>
         )}
         {error && (
