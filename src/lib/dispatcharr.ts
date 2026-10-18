@@ -505,8 +505,11 @@ export async function activeChannelKeys(): Promise<Set<string> | null> {
 export type LiveConnection = {
   channelName: string;
   streamName: string | null;
-  /** The provider line in use: "trex Default", "strong8k Line 2". */
-  line: string | null;
+  /** The provider line in use, by Dispatcharr's profile id (IptvLine.id). */
+  lineId: number | null;
+  resolution: string | null;
+  /** ffmpeg's speed pulling the stream: under 1 means it can't keep up with live. */
+  speed: number | null;
   state: string;
   uptimeSeconds: number | null;
   kbps: number | null;
@@ -526,7 +529,10 @@ export async function liveConnections(): Promise<LiveConnection[] | null> {
   return (Array.isArray(data.channels) ? data.channels : []).map((c) => ({
     channelName: str(c.channel_name) ?? String(c.channel_id ?? "?"),
     streamName: str(c.stream_name),
-    line: str(c.m3u_profile_name),
+    // The summary carries the profile's id; its name is only in the per-channel detail.
+    lineId: num(c.m3u_profile_id) ?? (typeof c.m3u_profile_id === "string" ? Number(c.m3u_profile_id) || null : null),
+    resolution: str(c.resolution),
+    speed: num(c.ffmpeg_speed) ?? (typeof c.ffmpeg_speed === "string" ? parseFloat(c.ffmpeg_speed) || null : null),
     state: str(c.state) ?? "unknown",
     uptimeSeconds: num(c.uptime),
     kbps: num(c.avg_bitrate_kbps),

@@ -102,7 +102,7 @@ function ProviderLines({ data }: { data: ViewerActivity }) {
       <h3 className="mb-2 text-sm font-semibold text-white/80">Provider lines</h3>
       <ul className="flex flex-wrap gap-2">
         {(data.lines ?? []).filter((l) => l.active).map((l) => {
-          const using = conns.filter((c) => c.line === l.line);
+          const using = conns.filter((c) => c.lineId === l.id);
           const busy = using.length > 0 || l.viewers > 0;
           return (
             <li key={`${l.provider}:${l.line}`} className="rounded border border-white/10 px-3 py-2 text-xs">
@@ -112,7 +112,11 @@ function ProviderLines({ data }: { data: ViewerActivity }) {
                 <span key={c.channelName} className="mt-1 block text-white/60">
                   {c.channelName} · {c.state}
                   {c.uptimeSeconds != null && ` · ${Math.round(c.uptimeSeconds / 60)} min`}
+                  {c.resolution && ` · ${c.resolution}`}
                   {c.kbps != null && ` · ${(c.kbps / 1000).toFixed(1)} Mbps`}
+                  {c.speed != null && (
+                    <span className={c.speed < 0.95 ? "text-amber-300" : undefined}>{` · ${c.speed.toFixed(2)}x`}</span>
+                  )}
                   {c.clients === 0 && " · no viewer (retrying?)"}
                 </span>
               ))}
@@ -121,10 +125,10 @@ function ProviderLines({ data }: { data: ViewerActivity }) {
         })}
         {/* A connection on a line the account list doesn't know about. */}
         {conns
-          .filter((c) => !(data.lines ?? []).some((l) => l.line === c.line))
+          .filter((c) => !(data.lines ?? []).some((l) => l.id === c.lineId))
           .map((c) => (
             <li key={`x:${c.channelName}`} className="rounded border border-white/10 px-3 py-2 text-xs text-white/60">
-              {c.line ?? "unknown line"}: {c.channelName} · {c.state}
+              {c.lineId != null ? `line ${c.lineId}` : "unknown line"}: {c.channelName} · {c.state}
             </li>
           ))}
       </ul>
