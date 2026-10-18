@@ -199,8 +199,10 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
   const [loading, setLoading] = useState(true);
   /** Playback started and then stalled, as opposed to never having started. */
   const [rebuffering, setRebuffering] = useState(false);
-  /** The stream is ready but the browser won't start it without a tap (iPhone Safari). */
+  /** The stream is ready but the browser won't start it even muted without a tap (iPhone Low Power Mode). */
   const [needsTap, setNeedsTap] = useState(false);
+  /** Playing, but muted because the browser won't allow sound until the viewer taps. */
+  const [soundBlocked, setSoundBlocked] = useState(false);
   /**
    * Whether a blocked autoplay forced this tune to start muted.
    *
@@ -319,6 +321,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       setError(null);
       setLoading(true);
       setNeedsTap(false);
+      setSoundBlocked(false);
     }
 
     /*
@@ -435,8 +438,23 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       // not unconditionally, so this never fights a viewer's own deliberate
       // mute (toggleMute), only the one this component itself forced.
       if (autoMutedRef.current) {
-        autoMutedRef.current = false;
+        /*
+          Sound back on if the browser allows it. Without a recent tap it
+          doesn't: unmuting then makes Chrome and Safari *pause* the video,
+          which used to leave an autoplayed channel frozen. So check, and if
+          it paused, carry on muted and offer sound instead.
+        */
         video.muted = false;
+        setTimeout(() => {
+          if (!video.paused) {
+            autoMutedRef.current = false;
+            setSoundBlocked(false);
+            return;
+          }
+          video.muted = true;
+          void video.play().catch(() => {});
+          setSoundBlocked(true);
+        }, 0);
       }
       // A channel that plays fine now shouldn't have its retry budget
       // dented by trouble from ten minutes ago -- only a run of failures
@@ -556,13 +574,13 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
           return;
         }
         if (onCanPlay) return;
-        // Offered straight away only when the browser wants a tap
-        // (NotAllowedError): Safari may not load a stream at all until it is
-        // tapped, and then `canplay` never comes. An AbortError is just a
-        // play() interrupted while the stream loads -- Chrome does it on most
-        // tunes -- and offering a tap for that put "Tap to play" over
-        // "Tuning..." on desktop (2026-10-17).
-        if (err instanceof Error && err.name === "NotAllowedError") setNeedsTap(true);
+        // No tap asked for here: tryPlay has already fallen back to muted,
+        // which every browser autoplays. A refusal at this point is a play()
+        // interrupted while the stream loads (Chrome does it on most tunes),
+        // so try again once there is something to play. Only if that fails
+        // too -- iPhone Low Power Mode blocks even muted autoplay -- is a tap
+        // the one thing left (2026-10-17: offering it earlier put "Tap to
+        // play" over "Tuning..." on desktop).
         onCanPlay = () => {
           video.removeEventListener("canplay", onCanPlay!);
           tryPlay().catch(() => {
@@ -816,6 +834,25 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         {rebuffering && !loading && !error && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
             <Spinner label="Reconnecting…" />
+          </span>
+        )}
+        {/* Not blocking: the picture plays on underneath, muted. */}
+        {soundBlocked && !needsTap && !error && (
+          <span className="absolute left-3 top-3 z-10">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                const v = videoRef.current;
+                if (!v) return;
+                v.muted = false;
+                autoMutedRef.current = false;
+                setSoundBlocked(false);
+                void v.play().catch(() => {});
+              }}
+            >
+              Tap for sound
+            </Button>
           </span>
         )}
         {needsTap && !error && (
