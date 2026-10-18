@@ -214,7 +214,7 @@ const PLACEHOLDER_POSTER =
 const PLACEHOLDER_BACKDROP =
   "https://placehold.co/1920x1080/1a1a1a/444?text=No+Backdrop";
 
-function imageUrl(path: string | null, size: "w92" | "w185" | "w500" | "original" = "w500"): string {
+function imageUrl(path: string | null, size: "w92" | "w185" | "w300" | "w500" | "original" = "w500"): string {
   if (!path) return PLACEHOLDER_POSTER;
   return `${IMAGE_BASE}/${size}${path}`;
 }
@@ -613,7 +613,8 @@ export async function getSeason(showId: string, seasonNumber: number): Promise<T
                 id: String(ep.id),
                 name: ep.name,
                 overview: ep.overview || "",
-                still: imageUrl(ep.still_path),
+                // Shown at most 160 px wide (320 on a 2x screen).
+                still: imageUrl(ep.still_path, "w300"),
                 seasonNumber: ep.season_number,
                 episodeNumber: ep.episode_number,
                 runtime: ep.runtime ?? null,
