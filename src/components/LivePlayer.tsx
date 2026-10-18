@@ -7,6 +7,7 @@ import { liveSeekTarget } from "@/lib/liveTimeline";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
 import { Button } from "@/components/ui";
+import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 
 type Props = {
   channelId: string;
@@ -232,6 +233,18 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
    * the same thing a manual back-and-reselect would produce, just automatic.
    */
   const [retryToken, setRetryToken] = useState(0);
+  // Every attempt reported to the admin Viewers panel, retries included.
+  const { reportRetry } = usePlaybackTelemetry(videoRef, {
+    kind: "live",
+    title: channelName,
+    error,
+    attempt: retryToken,
+    startOnMount: true,
+  });
+  const reportRetryRef = useRef(reportRetry);
+  useEffect(() => {
+    reportRetryRef.current = reportRetry;
+  }, [reportRetry]);
   /** How many consecutive failed attempts *this* channel has had. */
   const retryCountRef = useRef(0);
   /** Which channel retryCountRef's count belongs to, so switching channels starts fresh. */
@@ -400,6 +413,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         return;
       }
       retryCountRef.current += 1;
+      reportRetryRef.current(finalError);
       setTimeout(() => {
         setRetryToken((t) => t + 1);
       }, RETRY_BACKOFF_MS * retryCountRef.current);

@@ -11,6 +11,7 @@ import { type SubtitleOption } from "./SubtitleSelector";
 import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
 import { Button } from "./ui";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 import type { EpisodePlayback } from "@/lib/episodePlayback";
 import {
   isFinished,
@@ -370,6 +371,11 @@ function EpisodeView({
     saveProgress,
     fullscreenRef: frameRef,
     continuing,
+  });
+  usePlaybackTelemetry(videoRef, {
+    kind: "episode",
+    title: `${showName} S${seasonNumber}E${episodeNumber}`,
+    error: playbackError ? "Playback failed" : null,
   });
   // Back to a paused player after watching elsewhere: pick up that spot.
   useResumeRecheck(resumeQuery, videoRef);

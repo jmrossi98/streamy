@@ -501,6 +501,39 @@ export async function activeChannelKeys(): Promise<Set<string> | null> {
   return keys;
 }
 
+/** One open provider connection, as the admin Viewers panel shows it. */
+export type LiveConnection = {
+  channelName: string;
+  streamName: string | null;
+  /** The provider line in use: "trex Default", "strong8k Line 2". */
+  line: string | null;
+  state: string;
+  uptimeSeconds: number | null;
+  kbps: number | null;
+  clients: number;
+};
+
+/**
+ * Every provider connection Dispatcharr holds open right now, with the line
+ * it is on. Each line allows one stream, so this is exactly "which lines are
+ * in use, by what". Null when Dispatcharr can't be asked.
+ */
+export async function liveConnections(): Promise<LiveConnection[] | null> {
+  const data = await api<{ channels?: Record<string, unknown>[] }>(`/proxy/ts/status`);
+  if (!data || typeof data !== "object") return null;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return (Array.isArray(data.channels) ? data.channels : []).map((c) => ({
+    channelName: str(c.channel_name) ?? String(c.channel_id ?? "?"),
+    streamName: str(c.stream_name),
+    line: str(c.m3u_profile_name),
+    state: str(c.state) ?? "unknown",
+    uptimeSeconds: num(c.uptime),
+    kbps: num(c.avg_bitrate_kbps),
+    clients: typeof c.clients === "number" ? c.clients : Array.isArray(c.clients) ? c.clients.length : 0,
+  }));
+}
+
 /**
  * Dispatcharr's numeric channel id for a channel Jellyfin already knows by
  * name.

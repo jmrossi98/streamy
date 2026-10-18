@@ -6,6 +6,7 @@ import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
+import { ViewerActivityPanel } from "@/components/ViewerActivityPanel";
 
 /**
  * Who has been here, and whether anything about it looks wrong.
@@ -25,6 +26,12 @@ export default async function AdminSecurityPage() {
 
   return (
       <div className="space-y-10">
+      {/* First: who is on now and whether it's working is the question this
+          tab gets opened for most. */}
+      <AdminSection title="Viewers">
+        <ViewerActivityPanel />
+      </AdminSection>
+
       <AdminSection title="Security">
         <SecurityPanel
           activity={security.activity}

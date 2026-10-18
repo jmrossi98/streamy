@@ -8,6 +8,7 @@ import { VideoChrome } from "./VideoChrome";
 import { type SubtitleOption } from "./SubtitleSelector";
 import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the movie is here" when it
@@ -104,6 +105,7 @@ export function WatchPlayer({
     identityKey: movieId,
     saveProgress,
   });
+  usePlaybackTelemetry(videoRef, { kind: "movie", title: movieTitle, error: playbackError ? "Playback failed" : null });
   // Back to a paused player after watching elsewhere: pick up that spot.
   useResumeRecheck(resumeQuery, videoRef);
 
