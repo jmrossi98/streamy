@@ -5,6 +5,7 @@ import {
   lineAlert,
   lineCapacity,
   lineProfilePatterns,
+  lineReplaceIsPositional,
   lineSummary,
   nextLineName,
   type IptvLine,
@@ -36,6 +37,22 @@ describe("lineProfilePatterns", () => {
   });
   it("matches the synthetic URL Dispatcharr derives the login from", () => {
     expect(apply("http://line.example.cc/live/base/basepw/1234.ts", "u2", "p2")).toContain("/live/u2/p2/1234.ts");
+  });
+  it("uses a named group, so a login starting with a digit is not read as a backreference", () => {
+    // "$1" + "4dad..." becomes Python "\14dad" = group 14, which is what broke
+    // the trex line added 2026-10-18. The named form cannot be misread.
+    const { replace } = lineProfilePatterns("4dad0abc", "p2");
+    expect(replace.startsWith("$<base>")).toBe(true);
+    expect(lineReplaceIsPositional(replace)).toBe(false);
+    expect(apply("http://x.example/live/old/old/1.ts", "4dad0abc", "p2")).toBe("http://x.example/live/4dad0abc/p2/1.ts");
+  });
+});
+
+describe("lineReplaceIsPositional", () => {
+  it("flags the old $1 form and clears the named form", () => {
+    expect(lineReplaceIsPositional("$1u/p/")).toBe(true);
+    expect(lineReplaceIsPositional("$<base>u/p/")).toBe(false);
+    expect(lineReplaceIsPositional(null)).toBe(false);
   });
 });
 

@@ -38,8 +38,10 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
 };
 
 const BUTTON_SIZE: Record<ButtonSize, string> = {
-  xs: "px-1.5 py-0.5 text-[11px]",
-  sm: "px-2.5 py-1 text-xs",
+  // Minimum heights so the small sizes stay tappable on a phone (28/32 px)
+  // without growing the text.
+  xs: "min-h-7 px-2 py-0.5 text-[11px]",
+  sm: "min-h-8 px-2.5 py-1 text-xs",
   md: "px-3 py-1.5 text-sm",
 };
 
@@ -81,7 +83,8 @@ export function ButtonLink({ variant, size, className, ...rest }: ButtonLinkProp
 
 const FIELD =
   "w-full rounded border border-white/15 bg-black/40 text-white placeholder:text-white/30 focus:border-white/40 focus:outline-none";
-const FIELD_SIZE = { sm: "px-2 py-1 text-xs", md: "px-2.5 py-1.5 text-sm" } as const;
+// 16px on phones: iOS Safari zooms the page into any field whose text is smaller.
+const FIELD_SIZE = { sm: "px-2 py-1 text-base sm:text-xs", md: "px-2.5 py-1.5 text-base sm:text-sm" } as const;
 
 export function TextInput({ className, fieldSize = "md", ...rest }: InputHTMLAttributes<HTMLInputElement> & { fieldSize?: "sm" | "md" }) {
   return <input className={cx(FIELD, FIELD_SIZE[fieldSize], className)} {...rest} />;
@@ -95,7 +98,7 @@ export function Select({ className, fieldSize = "md", ...rest }: SelectHTMLAttri
   // pr is left to .streamy-select, which reserves room for its arrow.
   return (
     <select
-      className={cx("streamy-select", FIELD, fieldSize === "sm" ? "py-1 pl-2 text-xs" : "py-1.5 pl-2.5 text-sm", className)}
+      className={cx("streamy-select", FIELD, fieldSize === "sm" ? "py-1 pl-2 text-base sm:text-xs" : "py-1.5 pl-2.5 text-base sm:text-sm", className)}
       {...rest}
     />
   );
@@ -197,6 +200,25 @@ export function Badge({ tone = "neutral", className, children, title }: { tone?:
 // ------------------------------------------------------------ Panel/Section
 
 /** The admin card: dark, bordered, padded. */
+/**
+ * The one height at which an admin list stops growing and scrolls inside
+ * itself.
+ *
+ * Every long list on the dashboard uses this -- service rows, probe runs, the
+ * visitor log, sessions earlier today, accounts -- so a tab's length is set by
+ * how many panels it has, not by how busy the day was. Before 2026-10-18 there
+ * were nine different heights across the admin and several lists with none,
+ * and each one was asked for separately. `tall` is for a table that is the
+ * whole point of its panel (the visitor log, job listings), where more rows on
+ * screen earn the room.
+ */
+export const SCROLL_LIST_MAX_H = "max-h-80";
+export const SCROLL_LIST_MAX_H_TALL = "max-h-[32rem]";
+
+export function scrollListClass(opts: { tall?: boolean } = {}, extra?: string): string {
+  return cx(opts.tall ? SCROLL_LIST_MAX_H_TALL : SCROLL_LIST_MAX_H, "overflow-y-auto overscroll-contain pr-1", extra);
+}
+
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cx("rounded-lg border border-white/10 bg-netflix-dark/80 px-4 py-5 sm:px-6", className)}>{children}</div>;
 }

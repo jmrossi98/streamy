@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApplyReviewDialog } from "@/components/ApplyReviewDialog";
-import { Chip } from "@/components/ui";
+import { Chip, scrollListClass } from "@/components/ui";
 import {
   CATEGORY_LABELS,
   LEVEL_LABELS,
@@ -482,7 +482,7 @@ export function JobListingsPanel({
           {hideOpened ? ", unexplored." : "."}
         </p>
       ) : (
-        <ul className="max-h-[48rem] space-y-1.5 overflow-y-auto pr-1">
+        <ul className={scrollListClass({ tall: true }, "space-y-1.5")}>
           {shown.map((listing) => (
             <li
               key={listing.id}

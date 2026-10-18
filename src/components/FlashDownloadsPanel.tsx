@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useState } from "react";
 import Link from "next/link";
 import { FlashDeleteButton } from "@/components/FlashDeleteButton";
@@ -59,7 +60,7 @@ export function FlashDownloadsPanel({ rows }: { rows: FlashDownloadRow[] }) {
       </div>
 
       {/* Scroll box, matching the other long lists on this page. */}
-      <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
+      <ul className={scrollListClass({}, "space-y-1")}>
         {shown.map((g) => (
           <li
             key={g.slug}

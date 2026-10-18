@@ -4,8 +4,6 @@ import { AdminSection } from "@/components/ui";
 import { ServicesPanel } from "@/components/ServicesPanel";
 import { getServiceStatuses } from "@/lib/serviceStatus";
 import { TestAlertButton } from "@/components/TestAlertButton";
-import { EpgBackfillButton } from "@/components/EpgBackfillButton";
-import { isDispatcharrConfigured } from "@/lib/dispatcharr";
 import { isNotifyConfigured } from "@/lib/notify";
 import { PlaybackCheckPanel } from "@/components/PlaybackCheckPanel";
 import { getPlaybackCheckHistory } from "@/lib/playbackCheck";
@@ -41,7 +39,6 @@ export default function AdminHealthPage() {
           <Services />
         </Suspense>
         <TestAlertButton configured={isNotifyConfigured()} />
-        <EpgBackfillButton configured={isDispatcharrConfigured()} />
         {/* Same section, not its own -- this is itself a health check (the
             one real end-to-end signal: request a title, wait for it to
             actually download, then exercise real playback), so it belongs

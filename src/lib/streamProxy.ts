@@ -9,6 +9,7 @@ import {
 } from "./jellyfin";
 import { trickplayVersion } from "./trickplayRules";
 import { windowLivePlaylist } from "./hlsPlaylistRules";
+import { streamMeter, type MeterTag } from "./streamMeter";
 
 // Headers that must survive the hop for video playback to behave: the browser
 // relies on them for seeking (Range/Content-Range/Accept-Ranges), for knowing
@@ -78,7 +79,8 @@ async function fetchUpstream(
 export async function proxyJellyfinStream(
   itemId: string,
   request: Request,
-  opts: { transcode?: boolean; startSeconds?: number; playSessionId?: string } = {}
+  // meter: who is watching what, for the admin Streaming tab's byte meter (streamMeter.ts).
+  opts: { transcode?: boolean; startSeconds?: number; playSessionId?: string; meter?: MeterTag } = {}
 ): Promise<Response> {
   const range = request.headers.get("range");
   // Direct file by default; the transcoded stream is requested only as a
@@ -106,7 +108,8 @@ export async function proxyJellyfinStream(
   // Some clients refuse to seek unless the server advertises range support.
   if (!headers.has("accept-ranges")) headers.set("accept-ranges", "bytes");
 
-  return new Response(upstream.body, { status: upstream.status, headers });
+  const body = opts.meter ? streamMeter.wrap(upstream.body, opts.meter) : upstream.body;
+  return new Response(body, { status: upstream.status, headers });
 }
 
 const HLS_PLAYLIST_CONTENT_TYPES = [
@@ -139,7 +142,9 @@ export async function proxyJellyfinHlsResource(
   // Master playlist only: which audio track to transcode (see playbackLanguage.ts).
   audioStreamIndex?: number | null,
   // Live TV: playlists are trimmed to a sliding window (hlsPlaylistRules.ts).
-  live = false
+  live = false,
+  // Who is watching what, for the admin Streaming tab's byte meter (streamMeter.ts).
+  meter?: MeterTag
 ): Promise<Response> {
   const incoming = new URL(request.url);
   // The master playlist is the one request usePlayerEngine builds itself
@@ -202,7 +207,8 @@ export async function proxyJellyfinHlsResource(
 
   if (!isPlaylist) {
     got.done();
-    return new Response(upstream.body, { status: upstream.status, headers });
+    const body = meter ? streamMeter.wrap(upstream.body, meter) : upstream.body;
+    return new Response(body, { status: upstream.status, headers });
   }
 
   // A playlist is small: keep the timeout armed until its body is in too.
@@ -227,6 +233,7 @@ export async function proxyJellyfinHlsResource(
   // The rewritten body's byte length differs from upstream's -- let the
   // runtime compute Content-Length rather than forwarding the stale one.
   headers.delete("content-length");
+  if (meter) streamMeter.add(meter, Buffer.byteLength(rewritten));
   return new Response(rewritten, { status: upstream.status, headers });
 }
 

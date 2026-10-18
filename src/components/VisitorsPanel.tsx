@@ -1,3 +1,4 @@
+import { scrollListClass } from "@/components/ui";
 import type { VisitorSummary } from "@/lib/siteVisits";
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -151,8 +152,8 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
         </h3>
         {/* Scrolls inside its own container so a wide row never makes the page
             scroll sideways on mobile, and a long log doesn't push the page down. */}
-        <div className="max-h-[32rem] overflow-y-auto rounded border border-white/10">
-          <div className="overflow-x-auto">
+        <div className={scrollListClass({ tall: true }, "overflow-x-auto rounded border border-white/10 pr-0")}>
+          <div>
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 bg-netflix-dark text-xs uppercase tracking-wide text-white/30">
                 <tr>

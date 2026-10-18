@@ -32,6 +32,7 @@ export async function GET(request: Request, { params }: Props) {
     transcode,
     startSeconds: Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : undefined,
     playSessionId: searchParams.get("session") || undefined,
+    meter: { user: session?.user?.name ?? "unknown", kind: "episode", ref: itemId },
   });
   return checkedEpisodeStream(res, showId, seasonNum, episodeNum);
 }

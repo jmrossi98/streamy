@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useState } from "react";
 
 function timeAgo(iso: string): string {
@@ -82,7 +83,7 @@ export function HealthProbePanel({ runs }: { runs: HealthProbeRunSummary[] }) {
         )}
       </div>
 
-      <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+      <ul className={scrollListClass({}, "space-y-2")}>
         {runs.map((run) => {
           const isOpen = expanded === run.id;
           return (

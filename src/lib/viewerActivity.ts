@@ -1,6 +1,8 @@
 import { prisma } from "./db";
 import { locateMany } from "./geoip";
 import { isDispatcharrConfigured, listIptvAccounts, liveConnections, type LiveConnection } from "./dispatcharr";
+import { maybeSampleStreamLoad } from "./streamLoadHistory";
+import { cached } from "./ttlCache";
 import {
   deviceLabel,
   presenceOf,
@@ -52,6 +54,8 @@ export async function recordPresence(
       })),
     });
   }
+  // The minute-by-minute load record rides on the heartbeat (streamLoadHistory.ts).
+  void maybeSampleStreamLoad(now.getTime()).catch((err) => console.error("[presence] load sample failed:", err));
   if (now.getTime() - lastPrune > 60 * 60_000) {
     lastPrune = now.getTime();
     const cutoff = new Date(now.getTime() - KEEP_DAYS * 24 * 60 * 60_000);
@@ -99,10 +103,15 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
   const since = new Date(now - WINDOW_MS);
   const [rows, events, connections, accounts] = await Promise.all([
     prisma.viewerSession.findMany({ where: { lastSeenAt: { gte: since } }, orderBy: { lastSeenAt: "desc" }, take: 200 }),
-    prisma.playbackEvent.findMany({ where: { at: { gte: since } }, orderBy: { at: "asc" }, take: 5000 }),
-    isDispatcharrConfigured() ? liveConnections().catch(() => null) : Promise.resolve(null),
-    isDispatcharrConfigured() ? listIptvAccounts().catch(() => null) : Promise.resolve(null),
+    // Newest first, so on a day with more than the cap it is the oldest
+    // events that fall off rather than what is happening now.
+    prisma.playbackEvent.findMany({ where: { at: { gte: since } }, orderBy: { at: "desc" }, take: 5000 }),
+    // Polled every ten seconds by each open admin tab; Dispatcharr need not
+    // be asked more often than that.
+    isDispatcharrConfigured() ? cached("dispatcharr:connections", 5_000, liveConnections).catch(() => null) : Promise.resolve(null),
+    isDispatcharrConfigured() ? cached("dispatcharr:accounts", 10_000, listIptvAccounts).catch(() => null) : Promise.resolve(null),
   ]);
+  events.reverse();
   const geo = await locateMany(rows.map((r) => r.ip)).catch(() => new Map());
 
   const bySession = new Map<string, ViewerEvent[]>();

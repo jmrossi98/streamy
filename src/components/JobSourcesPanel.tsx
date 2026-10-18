@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, Chip, type BadgeTone } from "@/components/ui";
+import { Badge, Chip, type BadgeTone, scrollListClass } from "@/components/ui";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LEVEL_LABELS, LEVEL_ORDER } from "@/lib/jobFilters";
@@ -223,7 +223,7 @@ export function JobSourcesPanel({
           : "Every source read fine on its last poll."}
       </p>
 
-      <ul className="max-h-[36rem] space-y-1 overflow-y-auto pr-1">
+      <ul className={scrollListClass({ tall: true }, "space-y-1")}>
         {rows.map((row) => (
           <li
             key={row.id}

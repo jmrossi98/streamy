@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useState } from "react";
 
 type PendingUser = { id: string; name: string; createdAt: string };
@@ -35,7 +36,7 @@ export function AdminApprovals({ users }: { users: PendingUser[] }) {
     // Was a fixed h-72 so the widget kept its size next to other panels on the
     // old single-page admin. On its own tab that just left a screenful of empty
     // space under a one-line queue, so it sizes to its contents and caps.
-    <ul className="max-h-96 space-y-3 overflow-y-auto pr-1">
+    <ul className={scrollListClass({}, "space-y-3")}>
       {pending.map((user) => (
         <li
           key={user.id}

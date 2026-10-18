@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 
@@ -32,11 +33,9 @@ export type GameDownloadRow = {
 // two loops (2.5 s and 4 s) together re-rendered the page 44,000 times in
 // one week (access log, 2026-10-18) -- on the 2-vCPU box that also pipes
 // every viewer's video.
-// Same cap and row arithmetic as DownloadsPanel, for the same reason -- but
-// it matters more here: this list now includes every owned game (~150), so
-// without a cap it pushed the whole rest of the admin page off-screen.
-const VISIBLE_ROWS = 12;
-const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
+// The list scrolls at the standard admin height (ui/scrollListClass): it
+// includes every owned game (~150), and without a cap it pushed the rest of
+// the admin page off-screen.
 
 export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[] }) {
   const router = useRouter();
@@ -111,10 +110,7 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
   }
 
   return (
-    <ul
-      className="space-y-3 overflow-y-auto pr-1"
-      style={{ maxHeight: visible.length > VISIBLE_ROWS ? `${MAX_HEIGHT_PX}px` : undefined }}
-    >
+    <ul className={scrollListClass({}, "space-y-3")}>
       {visible.map((d) => {
         const isManaging = managingKey === d.key;
         return (

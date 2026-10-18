@@ -15,7 +15,7 @@
  * behaviour is testable; userGate.ts wires it to Prisma.
  */
 
-export type UserGate = { approved: boolean; isAdmin: boolean; passwordChangedAt: Date | null };
+export type UserGate = { approved: boolean; isAdmin: boolean; passwordChangedAt: Date | null; name?: string };
 
 export const USER_GATE_TTL_MS = 30_000;
 

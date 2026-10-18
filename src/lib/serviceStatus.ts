@@ -18,6 +18,7 @@ import {
 } from "./jellyfin";
 import { isQbittorrentConfigured, getTorrentHealth, stalledDownloads } from "./qbittorrent";
 import { isGamarrConfigured } from "./gamarr";
+import { cached } from "./ttlCache";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
 import { getLiveChannels, isJellyfinConfiguredForLiveTv } from "./liveTv";
 import { isFlashLibraryConfigured, listFlashFiles } from "./flashLibrary";
@@ -1359,7 +1360,18 @@ async function portainerStatus(): Promise<ServiceStatus> {
   };
 }
 
-export async function getServiceStatuses(): Promise<ServiceStatus[]> {
+/**
+ * Shared for a short while: the Health tab, the assistant's status line, the
+ * scheduled service watch and the health probes all ask, and each answer is
+ * some forty checks across every service the stack has.
+ */
+const SERVICE_STATUS_TTL_MS = 15_000;
+
+export function getServiceStatuses(): Promise<ServiceStatus[]> {
+  return cached("services:statuses", SERVICE_STATUS_TTL_MS, computeServiceStatuses);
+}
+
+async function computeServiceStatuses(): Promise<ServiceStatus[]> {
   // WARNING: this destructuring is positional against the Promise.all below,
   // and every entry is a ServiceStatus, so TypeScript cannot catch a
   // misalignment. Adding a check to the array without adding a name here

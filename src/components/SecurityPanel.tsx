@@ -1,3 +1,4 @@
+import { scrollListClass } from "@/components/ui";
 import type { Finding, LoginActivity, Severity } from "@/lib/securityRules";
 import { overallSeverity } from "@/lib/securityRules";
 import type { AuditLogRow } from "@/lib/auditLog";
@@ -149,7 +150,7 @@ export function SecurityPanel({
         {auditLog.length === 0 ? (
           <p className="text-sm text-white/50">Nothing recorded yet.</p>
         ) : (
-          <ul className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+          <ul className={scrollListClass({}, "space-y-1.5")}>
             {auditLog.map((e) => (
               <li key={e.id} className="flex items-baseline gap-2 text-sm">
                 <span className="shrink-0 text-white/70">{e.actorName}</span>

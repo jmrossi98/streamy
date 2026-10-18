@@ -1,5 +1,6 @@
 "use client";
 
+import { scrollListClass } from "@/components/ui";
 import { useState } from "react";
 import type { PlaybackCheckRunSummary } from "@/lib/playbackCheck";
 
@@ -57,10 +58,9 @@ export function PlaybackCheckPanel({ runs }: { runs: PlaybackCheckRunSummary[] }
         )}
       </div>
 
-      {/* Same max-h-72/overflow-y-auto as Security's "Recent admin activity" --
-          both are run-history lists sitting under a fixed summary, so they
-          should behave the same way as the list grows. */}
-      <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+      {/* The standard admin list height (ui/scrollListClass): a run-history
+          list under a fixed summary, like every other one on the dashboard. */}
+      <ul className={scrollListClass({}, "space-y-2")}>
         {runs.map((run) => {
           const isOpen = expanded === run.id;
           return (

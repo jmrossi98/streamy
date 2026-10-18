@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, Field, TextInput } from "@/components/ui";
+import { Button, Field, TextInput, scrollListClass } from "@/components/ui";
 // Type-only: credentials.ts calls the services with Streamy's own keys and must not reach the browser.
 import type { CredentialTarget } from "@/lib/credentials";
 import { lineAlert, lineSummary, type IptvLine } from "@/lib/iptvLineRules";
@@ -70,7 +70,7 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
   return (
     <div className="mt-1 space-y-1">
       <p className="text-xs text-white/40">{lineSummary(lines)}</p>
-      <ul className="space-y-0.5">
+      <ul className={scrollListClass({}, "space-y-0.5")}>
         {lines.map((l) => {
           const alert = lineAlert(l);
           return (

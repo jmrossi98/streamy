@@ -30,6 +30,10 @@ export async function GET(request: Request, { params }: Props) {
     return new Response("Not available", { status: 404 });
   }
 
-  const res = await proxyJellyfinHlsResource(itemId, path.join("/"), `/api/stream/sports/${eventId}/hls`, request);
+  const res = await proxyJellyfinHlsResource(itemId, path.join("/"), `/api/stream/sports/${eventId}/hls`, request, undefined, undefined, false, {
+    user: session?.user?.name ?? "unknown",
+    kind: "recording",
+    ref: itemId,
+  });
   return checkedRecordingStream(res, eventId);
 }

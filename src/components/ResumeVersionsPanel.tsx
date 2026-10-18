@@ -1,3 +1,5 @@
+import { scrollListClass } from "@/components/ui";
+
 /**
  * Every tailored resume, newest first: view (a printable page in a new tab --
  * Save as PDF from there) or download the Markdown. Kept rather than pruned so
@@ -17,7 +19,7 @@ export function ResumeVersionsPanel({
     );
   }
   return (
-    <ul className="max-h-[28rem] space-y-1.5 overflow-y-auto pr-1">
+    <ul className={scrollListClass({ tall: true }, "space-y-1.5")}>
       {versions.map((v) => (
         <li key={v.id} className="flex items-center gap-3 rounded border border-white/10 bg-black/20 px-3 py-2 text-xs">
           <div className="min-w-0 flex-1">

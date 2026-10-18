@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Chip } from "@/components/ui";
+import { Chip, scrollListClass } from "@/components/ui";
 import { classifyChannel } from "@/lib/liveTv";
 import { looksLikeEventFeed } from "@/lib/liveTimeline";
 
@@ -307,7 +307,7 @@ export function StreamBrowser() {
               : "No streams match that search."}
         </p>
       ) : (
-        <ul className="space-y-1">
+        <ul className={scrollListClass({ tall: true }, "space-y-1")}>
           {visible.map((s) => {
             const channelId = promoted.get(s.id);
             return (
