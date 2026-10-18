@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { refreshGuide, waitForLineupChannel } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { namesGameDate } from "@/lib/liveGuideGrid";
+import { feedLanguageRank } from "@/lib/gameStreamRules";
 import {
   isDispatcharrConfigured,
   listChannels,
@@ -62,14 +63,19 @@ export async function POST(request: Request) {
   // page adds it, everyone after finds it already there.
   const autoFixtureId = body?.auto === true && typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
   if (autoFixtureId) {
-    const already = await prisma.gameChannel.findFirst({ where: { fixtureId: autoFixtureId } }).catch(() => null);
+    const addedSoFar = await prisma.gameChannel.findMany({ where: { fixtureId: autoFixtureId } }).catch(() => []);
+    const already = addedSoFar[0] ?? null;
     // ...unless this one names the game's date and what's there doesn't: a
     // standing slot's day-old label can be on another event entirely (the
     // Bruins slot showed soccer, 2026-10-18), so the dated feed is added too
     // and the game page defaults to it.
     const start = already ? (await getTodaysFixtures().catch(() => [])).find((f) => f.id === autoFixtureId)?.startUtc : null;
     const startMs = start ? Date.parse(start) : NaN;
-    const upgrade = !!already && namesGameDate(name, startMs) && !namesGameDate(already.name, startMs);
+    // Better than everything added so far: dated beats undated, then English
+    // beats another language (a Portuguese DAZN feed was first for Man Utd at
+    // Leeds while an English one was there).
+    const rank = (n: string) => (namesGameDate(n, startMs) ? 0 : 2) + (feedLanguageRank(n) === 0 ? 0 : 1);
+    const upgrade = !!already && addedSoFar.every((a) => rank(name) < rank(a.name));
     if (already && !upgrade) {
       return NextResponse.json({
         id: already.channelId,

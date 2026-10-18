@@ -333,10 +333,18 @@ export default async function GamePage({
             only takes a feed naming both teams (score 0). */}
         <GameStreamFinder
           fixtureId={fixtureId}
-          autoAdd={fixture.state === "in" && !channelConfirmed && !(gameFeed && namesGameDate(gameFeed.name, startMs))}
+          // Until the game has a confirmed channel, or a feed that is both dated
+          // and English: a Portuguese DAZN feed shouldn't stop the search for
+          // the English one (Man Utd at Leeds, 2026-10-18).
+          autoAdd={
+            fixture.state === "in" &&
+            !channelConfirmed &&
+            !(gameFeed && namesGameDate(gameFeed.name, startMs) && feedLanguageRank(gameFeed.name) === 0)
+          }
           autoAddMaxScore={autoRequested && !channelConfirmed ? 1 : 0}
           // An undated game feed is already in the lineup: only a dated one improves on it.
           autoAddDatedOnly={!!gameFeed}
+          autoAddEnglishOnly={!!gameFeed && namesGameDate(gameFeed.name, startMs)}
         />
       </div>
     </div>
