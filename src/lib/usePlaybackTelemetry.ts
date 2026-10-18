@@ -35,6 +35,7 @@ export function usePlaybackTelemetry(
     let startedAt = 0;
     let played = false;
     let stallAt: number | null = null;
+    let stallFrom = 0;
     const begin = () => {
       if (startedAt) return;
       startedAt = Date.now();
@@ -57,9 +58,18 @@ export function usePlaybackTelemetry(
       updatePlayingState("playing");
     };
     const onWaiting = () => {
-      if (!played || stallAt != null) return;
+      // A seek's wait is the seek, not a stall: LivePlayer jumps to the live
+      // edge right after starting, and counting that read every healthy tune
+      // as buffering (2026-10-18).
+      if (!played || stallAt != null || v.seeking) return;
       stallAt = Date.now();
+      stallFrom = v.currentTime;
       updatePlayingState("buffering");
+    };
+    // Chrome doesn't always fire `playing` after a wait resolves; the
+    // playhead moving again is the surer sign.
+    const onTimeUpdate = () => {
+      if (stallAt != null && !v.paused && v.currentTime > stallFrom + 0.5) onPlaying();
     };
     const onPause = () => {
       if (played && !v.ended) updatePlayingState("paused");
@@ -71,12 +81,14 @@ export function usePlaybackTelemetry(
     v.addEventListener("play", onPlay);
     v.addEventListener("playing", onPlaying);
     v.addEventListener("waiting", onWaiting);
+    v.addEventListener("timeupdate", onTimeUpdate);
     v.addEventListener("pause", onPause);
     v.addEventListener("error", onError);
     return () => {
       v.removeEventListener("play", onPlay);
       v.removeEventListener("playing", onPlaying);
       v.removeEventListener("waiting", onWaiting);
+      v.removeEventListener("timeupdate", onTimeUpdate);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("error", onError);
       if (!startedAt) return;

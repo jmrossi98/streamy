@@ -84,7 +84,7 @@ export type ViewerSessionView = {
   events: ViewerEvent[];
 };
 
-export type ProviderLine = { provider: string; line: string; maxStreams: number; viewers: number; active: boolean };
+export type ProviderLine = { id: number; provider: string; line: string; maxStreams: number; viewers: number; active: boolean };
 
 export type ViewerActivity = {
   generatedAt: number;
@@ -140,7 +140,7 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
 
   const lines = accounts
     ? accounts.flatMap((a) =>
-        a.lines.map((l) => ({ provider: a.name, line: l.name, maxStreams: l.maxStreams, viewers: l.viewers, active: l.active }))
+        a.lines.map((l) => ({ id: l.id, provider: a.name, line: l.name, maxStreams: l.maxStreams, viewers: l.viewers, active: l.active }))
       )
     : null;
 
