@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { forgetUserGate } from "@/lib/userGate";
 import { logAudit } from "@/lib/auditLog";
 
 export async function POST(request: Request) {
@@ -40,6 +41,8 @@ export async function POST(request: Request) {
     }
   }
 
+  // Approved or gone: the remembered row must not outlive the change.
+  forgetUserGate(userId);
   logAudit(admin.name, `approval.${action}`, target?.name ?? userId);
   return NextResponse.json({ ok: true });
 }

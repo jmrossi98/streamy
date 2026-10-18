@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import { readUserGate } from "./userGate";
 import { pickNextAvatarColor } from "./userAvatarColors";
 import { emailApprovalRequest } from "./approvalEmail";
 import { checkPasswordStrength } from "./passwordPolicy";
@@ -214,10 +215,9 @@ export const authOptions: NextAuthOptions = {
       // at worst show someone an admin link that then refuses to load.
       if (token.id) {
         try {
-          const row = await prisma.user.findUnique({
-            where: { id: token.id as string },
-            select: { isAdmin: true, passwordChangedAt: true },
-          });
+          // Remembered for 30 s (userGateCache.ts): this runs on every
+          // request, video chunks included.
+          const row = await readUserGate(token.id as string);
           token.isAdmin = row?.isAdmin ?? false;
 
           // Session invalidation on password change. Tokens are stateless and
@@ -269,12 +269,10 @@ export const authOptions: NextAuthOptions = {
  */
 export async function getValidSessionUserId(session: Session | null): Promise<string | null> {
   if (!session?.user?.id) return null;
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { id: true, approved: true },
-  });
+  // The same remembered row the JWT callback just read (userGateCache.ts).
+  const user = await readUserGate(session.user.id);
   if (!user?.approved) return null;
-  return user.id;
+  return session.user.id;
 }
 
 /**

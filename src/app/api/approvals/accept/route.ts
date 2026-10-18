@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { forgetUserGate } from "@/lib/userGate";
 import { logAudit } from "@/lib/auditLog";
 import { readApprovalToken } from "@/lib/approvalLink";
 
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
     return page("Already approved", `<h1>${escape(user.name)} is already approved</h1><p><a href="/">Open Streamy</a></p>`);
   }
   await prisma.user.updateMany({ where: { id: userId, approved: false }, data: { approved: true } });
+  forgetUserGate(userId);
   await logAudit("email link", "approval.approve", user.name);
   return page("Approved", `<h1>Approved ${escape(user.name)}</h1><p>They can sign in now.</p><p><a href="/admin/approvals">Approvals</a></p>`);
 }

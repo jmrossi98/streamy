@@ -63,6 +63,8 @@ export async function GET(request: Request, { params }: Props) {
     jellyfinPath,
     `/api/stream/live/${encodeURIComponent(channelId)}/hls`,
     request,
-    mediaSourceId
+    mediaSourceId,
+    null,
+    true
   );
 }

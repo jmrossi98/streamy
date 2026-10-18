@@ -136,7 +136,14 @@ export function rowKey(d: DownloadRow): string {
 // before a freshly-started movie showed up here at all. Confirmed the
 // request itself is fast (~200ms for the Radarr round trip), so the delay
 // was purely this interval; halving it halves the worst case.
-const REFRESH_INTERVAL_MS = 2500;
+// Quick only while a transfer is moving (its progress bar is the point),
+// slow otherwise, and never while the tab is hidden. Each tick is a full
+// server re-render of the admin downloads route: at 2.5 s regardless, this
+// page alone was 44,000 renders a week on the 2-vCPU box that also pipes
+// every viewer's video (access log, 2026-10-18). The download healer that
+// these renders kick is rate-limited to once per 2 minutes anyway.
+const REFRESH_ACTIVE_MS = 5000;
+const REFRESH_QUIET_MS = 30000;
 // Was 5 -- confirmed live as too cramped once a season's worth of episodes
 // (or several titles) were downloading at once, hiding most of them behind
 // a scrollbar by default. 12 covers a full season's typical batch without
@@ -159,7 +166,7 @@ const BRIDGE_GRACE_MS = 20_000;
 
 export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   const router = useRouter();
-  // The panel already polls every REFRESH_INTERVAL_MS (below) -- this is for
+  // The panel already polls every REFRESH_ACTIVE_MS (below) -- this is for
   // the gap right after taking an action somewhere the poll doesn't cover
   // (e.g. cancelling directly in Radarr/Sonarr instead of from here), where
   // sitting on stale data for up to the full interval read as "I need to
@@ -281,7 +288,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // interval while the manual click's own startTransition was still
   // tracking its call replaces it at the router level, and the original
   // transition then has nothing to resolve against -- isPending just never
-  // flips back. Every REFRESH_INTERVAL_MS (2.5s) was frequent enough that
+  // flips back. Every REFRESH_ACTIVE_MS (5s) was frequent enough that
   // essentially any manual click landed in that window.
   // The guard reads a ref, not the transition state. startTransition sets
   // `refreshing` on React's schedule, so between the click and that commit
@@ -289,12 +296,14 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
   // router.refresh(), and replaced the call the manual transition was
   // tracking -- leaving isPending stuck on forever. The ref is set
   // synchronously in the click handler, so that window does not exist.
+  const anyActive = downloads.some((d) => !d.completed && !d.noRelease);
   useEffect(() => {
     const interval = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       if (!manualRefreshRef.current) router.refresh();
-    }, REFRESH_INTERVAL_MS);
+    }, anyActive ? REFRESH_ACTIVE_MS : REFRESH_QUIET_MS);
     return () => clearInterval(interval);
-  }, [router]);
+  }, [router, anyActive]);
 
   // Cleared only once the transition actually finishes.
   useEffect(() => {

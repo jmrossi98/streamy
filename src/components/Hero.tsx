@@ -1,6 +1,6 @@
 import Link from "next/link";
-import Image from "next/image";
 import type { Movie } from "@/lib/tmdb";
+import { backdropSrcSet } from "@/lib/tmdbImageRules";
 import { PrefetchMovieOnHover } from "@/components/PrefetchMovieOnHover";
 
 type HeroProps = { featured: Movie; progressSeconds?: number };
@@ -20,14 +20,18 @@ export function Hero({ featured, progressSeconds = 0 }: HeroProps) {
         "
       >
         <div className="absolute inset-0 overflow-hidden max-md:rounded-3xl md:rounded-none">
-          <Image
+          {/* A plain <img> with TMDB's own sizes (tmdbImageRules.ts): this was
+              next/image `unoptimized` + `priority` on the /original/ file, so
+              every phone fetched a 1-3 MB backdrop first thing. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={featured.backdrop}
-            alt=""
-            fill
-            className="object-cover"
-            priority
+            srcSet={backdropSrcSet(featured.backdrop)}
             sizes="100vw"
-            unoptimized
+            alt=""
+            fetchPriority="high"
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover"
           />
           <div className="hero-overlay absolute inset-0" />
           {/* Extra bottom fade — mobile card only; web uses hero-overlay alone like before */}
