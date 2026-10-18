@@ -27,10 +27,11 @@ export type GameDownloadRow = {
   romStem: string | null;
 };
 
-// Same reasoning as DownloadsPanel's own interval: nothing else on this page
-// pushes a change here, so noticing a fresh queue/cancel/failure means
-// polling, not waiting for someone to reload.
-const REFRESH_INTERVAL_MS = 4000;
+// No interval of its own: router.refresh() re-renders the whole admin
+// downloads route, and DownloadsPanel on the same page already polls it. The
+// two loops (2.5 s and 4 s) together re-rendered the page 44,000 times in
+// one week (access log, 2026-10-18) -- on the 2-vCPU box that also pipes
+// every viewer's video.
 // Same cap and row arithmetic as DownloadsPanel, for the same reason -- but
 // it matters more here: this list now includes every owned game (~150), so
 // without a cap it pushed the whole rest of the admin page off-screen.
@@ -59,13 +60,6 @@ export function GameDownloadsPanel({ downloads }: { downloads: GameDownloadRow[]
       return changed ? next : prev;
     });
   }, [downloads]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!refreshing) router.refresh();
-    }, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [router, refreshing]);
 
   async function handleManage(d: GameDownloadRow) {
     // Deleting an owned game removes the ROM from disk and is not

@@ -8,6 +8,7 @@ import {
   getJellyfinTrickplay,
 } from "./jellyfin";
 import { trickplayVersion } from "./trickplayRules";
+import { windowLivePlaylist } from "./hlsPlaylistRules";
 
 // Headers that must survive the hop for video playback to behave: the browser
 // relies on them for seeking (Range/Content-Range/Accept-Ranges), for knowing
@@ -136,7 +137,9 @@ export async function proxyJellyfinHlsResource(
   // than the channel's.
   mediaSourceId?: string,
   // Master playlist only: which audio track to transcode (see playbackLanguage.ts).
-  audioStreamIndex?: number | null
+  audioStreamIndex?: number | null,
+  // Live TV: playlists are trimmed to a sliding window (hlsPlaylistRules.ts).
+  live = false
 ): Promise<Response> {
   const incoming = new URL(request.url);
   // The master playlist is the one request usePlayerEngine builds itself
@@ -211,7 +214,9 @@ export async function proxyJellyfinHlsResource(
   } finally {
     got.done();
   }
-  const rewritten = text
+  // A live playlist is windowed before the rewrite, so the work per fetch
+  // stops growing with how long the viewer has been tuned.
+  const rewritten = (live ? windowLivePlaylist(text) : text)
     .split("\n")
     .map((line) => {
       const trimmed = line.trim();

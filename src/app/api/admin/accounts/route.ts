@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { forgetUserGate } from "@/lib/userGate";
 import { logAudit } from "@/lib/auditLog";
 import { canDeleteAccount, REFUSAL_MESSAGES } from "@/lib/accountDeletion";
 
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
   // deleteMany scoped by id rather than delete: two admins acting at once
   // should leave the second with a no-op, not an exception.
   const result = await prisma.user.deleteMany({ where: { id: userId } });
+  forgetUserGate(userId);
   if (result.count === 0) {
     return NextResponse.json({ error: REFUSAL_MESSAGES["not-found"] }, { status: 404 });
   }

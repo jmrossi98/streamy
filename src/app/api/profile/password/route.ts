@@ -3,6 +3,7 @@ import { syncJellyfinAccount } from "@/lib/jellyfinAccounts";
 import bcrypt from "bcryptjs";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { forgetUserGate } from "@/lib/userGate";
 import { checkPasswordStrength } from "@/lib/passwordPolicy";
 import { clientIpFromHeaders } from "@/lib/loginAttemptRules";
 import { getLockoutState, recordLoginAttempt } from "@/lib/loginAttempts";
@@ -97,6 +98,8 @@ export async function POST(request: Request) {
       passwordChangedAt: new Date(),
     },
   });
+  // So every other session of theirs is stale on its very next request.
+  forgetUserGate(user.id);
   // Same password on their Jellyfin account (the Roku). Never blocks this.
   void syncJellyfinAccount(user.id, user.name, newPassword);
 
