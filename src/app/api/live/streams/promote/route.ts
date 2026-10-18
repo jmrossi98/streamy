@@ -143,13 +143,16 @@ export async function POST(request: Request) {
   const refreshing = await refreshGuide();
   // Answer once Jellyfin actually lists it, so the page can switch straight
   // away instead of waiting a fixed time and hoping (see waitForLineupChannel).
-  const ready = refreshing ? (await waitForLineupChannel(name)) != null : false;
+  const jellyfinId = refreshing ? await waitForLineupChannel(name) : null;
+  const ready = jellyfinId != null;
 
   return NextResponse.json({
     id: created.id,
     channelNumber,
     refreshing,
     ready,
+    // So the game page can play it straight away, without reloading.
+    jellyfinId,
     note: refreshing
       ? "Added. Jellyfin is refreshing its guide now - it appears in Live TV in a moment."
       : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",

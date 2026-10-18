@@ -1,3 +1,5 @@
+import { nameHasBothTeams } from "./teamNames";
+
 /**
  * The arithmetic behind a live scrubber.
  *
@@ -329,18 +331,6 @@ function teamCity(teamName: string | null): string | null {
 }
 
 /**
- * A club's name without a trailing "FC"/"SC"/"CF"/"AFC": "San Diego FC" is
- * "San Diego", "Inter Miami CF" is "Inter Miami". Only for matching both
- * teams at once -- a lone city ("Austin") would match local stations.
- */
-function clubName(teamName: string | null): string | null {
-  if (!teamName) return null;
-  const full = teamName.trim();
-  const stripped = full.replace(/\s+(?:FC|SC|CF|AFC)$/i, "").trim();
-  return stripped !== full && stripped.length >= 4 ? stripped : null;
-}
-
-/**
  * Whether a channel name carries both teams' nicknames, as whole words.
  * A club with no usable nickname ("San Diego FC": "FC" is too short) is
  * matched by its name without the suffix: on 2026-10-18 "LA Galaxy vs San
@@ -350,10 +340,14 @@ export function namesBothTeams(
   channelName: string,
   fixture: { awayTeam?: string | null; homeTeam?: string | null }
 ): boolean {
-  const names = [fixture.awayTeam ?? null, fixture.homeTeam ?? null].map((t) => teamNickname(t) ?? clubName(t));
-  if (names.some((x) => x == null)) return false;
-  const pattern = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  return names.every((x) => new RegExp(`\\b${pattern(x!)}\\b`, "i").test(channelName));
+  // teamNames.ts tells the two sides apart, which a shared last word can't:
+  // Manchester United at Leeds United (2026-10-18).
+  return nameHasBothTeams(channelName, fixture.awayTeam, fixture.homeTeam);
+}
+
+/** Over-the-air networks, whose feed differs by local affiliate. */
+export function isLocalNetwork(network: string): boolean {
+  return LOCAL_NETWORKS.has(network.toLowerCase().replace(/[^a-z0-9+]+/g, ""));
 }
 
 export function findChannelForFixture<C extends { id: string; name: string }>(

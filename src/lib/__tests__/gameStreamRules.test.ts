@@ -49,7 +49,13 @@ describe("rankGameStreams", () => {
 
 describe("gameStreamQueries", () => {
   it("searches both sides, both cities and the carrying networks", () => {
-    expect(gameStreamQueries(sharks)).toEqual(["Sharks", "Predators", "San Jose", "Nashville", "ESPN+", "NBC Sports BA", "Scripps Sports"]);
+    expect(gameStreamQueries(sharks)).toEqual(["sharks", "predators", "san jose", "nashville", "espn+", "nbc sports ba", "scripps sports"]);
+  });
+  it("searches by what tells two \"United\" sides apart (2026-10-18)", () => {
+    const q = gameStreamQueries({ league: "Premier League", awayTeam: "Manchester United", homeTeam: "Leeds United" });
+    expect(q).toContain("leeds");
+    expect(q).toContain("man u");
+    expect(q).not.toContain("united");
   });
 });
 
