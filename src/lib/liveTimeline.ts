@@ -1,4 +1,5 @@
 import { nameHasBothTeams } from "./teamNames";
+import { channelInTeamMarket, inMarketTeam, teamMarketRank } from "./teamMarkets";
 
 /**
  * The arithmetic behind a live scrubber.
@@ -600,6 +601,78 @@ export function resolveChannelForFixture<C extends { id: string; name: string }>
  */
 export const HOME_MARKETS = ["Rochester", "Buffalo"];
 
+/**
+ * The over-the-air networks this game shares with another game at the same
+ * time -- so the network's affiliates are split across games by region (a
+ * Sunday-afternoon window) and carrying the network is NOT proof a given
+ * affiliate has THIS game. The complement is a national over-the-air window
+ * (Sunday/Monday/Thursday night, a playoff): the network carries this one game
+ * on every affiliate. That is why "it's on CBS" can be trusted in one case and
+ * not the other.
+ */
+export function contestedLocalNetworks(
+  fixture: { id: string; league: string; startUtc: string | null; broadcasts?: string[] },
+  fixtures: readonly { id: string; league: string; startUtc: string | null; state?: string; broadcasts?: string[] }[],
+  overlapMs = 2.5 * 60 * 60 * 1000
+): Set<string> {
+  const start = fixture.startUtc ? Date.parse(fixture.startUtc) : NaN;
+  const mine = (fixture.broadcasts ?? [])
+    .map((b) => b.toLowerCase().replace(/[^a-z0-9+]+/g, ""))
+    .filter((k) => LOCAL_NETWORKS.has(k));
+  const contested = new Set<string>();
+  if (mine.length === 0) return contested;
+  for (const other of fixtures) {
+    if (other.id === fixture.id || other.league !== fixture.league || other.state === "post") continue;
+    const otherStart = other.startUtc ? Date.parse(other.startUtc) : NaN;
+    if (!Number.isFinite(start) || !Number.isFinite(otherStart) || Math.abs(start - otherStart) > overlapMs) continue;
+    for (const net of other.broadcasts ?? []) {
+      const key = net.toLowerCase().replace(/[^a-z0-9+]+/g, "");
+      if (mine.includes(key)) contested.add(key);
+    }
+  }
+  return contested;
+}
+
+/**
+ * Whether a channel is *confirmed* to carry a fixture by ESPN's listed
+ * networks -- a real "it has this game", not "worth a look":
+ *
+ *   - a national network (ESPN, TNT, NBA TV, an RSN) carrying it -- that feed
+ *     shows one game, and networksOnOtherGames has already dropped it if busy
+ *     with another;
+ *   - an over-the-air network in a national window (not contested) -- every
+ *     affiliate shows the one game;
+ *   - an over-the-air affiliate in one of the two teams' home markets -- that
+ *     market always gets its team's game on the carrying network.
+ *
+ * An over-the-air affiliate in a contested window and NOT in either team's
+ * market is not confirmed: it is whatever that region was assigned, the exact
+ * Sunday-afternoon case where "a CBS station" means nothing.
+ */
+export function networkConfirmsFixture(
+  channelName: string,
+  fixture: { awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] },
+  contested: Set<string> = new Set()
+): boolean {
+  for (const net of fixture.broadcasts ?? []) {
+    if (!channelCarriesNetwork(channelName, net)) continue;
+    if (!isLocalNetwork(net)) return true;
+    const key = net.toLowerCase().replace(/[^a-z0-9+]+/g, "");
+    if (!contested.has(key)) return true;
+    if (channelInTeamMarket(channelName, fixture.homeTeam) || channelInTeamMarket(channelName, fixture.awayTeam)) return true;
+  }
+  return false;
+}
+
+/** The team whose market this channel is in and that carries this game, for a badge. */
+export function channelMarketTeam(
+  channelName: string,
+  fixture: { awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] }
+): string | null {
+  const carries = (fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channelName, net));
+  return carries ? inMarketTeam(channelName, fixture) : null;
+}
+
 /** Over-the-air networks: carried by a local affiliate, not one national feed. */
 const LOCAL_NETWORKS = new Set(["abc", "cbs", "nbc", "fox", "cw"]);
 
@@ -789,7 +862,10 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     // contains it as a substring of a longer word. 0, strictly below every
     // brand match above, so a team's own market always outranks a network --
     // see the comment on that branch for why this isn't just "equally good".
-    const inMarket = cities.some((city) => new RegExp(`\\b${city}\\b`, "i").test(channel.name));
+    const inMarket =
+      channelInTeamMarket(channel.name, fixture.homeTeam) ||
+      channelInTeamMarket(channel.name, fixture.awayTeam) ||
+      cities.some((city) => new RegExp(`\b${city}\b`, "i").test(channel.name));
     if (inMarket) {
       consider(channel, 0);
     }
@@ -803,8 +879,13 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     // carrying network shows what this household would get over the air, which
     // an affiliate in some unrelated city does not.
     if ((fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channel.name, net))) {
-      const atHome = homeMarkets.some((m) => new RegExp(`\\b${m}\\b`, "i").test(channel.name));
-      consider(channel, inMarket ? -3 : atHome ? -2 : -1);
+      // The carrying network's affiliate in a team's own city first, then in a
+      // secondary market city it airs in, then the household's own market, then
+      // any other affiliate of the network.
+      const rank = teamMarketRank(channel.name, fixture.homeTeam) ?? teamMarketRank(channel.name, fixture.awayTeam);
+      const atHome = homeMarkets.some((m) => new RegExp(`\b${m}\b`, "i").test(channel.name));
+      const spec = rank === 0 ? -3 : rank === 1 || inMarket ? -2.5 : atHome ? -2 : -1;
+      consider(channel, spec);
     }
   }
 

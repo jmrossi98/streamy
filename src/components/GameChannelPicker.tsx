@@ -13,10 +13,16 @@ type Props = {
   channel: LiveChannel | null;
   /** Whether `channel` is a real fact (Dispatcharr's EPG names both teams in what's airing right now) rather than a guess. */
   channelConfirmed: boolean;
+  /** The ids of every option we actually know carries this game, so each is badged honestly -- not just the first. */
+  confirmedIds?: string[];
+  /** Channel name -> the team whose home market it is, when that is why it's confirmed (badge wording). */
+  marketTeamByName?: Record<string, string>;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
   candidates: LiveChannel[];
   /** Channel name -> provider and dead-stream state, best effort. */
   infoByChannel: Record<string, ChannelInfo>;
+  /** Provider name -> free lines right now (Dispatcharr snapshot). Absent = unknown, treated as available. */
+  providerFreeLines?: Record<string, number>;
   /** Channel name -> how fast its stream was last measured arriving (1 = real time). */
   speedByChannel?: Record<string, number>;
   /** This game's id, so a pick can be remembered against it. */
@@ -67,8 +73,11 @@ const FEED_SEARCH_LIMIT_MS = 45_000;
 export function GameChannelPicker({
   channel,
   channelConfirmed,
+  confirmedIds = [],
+  marketTeamByName = {},
   candidates,
   infoByChannel,
+  providerFreeLines = {},
   speedByChannel = {},
   fixtureId,
   storedChoice,
@@ -88,6 +97,10 @@ export function GameChannelPicker({
   /** Channels that already failed to start this visit, so the fallback never loops. */
   const [failedIds, setFailedIds] = useState<string[]>([]);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
+  /** Providers found at capacity this visit (a 503 on tune), so we don't keep trying their channels. */
+  const [fullProviders, setFullProviders] = useState<string[]>([]);
+  /** Set when every option left is on a provider with no free line -- shown instead of spinning forever. */
+  const [noLines, setNoLines] = useState(false);
   /** The viewer chose (now or on an earlier visit): nothing switches it for them after that. */
   const [userPicked, setUserPicked] = useState(remembered != null);
 
@@ -133,20 +146,44 @@ export function GameChannelPicker({
 
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
 
+  const providerOf = (c: LiveChannel): string | null => infoByChannel[c.name]?.provider ?? null;
+  /** A provider is unusable when we hit its capacity this visit, or the snapshot shows no free line. */
+  const providerFull = (provider: string | null, full: Set<string>): boolean =>
+    provider != null && (full.has(provider) || (providerFreeLines[provider] ?? 1) <= 0);
+
   /**
-   * A channel that never started, after its own retries: try the next option
-   * that has not failed yet. Not remembered as the viewer's pick -- it was
-   * ours, and the stored choice should stay what they chose.
+   * A channel that never started, after its own retries: move on. When it
+   * failed because its provider had no free line ("busy"), that whole provider
+   * is skipped -- its other channels would fail the same way -- and we switch to
+   * one on a provider that still has a line. When nothing is left on an
+   * available provider, say so at once rather than spin on a channel we already
+   * know can't start. Not remembered as the viewer's pick -- it was ours.
    */
-  function giveUpOn(dead: LiveChannel) {
+  function giveUpOn(dead: LiveChannel, reason?: "busy" | "offline") {
     const failed = [...failedIds, dead.id];
     setFailedIds(failed);
-    const next = options.find((c) => !failed.includes(c.id));
+    const deadProvider = providerOf(dead);
+    const full = new Set(fullProviders);
+    if (reason === "busy" && deadProvider) full.add(deadProvider);
+    setFullProviders([...full]);
+
+    const usable = options
+      .filter((c) => !failed.includes(c.id) && !providerFull(providerOf(c), full))
+      // A provider with a known free line ahead of one whose capacity we can't see.
+      .sort((a, b) => (providerFreeLines[providerOf(b) ?? ""] ?? 0) - (providerFreeLines[providerOf(a) ?? ""] ?? 0));
+    const next = usable[0];
     if (!next) {
+      // Everything left is on a provider at capacity (or there's nothing left).
+      setNoLines(options.some((c) => !failed.includes(c.id)));
       setFallbackNote(null);
       return;
     }
-    setFallbackNote(`${dead.name} didn’t start, so we switched to ${next.name}.`);
+    setNoLines(false);
+    setFallbackNote(
+      reason === "busy" && deadProvider
+        ? `${deadProvider} is at capacity (all its lines are in use), so we switched to ${next.name}.`
+        : `${dead.name} didn’t start, so we switched to ${next.name}.`
+    );
     setSelectedId(next.id);
   }
 
@@ -160,6 +197,10 @@ export function GameChannelPicker({
     setUserPicked(true);
     setSelectedId(c.id);
     setFallbackNote(null);
+    // A deliberate pick is a fresh go: it may be on a provider we'd given up on,
+    // and a line may have freed since.
+    setNoLines(false);
+    setFailedIds((f) => f.filter((id) => id !== c.id));
     void fetch("/api/live/game-channel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -181,7 +222,27 @@ export function GameChannelPicker({
 
   return (
     <div>
-      {held || !selected ? (
+      {noLines ? (
+        <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg bg-black px-6 text-center">
+          <p className="text-base font-semibold text-white/85">All lines are in use</p>
+          <p className="max-w-md text-sm text-white/55">
+            Every provider that could carry this game is at capacity right now. A line frees up when
+            another stream ends. Pick a channel below to try again, or come back shortly.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setNoLines(false);
+              setFailedIds([]);
+              setFullProviders([]);
+              setHeld(false);
+            }}
+            className="mt-1 rounded bg-white/10 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/20"
+          >
+            Try again
+          </button>
+        </div>
+      ) : held || !selected ? (
         <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg bg-black text-center">
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" aria-hidden />
           <p className="text-sm text-white/70">Finding the game&rsquo;s own stream…</p>
@@ -195,7 +256,7 @@ export function GameChannelPicker({
           channelId={selected.id}
           channelName={selected.name}
           nowPlaying={selected.now?.name ?? null}
-          onGiveUp={() => giveUpOn(selected)}
+          onGiveUp={(reason) => giveUpOn(selected, reason)}
         />
       )}
       {fallbackNote && <p className="mt-3 text-sm text-amber-300/90">{fallbackNote}</p>}
@@ -265,18 +326,26 @@ export function GameChannelPicker({
                         Dead
                       </span>
                     )}
-                    {isBestMatch && channelConfirmed && (
+                    {confirmedIds.includes(c.id) ? (
                       <span
                         className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400"
-                        title="The guide names this game on it, or it's the network the game is listed on"
+                        title={
+                          marketTeamByName[c.name]
+                            ? `${marketTeamByName[c.name]} home market — this market always gets its team's game on the carrying network`
+                            : "The guide names this game here, or it's the single national feed the game is on"
+                        }
                       >
-                        Confirmed
+                        {marketTeamByName[c.name] ? "In market" : "Confirmed"}
                       </span>
-                    )}
-                    {isBestMatch && !channelConfirmed && (
-                      <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/60">
-                        Best match
-                      </span>
+                    ) : (
+                      isBestMatch && (
+                        <span
+                          className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/60"
+                          title="The closest match in the lineup, but not confirmed to be showing this game"
+                        >
+                          Best match
+                        </span>
+                      )
                     )}
                     {isSelected && (
                       <span className="shrink-0 rounded bg-netflix-red px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">

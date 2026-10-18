@@ -5,6 +5,7 @@ import { maybeSampleStreamLoad } from "./streamLoadHistory";
 import { cached } from "./ttlCache";
 import {
   deviceLabel,
+  isActivelyPlaying,
   presenceOf,
   sessionHealth,
   VERDICT_WINDOW_MS,
@@ -142,7 +143,9 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
       startedAt: r.startedAt.getTime(),
       lastSeenAt: r.lastSeenAt.getTime(),
       // A tab that stopped reporting isn't playing anything any more.
-      playing: presence === "offline" ? null : playing,
+      // Only a freshly-seen session is really playing: a tab that closed
+      // without its "stopped" beat landing shouldn't linger as playing.
+      playing: isActivelyPlaying(r.lastSeenAt.getTime(), now) ? playing : null,
       // Recent events only: a stall an hour ago says nothing about now.
       health: sessionHealth(evs.filter((e) => e.at >= now - VERDICT_WINDOW_MS)),
       events: evs.slice(-40),

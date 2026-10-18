@@ -18,6 +18,9 @@ import {
   resolveChannelForFixture,
   liveTrackPercent,
   secondsBehindLive,
+  contestedLocalNetworks,
+  networkConfirmsFixture,
+  channelMarketTeam,
   type ChannelProgramme,
 } from "@/lib/liveTimeline";
 
@@ -727,5 +730,61 @@ describe("channelCarriesNetwork regional aliases", () => {
     expect(channelCarriesNetwork("MSG New York", "MSG")).toBe(true);
     expect(channelCarriesNetwork("US: MSG 2 HD", "MSG")).toBe(false);
     expect(channelCarriesNetwork("US: MSG PLUS HD", "MSG")).toBe(false);
+  });
+});
+
+describe("contestedLocalNetworks", () => {
+  const bills = { id: "nfl:1", league: "NFL", startUtc: "2026-10-18T20:25:00Z", broadcasts: ["CBS"] };
+  it("flags an over-the-air network another concurrent game shares (a Sunday window)", () => {
+    const panthers = { id: "nfl:2", league: "NFL", startUtc: "2026-10-18T20:25:00Z", broadcasts: ["CBS"] };
+    expect([...contestedLocalNetworks(bills, [bills, panthers])]).toEqual(["cbs"]);
+  });
+  it("is empty when the network carries only this game (a national window)", () => {
+    const other = { id: "nfl:3", league: "NFL", startUtc: "2026-10-18T20:25:00Z", broadcasts: ["FOX"] };
+    expect([...contestedLocalNetworks(bills, [bills, other])]).toEqual([]);
+  });
+  it("ignores a game in another league or a finished one", () => {
+    const nba = { id: "nba:1", league: "NBA", startUtc: "2026-10-18T20:25:00Z", broadcasts: ["CBS"] };
+    const done = { id: "nfl:4", league: "NFL", startUtc: "2026-10-18T20:25:00Z", state: "post", broadcasts: ["CBS"] };
+    expect([...contestedLocalNetworks(bills, [bills, nba, done])]).toEqual([]);
+  });
+});
+
+describe("networkConfirmsFixture", () => {
+  const fixture = { awayTeam: "Buffalo Bills", homeTeam: "Las Vegas Raiders", broadcasts: ["CBS"] };
+  const contested = new Set(["cbs"]); // a Sunday-afternoon window
+
+  it("confirms an over-the-air affiliate in a participating team's market", () => {
+    expect(networkConfirmsFixture("CBS 8 (WROC) ROCHESTER HD", fixture, contested)).toBe(true); // Bills market
+    expect(networkConfirmsFixture("CBS 2 LAS VEGAS NV", fixture, contested)).toBe(true); // Raiders market
+  });
+
+  it("does NOT confirm an over-the-air affiliate in neither team's market, even the viewer's own", () => {
+    expect(networkConfirmsFixture("CBS 13 BALTIMORE MD (WJZ)", fixture, contested)).toBe(false);
+    // Rochester is the viewer's market but this game is Panthers/Eagles:
+    const panthers = { awayTeam: "Carolina Panthers", homeTeam: "Philadelphia Eagles", broadcasts: ["CBS"] };
+    expect(networkConfirmsFixture("CBS 8 (WROC) ROCHESTER HD", panthers, contested)).toBe(false);
+  });
+
+  it("confirms any affiliate in a national over-the-air window (network not contested)", () => {
+    expect(networkConfirmsFixture("CBS 13 BALTIMORE MD (WJZ)", fixture, new Set())).toBe(true);
+  });
+
+  it("confirms a national cable/RSN feed by carrying the game", () => {
+    const tnt = { awayTeam: "Boston Celtics", homeTeam: "Miami Heat", broadcasts: ["TNT"] };
+    expect(networkConfirmsFixture("TNT", tnt)).toBe(true);
+    expect(networkConfirmsFixture("CBS 13 BALTIMORE MD (WJZ)", tnt)).toBe(false);
+  });
+});
+
+describe("channelMarketTeam", () => {
+  it("names the team whose market a carrying affiliate is in", () => {
+    const fixture = { awayTeam: "Buffalo Bills", homeTeam: "Las Vegas Raiders", broadcasts: ["CBS"] };
+    expect(channelMarketTeam("CBS 8 (WROC) ROCHESTER HD", fixture)).toBe("Buffalo Bills");
+    expect(channelMarketTeam("CBS 13 BALTIMORE MD (WJZ)", fixture)).toBeNull();
+  });
+  it("is null when the channel doesn't carry the game's network", () => {
+    const fixture = { awayTeam: "Buffalo Bills", homeTeam: "Las Vegas Raiders", broadcasts: ["CBS"] };
+    expect(channelMarketTeam("FOX 29 BUFFALO NY (WUTV)", fixture)).toBeNull();
   });
 });
