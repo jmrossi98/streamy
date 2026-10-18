@@ -11,6 +11,7 @@
  */
 
 import { mustKeepSeeding } from "./privateSeedRules";
+import { cached } from "./ttlCache";
 
 const QBITTORRENT_URL = process.env.QBITTORRENT_URL?.replace(/\/$/, "");
 const QBITTORRENT_USER = process.env.QBITTORRENT_USER;
@@ -256,6 +257,9 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
 export type TorrentNetwork = {
   connectionStatus: string;
   dhtNodes: number;
+  /** Current upload and download, bytes per second. */
+  upBps: number;
+  dlBps: number;
 };
 
 /** Whether qBittorrent can reach the outside at all. Null when unreadable. */
@@ -270,12 +274,25 @@ export async function getTorrentNetwork(): Promise<TorrentNetwork | null> {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as { connection_status?: string; dht_nodes?: number };
-    return { connectionStatus: body.connection_status ?? "unknown", dhtNodes: body.dht_nodes ?? 0 };
+    const body = (await res.json()) as { connection_status?: string; dht_nodes?: number; up_info_speed?: number; dl_info_speed?: number };
+    return {
+      connectionStatus: body.connection_status ?? "unknown",
+      dhtNodes: body.dht_nodes ?? 0,
+      upBps: body.up_info_speed ?? 0,
+      dlBps: body.dl_info_speed ?? 0,
+    };
   } catch (err) {
     console.error("[qbittorrent] network read failed:", err);
     return null;
   }
+}
+
+/**
+ * The same reading, shared for a few seconds: the admin Streaming tab polls it
+ * and the load sampler reads it once a minute.
+ */
+export function getTorrentTransferRates(): Promise<TorrentNetwork | null> {
+  return cached("qbittorrent:transfer", 5_000, getTorrentNetwork);
 }
 
 /**

@@ -38,8 +38,10 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
 };
 
 const BUTTON_SIZE: Record<ButtonSize, string> = {
-  xs: "px-1.5 py-0.5 text-[11px]",
-  sm: "px-2.5 py-1 text-xs",
+  // Minimum heights so the small sizes stay tappable on a phone (28/32 px)
+  // without growing the text.
+  xs: "min-h-7 px-2 py-0.5 text-[11px]",
+  sm: "min-h-8 px-2.5 py-1 text-xs",
   md: "px-3 py-1.5 text-sm",
 };
 
@@ -81,7 +83,8 @@ export function ButtonLink({ variant, size, className, ...rest }: ButtonLinkProp
 
 const FIELD =
   "w-full rounded border border-white/15 bg-black/40 text-white placeholder:text-white/30 focus:border-white/40 focus:outline-none";
-const FIELD_SIZE = { sm: "px-2 py-1 text-xs", md: "px-2.5 py-1.5 text-sm" } as const;
+// 16px on phones: iOS Safari zooms the page into any field whose text is smaller.
+const FIELD_SIZE = { sm: "px-2 py-1 text-base sm:text-xs", md: "px-2.5 py-1.5 text-base sm:text-sm" } as const;
 
 export function TextInput({ className, fieldSize = "md", ...rest }: InputHTMLAttributes<HTMLInputElement> & { fieldSize?: "sm" | "md" }) {
   return <input className={cx(FIELD, FIELD_SIZE[fieldSize], className)} {...rest} />;
@@ -95,7 +98,7 @@ export function Select({ className, fieldSize = "md", ...rest }: SelectHTMLAttri
   // pr is left to .streamy-select, which reserves room for its arrow.
   return (
     <select
-      className={cx("streamy-select", FIELD, fieldSize === "sm" ? "py-1 pl-2 text-xs" : "py-1.5 pl-2.5 text-sm", className)}
+      className={cx("streamy-select", FIELD, fieldSize === "sm" ? "py-1 pl-2 text-base sm:text-xs" : "py-1.5 pl-2.5 text-base sm:text-sm", className)}
       {...rest}
     />
   );

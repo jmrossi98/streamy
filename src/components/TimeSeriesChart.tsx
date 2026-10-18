@@ -49,7 +49,7 @@ type Props = {
    * because it is a serialization rule, not a type error. A union of string
    * literals cannot fail that way.
    */
-  unit: "bytesPerSecond" | "celsius" | "watts";
+  unit: "bytesPerSecond" | "celsius" | "watts" | "count" | "megabitsPerSecond";
   height?: number;
   /** Forces the y-axis floor to 0. True for rates, false for temperatures. */
   zeroBased?: boolean;
@@ -74,6 +74,8 @@ const FORMATTERS: Record<Props["unit"], (v: number) => string> = {
   bytesPerSecond: formatBytesPerSecond,
   celsius: (v) => `${Math.round(v)}°C`,
   watts: (v) => `${v.toFixed(1)} W`,
+  count: (v) => `${Math.round(v)}`,
+  megabitsPerSecond: (v) => `${v.toFixed(1)} Mbit/s`,
 };
 
 export function TimeSeriesChart({

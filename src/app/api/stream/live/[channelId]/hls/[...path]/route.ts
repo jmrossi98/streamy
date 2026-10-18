@@ -65,6 +65,7 @@ export async function GET(request: Request, { params }: Props) {
     request,
     mediaSourceId,
     null,
-    true
+    true,
+    { user: session?.user?.name ?? "unknown", kind: "live", ref: channelId }
   );
 }

@@ -29,6 +29,7 @@ export async function GET(request: Request, { params }: Props) {
     transcode,
     startSeconds: Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : undefined,
     playSessionId: searchParams.get("session") || undefined,
+    meter: { user: session?.user?.name ?? "unknown", kind: "movie", ref: itemId },
   });
   return checkedMovieStream(res, tmdbId);
 }

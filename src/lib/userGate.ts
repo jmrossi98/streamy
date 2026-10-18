@@ -5,9 +5,9 @@ import { createUserGateCache } from "./userGateCache";
 const cache = createUserGateCache(async (userId) => {
   const row = await prisma.user.findUnique({
     where: { id: userId },
-    select: { approved: true, isAdmin: true, passwordChangedAt: true },
+    select: { approved: true, isAdmin: true, passwordChangedAt: true, name: true },
   });
-  return row ? { approved: row.approved, isAdmin: row.isAdmin, passwordChangedAt: row.passwordChangedAt } : null;
+  return row ? { approved: row.approved, isAdmin: row.isAdmin, passwordChangedAt: row.passwordChangedAt, name: row.name } : null;
 });
 
 export const readUserGate = cache.read;

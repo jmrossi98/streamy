@@ -1067,3 +1067,20 @@ model PlaybackEvent {
   @@index([at])
   @@index([sessionId, at])
 }
+
+/// One row a minute while anyone is on: how many streams were playing, split
+/// live/VOD, and what the upload line carried. Feeds the admin Streaming tab's
+/// history (peak concurrency per day, the last day's load). streamLoadHistory.ts.
+model StreamLoadSample {
+  id            Int      @id @default(autoincrement())
+  at            DateTime @default(now())
+  playing       Int
+  live          Int
+  vod           Int
+  /// Megabits per second through Streamy's own proxy.
+  proxyMbps     Float
+  /// qBittorrent's upload at the time, when it could be asked.
+  torrentUpMbps Float?
+
+  @@index([at])
+}

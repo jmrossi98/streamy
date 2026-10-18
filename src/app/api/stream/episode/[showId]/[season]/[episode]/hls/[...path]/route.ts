@@ -38,7 +38,9 @@ export async function GET(request: Request, { params }: Props) {
     `/api/stream/episode/${showId}/${seasonNum}/${episodeNum}/hls`,
     request,
     undefined,
-    audio
+    audio,
+    false,
+    { user: session?.user?.name ?? "unknown", kind: "episode", ref: itemId }
   );
   return checkedEpisodeStream(res, showId, seasonNum, episodeNum);
 }

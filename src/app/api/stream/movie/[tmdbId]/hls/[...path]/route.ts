@@ -26,6 +26,10 @@ export async function GET(request: Request, { params }: Props) {
     resource === "master.m3u8"
       ? chooseAudio(await getLanguagePlan(itemId, "movie", tmdbId), new URL(request.url).searchParams.get("audio"))
       : null;
-  const res = await proxyJellyfinHlsResource(itemId, resource, `/api/stream/movie/${tmdbId}/hls`, request, undefined, audio);
+  const res = await proxyJellyfinHlsResource(itemId, resource, `/api/stream/movie/${tmdbId}/hls`, request, undefined, audio, false, {
+    user: session?.user?.name ?? "unknown",
+    kind: "movie",
+    ref: itemId,
+  });
   return checkedMovieStream(res, tmdbId);
 }

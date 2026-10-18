@@ -292,12 +292,12 @@ export async function requireAdmin(
 ): Promise<{ id: string; name: string } | null> {
   if (!session?.user?.id) return null;
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { id: true, name: true, approved: true, isAdmin: true },
-    });
-    if (!user?.approved || !user.isAdmin) return null;
-    return { id: user.id, name: user.name };
+    // The same 30-second gate every request reads: the admin layout, the
+    // page and its API routes each asked the database for this row, so one
+    // admin tab polling two panels cost three user lookups a tick.
+    const gate = await readUserGate(session.user.id);
+    if (!gate?.approved || !gate.isAdmin) return null;
+    return { id: session.user.id, name: gate.name ?? session.user.name ?? "" };
   } catch (err) {
     // Fail closed. An unreachable database is a reason to deny an admin
     // action, never to allow one.

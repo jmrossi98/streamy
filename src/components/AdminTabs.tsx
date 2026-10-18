@@ -15,6 +15,9 @@ import { TabBar, TabLink } from "@/components/ui";
  * everything else rather than reporting its own thing.
  */
 export const ADMIN_TABS = [
+  // First: is playback working right now, for whom, and is there room for
+  // one more. Viewers moved here from Security on 2026-10-18.
+  { href: "/admin/streaming", label: "Streaming" },
   { href: "/admin/security", label: "Security" },
   { href: "/admin/health", label: "Health" },
   { href: "/admin/metrics", label: "Metrics" },
