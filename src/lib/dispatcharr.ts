@@ -642,24 +642,18 @@ export async function getMappedChannelPrograms(): Promise<Map<string, ChannelPro
     api<{ results?: { id?: number; tvg_id?: string }[] } | { id?: number; tvg_id?: string }[]>(
       `/api/epg/epgdata/?page_size=5000`
     ),
-    api<
-      | {
-          results?: {
-            title?: string;
-            description?: string;
-            start_time?: string;
-            end_time?: string;
-            tvg_id?: string;
-          }[];
-        }
-      | { title?: string; description?: string; start_time?: string; end_time?: string; tvg_id?: string }[]
-    >(`/api/epg/programs/?page_size=5000`),
+    // Every page, not just the first: one page of 5,000 held the whole guide
+    // when this was written, and was at 4,098 on 2026-10-17 with dozens of
+    // channels just added. Past it, channels lost their guide data silently.
+    listAll<{ title?: string; description?: string; start_time?: string; end_time?: string; tvg_id?: string }>(
+      `/api/epg/programs/?page_size=5000`
+    ),
   ]);
   if (!channelsData || !epgData || !programsData) return null;
 
   const channels = Array.isArray(channelsData) ? channelsData : (channelsData.results ?? []);
   const epgRows = Array.isArray(epgData) ? epgData : (epgData.results ?? []);
-  const programs = Array.isArray(programsData) ? programsData : (programsData.results ?? []);
+  const programs = programsData;
 
   const tvgIdByEpgDataId = new Map<number, string>();
   for (const row of epgRows) {
