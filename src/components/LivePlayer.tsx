@@ -556,9 +556,13 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
           return;
         }
         if (onCanPlay) return;
-        // Offered straight away, not after `canplay`: Safari may not load a
-        // stream at all until it is tapped, and then `canplay` never comes.
-        setNeedsTap(true);
+        // Offered straight away only when the browser wants a tap
+        // (NotAllowedError): Safari may not load a stream at all until it is
+        // tapped, and then `canplay` never comes. An AbortError is just a
+        // play() interrupted while the stream loads -- Chrome does it on most
+        // tunes -- and offering a tap for that put "Tap to play" over
+        // "Tuning..." on desktop (2026-10-17).
+        if (err instanceof Error && err.name === "NotAllowedError") setNeedsTap(true);
         onCanPlay = () => {
           video.removeEventListener("canplay", onCanPlay!);
           tryPlay().catch(() => {
@@ -798,7 +802,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
           />
         )}
 
-        {loading && !error && (
+        {loading && !error && !needsTap && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <Spinner label="Tuning…" />
           </span>
