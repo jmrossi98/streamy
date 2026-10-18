@@ -5,6 +5,7 @@ import {
   deviceLabel,
   presenceOf,
   sessionHealth,
+  VERDICT_WINDOW_MS,
   type PlayingNow,
   type PresencePayload,
   type SessionHealth,
@@ -133,7 +134,8 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
       lastSeenAt: r.lastSeenAt.getTime(),
       // A tab that stopped reporting isn't playing anything any more.
       playing: presence === "offline" ? null : playing,
-      health: sessionHealth(evs),
+      // Recent events only: a stall an hour ago says nothing about now.
+      health: sessionHealth(evs.filter((e) => e.at >= now - VERDICT_WINDOW_MS)),
       events: evs.slice(-40),
     };
   });
