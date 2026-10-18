@@ -122,6 +122,12 @@ export function presenceOf(lastSeenAt: number, now = Date.now()): "online" | "id
   return "offline";
 }
 
+/** The shortest stall that counts against a session. */
+export const NOTICEABLE_STALL_MS = 1_000;
+
+/** How far back a session's verdict looks: now, not an hour ago. */
+export const VERDICT_WINDOW_MS = 30 * 60_000;
+
 export type SessionHealth = {
   /** smooth | rough (buffering) | failing (errors) | none (nothing played) */
   verdict: "smooth" | "rough" | "failing" | "none";
@@ -161,6 +167,10 @@ export function sessionHealth(events: { kind: string; ms: number | null; detail:
       if (open && e.ms != null) startTimes.push(e.ms);
       open = false;
     } else if (e.kind === "stall") {
+      // Under a second isn't something a viewer sees: a seek settling, a
+      // segment boundary. Counting those called a smooth episode "buffering"
+      // (2026-10-18: waits of 3ms and 90ms).
+      if ((e.ms ?? 0) < NOTICEABLE_STALL_MS) continue;
       stalls += 1;
       stallMs += e.ms ?? 0;
     } else if (e.kind === "error") {

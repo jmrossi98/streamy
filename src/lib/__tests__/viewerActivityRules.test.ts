@@ -82,6 +82,13 @@ describe("sessionHealth", () => {
     expect(h.lastError).toBe("This channel didn’t start.");
   });
 
+  it("ignores waits nobody could see", () => {
+    // 2026-10-18, Clone High: smooth, but logged 3ms and 90ms waits.
+    const h = sessionHealth([ev("start", 1), ev("playing", 2, 59), ev("stall", 3, 3), ev("stall", 4, 90), ev("stall", 5, 400)]);
+    expect(h.verdict).toBe("smooth");
+    expect(h.stalls).toBe(0);
+  });
+
   it("rough: lots of buffering", () => {
     const h = sessionHealth([ev("start", 1), ev("playing", 2, 4000), ev("stall", 3, 6000), ev("stall", 4, 6000)]);
     expect(h.verdict).toBe("rough");

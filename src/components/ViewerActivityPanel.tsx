@@ -197,11 +197,19 @@ function HealthLine({ s }: { s: ViewerSessionView }) {
 }
 
 function HealthBadge({ s }: { s: ViewerSessionView }) {
-  const v = s.health.verdict;
+  // Nothing eventful in the window but still playing (an hour into a film):
+  // that's smooth, not browsing.
+  const v = s.health.verdict === "none" && s.playing && s.playing.state !== "error" ? "smooth" : s.health.verdict;
   if (v === "none") return <Badge>browsing</Badge>;
   const tone: BadgeTone = v === "smooth" ? "success" : v === "rough" ? "warning" : "danger";
-  const label = v === "smooth" ? "smooth" : v === "rough" ? "buffering" : "errors";
-  return <Badge tone={tone}>{label}</Badge>;
+  // "playback:", so a verdict over the last half hour can't be read as the
+  // video's state right now -- that is the state badge on the card.
+  const label = v === "smooth" ? "playback: smooth" : v === "rough" ? "playback: stalling" : "playback: errors";
+  return (
+    <Badge tone={tone} title="How playback went over the last 30 minutes (stalls of 1s or more, errors, failed starts)">
+      {label}
+    </Badge>
+  );
 }
 
 function ago(at: number, now: number): string {
