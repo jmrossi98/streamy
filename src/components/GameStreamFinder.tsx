@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { announceGameFeedSearch } from "@/lib/gameFeedSearch";
 import { Badge, Button } from "@/components/ui";
 import {
   applyResult,
@@ -106,15 +107,30 @@ export function GameStreamFinder({
   useEffect(() => {
     if (!autoAdd || autoTried.current || !streams) return;
     const pick = pickAutoAdd(streams, checks, autoAddMaxScore);
-    if (!pick) return;
+    if (!pick) {
+      // Nothing to add, and nothing left that could change that: tell the
+      // player it can stop holding for a feed and play its best guess.
+      const ids = verify ? streamsToVerify(streams) : [];
+      const settled = ids.every((id) => {
+        const s = checks[id]?.status;
+        return s !== undefined && s !== "queued" && s !== "checking";
+      });
+      if (streams.length === 0 || !verify || settled) {
+        autoTried.current = true;
+        announceGameFeedSearch({ fixtureId, outcome: "none" });
+      }
+      return;
+    }
     autoTried.current = true;
-    void add(pick, true);
+    void add(pick, true)
+      .catch(() => false)
+      .then((ok) => announceGameFeedSearch({ fixtureId, outcome: ok ? "added" : "none" }));
     // add is recreated each render; the pick only depends on these.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoAdd, autoAddMaxScore, streams, checks]);
+  }, [autoAdd, autoAddMaxScore, streams, checks, verify]);
 
-  async function add(s: Candidate, auto = false) {
-    if (adding !== null || !canAdd(checks[s.id])) return;
+  async function add(s: Candidate, auto = false): Promise<boolean> {
+    if (adding !== null || !canAdd(checks[s.id])) return false;
     setAdding(s.id);
     try {
       const res = await fetch("/api/live/streams/promote", {
@@ -135,6 +151,7 @@ export function GameStreamFinder({
         if (body.ready || body.existing) router.refresh();
         else setTimeout(() => router.refresh(), 8000);
       }
+      return res.ok;
     } finally {
       setAdding(null);
     }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { GAME_FEED_SEARCH_EVENT, type GameFeedSearchOutcome } from "@/lib/gameFeedSearch";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
@@ -22,6 +23,17 @@ type Props = {
   fixtureId: string;
   /** What this user picked last time, if anything. Null for signed-out viewers. */
   storedChoice: StoredChoice | null;
+  /**
+   * Hold off playing while the page looks for the game's own feed, because
+   * every option on offer is only a guess. Playing a guess straight away
+   * took a provider line, so the stream probe refused to check the game's
+   * feeds ("every line on this provider is in use") and nothing could be
+   * added: on 2026-10-18 Bruins at Kings played MSG while ten dedicated feeds
+   * went unchecked. Released when GameStreamFinder reports (an added feed
+   * arrives with the page refresh), when the viewer picks a channel, or
+   * after FEED_SEARCH_LIMIT_MS.
+   */
+  holdForFeed?: boolean;
 };
 
 /**
@@ -49,6 +61,9 @@ type Props = {
  * pick beats `channel` precisely because the person overrode `channel` once
  * already.
  */
+/** The longest a game page holds off playing while it looks for the game's feed. */
+const FEED_SEARCH_LIMIT_MS = 45_000;
+
 export function GameChannelPicker({
   channel,
   channelConfirmed,
@@ -57,7 +72,23 @@ export function GameChannelPicker({
   speedByChannel = {},
   fixtureId,
   storedChoice,
+  holdForFeed = false,
 }: Props) {
+  const [held, setHeld] = useState(holdForFeed);
+  useEffect(() => {
+    if (!held) return;
+    const onOutcome = (e: Event) => {
+      const d = (e as CustomEvent<GameFeedSearchOutcome>).detail;
+      // "added" keeps holding: the page refresh brings the feed as the default.
+      if (d?.fixtureId === fixtureId && d.outcome === "none") setHeld(false);
+    };
+    window.addEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
+    const limit = setTimeout(() => setHeld(false), FEED_SEARCH_LIMIT_MS);
+    return () => {
+      window.removeEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
+      clearTimeout(limit);
+    };
+  }, [held, fixtureId]);
   const options = channel ? [channel, ...candidates] : candidates;
   const [selectedId, setSelectedId] = useState<string | null>(
     // The remembered pick if it's still in the lineup, otherwise the best
@@ -92,6 +123,7 @@ export function GameChannelPicker({
    * Blocking the tune on a round trip would be the worse trade.
    */
   function pick(c: LiveChannel) {
+    setHeld(false);
     setSelectedId(c.id);
     setFallbackNote(null);
     void fetch("/api/live/game-channel", {
@@ -101,7 +133,7 @@ export function GameChannelPicker({
     }).catch(() => {});
   }
 
-  if (!selected) {
+  if (!selected && !held) {
     return (
       <div className="rounded-lg border border-white/10 bg-netflix-dark/60 px-4 py-10 text-center">
         <p className="text-base font-semibold text-white/80">No channel available</p>
@@ -115,12 +147,23 @@ export function GameChannelPicker({
 
   return (
     <div>
-      <LivePlayer
-        channelId={selected.id}
-        channelName={selected.name}
-        nowPlaying={selected.now?.name ?? null}
-        onGiveUp={() => giveUpOn(selected)}
-      />
+      {held || !selected ? (
+        <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg bg-black text-center">
+          <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" aria-hidden />
+          <p className="text-sm text-white/70">Finding the game&rsquo;s own stream…</p>
+          <p className="max-w-sm px-4 text-xs text-white/40">
+            Nothing in the lineup is confirmed to carry this game, so the providers are being checked for its feed.
+            Pick a channel below to watch one of them now instead.
+          </p>
+        </div>
+      ) : (
+        <LivePlayer
+          channelId={selected.id}
+          channelName={selected.name}
+          nowPlaying={selected.now?.name ?? null}
+          onGiveUp={() => giveUpOn(selected)}
+        />
+      )}
       {fallbackNote && <p className="mt-3 text-sm text-amber-300/90">{fallbackNote}</p>}
 
       {options.length > 1 && (

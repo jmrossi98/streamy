@@ -300,6 +300,8 @@ export default async function GamePage({
           )}
           fixtureId={fixtureId}
           storedChoice={storedChoice}
+          // Only guesses on offer: look for the game's own feed before playing one.
+          holdForFeed={fixture.state === "in" && !gameFeed && !channelConfirmed && !storedChoice}
         />
         {/* Below the lineup's options: what the catalogue has that the lineup
             doesn't, one click from being a channel. */}

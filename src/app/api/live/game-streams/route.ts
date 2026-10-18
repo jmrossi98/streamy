@@ -6,6 +6,7 @@ import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
 import { gameStreamQueries, gameStreamScore, rankGameStreams } from "@/lib/gameStreamRules";
 import { isStreamProbeConfigured } from "@/lib/streamProbe";
+import { cached } from "@/lib/ttlCache";
 
 /**
  * Provider streams that might carry one of today's games, for the game page's
@@ -26,7 +27,15 @@ export async function GET(request: Request) {
   if (!fixture) return NextResponse.json({ streams: [] });
 
   const [pages, promoted, renewals] = await Promise.all([
-    Promise.all(gameStreamQueries(fixture).map((q) => listStreams({ search: q, pageSize: 100 }).catch(() => null))),
+    // Cached per game for a few minutes: the search took 23s on 2026-10-18,
+    // and the page asks again right after adding a feed (and for every other
+    // viewer of the same game). Only a complete answer is kept.
+    cached(
+      `game-streams:${fixture.id}`,
+      3 * 60_000,
+      () => Promise.all(gameStreamQueries(fixture).map((q) => listStreams({ search: q, pageSize: 100 }).catch(() => null))),
+      { skipCacheIf: (pages) => pages.some((p) => p === null) }
+    ),
     listPromotedStreamIds().catch(() => null),
     getAutomaticRenewals().catch(() => []),
   ]);
