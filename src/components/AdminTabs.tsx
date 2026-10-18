@@ -25,11 +25,9 @@ export const ADMIN_TABS = [
   // is filling up are the same question from two sides. Named for the
   // downloads, which are what the tab is opened for.
   { href: "/admin/downloads", label: "Downloads" },
-  // Channel management, moved here from /live on 2026-10-16: select/hide/
-  // delete and the stream catalogue were sitting above the channels on the
-  // viewing page. Next to Downloads because both are "what is in the
-  // library" rather than "is anything wrong".
-  { href: "/admin/live-tv", label: "Live TV" },
+  // Live TV channel management folded into the Streaming tab (its bottom) on
+  // 2026-10-18, so there is one page for the whole of streaming; /admin/live-tv
+  // now redirects there.
   { href: "/admin/spend", label: "Subscriptions" },
   { href: "/admin/approvals", label: "Accounts" },
   { href: "/admin/jobs", label: "Job search" },

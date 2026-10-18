@@ -12,7 +12,10 @@ import {
   isJellyfinReachable,
   MAX_CHANNELS,
 } from "@/lib/liveTv";
-import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
+import { getChannelInfo, getMappedChannelPrograms, listIptvAccounts, type ChannelInfo } from "@/lib/dispatcharr";
+import { getAutomaticRenewals } from "@/lib/renewals";
+import { providerAlert } from "@/lib/credentialRules";
+import { channelProviderState, providerAvailability } from "@/lib/providerAvailability";
 import { fixtureGuidePrograms, trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { parseLiveTab } from "@/lib/liveTabs";
@@ -58,6 +61,28 @@ export default async function LivePage({
     if (info) infoByChannel = Object.fromEntries(info);
   } catch (err) {
     console.error("[live] getChannelInfo failed:", err);
+  }
+
+  // Which channels can't be tuned right now because their provider's lines are
+  // all in use (or the provider is offline), so the grid can say so instead of
+  // opening into a spinner. Best effort: without it every channel reads as
+  // available, which is how it behaved before.
+  let providerStateByChannel: Record<string, "ok" | "full" | "down"> = {};
+  try {
+    const [accounts, renewals] = await Promise.all([
+      listIptvAccounts(),
+      getAutomaticRenewals().catch(() => []),
+    ]);
+    const expired = new Set(
+      renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
+    );
+    const availability = providerAvailability(accounts, expired);
+    for (const c of channels) {
+      const state = channelProviderState(infoByChannel[c.name]?.provider, availability);
+      if (state) providerStateByChannel[c.name] = state;
+    }
+  } catch (err) {
+    console.error("[live] provider availability failed:", err);
   }
 
   // Logos for the channels Jellyfin has no image for. Best effort: a picon
@@ -142,6 +167,7 @@ export default async function LivePage({
         infoByChannel={infoByChannel}
         statusByChannel={statusByChannel}
         logoFallbacks={logoFallbacks}
+        providerStateByChannel={providerStateByChannel}
         guidePrograms={guidePrograms}
       />
     </div>

@@ -6,7 +6,10 @@ import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { DemoteChannelButton } from "@/components/DemoteChannelButton";
 import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
-import { findChannelIdByName, getChannelInfo, isDispatcharrConfigured } from "@/lib/dispatcharr";
+import { findChannelIdByName, getChannelInfo, isDispatcharrConfigured, listIptvAccounts } from "@/lib/dispatcharr";
+import { getAutomaticRenewals } from "@/lib/renewals";
+import { providerAlert } from "@/lib/credentialRules";
+import { channelProviderState, providerAvailability } from "@/lib/providerAvailability";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -54,6 +57,7 @@ export default async function LiveChannelPage({
   // the page.
   let provider: string | null = null;
   let stale = false;
+  let providerState: "ok" | "full" | "down" | null = null;
   if (isDispatcharrConfigured()) {
     try {
       const info = (await getChannelInfo())?.get(channel.name);
@@ -61,6 +65,17 @@ export default async function LiveChannelPage({
       stale = info?.stale ?? false;
     } catch (err) {
       console.error("[live/channel] getChannelInfo failed:", err);
+    }
+    // Whether this channel's provider has a free line. Shown up front so a
+    // used-up or offline provider is visible before the player spins.
+    try {
+      const [accounts, renewals] = await Promise.all([listIptvAccounts(), getAutomaticRenewals().catch(() => [])]);
+      const expired = new Set(
+        renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
+      );
+      providerState = channelProviderState(provider, providerAvailability(accounts, expired));
+    } catch (err) {
+      console.error("[live/channel] provider availability failed:", err);
     }
   }
 
@@ -103,6 +118,20 @@ export default async function LiveChannelPage({
           </span>
         </div>
 
+        {/* Said before the player spins: the provider has no free line, or is
+            offline. Not a hard block -- the viewer may be the one already on
+            it, and a freed line or a recovered provider should just work. */}
+        {providerState === "full" && (
+          <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            All of {provider ?? "this provider"}&rsquo;s lines are in use right now, so this channel may not start until one
+            frees up.
+          </p>
+        )}
+        {providerState === "down" && (
+          <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {provider ?? "This provider"} is offline right now, so this channel can&rsquo;t be tuned.
+          </p>
+        )}
         <LivePlayer
           channelId={channel.id}
           channelName={channel.name}
