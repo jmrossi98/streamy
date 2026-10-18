@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { VideoChrome } from "./VideoChrome";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 
 type Props = {
   eventId: number;
@@ -74,6 +75,7 @@ export function RecordingPlayer({ eventId, title, subtitle, videoUrl, closeHref,
     identityKey: `recording-${eventId}`,
     saveProgress,
   });
+  usePlaybackTelemetry(videoRef, { kind: "recording", title, error: playbackError ? "Playback failed" : null });
 
   const showVideo = playing && !showOverlay;
 
