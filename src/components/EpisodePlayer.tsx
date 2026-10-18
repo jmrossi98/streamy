@@ -11,6 +11,7 @@ import { type SubtitleOption } from "./SubtitleSelector";
 import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
 import { Button } from "./ui";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import { usePageScrollLock } from "@/lib/usePageScrollLock";
 import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 import type { EpisodePlayback } from "@/lib/episodePlayback";
 import {
@@ -100,6 +101,7 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
   const { showId, showName, backdropUrl, closeHref, onClose, autoPlay = true } = props;
   const router = useRouter();
   const frameRef = useRef<HTMLDivElement>(null);
+  usePageScrollLock();
 
   const fromProps: Episode = {
     seasonNumber: props.seasonNumber,

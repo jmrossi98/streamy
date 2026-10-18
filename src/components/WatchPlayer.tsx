@@ -8,6 +8,7 @@ import { VideoChrome } from "./VideoChrome";
 import { type SubtitleOption } from "./SubtitleSelector";
 import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
+import { usePageScrollLock } from "@/lib/usePageScrollLock";
 import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
 
 // No placeholder fallback on purpose: without a real file this used to play
@@ -55,6 +56,7 @@ export function WatchPlayer({
   audioTracks = [],
   defaultAudio = null,
 }: WatchPlayerProps) {
+  usePageScrollLock();
   // Stable across renders (see usePlayerEngine's saveProgress doc) --
   // The page's resume point can be minutes old; this re-asks on open.
   const resumeQuery = videoUrl ? `movieId=${encodeURIComponent(movieId)}` : null;
