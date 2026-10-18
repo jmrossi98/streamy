@@ -40,12 +40,14 @@ type Props = {
   statusByChannel: Record<string, ChannelVerdict>;
   /** Channel name -> a logo to use when the channel has none of its own. */
   logoFallbacks: Record<string, string>;
+  /** Channel name -> its provider's availability: "full" = every line in use, "down" = offline. */
+  providerStateByChannel: Record<string, "ok" | "full" | "down">;
   /** guideKey(channel name) -> EPG listings for the Guide grid. Empty off the Guide tab. */
   guidePrograms: Record<string, GuideProgram[]>;
 };
 
 /** What every tab needs to draw a channel card. */
-type CardLookups = Pick<Props, "infoByChannel" | "statusByChannel" | "logoFallbacks">;
+type CardLookups = Pick<Props, "infoByChannel" | "statusByChannel" | "logoFallbacks" | "providerStateByChannel">;
 
 /** Rendered at once. Enough to scroll, few enough to stay responsive. */
 const PAGE_SIZE = 60;
@@ -72,7 +74,7 @@ function numberValue(number: string | null): number {
  */
 export function LiveTvContent({
   envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
-  statusByChannel, logoFallbacks, guidePrograms,
+  statusByChannel, logoFallbacks, providerStateByChannel, guidePrograms,
 }: Props) {
   // The page is force-dynamic, so this is available on the server render too
   // and the tab arrives in the first HTML rather than after hydration.
@@ -146,7 +148,7 @@ export function LiveTvContent({
     </div>
   );
 
-  const lookups: CardLookups = { infoByChannel, statusByChannel, logoFallbacks };
+  const lookups: CardLookups = { infoByChannel, statusByChannel, logoFallbacks, providerStateByChannel };
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 md:px-6">
@@ -204,7 +206,7 @@ function LiveTabBar({ active }: { active: LiveTab }) {
  * narrowed is a grid wearing a costume.
  */
 function NowTab({
-  lineup, listed, infoByChannel, statusByChannel, logoFallbacks,
+  lineup, listed, infoByChannel, statusByChannel, logoFallbacks, providerStateByChannel,
 }: { lineup: LiveChannel[]; listed: Set<string> } & CardLookups) {
   // Pinned above the rest. Starred channels are left out of the rows below
   // on purpose -- a channel already on its own shelf, shown a second time
@@ -224,6 +226,7 @@ function NowTab({
         info={infoByChannel[c.name]}
         status={statusByChannel[c.name]}
         logoFallback={logoFallbacks[c.name]}
+        providerState={providerStateByChannel[c.name]}
       />
     </div>
   );
@@ -257,7 +260,7 @@ function NowTab({
  * rows the grid draws.
  */
 function GuideTab({
-  lineup, listed, truncated, total, isAdmin, guidePrograms, infoByChannel, statusByChannel, logoFallbacks,
+  lineup, listed, truncated, total, isAdmin, guidePrograms, infoByChannel, statusByChannel, logoFallbacks, providerStateByChannel,
 }: {
   lineup: LiveChannel[];
   listed: Set<string>;
@@ -426,6 +429,7 @@ function GuideTab({
                   info={infoByChannel[c.name]}
                   status={statusByChannel[c.name]}
                   logoFallback={logoFallbacks[c.name]}
+                  providerState={providerStateByChannel[c.name]}
                 />
               ))}
             </div>

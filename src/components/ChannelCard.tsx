@@ -91,6 +91,12 @@ type Props = {
    * cached, or a sibling channel's. Never preferred over the real one.
    */
   logoFallback?: string;
+  /**
+   * The channel's provider right now: "full" = every line is in use, so a new
+   * tune would fail; "down" = the provider is offline or lapsed. Shown so a
+   * viewer sees it before clicking into a spinner. "ok"/undefined shows nothing.
+   */
+  providerState?: "ok" | "full" | "down";
 };
 
 export function ChannelCard({
@@ -102,7 +108,9 @@ export function ChannelCard({
   info,
   status,
   logoFallback,
+  providerState,
 }: Props) {
+  const unavailable = providerState === "full" || providerState === "down";
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -118,6 +126,7 @@ export function ChannelCard({
   // top-heavy with dead space under the name.
   const className =
     "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none " +
+    (unavailable && !selectMode ? "opacity-60 " : "") +
     (selectMode
       ? selected
         ? "border-netflix-red/70 bg-netflix-red/10"
@@ -207,6 +216,15 @@ export function ChannelCard({
             {info.provider && info.stale && " · "}
             {info.stale && <span className="text-amber-400/80">provider reports this as dead</span>}
           </p>
+        )}
+
+        {/* The provider's lines are all in use, or it is offline: tuning would
+            fail, so say so on the card rather than after a spinner. */}
+        {providerState === "full" && (
+          <p className="truncate text-[11px] text-amber-400/90">All lines in use — can’t tune right now</p>
+        )}
+        {providerState === "down" && !info?.stale && (
+          <p className="truncate text-[11px] text-red-400/80">Provider offline</p>
         )}
 
         {/* Only the states worth acting on. "live" and "unknown" render
