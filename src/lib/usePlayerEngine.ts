@@ -143,7 +143,7 @@ export type PlayerEngineOptions = {
    * shape the caller's title type uses. Must be referentially stable
    * (wrap in useCallback) or the progress-tracking effect resubscribes on
    * every render. */
-  saveProgress: (seconds: number) => void;
+  saveProgress: (seconds: number, opts?: { leaving: boolean }) => void;
   /** See usePlayerChrome's option of the same name. */
   fullscreenRef?: RefObject<HTMLElement | null>;
   /** Reached by rolling on from the previous episode, not by a tap: plays
@@ -748,10 +748,14 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   useEffect(() => {
     saveProgressRef.current = saveProgress;
   }, [saveProgress]);
-  const saveAt = useCallback((sec: number) => {
-    if (sec > 0 && sec !== lastSavedRef.current) {
+  // `leaving`: the viewer is done with this player (closed it, rolled on,
+  // or the page is going away). Always sent, even at an already-saved spot,
+  // so a caller can treat that last save differently -- the episode player
+  // starts a finished episode over only then, never while it is still open.
+  const saveAt = useCallback((sec: number, leaving = false) => {
+    if (sec > 0 && (leaving || sec !== lastSavedRef.current)) {
       lastSavedRef.current = sec;
-      saveProgressRef.current(sec);
+      saveProgressRef.current(sec, { leaving });
     }
   }, []);
 
@@ -779,7 +783,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
     const onHide = () => {
       if (document.visibilityState === "hidden") saveAt(lastPositionRef.current);
     };
-    const onPageHide = () => saveAt(lastPositionRef.current);
+    const onPageHide = () => saveAt(lastPositionRef.current, true);
     const clock = setInterval(() => {
       if (!v.paused) saveAt(lastPositionRef.current);
     }, PROGRESS_SAVE_EVERY_MS);
@@ -817,7 +821,7 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       // sequence, so resetting on mount would wipe the position it just used.
       startedAtRef.current = null;
       // The remembered position, not v.currentTime -- see lastPositionRef.
-      saveAt(lastPositionRef.current);
+      saveAt(lastPositionRef.current, true);
       // Leaving the page mid-transcode would otherwise leave that ffmpeg job
       // running on the mediabox indefinitely -- nothing else ever tells
       // Jellyfin this session is done.

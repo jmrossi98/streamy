@@ -3,11 +3,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { spaceTogglesPlayback } from "./playerKeyRules";
 
-// Drives a custom control chrome layered over a <video>. The key reason this
-// exists rather than using native `controls`: a Jellyfin *transcode* is a
-// progressive stream whose reported duration starts tiny and grows as it
-// downloads, so the native scrubber visibly resizes. We know the real runtime
-// up front (from TMDB), so the scrubber can use a fixed duration and never jump.
+// Drives a custom control chrome layered over a <video>, in place of native
+// `controls`. The scrubber shows the known runtime until the element reports
+// the file's own length (see `duration` below).
 //
 // The hook owns only chrome state (play/seek/volume/fullscreen/visibility). The
 // player keeps its own source, quality, progress-saving and error handling.
@@ -41,10 +39,14 @@ export function usePlayerChrome(
   const [fullscreenHint, setFullscreenHint] = useState(false);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fixed known runtime wins so the scrubber never resizes mid-transcode; fall
-  // back to the element's own duration only when we weren't told the runtime.
+  // The file's own length once the element knows it; the known runtime only
+  // until then. The known runtime is TMDB's, rounded to the minute and often
+  // off: Clone High's "22 min" files are 21:30, so the scrubber ran 30 s past
+  // the end (2026-10-17). It once had to win because a transcode was a
+  // progressive stream whose length grew as it downloaded; transcodes are
+  // full-timeline HLS now, which reports the whole length up front.
   const known = opts.knownDurationSeconds && opts.knownDurationSeconds > 0 ? opts.knownDurationSeconds : 0;
-  const duration = known || (Number.isFinite(videoDuration) ? videoDuration : 0);
+  const duration = Number.isFinite(videoDuration) && videoDuration > 0 ? videoDuration : known;
 
   // Starts the countdown that fades the controls out. Playback starting arms
   // it too, not only a mouse move: live TV and autoplay start on their own,

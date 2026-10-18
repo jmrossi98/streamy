@@ -122,9 +122,24 @@ export function skipOfferAt(t: number, segs: EpisodeSegments): SkipOffer | null 
 /** Seconds the "next episode" card counts down once the credits begin. */
 export const CREDITS_COUNTDOWN_SECONDS = 10;
 
-/** Whether `t` is inside the credits, where the next episode is offered. */
-export function inCredits(t: number, segs: EpisodeSegments): boolean {
-  return !!segs.credits && t >= segs.credits.start;
+/**
+ * Without a credits marker, the next episode is offered this long before the
+ * end. Intro Skipper finds end credits far less often than intros -- 2 of
+ * Clone High's 13 episodes, where those two ran the last 31 s -- so without
+ * this most episodes never offered the next one (reported 2026-10-17).
+ */
+export const FALLBACK_CREDITS_SECONDS = 30;
+/** Too short to be an episode with credits worth offering past (a clip, an extra). */
+const FALLBACK_MIN_RUNTIME_SECONDS = 300;
+
+/**
+ * Whether `t` is inside the credits, where the next episode is offered: the
+ * marked credits, or else the last FALLBACK_CREDITS_SECONDS of the file.
+ */
+export function inCredits(t: number, segs: EpisodeSegments, durationSeconds: number | null = null): boolean {
+  if (segs.credits) return t >= segs.credits.start;
+  if (!durationSeconds || durationSeconds < FALLBACK_MIN_RUNTIME_SECONDS) return false;
+  return t >= durationSeconds - FALLBACK_CREDITS_SECONDS;
 }
 
 /**
