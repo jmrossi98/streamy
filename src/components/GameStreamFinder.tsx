@@ -34,7 +34,16 @@ type Candidate = { id: number; name: string; provider: string | null; logoUrl: s
  * check is added without a click (pickAutoAdd). One per game, enforced by
  * the promote route.
  */
-export function GameStreamFinder({ fixtureId, autoAdd = false }: { fixtureId: string; autoAdd?: boolean }) {
+export function GameStreamFinder({
+  fixtureId,
+  autoAdd = false,
+  autoAddMaxScore = 1,
+}: {
+  fixtureId: string;
+  autoAdd?: boolean;
+  /** The weakest gameStreamScore auto-add will take: 0 = names both teams. */
+  autoAddMaxScore?: number;
+}) {
   const router = useRouter();
   const [streams, setStreams] = useState<Candidate[] | null>(null);
   const [verify, setVerify] = useState(false);
@@ -90,13 +99,13 @@ export function GameStreamFinder({ fixtureId, autoAdd = false }: { fixtureId: st
 
   useEffect(() => {
     if (!autoAdd || autoTried.current || !streams) return;
-    const pick = pickAutoAdd(streams, checks);
+    const pick = pickAutoAdd(streams, checks, autoAddMaxScore);
     if (!pick) return;
     autoTried.current = true;
     void add(pick, true);
     // add is recreated each render; the pick only depends on these.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoAdd, streams, checks]);
+  }, [autoAdd, autoAddMaxScore, streams, checks]);
 
   async function add(s: Candidate, auto = false) {
     if (adding !== null || !canAdd(checks[s.id])) return;

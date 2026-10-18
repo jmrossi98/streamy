@@ -10,6 +10,7 @@ import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getChannelInfo, getMappedChannelPrograms, type ChannelInfo } from "@/lib/dispatcharr";
 import {
   findCandidateChannels,
+  namesBothTeams,
   findEpgConfirmedChannels,
   findEpgConfirmedChannelNames,
   HOME_MARKETS,
@@ -145,7 +146,17 @@ export default async function GamePage({
     notResponding.has(normaliseName(name)) ||
     epgElsewhere.has(name);
 
-  const resolved = resolveChannelForFixture(fixture, channels, epgConfirmedNames, qualityOf);
+  /*
+    A channel named for this exact game -- the provider's own per-game feed,
+    "NHL | 07 - 7pm Sharks at Red Wings" -- is the default whenever there is
+    one. On 2026-10-17 that feed was the only thing that showed the Sharks
+    game: the team channel, NHL Network and a San Jose station (soccer) were
+    all offered first, and the viewer had to find the feed by hand. Feeds
+    are only ever added after the stream probe sees video in them, and
+    they're removed after the game, so this is not a name-only guess.
+  */
+  const gameFeed = channels.find((c) => namesBothTeams(c.name, fixture) && !isStale(c.name)) ?? null;
+  const resolved = gameFeed ?? resolveChannelForFixture(fixture, channels, epgConfirmedNames, qualityOf);
   const channelConfirmed = resolved != null && epgConfirmedNames.includes(resolved.name);
   /*
     Only a real EPG fact suppresses the rest -- a confirmed channel needs no
@@ -166,17 +177,24 @@ export default async function GamePage({
   // When the guide confirms more than one channel, the others are offered
   // too: all of them are certainly this game, so they are the right things to
   // switch to when the best stream of the moment stops being the best.
-  const networkOrMarketCandidates = channelConfirmed
-    ? findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf).filter((c) => c.id !== resolved?.id)
-    : findCandidateChannels(
-        { ...fixture, networksOnOtherGames: networksOnOtherGames(fixture, fixtures) },
-        channels,
-        8,
-        HOME_MARKETS,
-        qualityOf
-      ).filter(
-        (c) => c.id !== resolved?.id
-      );
+  /*
+    Guide-confirmed channels first, then the guesses -- always both. A
+    confirmed channel used to hide every other option, which on 2026-10-17
+    left only NBC Sports California (in an ad break) on the Sharks page, with
+    the provider's own game feed nowhere to be seen. Confirmation is a strong
+    reason to rank first, not a reason to take the alternatives away.
+  */
+  const confirmedChannels = findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf);
+  const networkOrMarketCandidates = [
+    ...confirmedChannels,
+    ...findCandidateChannels(
+      { ...fixture, networksOnOtherGames: networksOnOtherGames(fixture, fixtures) },
+      channels,
+      8,
+      HOME_MARKETS,
+      qualityOf
+    ),
+  ].filter((c, i, all) => c.id !== resolved?.id && all.findIndex((x) => x.id === c.id) === i);
 
   /*
     An unconfirmed `resolved` is, by construction, exactly the category
@@ -191,7 +209,7 @@ export default async function GamePage({
     nothing better to offer when it's genuinely the only option.
   */
   const demoteUnconfirmedFixtureGuess =
-    resolved != null && !channelConfirmed && networkOrMarketCandidates.length > 0;
+    resolved != null && resolved !== gameFeed && !channelConfirmed && networkOrMarketCandidates.length > 0;
   const primary = demoteUnconfirmedFixtureGuess ? null : resolved;
   const restCandidates = demoteUnconfirmedFixtureGuess
     ? [...networkOrMarketCandidates, resolved!]
@@ -228,6 +246,9 @@ export default async function GamePage({
   // still play: the one remembered on 2026-10-15 was an empty channel, and it
   // kept being the default after the working feeds appeared beside it.
   if (storedChoice && isStale(storedChoice.name)) storedChoice = null;
+  // The game's own feed beats an earlier pick: picks were made before it
+  // existed, usually among the guesses it replaces.
+  if (gameFeed && storedChoice && storedChoice.channelId !== gameFeed.id) storedChoice = null;
   const candidates = demoteDeadPrimary
     ? [...liveCandidates, primary!, ...deadCandidates]
     : [...liveCandidates, ...deadCandidates];
@@ -260,7 +281,11 @@ export default async function GamePage({
           </p>
         </div>
 
+        {/* Keyed on the default, so a feed added mid-visit (GameStreamFinder
+            below) takes over the player when the page refreshes, instead of
+            the picker keeping the guess it mounted with. */}
         <GameChannelPicker
+          key={channel?.id ?? "none"}
           channel={channel}
           channelConfirmed={channelConfirmed}
           candidates={candidates}
@@ -278,7 +303,14 @@ export default async function GamePage({
         />
         {/* Below the lineup's options: what the catalogue has that the lineup
             doesn't, one click from being a channel. */}
-        <GameStreamFinder fixtureId={fixtureId} autoAdd={autoRequested && !channelConfirmed && fixture.state === "in"} />
+        {/* Adds the game's own feed whenever the game is on and the lineup has
+            none -- not only after Watch in Live Now. Without that request it
+            only takes a feed naming both teams (score 0). */}
+        <GameStreamFinder
+          fixtureId={fixtureId}
+          autoAdd={fixture.state === "in" && !gameFeed}
+          autoAddMaxScore={autoRequested && !channelConfirmed ? 1 : 0}
+        />
       </div>
     </div>
   );
