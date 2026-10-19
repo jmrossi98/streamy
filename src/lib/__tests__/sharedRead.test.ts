@@ -32,6 +32,28 @@ describe("sharedRead", () => {
     expect(await sharedRead(k, 1000, read, { now: () => t })).toBe(2);
   });
 
+  it("serves the expired answer at once and refreshes behind it, when asked to", async () => {
+    const k = key();
+    let t = 1_000;
+    let calls = 0;
+    let release!: (v: number) => void;
+    const read = () => {
+      calls++;
+      return calls === 1 ? Promise.resolve(1) : new Promise<number>((resolve) => (release = resolve));
+    };
+    const opts = { now: () => t, serveStale: true };
+    expect(await sharedRead(k, 1000, read, opts)).toBe(1);
+    t += 1500;
+    expect(await sharedRead(k, 1000, read, opts)).toBe(1);
+    expect(calls).toBe(2);
+    expect(await sharedRead(k, 1000, read, opts)).toBe(1);
+    expect(calls).toBe(2);
+    release(2);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await sharedRead(k, 1000, read, opts)).toBe(2);
+  });
+
   it("serves the last good answer while the source is failing, without asking every time", async () => {
     const k = key();
     let t = 1_000;

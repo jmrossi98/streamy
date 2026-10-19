@@ -313,30 +313,34 @@ export type CompletedEpisode = {
  * badge for a few seconds.
  */
 const PROTOCOL_CACHE_TTL_MS = 30_000;
-let protocolCache: { at: number; value: Map<number, DownloadProtocol> } | null = null;
 
 export async function getSonarrCompletedProtocols(): Promise<Map<number, DownloadProtocol>> {
-  if (protocolCache && Date.now() - protocolCache.at < PROTOCOL_CACHE_TTL_MS) {
-    return protocolCache.value;
-  }
-  const result = new Map<number, DownloadProtocol>();
-  if (!isSonarrConfigured()) return result;
+  if (!isSonarrConfigured()) return new Map();
   try {
-    const history = await sonarrFetch<{
-      records: { episodeId?: number; date: string; data?: { protocol?: string } }[];
-    }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending");
-    for (const r of history.records) {
-      if (r.episodeId == null || result.has(r.episodeId)) continue;
-      result.set(r.episodeId, normalizeProtocol(r.data?.protocol));
-    }
+    // The expired map is handed back while the 2 s history read refreshes
+    // behind it -- a badge can be a minute late; a render cannot wait.
+    return await cached(
+      "sonarr:grab-history",
+      PROTOCOL_CACHE_TTL_MS,
+      async () => {
+        const result = new Map<number, DownloadProtocol>();
+        const history = await sonarrFetch<{
+          records: { episodeId?: number; date: string; data?: { protocol?: string } }[];
+        }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending");
+        for (const r of history.records) {
+          if (r.episodeId == null || result.has(r.episodeId)) continue;
+          result.set(r.episodeId, normalizeProtocol(r.data?.protocol));
+        }
+        return result;
+      },
+      { staleWhileRevalidate: true }
+    );
   } catch (err) {
+    // A rejection is never cached, so a transient error does not blank the
+    // badges for the next 30 seconds.
     console.error("[sonarr] getSonarrCompletedProtocols failed:", err);
-    // Not cached on failure: a transient error should not blank the
-    // protocol badges for the next 30 seconds.
-    return result;
+    return new Map();
   }
-  protocolCache = { at: Date.now(), value: result };
-  return result;
 }
 
 /**
@@ -367,6 +371,11 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
     // An empty answer is usually a failed read, and caching it would blank
     // the list for the whole TTL.
     skipCacheIf: (rows) => rows.length === 0,
+    // Under search load this takes six seconds, which was the downloads
+    // panel's whole render deadline every thirty seconds: that render drew
+    // without TV rows. The list changes on the scale of minutes; the old one
+    // is handed back while the new one is fetched.
+    staleWhileRevalidate: true,
   });
 }
 
@@ -403,29 +412,29 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
     const withFiles = series.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0);
     const perSeries = await Promise.all(
       withFiles.map(async (s) => {
-        const [episodes, files] = await Promise.all([
-          sonarrFetch<
-            { id: number; episodeFileId: number; seasonNumber: number; episodeNumber: number; title: string; hasFile: boolean }[]
-          >(`/api/v3/episode?seriesId=${s.id}`),
-          // The episode list only has episodeFileId, not the file itself --
-          // this is what the movie side gets straight from movieFile. Same
-          // fix as there: show the actual file name, not a synthesised
-          // "show · SxxEyy · title" label that isn't what's really on disk.
-          sonarrFetch<
-            { id: number; relativePath: string; size?: number; dateAdded?: string }[]
-          >(`/api/v3/episodefile?seriesId=${s.id}`),
-        ]);
+        // One call per series, with each episode's file embedded: the file's
+        // real name, size and arrival date are what the row shows (the movie
+        // side gets the same from movieFile). This used to be two calls per
+        // series -- episodes, then episode files -- about forty requests at
+        // Sonarr per refresh of the list.
+        const episodes = await sonarrFetch<
+          {
+            id: number;
+            seasonNumber: number;
+            episodeNumber: number;
+            title: string;
+            hasFile: boolean;
+            episodeFile?: { relativePath?: string; size?: number; dateAdded?: string } | null;
+          }[]
+        >(`/api/v3/episode?seriesId=${s.id}&includeEpisodeFile=true`);
         // Episodes older than the global 1000-grab window get their protocol
         // from this series' own history -- see historyProtocolRules.
         const missing = episodes.some((e) => e.hasFile && !protocols.has(e.id));
         const ownHistory = missing ? await seriesProtocols(s.id) : new Map<number, DownloadProtocol>();
-        const pathById = new Map(files.map((f) => [f.id, f.relativePath]));
-        const sizeById = new Map(files.map((f) => [f.id, f.size ?? null]));
-        const addedById = new Map(files.map((f) => [f.id, f.dateAdded ?? null]));
         return episodes
           .filter((e) => e.hasFile)
           .map((e) => {
-            const relativePath = pathById.get(e.episodeFileId);
+            const relativePath = e.episodeFile?.relativePath;
             return {
               episodeId: e.id,
               seriesId: s.id,
@@ -433,8 +442,8 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
                 ? fileBaseName(relativePath)
                 : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
               protocol: protocols.get(e.id) ?? ownHistory.get(e.id),
-              sizeBytes: sizeById.get(e.episodeFileId) ?? null,
-              addedAt: addedById.get(e.episodeFileId) ?? null,
+              sizeBytes: e.episodeFile?.size ?? null,
+              addedAt: e.episodeFile?.dateAdded ?? null,
             };
           });
       })

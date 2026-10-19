@@ -17,6 +17,48 @@ describe("cached", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it("hands back the old answer at once while refreshing, when asked to", async () => {
+    let release!: (v: string) => void;
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce("old")
+      .mockImplementationOnce(() => new Promise<string>((r) => (release = r)));
+    const opts = { staleWhileRevalidate: true };
+    expect(await cached("k", 1000, fn, opts)).toBe("old");
+    vi.advanceTimersByTime(1500);
+    // Expired: the old answer comes back immediately and the refresh starts.
+    expect(await cached("k", 1000, fn, opts)).toBe("old");
+    expect(fn).toHaveBeenCalledTimes(2);
+    // Still refreshing: no third call, still the old answer.
+    expect(await cached("k", 1000, fn, opts)).toBe("old");
+    expect(fn).toHaveBeenCalledTimes(2);
+    release("new");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await cached("k", 1000, fn, opts)).toBe("new");
+  });
+
+  it("keeps the old answer when a background refresh fails, and tries again next time", async () => {
+    const fn = vi
+      .fn()
+      .mockResolvedValueOnce("old")
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValue("new");
+    const opts = { staleWhileRevalidate: true };
+    await cached("k", 1000, fn, opts);
+    vi.advanceTimersByTime(1500);
+    // The refresh fails behind the scenes; the old answer stands.
+    expect(await cached("k", 1000, fn, opts)).toBe("old");
+    await Promise.resolve();
+    await Promise.resolve();
+    // Next call: still the old answer at once, and another refresh is started.
+    expect(await cached("k", 1000, fn, opts)).toBe("old");
+    expect(fn).toHaveBeenCalledTimes(3);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await cached("k", 1000, fn, opts)).toBe("new");
+  });
+
   it("asks again once the TTL is up", async () => {
     const fn = vi.fn().mockResolvedValue("v");
     await cached("k", 1000, fn);

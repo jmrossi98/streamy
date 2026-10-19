@@ -29,6 +29,17 @@ type Options<T> = {
    * a null, and caching that turns one bad moment into a TTL-long outage.
    */
   skipCacheIf?: (value: T) => boolean;
+  /**
+   * Once the TTL is up, hand back the old answer at once and refresh behind
+   * it, rather than making the caller wait for the source. For a read that
+   * is slow and only slightly stale-sensitive: Sonarr's completed-episode
+   * list takes six seconds under search load, and the downloads panel's
+   * render was paying that every thirty seconds -- hitting its deadline and
+   * drawing without TV rows -- for a list that changes on the scale of
+   * minutes. A failed refresh keeps the old answer and is tried again on the
+   * next call.
+   */
+  staleWhileRevalidate?: boolean;
 };
 
 export async function cached<T>(
@@ -41,7 +52,7 @@ export async function cached<T>(
   if (hit && Date.now() - hit.at < ttlMs) return hit.value as T;
 
   const pending = inflight.get(key);
-  if (pending) return pending as Promise<T>;
+  if (pending) return hit && options.staleWhileRevalidate ? (hit.value as T) : (pending as Promise<T>);
 
   // Rejections are never cached -- the catch below only cleans up, so the
   // next caller retries rather than inheriting a thrown error.
@@ -55,6 +66,11 @@ export async function cached<T>(
     });
 
   inflight.set(key, run);
+  if (hit && options.staleWhileRevalidate) {
+    // The refresh is on its way; a rejection is nobody's to await here.
+    run.catch(() => {});
+    return hit.value as T;
+  }
   return run;
 }
 

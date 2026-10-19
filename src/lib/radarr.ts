@@ -444,9 +444,17 @@ export async function getRadarrCompletedProtocols(): Promise<Map<number, Downloa
   try {
     // A thousand history records, and which protocol delivered a finished
     // movie never changes: once a minute is plenty.
-    const history = await sharedRead("radarr:grab-history", 60_000, () => radarrFetch<{
-      records: { movieId?: number; date: string; data?: { protocol?: string } }[];
-    }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending"));
+    const history = await sharedRead(
+      "radarr:grab-history",
+      60_000,
+      () =>
+        radarrFetch<{
+          records: { movieId?: number; date: string; data?: { protocol?: string } }[];
+        }>("/api/v3/history?pageSize=1000&eventType=1&sortKey=date&sortDirection=descending"),
+      // A render never waits on the thousand records; the old map stands
+      // while they refresh.
+      { serveStale: true }
+    );
     for (const r of history.records) {
       if (r.movieId == null || result.has(r.movieId)) continue; // newest first -- first hit per movie wins
       result.set(r.movieId, normalizeProtocol(r.data?.protocol));
@@ -511,15 +519,19 @@ export async function getRadarrCompletedMovies(): Promise<CompletedDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
     const [movies, protocols] = await Promise.all([
-      sharedRead("radarr:movies", 30_000, () =>
-        radarrFetch<
-          {
-            id: number;
-            title: string;
-            hasFile: boolean;
-            movieFile?: { relativePath?: string; size?: number; dateAdded?: string };
-          }[]
-        >("/api/v3/movie")
+      sharedRead(
+        "radarr:movies",
+        30_000,
+        () =>
+          radarrFetch<
+            {
+              id: number;
+              title: string;
+              hasFile: boolean;
+              movieFile?: { relativePath?: string; size?: number; dateAdded?: string };
+            }[]
+          >("/api/v3/movie"),
+        { serveStale: true }
       ),
       getRadarrCompletedProtocols(),
     ]);
