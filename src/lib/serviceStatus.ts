@@ -1064,11 +1064,16 @@ async function sabnzbdStatus(): Promise<ServiceStatus> {
     return {
       name,
       group,
-      // Paused is reported as a real problem rather than a note: it is chosen
-      // deliberately once and then forgotten about for weeks.
-      state: q.paused ? "down" : "up",
+      // Paused used to count as down, on the thought that a pause is chosen
+      // once and forgotten for weeks. But SABnzbd pauses itself: "pause
+      // downloading during post-processing" is on (see mediabox-infra's
+      // compose), so a 60 GB season's verify-and-move holds the queue for
+      // twenty minutes several times a day, and each one the scheduled probe
+      // caught became a "SABnzbd is down" email (2026-10-18). It answered;
+      // it was working. Paused is a note on an up service.
+      state: "up",
       detail: q.paused
-        ? `PAUSED - ${queued} job(s) waiting`
+        ? `paused, ${queued} job(s) waiting`
         : `${q.status ?? "idle"}, ${queued} queued`,
       address,
     };
