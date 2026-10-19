@@ -23,6 +23,7 @@ import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownl
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { formatFileSize } from "@/lib/formatBytes";
 import { withDeadline } from "@/lib/withDeadline";
+import { startRenderTiming } from "@/lib/renderTiming";
 import { getClientProgress } from "@/lib/clientProgress";
 import { withClientProgress } from "@/lib/liveProgressRules";
 import { foldPacks } from "@/lib/downloadGroupRules";
@@ -56,6 +57,12 @@ export async function AdminDownloadsSections() {
   // refresh button just hangs" was.
   const PANEL_DEADLINE_MS = 6000;
 
+  // Where a render's time goes: a render over SLOW_RENDER_MS logs its slowest
+  // steps (renderTiming.ts).
+  const SLOW_RENDER_MS = 1000;
+  const timing = startRenderTiming("downloads-panel");
+  const timed = timing.timed;
+
   const [
     radarrQueue,
     sonarrQueue,
@@ -70,19 +77,19 @@ export async function AdminDownloadsSections() {
     ownedGames,
     flashDownloads,
   ] = await Promise.all([
-    withDeadline(getRadarrActiveDownloads(), [], PANEL_DEADLINE_MS),
-    withDeadline(getSonarrActiveDownloads(), [], PANEL_DEADLINE_MS),
+    timed("radarr queue", withDeadline(getRadarrActiveDownloads(), [], PANEL_DEADLINE_MS)),
+    timed("sonarr queue", withDeadline(getSonarrActiveDownloads(), [], PANEL_DEADLINE_MS)),
     // The clients' own figure for each transfer: the *arrs' lags their serial
     // command queue, minutes behind a season search (liveProgressRules.ts).
-    withDeadline(getClientProgress(), new Map(), PANEL_DEADLINE_MS),
-    withDeadline(getRadarrCompletedMovies(), [], PANEL_DEADLINE_MS),
-    withDeadline(getSonarrCompletedEpisodes(), [], PANEL_DEADLINE_MS),
+    timed("client progress", withDeadline(getClientProgress(), new Map(), PANEL_DEADLINE_MS)),
+    timed("radarr completed", withDeadline(getRadarrCompletedMovies(), [], PANEL_DEADLINE_MS)),
+    timed("sonarr completed", withDeadline(getSonarrCompletedEpisodes(), [], PANEL_DEADLINE_MS)),
     // In the same wave: these rows sit at the top of the panel, so resolving
     // them after the rest would leave the newest requests blank the longest.
-    withDeadline(getQueuedEpisodeSearches(), [], PANEL_DEADLINE_MS),
+    timed("queued searches", withDeadline(getQueuedEpisodeSearches(), [], PANEL_DEADLINE_MS)),
     // Requested but not yet picked up by Radarr/Sonarr's own queue -- still
     // searching for a release, and otherwise invisible until it is grabbed.
-    prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } }),
+    timed("pending requests", prisma.mediaRequest.findMany({ where: { status: { in: ["requested", "noReleaseFound"] } } })),
     // When each title was asked for, for stamping in-flight rows the download
     // client gives no grab time for.
     prisma.mediaRequest
@@ -91,9 +98,9 @@ export async function AdminDownloadsSections() {
         select: { mediaType: true, externalId: true, requestedAt: true, status: true },
       })
       .catch(() => []),
-    withDeadline(getGameDownloads(), [], PANEL_DEADLINE_MS),
-    withDeadline(getWishlist(), [], PANEL_DEADLINE_MS),
-    withDeadline(getGamesList(), [], PANEL_DEADLINE_MS),
+    timed("gamarr downloads", withDeadline(getGameDownloads(), [], PANEL_DEADLINE_MS)),
+    timed("gamarr wishlist", withDeadline(getWishlist(), [], PANEL_DEADLINE_MS)),
+    timed("games list", withDeadline(getGamesList(), [], PANEL_DEADLINE_MS)),
     prisma.flashGame.findMany({
       where: { fileName: { not: null } },
       select: { slug: true, title: true, fileSize: true, storage: true },
@@ -234,7 +241,7 @@ export async function AdminDownloadsSections() {
     r.externalId != null &&
     (r.mediaType === "movie" ? !representedMovieIds.has(r.externalId) : !representedShowIds.has(r.externalId))
   );
-  const searchingRows = await withDeadline(
+  const searchingRows = await timed("searching rows", withDeadline(
     Promise.all(
       stillSearching.map(async (r): Promise<DownloadRow | null> => {
         if (r.externalId == null) return null;
@@ -277,7 +284,7 @@ export async function AdminDownloadsSections() {
     // above already say the same request was received.
     [],
     PANEL_DEADLINE_MS
-  );
+  ));
   downloads.unshift(...searchingRows);
 
   // Everything still waiting its turn in the ordered search queue.
@@ -317,13 +324,13 @@ export async function AdminDownloadsSections() {
       .filter((r) => r.mediaType === "show" && (r.status === "requested" || r.status === "downloading"))
       .map((r) => r.externalId)
       .filter((id): id is number => id != null),
-    ...(await withDeadline(getSonarrWantedSeriesIds(), [], PANEL_DEADLINE_MS)),
+    ...(await timed("sonarr wanted", withDeadline(getSonarrWantedSeriesIds(), [], PANEL_DEADLINE_MS))),
   ];
-  const places = await withDeadline(
+  const places = await timed("series places", withDeadline(
     getSonarrSeriesPlaces([...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId), ...activeShowIds]),
     new Map(),
     PANEL_DEADLINE_MS
-  );
+  ));
 
   // Every episode a requested show is still owed, whether or not anything has
   // a row for it. Without these a show appeared only as far as the search
@@ -358,7 +365,7 @@ export async function AdminDownloadsSections() {
   // than them simply vanishing from "queued". One asked for again since is
   // wanted again and already has a row above.
   const listedNow = new Set(downloads.map((d) => `${d.mediaType}:${d.externalId}:${d.episodeId ?? ""}`));
-  const givenUp = await withDeadline(recentGiveUps(), [], PANEL_DEADLINE_MS);
+  const givenUp = await timed("give-ups", withDeadline(recentGiveUps(), [], PANEL_DEADLINE_MS));
   downloads.unshift(
     ...givenUp
       .filter((g) => !listedNow.has(`${g.mediaType}:${g.externalId}:${g.episodeId ?? ""}`))
@@ -407,6 +414,8 @@ export async function AdminDownloadsSections() {
     d.seasonNumber = place?.seasonNumber ?? null;
     d.episodeNumber = place?.episodeNumber ?? null;
   }
+
+  timing.finish(SLOW_RENDER_MS);
 
   return (
       <div className="space-y-10">
