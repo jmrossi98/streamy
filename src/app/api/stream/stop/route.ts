@@ -1,5 +1,6 @@
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { stopJellyfinTranscode } from "@/lib/jellyfin";
+import { forgetPlaybackSession } from "@/lib/playbackKeepalive";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,9 @@ export async function POST(request: Request) {
     return new Response("playSessionId required", { status: 400 });
   }
 
+  // Stop the keepalive first: a ping landing after the stop would be
+  // harmless (nothing to keep alive) but pointless.
+  forgetPlaybackSession(playSessionId);
   await stopJellyfinTranscode(playSessionId);
   return new Response(null, { status: 204 });
 }
