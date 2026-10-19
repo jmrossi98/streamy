@@ -487,14 +487,19 @@ export function ShowContent({
                     }`}
                   >
                     <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded bg-white/10 sm:h-24 sm:w-40">
-                      <Image
-                        src={ep.still}
-                        alt=""
-                        fill
-                        className={`object-cover ${playable ? "" : "opacity-40"}`}
-                        sizes="160px"
-                        unoptimized
-                      />
+                      {/* No still from TMDB: a plain box, not the poster
+                          placeholder, whose "No Poster" text showed through
+                          behind the status badge. */}
+                      {ep.hasStill && (
+                        <Image
+                          src={ep.still}
+                          alt=""
+                          fill
+                          className={`object-cover ${playable ? "" : "opacity-40"}`}
+                          sizes="160px"
+                          unoptimized
+                        />
+                      )}
                       {/* Only offer Play when there's actually something to
                           play -- a play button on an unfinished episode just
                           dead-ends at "not downloaded yet". */}
