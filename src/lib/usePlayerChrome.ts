@@ -11,6 +11,8 @@ import { spaceTogglesPlayback } from "./playerKeyRules";
 // player keeps its own source, quality, progress-saving and error handling.
 /** How long the controls stay up after the last mouse move, tap or play. */
 const HIDE_AFTER_MS = 3200;
+/** Mouse moves closer together than this re-arm nothing. */
+const REVEAL_THROTTLE_MS = 250;
 
 export function usePlayerChrome(
   videoRef: RefObject<HTMLVideoElement | null>,
@@ -134,7 +136,16 @@ export function usePlayerChrome(
   );
 
   // Show the controls and arm the auto-hide. Held open while paused.
+  //
+  // A mouse sends dozens of moves a second, and each one used to clear and
+  // re-set the hide timer on the same thread hls.js appends media on. Only
+  // the first move in a short window does anything; the hide then lands at
+  // most that much early, which nobody can see.
+  const lastRevealRef = useRef(0);
   const revealControls = useCallback(() => {
+    const now = Date.now();
+    if (now - lastRevealRef.current < REVEAL_THROTTLE_MS) return;
+    lastRevealRef.current = now;
     setControlsVisible(true);
     armHide();
   }, [armHide]);

@@ -186,10 +186,21 @@ export function VideoChrome({
   }, [show]);
   const interactive = interactable ? "pointer-events-auto" : "pointer-events-none";
 
+  // Never fully transparent, and always its own compositor layer.
+  //
+  // In fullscreen, Chrome hands an unobscured video to a hardware overlay
+  // plane and takes it back the moment something translucent is drawn over
+  // it. The bars fading in on a mouse move were exactly that, so every
+  // reveal (and every hide, 3 s later) switched the picture between the two
+  // paths, and on some GPUs the switch is a visible hitch: "hover the mouse
+  // in fullscreen and the video stalls for a moment" (2026-10-19). At 2%
+  // the bars are invisible but still drawn, so the video stays on one path
+  // the whole time. will-change keeps the layer from being rebuilt (a
+  // full-screen raster) at the start of every fade.
   return (
     <div
-      className={`absolute inset-0 z-20 transition-opacity duration-300 pointer-events-none ${
-        show ? "opacity-100" : "opacity-0"
+      className={`absolute inset-0 z-20 transition-opacity duration-300 pointer-events-none will-change-[opacity] ${
+        show ? "opacity-100" : "opacity-[0.02]"
       }`}
     >
       {/* Top bar: title (+ subtitle) left, quality + close right. */}
