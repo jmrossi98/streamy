@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Movie, TVShow } from "@/lib/tmdb";
-import { CardArt } from "@/components/CardArt";
+import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
 import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
@@ -75,11 +75,13 @@ function MovieCard({
     <div className={CARD_CLASS}>
       <div className="relative aspect-video w-full">
         <Link href={`/watch/${movie.id}`} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
-          <CardArt
-            backdrop={movie.backdrop}
-            poster={movie.poster}
+          <Image
+            src={movie.poster}
             alt={movie.title}
+            fill
+            className="object-cover"
             sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
+            unoptimized
           />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
@@ -108,11 +110,13 @@ function ShowCard({ show }: { show: TVShow }) {
     <div className={CARD_CLASS}>
       <div className="relative aspect-video w-full">
         <Link href={`/show/${show.id}`} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
-          <CardArt
-            backdrop={show.backdrop}
-            poster={show.poster}
+          <Image
+            src={show.poster}
             alt={show.name}
+            fill
+            className="object-cover"
             sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
+            unoptimized
           />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
