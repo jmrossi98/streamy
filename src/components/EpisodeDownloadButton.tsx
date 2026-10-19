@@ -440,6 +440,17 @@ export function EpisodeDownloadButton({
     );
   }
 
+  if (unaired) {
+    // Nothing to fetch yet. The season button above still covers it: a
+    // season request monitors every episode, aired or not, so Sonarr picks
+    // this one up the day it is out.
+    return (
+      <span className={`shrink-0 text-xs font-medium text-white/40 ${className}`} title="Nothing to download until it airs">
+        Not aired yet
+      </span>
+    );
+  }
+
   const label = episodeNumber == null ? "Download season" : "Download";
 
   async function handleClick(e: React.MouseEvent) {
