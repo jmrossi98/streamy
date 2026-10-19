@@ -1,7 +1,11 @@
-import { countWatchlist, getWatchlistMovies, getWatchlistShows } from "@/lib/watchlist";
-import { MovieRow } from "@/components/MovieRow";
-import { TVRow } from "@/components/TVRow";
-import { shelfHref, ROW_WINDOW } from "@/lib/browseShelfRules";
+import { countWatchlist, getWatchlistRecent } from "@/lib/watchlist";
+import { MovieCard } from "@/components/MovieRow";
+import { ShowCard } from "@/components/TVRow";
+import { ScrollableRow } from "@/components/ScrollableRow";
+import { ROW_WINDOW, rowOverflows } from "@/lib/browseShelfRules";
+
+/** The full My List page: every kind, as grids. */
+const MY_LIST_HREF = "/watchlist";
 
 /**
  * The viewer's saved titles, below Continue Watching on Home.
@@ -10,40 +14,33 @@ import { shelfHref, ROW_WINDOW } from "@/lib/browseShelfRules";
  * RecentlyWatchedSection is: a saved list is one TMDB detail lookup per item
  * and unbounded in length, so awaiting it in the page body would put the whole
  * shell -- hero included -- behind however many titles this viewer has saved.
- * Here a cold cache costs a moment of skeleton in two strips instead of the
+ * Here a cold cache costs a moment of skeleton in one strip instead of the
  * page's time to first byte.
  *
- * Movies and shows stay as separate rows rather than merging into one strip
- * the way Continue Watching does: that row merges because "what was I last
- * watching" is one question regardless of kind, whereas a saved list is
- * browsed by kind.
+ * One strip, movies and shows together, newest save first -- the way Continue
+ * Watching mixes kinds by when they were last watched. Home used to show two
+ * rows by kind; Jake asked for one (2026-10-19). The Movies and TV tabs keep
+ * their single-kind My List rows, since there the kind is the page.
  */
 export async function MyListSection({ userId }: { userId: string }) {
-  const [movies, shows, saved] = await Promise.all([
-    getWatchlistMovies(userId, ROW_WINDOW),
-    getWatchlistShows(userId, ROW_WINDOW),
-    countWatchlist(userId),
-  ]);
+  const [items, saved] = await Promise.all([getWatchlistRecent(userId, ROW_WINDOW), countWatchlist(userId)]);
+  if (items.length === 0) return null;
 
-  if (movies.length === 0 && shows.length === 0) return null;
-
+  const total = saved.movies + saved.shows;
   return (
-    <>
-      {/* Titled by kind, unlike the tabs where "My List" alone is unambiguous:
-          on Home both strips are visible at once, and two rows both called
-          "My List" read as one row that broke rather than two kinds. */}
-      {movies.length > 0 && (
-        <MovieRow
-          title="My List - Movies"
-          movies={movies}
-          href={shelfHref("movies", { kind: "my-list" })}
-          total={saved.movies}
-        />
+    <ScrollableRow
+      title="My List"
+      href={MY_LIST_HREF}
+      more={rowOverflows(items.length, total, true) ? { href: MY_LIST_HREF, total } : undefined}
+    >
+      {items.map((item) =>
+        item.kind === "movie" ? (
+          <MovieCard key={`m-${item.movie.id}`} movie={item.movie} />
+        ) : (
+          <ShowCard key={`s-${item.show.id}`} show={item.show} widthClass="w-[160px] sm:w-[180px] md:w-[240px]" />
+        )
       )}
-      {shows.length > 0 && (
-        <TVRow title="My List - Shows" shows={shows} href={shelfHref("tv", { kind: "my-list" })} total={saved.shows} />
-      )}
-    </>
+    </ScrollableRow>
   );
 }
 
@@ -53,7 +50,7 @@ export function MyListSkeleton() {
       <div className="h-6 w-28 rounded bg-white/5" />
       <div className="flex gap-2 overflow-hidden">
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="aspect-[2/3] w-28 shrink-0 rounded bg-white/5 sm:w-32" />
+          <div key={i} className="aspect-video w-40 shrink-0 rounded bg-white/5 sm:w-44 md:w-60" />
         ))}
       </div>
     </div>

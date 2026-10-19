@@ -12,6 +12,7 @@ import { getGamesList, type GameListItem } from "@/lib/games";
 import { getLiveChannels, type LiveChannel } from "@/lib/liveTv";
 import { listFlashGames } from "@/lib/flashGames";
 import type { FlashGameSummary } from "@/lib/flashGameRules";
+import { newestSaved } from "@/lib/savedRowRules";
 
 const showLanguage = (id: string) => getOriginalLanguage("tv", id);
 
@@ -74,6 +75,44 @@ export async function getWatchlistShows(
       .map(toCardShow),
     showLanguage
   );
+}
+
+/** One saved title of either kind, for the mixed My List row on Home. */
+export type SavedItem = { kind: "movie"; movie: Movie } | { kind: "show"; show: TVShow };
+
+/**
+ * The newest `limit` saves across movies and shows, newest first, as cards
+ * (see savedRowRules.ts). Each kind is read to `limit` so a list of mostly
+ * one kind still fills the row.
+ */
+export async function getWatchlistRecent(userId: string, limit: number): Promise<SavedItem[]> {
+  const [movieItems, showItems] = await Promise.all([
+    prisma.watchlistItem.findMany({ where: { userId }, orderBy: { addedAt: "desc" }, take: limit }),
+    prisma.watchlistShowItem.findMany({ where: { userId }, orderBy: { addedAt: "desc" }, take: limit }),
+  ]);
+  const refs = newestSaved(movieItems, showItems, limit);
+  if (refs.length === 0) return [];
+
+  const [movies, shows] = await Promise.all([
+    Promise.all(refs.filter((r) => r.kind === "movie").map((r) => getMovieById(r.id).catch(() => null))),
+    Promise.all(refs.filter((r) => r.kind === "show").map((r) => showOrNull(r.id))),
+  ]);
+  const movieById = new Map(movies.flatMap((m) => (m ? [[String(m.id), toCardMovie(m)] as const] : [])));
+  const tagged = await tagAnime(
+    shows.filter((s): s is NonNullable<typeof s> => s != null).map(toCardShow),
+    showLanguage
+  );
+  const showById = new Map(tagged.map((s) => [String(s.id), s] as const));
+
+  // Back in saved order; a title TMDB will not answer for leaves a gap.
+  return refs.flatMap((r): SavedItem[] => {
+    if (r.kind === "movie") {
+      const movie = movieById.get(r.id);
+      return movie ? [{ kind: "movie", movie }] : [];
+    }
+    const show = showById.get(r.id);
+    return show ? [{ kind: "show", show }] : [];
+  });
 }
 
 /** Loads all saved movies, TV shows, games, live channels, and Flash games;
