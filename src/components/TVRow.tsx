@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { TVShow } from "@/lib/tmdb";
-import { CardArt } from "@/components/CardArt";
+import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
 import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
@@ -40,11 +40,13 @@ export function ShowCard({
     >
       <div className="relative aspect-video w-full">
         <Link href={showHref} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
-          <CardArt
-            backdrop={show.backdrop}
-            poster={show.poster}
+          <Image
+            src={show.poster}
             alt={show.name}
+            fill
+            className="object-cover"
             sizes="(max-width: 768px) 180px, 240px"
+            unoptimized
           />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
