@@ -12,7 +12,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { cached } from "./ttlCache";
 import { isRetryable, tmdbFetch, TmdbTransientError } from "./tmdbThrottle";
-import type { SeasonCounts } from "./episodeNumbering";
+import { airKey, type AirDates, type SeasonCounts, type TmdbLayout } from "./episodeNumbering";
 // Lazy-load mock module only when needed (dev without API key) — avoids
 // compiling 200 lines of mock data on every page in dev when using real API.
 let _mock: typeof import("./tmdb-mock") | null = null;
@@ -552,23 +552,48 @@ export async function getShowBrowseMeta(id: string): Promise<{ keywords: string[
   );
 }
 
+/** TMDB appends at most twenty sub-requests to one call. */
+const TMDB_APPEND_LIMIT = 20;
+
 /**
- * How many episodes each of a show's regular seasons has on TMDB, which is
- * what translating to Sonarr's and Jellyfin's numbering needs (see
- * episodeNumbering.ts). Its own lookup, like getOriginalLanguage, so the
- * day-cached ShowDetail doesn't grow a field. Null when TMDB can't say.
+ * How TMDB lays out a show: how many episodes each regular season has, and
+ * the day each episode aired -- what translating to Sonarr's and Jellyfin's
+ * numbering needs (see episodeNumbering.ts). Its own lookup, like
+ * getOriginalLanguage, so the day-cached ShowDetail doesn't grow a field.
+ * The seasons ride along on the show call, twenty at a time. Null when TMDB
+ * can't say; a show whose seasons can't be read still has its counts.
  */
-export async function getTmdbSeasonCounts(id: string): Promise<SeasonCounts | null> {
+export async function getTmdbSeasonLayout(id: string): Promise<TmdbLayout | null> {
   if (USE_MOCK) return null;
   return cached(
-    `tmdb-season-counts:${id}`,
+    `tmdb-season-layout:${id}`,
     ONE_DAY_MS,
     async () => {
       try {
         const data = await fetchTmdb<{ seasons?: { season_number: number; episode_count: number }[] }>(`tv/${id}`);
         const counts: SeasonCounts = {};
         for (const s of data.seasons ?? []) if (s.season_number > 0) counts[s.season_number] = s.episode_count;
-        return Object.keys(counts).length > 0 ? counts : null;
+        if (Object.keys(counts).length === 0) return null;
+
+        const airDates: AirDates = {};
+        const seasons = Object.keys(counts).map(Number);
+        for (let i = 0; i < seasons.length; i += TMDB_APPEND_LIMIT) {
+          const chunk = seasons.slice(i, i + TMDB_APPEND_LIMIT);
+          try {
+            const appended = await fetchTmdb<Record<string, { episodes?: { episode_number: number; air_date?: string | null }[] }>>(
+              `tv/${id}`,
+              { append_to_response: chunk.map((n) => `season/${n}`).join(",") }
+            );
+            for (const n of chunk) {
+              for (const e of appended[`season/${n}`]?.episodes ?? []) {
+                if (e.air_date) airDates[airKey(n, e.episode_number)] = e.air_date;
+              }
+            }
+          } catch {
+            // The counts still translate by position; only the dates are lost.
+          }
+        }
+        return { counts, airDates };
       } catch {
         return null;
       }

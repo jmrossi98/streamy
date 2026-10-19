@@ -88,6 +88,8 @@ export type JellyfinItem = {
   LocationType?: string;
   IndexNumber?: number;
   ParentIndexNumber?: number;
+  /** ISO datetime of the air date, when asked for (fields=PremiereDate). */
+  PremiereDate?: string | null;
 };
 
 /**
@@ -219,14 +221,15 @@ export async function findJellyfinEpisodeItemId(
       // the whole show -- see episodeNumbering.ts.
       // Loaded lazily: tmdb.ts pulls in React's cache(), which this module
       // otherwise has no need for.
-      const { getTmdbSeasonCounts } = await import("./tmdb");
+      const { getTmdbSeasonLayout } = await import("./tmdb");
       const [all, tmdb] = await Promise.all([
-        jellyfinFetch<{ Items: JellyfinItem[] }>(`/Shows/${seriesId}/Episodes?fields=ProviderIds`),
-        getTmdbSeasonCounts(showTmdbId),
+        jellyfinFetch<{ Items: JellyfinItem[] }>(`/Shows/${seriesId}/Episodes?fields=ProviderIds,PremiereDate`),
+        getTmdbSeasonLayout(showTmdbId),
       ]);
       const refs = all.Items.filter((i) => i.ParentIndexNumber != null && i.IndexNumber != null).map((i) => ({
         season: i.ParentIndexNumber!,
         episode: i.IndexNumber!,
+        airDate: i.PremiereDate ?? null,
         item: i,
       }));
       const hit = tmdb ? toOtherNumbering(tmdb, refs, { season: seasonNumber, episode: episodeNumber }) : null;
