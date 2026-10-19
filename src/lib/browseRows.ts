@@ -32,6 +32,7 @@ import {
   getTrendingTVPages,
   getTVGenres,
   type Movie,
+  type PersonTitle,
   type TVShow,
 } from "./tmdb";
 import { getLibraryMovies, getLibraryShows, type LibraryMovie, type LibraryShow } from "./downloadedLibrary";
@@ -209,12 +210,14 @@ function movieRowPlan(library: LibraryMovie[], genres: Genre[], home: boolean, s
         ...featureRow<LibraryMovie>({ kind: "short" }, SHORT, shortWatches(library), MIN_FRESH_ROW),
         ...featureRow<LibraryMovie>({ kind: "long" }, LONG, longWatches(library), MIN_FRESH_ROW),
       ];
-  return [...lead, ...interleave(genreRows, [...among, ...runtime])];
+  // Home's Recently Added row mixes both kinds (getHomeMixedRows), so the
+  // movie-only one stays on the Movies tab.
+  return [...(home ? [] : lead), ...interleave(genreRows, [...among, ...runtime])];
 }
 
-/** The TV twin. Home shows only what is new, and leaves the rest to the tab. */
+/** The TV twin. Home has no TV rows of its own: what is new is in the mixed row. */
 function showRowPlan(library: LibraryShow[], genres: Genre[], home: boolean, seed = todaySeed()): PlannedRow<LibraryShow>[] {
-  if (home) return featureRow<LibraryShow>({ kind: "recent" }, RECENT, recentlyAdded(library));
+  if (home) return [];
   const genreRows: PlannedRow<LibraryShow>[] = genreBuckets(library, genres).map((b) => ({
     shelf: { kind: "genre", genreId: b.genre.id },
     title: b.genre.name,
@@ -236,8 +239,14 @@ export type MovieBrowse = {
   rows: MovieRowData[];
 };
 
-/** `home` keeps to the lead genres and fewer cross rows, for Home, where movies share the page. */
-export async function getMovieBrowse({ home = false }: { home?: boolean } = {}): Promise<MovieBrowse> {
+type BrowseOptions = {
+  /** Home: the lead genres and fewer cross rows, and no holiday or Recently Added row (those mix kinds there). */
+  home?: boolean;
+  /** Ids already leading a row elsewhere on the page, which these rows then avoid leading with. */
+  alreadyShown?: Iterable<string>;
+};
+
+export async function getMovieBrowse({ home = false, alreadyShown = [] }: BrowseOptions = {}): Promise<MovieBrowse> {
   const [library, genres] = await Promise.all([movieLibrary(), getGenres()]);
 
   if (!library) {
@@ -260,14 +269,18 @@ export async function getMovieBrowse({ home = false }: { home?: boolean } = {}):
   }
 
   const holiday = holidayNow();
-  const holidayMovies = holiday ? pickHolidayTitles(holiday, library) : [];
+  const holidayMovies = holiday && !home ? pickHolidayTitles(holiday, library) : [];
   const plan = movieRowPlan(library, genres, home);
 
   // Page order, so a title leads the first row it belongs to and sinks in the
   // rest: the holiday row keeps its own, Trending keeps what is left of the
   // top, and every row below leads with what the rows above did not show. A
   // bonus row that cannot is left off the page.
-  const [holidayWindow, trendingWindow, ...windows] = spreadRows([{ titles: holidayMovies }, { titles: library }, ...plan]);
+  const [holidayWindow, trendingWindow, ...windows] = spreadRows(
+    [{ titles: holidayMovies }, { titles: library }, ...plan],
+    ROW_LIMIT,
+    alreadyShown
+  );
 
   return {
     trending: trendingWindow.map(movieCard),
@@ -306,8 +319,7 @@ export type ShowBrowse = {
   rows: ShowRowData[];
 };
 
-/** `home` keeps to the one row Home has room for under Trending TV. */
-export async function getShowBrowse({ home = false }: { home?: boolean } = {}): Promise<ShowBrowse> {
+export async function getShowBrowse({ home = false, alreadyShown = [] }: BrowseOptions = {}): Promise<ShowBrowse> {
   const library = await showLibrary();
 
   if (!library) {
@@ -330,9 +342,13 @@ export async function getShowBrowse({ home = false }: { home?: boolean } = {}): 
   }
 
   const holiday = holidayNow();
-  const holidayShows = holiday ? pickHolidayTitles(holiday, library) : [];
+  const holidayShows = holiday && !home ? pickHolidayTitles(holiday, library) : [];
   const plan = showRowPlan(library, home ? [] : await libraryTVGenres(), home);
-  const [holidayWindow, trendingWindow, ...windows] = spreadRows([{ titles: holidayShows }, { titles: library }, ...plan]);
+  const [holidayWindow, trendingWindow, ...windows] = spreadRows(
+    [{ titles: holidayShows }, { titles: library }, ...plan],
+    ROW_LIMIT,
+    alreadyShown
+  );
 
   return {
     trending: trendingWindow.map(showCard),
@@ -361,6 +377,124 @@ export async function getShowBrowse({ home = false }: { home?: boolean } = {}): 
       }))
       .filter((row) => row.shows.length > 0),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Home's mixed rows: Recently Added and the holiday across movies and shows.
+// Home used to show each by kind, "Recently Added - Movies" and "- Shows"; one
+// row per cut is how the viewer reads the page, the way My List and Continue
+// Watching already mix kinds. The Movies and TV tabs keep the single-kind rows.
+// ---------------------------------------------------------------------------
+
+export const MIXED_SHELVES = ["recent", "holiday"] as const;
+export type MixedShelfKind = (typeof MIXED_SHELVES)[number];
+
+export function mixedShelfHref(kind: MixedShelfKind): string {
+  return `/browse/${kind}`;
+}
+
+export type MixedRowData = { title: string; href: string; items: PersonTitle[]; total: number };
+
+/** A library title of either kind, keyed so the two kinds' ids cannot collide. */
+type MixedTitle = {
+  id: string;
+  addedAt: string | null;
+  keywords: string[];
+  genres: string[];
+  popularity?: number;
+  card: PersonTitle;
+};
+
+async function mixedLibrary(): Promise<MixedTitle[] | null> {
+  const [movies, shows] = await Promise.all([movieLibrary(), showLibrary()]);
+  if (!movies && !shows) return null;
+  return [
+    ...(movies ?? []).map((m) => ({
+      id: `movie:${m.id}`,
+      addedAt: m.addedAt,
+      keywords: m.keywords,
+      genres: m.genres,
+      popularity: m.popularity,
+      card: { kind: "movie" as const, movie: movieCard(m) },
+    })),
+    ...(shows ?? []).map((s) => ({
+      id: `show:${s.id}`,
+      addedAt: s.addedAt,
+      keywords: s.keywords,
+      genres: s.genres,
+      popularity: s.popularity,
+      card: { kind: "show" as const, show: showCard(s) },
+    })),
+  ];
+}
+
+/** The whole of each mixed shelf, in row order; holiday is empty out of season. */
+function mixedShelves(library: MixedTitle[]): { recent: MixedTitle[]; holiday: MixedTitle[]; holidayTitle: string | null } {
+  const holiday = holidayNow();
+  return {
+    recent: recentlyAdded(library),
+    holiday: holiday ? pickHolidayTitles(holiday, library) : [],
+    holidayTitle: holiday?.title ?? null,
+  };
+}
+
+export type HomeMixedRows = {
+  recent: MixedRowData | null;
+  holiday: MixedRowData | null;
+  /** The movie and show ids these rows lead with, for the per-kind rows to avoid. */
+  movieIds: string[];
+  showIds: string[];
+};
+
+/** Home's two mixed rows, windowed. Null rows when the library cannot be read (the TMDB fallback has no arrivals). */
+export async function getHomeMixedRows(): Promise<HomeMixedRows> {
+  const library = await mixedLibrary();
+  if (!library) return { recent: null, holiday: null, movieIds: [], showIds: [] };
+  const shelves = mixedShelves(library);
+  // The holiday row sits above Recently Added on the page, so it keeps its own.
+  const [holidayWindow, recentWindow] = spreadRows([{ titles: shelves.holiday }, { titles: shelves.recent }]);
+  const shown = [...holidayWindow, ...recentWindow];
+  return {
+    recent:
+      recentWindow.length > 0
+        ? { title: RECENT, href: mixedShelfHref("recent"), items: recentWindow.map((t) => t.card), total: shelves.recent.length }
+        : null,
+    holiday:
+      shelves.holidayTitle && holidayWindow.length > 0
+        ? {
+            title: shelves.holidayTitle,
+            href: mixedShelfHref("holiday"),
+            items: holidayWindow.map((t) => t.card),
+            total: shelves.holiday.length,
+          }
+        : null,
+    movieIds: shown.filter((t) => t.card.kind === "movie").map((t) => t.id.slice("movie:".length)),
+    showIds: shown.filter((t) => t.card.kind === "show").map((t) => t.id.slice("show:".length)),
+  };
+}
+
+export type MixedShelfContents = {
+  title: string;
+  items: PersonTitle[];
+  /** The other mixed shelf, when it has anything today. */
+  others: { kind: MixedShelfKind; title: string }[];
+};
+
+/** Everything on one of Home's mixed shelves, or null when there is no such shelf today. */
+export async function getMixedShelf(kind: MixedShelfKind): Promise<MixedShelfContents | null> {
+  const library = await mixedLibrary();
+  if (!library) return null;
+  const shelves = mixedShelves(library);
+  const holidayShelf = shelves.holidayTitle ? { kind: "holiday" as const, title: shelves.holidayTitle } : null;
+  if (kind === "recent") {
+    return {
+      title: RECENT,
+      items: shelves.recent.map((t) => t.card),
+      others: holidayShelf && shelves.holiday.length > 0 ? [holidayShelf] : [],
+    };
+  }
+  if (!holidayShelf || shelves.holiday.length === 0) return null;
+  return { title: holidayShelf.title, items: shelves.holiday.map((t) => t.card), others: [{ kind: "recent", title: RECENT }] };
 }
 
 /** One shelf in full. `paged` is true only for TMDB's lists, which grow with "Load more". */

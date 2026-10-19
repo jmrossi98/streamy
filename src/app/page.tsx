@@ -10,7 +10,7 @@ import { HomeMoviesSection } from "@/components/HomeMoviesSection";
 import { HomePrefetch } from "@/components/HomePrefetch";
 import { RecentlyWatchedSection, RecentlyWatchedSkeleton } from "./RecentlyWatchedSection";
 import { MyListSection, MyListSkeleton } from "./MyListSection";
-import { getMovieBrowse, getShowBrowse } from "@/lib/browseRows";
+import { getHomeMixedRows, getMovieBrowse, getShowBrowse } from "@/lib/browseRows";
 
 const RECENT_LIMIT = 3; // cap to keep server fast; progress bars for rows fetched client-side
 const RECENT_SHOWS_LIMIT = 3;
@@ -32,15 +32,19 @@ export default async function HomePage() {
     redirect("/login");
   }
 
-  // Single wave: everything the shell, the hero and every row needs. The
+  // The two rows that mix kinds come first, so the per-kind rows below can
+  // avoid leading with what those already show. Both read the same cached
+  // library, so this is not a second round trip to the home server.
+  const mixed = await getHomeMixedRows();
+
+  // One wave for everything else the shell, the hero and every row needs. The
   // rows come from the downloaded library (see browseRows.ts), so the hero
   // below is always something that plays.
   const [movieBrowse, showBrowse, allWatchProgress, recentEpisodeProgress] = await Promise.all([
     // Home shares the page between movies and TV, so it keeps to the lead
-    // genres and a few rows among them, and leaves the rest, and TV's rows
-    // beyond what is new, to the tabs.
-    getMovieBrowse({ home: true }),
-    getShowBrowse({ home: true }),
+    // genres and a few rows among them, and leaves the rest to the tabs.
+    getMovieBrowse({ home: true, alreadyShown: mixed.movieIds }),
+    getShowBrowse({ home: true, alreadyShown: mixed.showIds }),
     prisma.watchProgress.findMany({
       where: { userId: session.user.id },
       orderBy: { updatedAt: "desc" },
@@ -65,7 +69,7 @@ export default async function HomePage() {
   const movieIdsOnPage = new Set([
     ...trending.map((m) => m.id),
     ...(movieBrowse.all?.movies.map((m) => m.id) ?? []),
-    ...(movieBrowse.holiday?.movies.map((m) => m.id) ?? []),
+    ...mixed.movieIds,
     ...rows.flatMap((r) => r.movies.map((m) => m.id)),
   ]);
   const progressList = allWatchProgress
@@ -130,13 +134,12 @@ export default async function HomePage() {
           trendingTotal={movieBrowse.trendingTotal}
           trendingTVTotal={showBrowse.trendingTotal}
           rows={rows}
-          showRows={showBrowse.rows}
           trendingTV={trendingTV}
           progressList={progressList}
-          holidayMovies={movieBrowse.holiday}
+          holiday={mixed.holiday}
+          recent={mixed.recent}
           allMovies={movieBrowse.all}
           allShows={showBrowse.all}
-          holidayShows={showBrowse.holiday}
         />
       </div>
     </>

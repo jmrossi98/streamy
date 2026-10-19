@@ -1,8 +1,6 @@
 import { countWatchlist, getWatchlistRecent } from "@/lib/watchlist";
-import { MovieCard } from "@/components/MovieRow";
-import { ShowCard } from "@/components/TVRow";
-import { ScrollableRow } from "@/components/ScrollableRow";
-import { ROW_WINDOW, rowOverflows } from "@/lib/browseShelfRules";
+import { MixedRow } from "@/components/MixedRow";
+import { ROW_WINDOW } from "@/lib/browseShelfRules";
 
 /** The full My List page: every kind, as grids. */
 const MY_LIST_HREF = "/watchlist";
@@ -25,23 +23,7 @@ const MY_LIST_HREF = "/watchlist";
 export async function MyListSection({ userId }: { userId: string }) {
   const [items, saved] = await Promise.all([getWatchlistRecent(userId, ROW_WINDOW), countWatchlist(userId)]);
   if (items.length === 0) return null;
-
-  const total = saved.movies + saved.shows;
-  return (
-    <ScrollableRow
-      title="My List"
-      href={MY_LIST_HREF}
-      more={rowOverflows(items.length, total, true) ? { href: MY_LIST_HREF, total } : undefined}
-    >
-      {items.map((item) =>
-        item.kind === "movie" ? (
-          <MovieCard key={`m-${item.movie.id}`} movie={item.movie} />
-        ) : (
-          <ShowCard key={`s-${item.show.id}`} show={item.show} widthClass="w-[160px] sm:w-[180px] md:w-[240px]" />
-        )
-      )}
-    </ScrollableRow>
-  );
+  return <MixedRow title="My List" items={items} href={MY_LIST_HREF} total={saved.movies + saved.shows} />;
 }
 
 export function MyListSkeleton() {
