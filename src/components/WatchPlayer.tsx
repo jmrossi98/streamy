@@ -225,9 +225,14 @@ export function WatchPlayer({
           )}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             {!hasSource ? (
-              <div className="z-10 flex max-w-sm flex-col items-center gap-2 px-6 text-center">
+              // On its own dark panel: over a bright backdrop the bare text
+              // was close to unreadable (reported 2026-10-19, episode player).
+              <div
+                role="status"
+                className="z-10 flex max-w-sm flex-col items-center gap-2 rounded-xl bg-black/75 px-7 py-6 text-center shadow-xl backdrop-blur-sm"
+              >
                 <svg
-                  className="h-10 w-10 text-white/50"
+                  className="h-10 w-10 text-white/60"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -240,9 +245,9 @@ export function WatchPlayer({
                     d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
                   />
                 </svg>
-                <p className="text-white font-medium">Not downloaded yet</p>
-                <p className="text-sm text-white/60">
-                  {movieTitle} isn&apos;t on the server yet. Download it first, then play it here.
+                <p className="text-lg font-semibold text-white">Not downloaded yet</p>
+                <p className="text-sm leading-relaxed text-white/85">
+                  {movieTitle} is not on the server yet. Download it first, then play it here.
                 </p>
               </div>
             ) : videoLoading ? (

@@ -24,6 +24,13 @@ import {
   skipOfferAt,
   type EpisodeSegments,
 } from "@/lib/episodeSegmentRules";
+import {
+  pendingNotice,
+  pendingSource,
+  SOURCE_POLL_EVERY_MS,
+  SOURCE_POLL_FOR_MS,
+  type PendingSource,
+} from "@/lib/pendingSourceRules";
 
 // No placeholder fallback on purpose: without a real file this used to play
 // an unrelated sample video, which reads as "the episode is here" when it
@@ -149,6 +156,45 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
     return () => clearTimeout(t);
   }, [episode.next, loadNext]);
 
+  // No file to play. Sonarr imports a file and Jellyfin indexes it a minute
+  // or so later; a click in between found nothing and the page said "Not
+  // downloaded yet" for Clone High (2023) S1E1 fifteen seconds after its
+  // import (2026-10-19). While there is no source: find out which case this
+  // is for the notice, and keep asking for the file, starting it the moment
+  // Jellyfin has it -- the same swap rolling on to the next episode does.
+  // See pendingSourceRules.ts.
+  const [pending, setPending] = useState<PendingSource | null>(null);
+  const { videoUrl: sourceUrl, seasonNumber: pendingSeason, episodeNumber: pendingEpisode } = episode;
+  useEffect(() => {
+    if (sourceUrl) return;
+    let live = true;
+    fetch(`/api/requests/tv?tmdbId=${encodeURIComponent(showId)}&season=${pendingSeason}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { statuses?: Record<number, { status?: string }> } | null) => {
+        if (live) setPending(pendingSource(d?.statuses?.[pendingEpisode]?.status));
+      })
+      .catch(() => {
+        if (live) setPending("missing");
+      });
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - startedAt > SOURCE_POLL_FOR_MS) {
+        clearInterval(timer);
+        return;
+      }
+      fetch(`/api/stream/episode/${showId}/${pendingSeason}/${pendingEpisode}/playback`, { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<EpisodePlayback>) : null))
+        .then((data) => {
+          if (live && data?.videoUrl) setRolled({ from: propsKey, episode: data });
+        })
+        .catch(() => {});
+    }, SOURCE_POLL_EVERY_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [sourceUrl, showId, pendingSeason, pendingEpisode, propsKey]);
+
   // Episodes rolled on to with nobody touching anything (see shouldAskStillWatching).
   const unattendedRef = useRef(0);
   const [askStillWatching, setAskStillWatching] = useState(false);
@@ -214,6 +260,7 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
         episode={episode}
         autoPlay={autoPlay || continuing}
         continuing={continuing}
+        pending={pending}
         closeHref={closeHref}
         onClose={onClose}
         frameRef={frameRef}
@@ -257,6 +304,8 @@ type EpisodeViewProps = {
   episode: Episode;
   autoPlay: boolean;
   continuing: boolean;
+  /** Why there is no source yet, once known (see pendingSourceRules.ts). */
+  pending: PendingSource | null;
   closeHref?: string;
   onClose?: () => void;
   frameRef: RefObject<HTMLDivElement | null>;
@@ -271,6 +320,7 @@ function EpisodeView({
   episode,
   autoPlay,
   continuing,
+  pending,
   closeHref,
   onClose,
   frameRef,
@@ -533,19 +583,30 @@ function EpisodeView({
             ))}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
             {!hasSource ? (
-              <div className="z-10 flex max-w-sm flex-col items-center gap-2 px-6 text-center">
-                <svg className="h-10 w-10 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+              // On its own dark panel: over a bright backdrop the bare text
+              // was close to unreadable (reported 2026-10-19).
+              <div
+                role="status"
+                className="z-10 flex max-w-sm flex-col items-center gap-2 rounded-xl bg-black/75 px-7 py-6 text-center shadow-xl backdrop-blur-sm"
+              >
+                {pending === "indexing" ? (
+                  <span
+                    className="h-10 w-10 rounded-full border-2 border-white/25 border-t-white animate-spin"
+                    aria-hidden
                   />
-                </svg>
-                <p className="text-white font-medium">Not downloaded yet</p>
-                <p className="text-sm text-white/60">
-                  S{seasonNumber} E{episodeNumber} isn&apos;t on the server. Download it from the
-                  episode list, then play it here.
+                ) : (
+                  <svg className="h-10 w-10 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                    />
+                  </svg>
+                )}
+                <p className="text-lg font-semibold text-white">{pendingNotice(pending, `S${seasonNumber} E${episodeNumber}`).title}</p>
+                <p className="text-sm leading-relaxed text-white/85">
+                  {pendingNotice(pending, `S${seasonNumber} E${episodeNumber}`).body}
                 </p>
               </div>
             ) : videoLoading ? (
