@@ -15,6 +15,7 @@ import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
 import { TVRow } from "@/components/TVRow";
 import { nextEpisode } from "@/lib/nextEpisodeRules";
+import { isUnaired, listableEpisodes, localToday } from "@/lib/episodeListRules";
 import { rollUpSeason } from "@/lib/seasonDeepSearchRules";
 import {
   EpisodeDownloadButton,
@@ -256,7 +257,17 @@ export function ShowContent({
     ...(show.hasSpecials ? [0] : []),
   ];
 
-  const seasonEpisodeNumbers = season?.episodes.map((e) => e.episodeNumber) ?? [];
+  // Fixed for the life of the page: an episode airing at midnight can wait
+  // for a reload, and a date read on every render trips the purity lint.
+  const [today] = useState(() => localToday());
+
+  // TMDB pads a season with "Episode N" rows it knows nothing about; those
+  // are left out unless Sonarr already tracks them. Everything below -- the
+  // list, the season roll-up, the season button's optimistic paint -- works
+  // from this set, so a placeholder nobody can see is not what keeps the
+  // season reading as partly done.
+  const listedEpisodes = listableEpisodes(season?.episodes ?? [], Object.keys(episodeStatuses).map(Number));
+  const seasonEpisodeNumbers = listedEpisodes.map((e) => e.episodeNumber);
   const seasonState = rollUpSeason(seasonEpisodeNumbers, episodeStatuses);
 
   useEffect(() => {
@@ -410,12 +421,7 @@ export function ShowContent({
               state={seasonState}
               statusLoading={!episodeStatusesLoaded}
               onRequested={refreshEpisodeStatuses}
-              onOptimistic={(next) =>
-                setSeasonEpisodeStates(
-                  (season?.episodes ?? []).map((e) => e.episodeNumber),
-                  next
-                )
-              }
+              onOptimistic={(next) => setSeasonEpisodeStates(seasonEpisodeNumbers, next)}
               className="ml-auto"
             />
           )}
@@ -428,16 +434,17 @@ export function ShowContent({
         )}
         {!seasonLoading && season && (
           <ul className="space-y-2 mt-4">
-            {season.episodes.map((ep: TVEpisode, index: number) => {
+            {listedEpisodes.map((ep: TVEpisode) => {
               const progressSeconds = getProgress(
                 episodeProgress,
                 ep.seasonNumber,
                 ep.episodeNumber
               );
               const pct = progressPct(progressSeconds, ep.runtime);
-              const nextEp = nextEpisode(show.id, ep.seasonNumber, ep.episodeNumber, season.episodes, {
+              const nextEp = nextEpisode(show.id, ep.seasonNumber, ep.episodeNumber, listedEpisodes, {
                 numberOfSeasons: show.numberOfSeasons,
               });
+              const unaired = isUnaired(ep, today);
               // An episode is only playable once Sonarr reports a file on
               // disk. When downloads aren't wired up at all, fall back to the
               // show-level flag so this doesn't disable playback for
@@ -511,6 +518,10 @@ export function ShowContent({
                               ? epState.progress != null
                                 ? `${epState.progress}%`
                                 : "Starting…"
+                              : unaired
+                                ? // Known about, not out yet: neither a
+                                  // failed search nor something to fetch.
+                                  "Not aired yet"
                               : epState?.status === "noReleaseFound"
                                 ? // Not "Starting…": nothing is starting, and
                                   // the row beside it already says why.
@@ -553,6 +564,7 @@ export function ShowContent({
                         episodeNumber={ep.episodeNumber}
                         state={episodeStatuses[ep.episodeNumber]}
                         statusLoading={!episodeStatusesLoaded}
+                        unaired={unaired}
                         onRequested={refreshEpisodeStatuses}
                         onOptimistic={(next) => setEpisodeState(ep.episodeNumber, next)}
                       />
