@@ -23,6 +23,8 @@ import { GameDownloadsPanel, type GameDownloadRow } from "@/components/GameDownl
 import { FlashDownloadsPanel } from "@/components/FlashDownloadsPanel";
 import { formatFileSize } from "@/lib/formatBytes";
 import { withDeadline } from "@/lib/withDeadline";
+import { getClientProgress } from "@/lib/clientProgress";
+import { withClientProgress } from "@/lib/liveProgressRules";
 import { foldPacks } from "@/lib/downloadGroupRules";
 import { episodeLabel, placeFromLabel } from "@/lib/wantedEpisodeRules";
 import { recentGiveUps } from "@/lib/wantedSearches";
@@ -55,8 +57,9 @@ export async function AdminDownloadsSections() {
   const PANEL_DEADLINE_MS = 6000;
 
   const [
-    radarrDownloads,
-    sonarrDownloads,
+    radarrQueue,
+    sonarrQueue,
+    clientProgress,
     radarrCompleted,
     sonarrCompleted,
     queuedSearches,
@@ -69,6 +72,9 @@ export async function AdminDownloadsSections() {
   ] = await Promise.all([
     withDeadline(getRadarrActiveDownloads(), [], PANEL_DEADLINE_MS),
     withDeadline(getSonarrActiveDownloads(), [], PANEL_DEADLINE_MS),
+    // The clients' own figure for each transfer: the *arrs' lags their serial
+    // command queue, minutes behind a season search (liveProgressRules.ts).
+    withDeadline(getClientProgress(), new Map(), PANEL_DEADLINE_MS),
     withDeadline(getRadarrCompletedMovies(), [], PANEL_DEADLINE_MS),
     withDeadline(getSonarrCompletedEpisodes(), [], PANEL_DEADLINE_MS),
     // In the same wave: these rows sit at the top of the panel, so resolving
@@ -94,6 +100,9 @@ export async function AdminDownloadsSections() {
       orderBy: { title: "asc" },
     }),
   ]);
+
+  const radarrDownloads = withClientProgress(radarrQueue, clientProgress);
+  const sonarrDownloads = withClientProgress(sonarrQueue, clientProgress);
 
   // Straight from gamarr's own downloads/wishlist, not the deduped public
   // games list -- that list deliberately folds a *completed* job into

@@ -24,6 +24,17 @@
  */
 
 import { romStemOf } from "./romNames";
+import { forgetShared, sharedRead } from "./sharedRead";
+
+// The downloads panel re-renders every 5 s while anything is downloading and
+// asked gamarr for its library, wishlist and downloads each time -- three
+// round trips to the home box, and the library one again inside
+// getGamesList. Shared for a few seconds, and forgotten by the mutations
+// below so a change shows on the next render rather than the next TTL.
+const DOWNLOADS_TTL_MS = 4_000;
+const WISHLIST_TTL_MS = 15_000;
+const LIBRARY_TTL_MS = 15_000;
+const PLATFORMS_TTL_MS = 5 * 60_000;
 
 const GAMARR_URL = process.env.GAMARR_URL?.replace(/\/$/, "");
 // Optional: unset means gamarr has no auth configured, and every call here
@@ -95,7 +106,9 @@ export type GamePlatform = { id: string; name: string };
 export async function getGamePlatforms(): Promise<GamePlatform[]> {
   if (!isGamarrConfigured()) return [];
   try {
-    const data = await gamarrFetch<{ platforms?: GamePlatform[] }>("/api/platforms");
+    const data = await sharedRead("gamarr:platforms", PLATFORMS_TTL_MS, () =>
+      gamarrFetch<{ platforms?: GamePlatform[] }>("/api/platforms")
+    );
     return data.platforms ?? [];
   } catch (err) {
     console.error("[gamarr] getGamePlatforms failed:", err);
@@ -289,7 +302,9 @@ export type WishlistItem = { id: number; title: string; platform: string; platfo
 export async function getWishlist(): Promise<WishlistItem[]> {
   if (!isGamarrConfigured()) return [];
   try {
-    const data = await gamarrFetch<{ items?: Record<string, unknown>[] }>("/api/wishlist");
+    const data = await sharedRead("gamarr:wishlist", WISHLIST_TTL_MS, () =>
+      gamarrFetch<{ items?: Record<string, unknown>[] }>("/api/wishlist")
+    );
     return (data.items ?? []).map((i) => ({
       id: Number(i.id ?? 0),
       title: decodeEntities(String(i.title ?? "")),
@@ -320,6 +335,8 @@ export async function queueGame(item: {
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isGamarrConfigured()) return { ok: false, error: "gamarr is not configured" };
   try {
+    forgetShared("gamarr:wishlist");
+    forgetShared("gamarr:downloads");
     await gamarrFetch("/api/wishlist", {
       method: "POST",
       body: JSON.stringify({
@@ -344,6 +361,7 @@ export async function queueGame(item: {
 export async function removeWishlistItem(id: number): Promise<boolean> {
   if (!isGamarrConfigured()) return false;
   try {
+    forgetShared("gamarr:wishlist");
     await gamarrFetch(`/api/wishlist/${id}`, { method: "DELETE" });
     return true;
   } catch (err) {
@@ -388,7 +406,9 @@ function normalizeStatus(raw: unknown): GameDownloadStatus {
 export async function getGameDownloads(): Promise<GameDownload[]> {
   if (!isGamarrConfigured()) return [];
   try {
-    const data = await gamarrFetch<{ downloads?: Record<string, unknown>[] }>("/api/downloads");
+    const data = await sharedRead("gamarr:downloads", DOWNLOADS_TTL_MS, () =>
+      gamarrFetch<{ downloads?: Record<string, unknown>[] }>("/api/downloads")
+    );
     return (data.downloads ?? []).map((d) => {
       const progress = num(d.progress);
       return {
@@ -448,8 +468,8 @@ export async function getGameLibrary(
     const params = new URLSearchParams({ page_size: "500" });
     if (opts.query) params.set("q", opts.query);
     if (opts.platform && opts.platform !== "all") params.set("platform", opts.platform);
-    const data = await gamarrFetch<{ items?: Record<string, unknown>[] }>(
-      `/api/library?${params}`
+    const data = await sharedRead(`gamarr:library:${params}`, LIBRARY_TTL_MS, () =>
+      gamarrFetch<{ items?: Record<string, unknown>[] }>(`/api/library?${params}`)
     );
     return (data.items ?? []).map((i) => {
       const fileName = decodeEntities(String(i.title ?? ""));
@@ -489,6 +509,7 @@ export async function getGameLibrary(
 export async function retryGameDownload(jobId: string): Promise<boolean> {
   if (!isGamarrConfigured()) return false;
   try {
+    forgetShared("gamarr:downloads");
     await gamarrFetch(`/api/downloads/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
     return true;
   } catch (err) {
@@ -504,6 +525,7 @@ export async function retryGameDownload(jobId: string): Promise<boolean> {
 export async function cancelGameDownload(jobId: string): Promise<boolean> {
   if (!isGamarrConfigured()) return false;
   try {
+    forgetShared("gamarr:downloads");
     await gamarrFetch(`/api/downloads/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     return true;
   } catch (err) {
