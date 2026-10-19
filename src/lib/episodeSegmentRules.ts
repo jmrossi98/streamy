@@ -108,14 +108,21 @@ export function parseSegments(
   return out;
 }
 
-export type SkipOffer = { kind: "intro" | "recap"; label: string; to: number };
+export type SkipOffer = { kind: "intro"; label: string; to: number };
 
-/** The skip button to show at `t`, if any. Gone a second before the span ends, so it never jumps nowhere. */
+/**
+ * The skip button to show at `t`, if any. Gone a second before the span
+ * ends, so it never jumps nowhere.
+ *
+ * Only the intro is offered. Intro Skipper's recap markers are not reliable
+ * enough to put a button on: Cyberpunk Edgerunners S1E1 carried a "recap"
+ * over its first two minutes, which is the cold open of a first episode, so
+ * "Skip recap" came up before anything had started (2026-10-19). The recap
+ * span is still parsed and kept for anything else that wants it.
+ */
 export function skipOfferAt(t: number, segs: EpisodeSegments): SkipOffer | null {
-  for (const [kind, label] of [["recap", "Skip recap"], ["intro", "Skip intro"]] as const) {
-    const s = segs[kind];
-    if (s && t >= s.start && t < s.end - 1) return { kind, label, to: s.end };
-  }
+  const s = segs.intro;
+  if (s && t >= s.start && t < s.end - 1) return { kind: "intro", label: "Skip intro", to: s.end };
   return null;
 }
 
