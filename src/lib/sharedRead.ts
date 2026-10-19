@@ -28,6 +28,13 @@ export const STALE_FOR_MS = 2 * 60_000;
 type Options = {
   now?: () => number;
   /**
+   * Once the answer is older than its TTL, hand it back at once and refresh
+   * behind it rather than waiting on the source -- for a slow read whose
+   * answer changes on the scale of minutes (a thousand history records, the
+   * whole movie list). Capped by STALE_FOR_MS like the failure case.
+   */
+  serveStale?: boolean;
+  /**
    * How long to leave the source alone after a failure. Longer for reads made
    * once per title: a library's worth of them failing together is a library's
    * worth of requests on every retry.
@@ -49,8 +56,8 @@ export async function sharedRead<T>(key: string, ttlMs: number, read: () => Prom
   }
   const s = slot;
   if (s.has && now() - s.at < ttlMs) return s.value as T;
-  if (s.inflight) return s.inflight as Promise<T>;
   const usable = () => s.has && now() - s.at < STALE_FOR_MS;
+  if (s.inflight) return options.serveStale && usable() ? (s.value as T) : (s.inflight as Promise<T>);
   if (s.failedAt > 0 && now() - s.failedAt < hold) {
     if (usable()) return s.value as T;
     throw new Error(`${key}: failed a moment ago, not asked again yet`);
@@ -73,6 +80,11 @@ export async function sharedRead<T>(key: string, ttlMs: number, read: () => Prom
     .finally(() => {
       s.inflight = null;
     });
+  if (options.serveStale && usable()) {
+    // The refresh is on its way; its failure is handled on the next call.
+    (s.inflight as Promise<T>).catch(() => {});
+    return s.value as T;
+  }
   return s.inflight as Promise<T>;
 }
 
