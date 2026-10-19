@@ -1532,29 +1532,64 @@ export async function requestEpisode(
       episodesWhenReady(series.sonarrId, null, series.created),
       getTmdbSeasonCounts(tmdbId),
     ]);
-    const episode = tmdbEpisodeInSonarr(tmdb, episodes, seasonNumber, episodeNumber);
-    if (!episode) return { ok: false, error: "Episode not found in Sonarr" };
-
-    await sonarrFetch(`/api/v3/episode/monitor`, {
-      method: "PUT",
-      body: JSON.stringify({ episodeIds: [episode.id], monitored: true }),
-    });
-    // Through the same queue a season uses, rather than firing a search
-    // straight at Sonarr. Searching directly left nothing anywhere to say the
-    // episode had been asked for, so the admin panel stayed empty until
-    // Sonarr happened to grab something -- and if the search found nothing,
-    // forever. Queuing it records the request first, and the drain this kicks
-    // off searches it immediately anyway, so nothing gets slower.
-    await searchEpisodesInOrder(series.sonarrId, [episode.id]);
-    // Alongside the ordinary search, for a release Sonarr finds but cannot
-    // place -- see deepSearchSonarrEpisode. Never awaited.
-    void deepSearchSonarrEpisode(series.sonarrId, episode.id).catch((err) =>
-      console.error(`[sonarr] episode deep search failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err)
-    );
-    return { ok: true };
+    if (episodes.length === 0) {
+      // Sonarr has not fetched the show's episodes yet -- see
+      // searchSeasonOncePopulated. The request is accepted and finished then.
+      void searchEpisodeOncePopulated(series.sonarrId, tmdbId, seasonNumber, episodeNumber);
+      return { ok: true };
+    }
+    return await searchEpisode(series.sonarrId, tmdbId, seasonNumber, episodeNumber, episodes, tmdb);
   } catch (err) {
     console.error(`[sonarr] requestEpisode failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err);
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
+/** Monitors and searches one episode of a series whose episodes Sonarr has. */
+async function searchEpisode(
+  seriesId: number,
+  tmdbId: string,
+  seasonNumber: number,
+  episodeNumber: number,
+  episodes: SonarrEpisode[],
+  tmdb: SeasonCounts | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const episode = tmdbEpisodeInSonarr(tmdb, episodes, seasonNumber, episodeNumber);
+  if (!episode) return { ok: false, error: "Episode not found in Sonarr" };
+
+  await sonarrFetch(`/api/v3/episode/monitor`, {
+    method: "PUT",
+    body: JSON.stringify({ episodeIds: [episode.id], monitored: true }),
+  });
+  // Through the same queue a season uses, rather than firing a search
+  // straight at Sonarr. Searching directly left nothing anywhere to say the
+  // episode had been asked for, so the admin panel stayed empty until
+  // Sonarr happened to grab something -- and if the search found nothing,
+  // forever. Queuing it records the request first, and the drain this kicks
+  // off searches it immediately anyway, so nothing gets slower.
+  await searchEpisodesInOrder(seriesId, [episode.id]);
+  // Alongside the ordinary search, for a release Sonarr finds but cannot
+  // place -- see deepSearchSonarrEpisode. Never awaited.
+  void deepSearchSonarrEpisode(seriesId, episode.id).catch((err) =>
+    console.error(`[sonarr] episode deep search failed for ${tmdbId} S${seasonNumber}E${episodeNumber}:`, err)
+  );
+  return { ok: true };
+}
+
+/** Finishes an episode request once Sonarr has the show's episodes. Never throws. */
+async function searchEpisodeOncePopulated(
+  seriesId: number,
+  tmdbId: string,
+  seasonNumber: number,
+  episodeNumber: number
+): Promise<void> {
+  try {
+    const episodes = await episodesOncePopulated(seriesId);
+    if (episodes.length === 0) return;
+    const result = await searchEpisode(seriesId, tmdbId, seasonNumber, episodeNumber, episodes, await getTmdbSeasonCounts(tmdbId));
+    if (!result.ok) console.error(`[sonarr] late search for ${tmdbId} S${seasonNumber}E${episodeNumber}: ${result.error}`);
+  } catch (err) {
+    console.error(`[sonarr] late search for ${tmdbId} S${seasonNumber}E${episodeNumber} failed:`, err);
   }
 }
 
@@ -1876,19 +1911,37 @@ async function searchSeriesInEpisodeOrder(seriesId: number, justCreated = false)
 const LATE_POPULATE_TIMEOUT_MS = 10 * 60_000;
 const LATE_POPULATE_POLL_MS = 5_000;
 
+/**
+ * A series' episodes, once Sonarr has fetched them; empty if it still has
+ * none at the deadline, which is logged.
+ *
+ * Adding a series only queues its metadata refresh, and Sonarr works its
+ * command queue one command at a time. With a series search or two ahead of
+ * it, the refresh for a show added at 00:14 did not start until 00:18
+ * (2026-10-19, Code Geass and Chernobyl behind The Wire and Severance), so
+ * the twenty seconds a request itself waits (episodesWhenReady) are not
+ * enough. Whoever asked has their answer by then; this finishes the job.
+ */
+async function episodesOncePopulated(seriesId: number): Promise<SonarrEpisode[]> {
+  const deadline = Date.now() + LATE_POPULATE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, LATE_POPULATE_POLL_MS));
+    const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+    if (episodes.length === 0) continue;
+    // Sonarr's post-add actions reset monitoring once the episodes are in;
+    // wait them out so the monitoring applied next is the last word.
+    await waitForSeriesRefresh(seriesId, Date.now() + SERIES_REFRESH_EXTRA_MS);
+    return await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+  }
+  console.error(`[sonarr] series ${seriesId} had no episodes ${LATE_POPULATE_TIMEOUT_MS / 60_000} minutes after being added; nothing was searched`);
+  return [];
+}
+
 /** Starts the ordered search for a new series once Sonarr has its episodes. Never throws. */
 async function searchSeriesOncePopulated(seriesId: number): Promise<void> {
-  const deadline = Date.now() + LATE_POPULATE_TIMEOUT_MS;
   try {
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, LATE_POPULATE_POLL_MS));
-      const episodes = await sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
-      if (episodes.length === 0) continue;
-      await waitForSeriesRefresh(seriesId, Date.now() + SERIES_REFRESH_EXTRA_MS);
-      await searchSeriesInEpisodeOrder(seriesId);
-      return;
-    }
-    console.error(`[sonarr] series ${seriesId} had no episodes ${LATE_POPULATE_TIMEOUT_MS / 60_000} minutes after being added; nothing was searched`);
+    if ((await episodesOncePopulated(seriesId)).length === 0) return;
+    await searchSeriesInEpisodeOrder(seriesId);
   } catch (err) {
     console.error(`[sonarr] late search for new series ${seriesId} failed:`, err);
   }
@@ -2159,97 +2212,129 @@ export async function requestSeason(
     const series = await ensureSeriesInSonarr(tmdbId, tier);
     if (!series.ok) return series;
 
-    // TMDB's season in Sonarr's numbering, which can span several of
-    // Sonarr's seasons: Frieren's one TMDB season is Sonarr's S1 and S2.
     const [allEpisodes, tmdb] = await Promise.all([
       episodesWhenReady(series.sonarrId, null, series.created),
       getTmdbSeasonCounts(tmdbId),
     ]);
-    const inOrder = tmdbSeasonInSonarr(tmdb, allEpisodes, seasonNumber);
-    const sonarrSeasons = [...new Set(inOrder.map((e) => e.seasonNumber))];
-    if (sonarrSeasons.length === 0) sonarrSeasons.push(seasonNumber);
-
-    // Monitor the seasons themselves so future episodes are picked up too.
-    const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
-      `/api/v3/series/${series.sonarrId}`
-    );
-    const updated = {
-      ...full,
-      seasons: full.seasons.map((s) =>
-        sonarrSeasons.includes(s.seasonNumber) ? { ...s, monitored: true } : s
-      ),
-    };
-    await sonarrFetch(`/api/v3/series/${series.sonarrId}`, {
-      method: "PUT",
-      body: JSON.stringify(updated),
-    });
-
-    const ids = inOrder.map((e) => e.id);
-    // An error, not a silent ok. Reporting success for a request that queued
-    // nothing left the row showing "Starting..." for a season that was never
-    // going to start, which is harder to diagnose than a plain failure.
-    if (ids.length === 0) {
-      return { ok: false, error: "Sonarr has no episodes for this season yet" };
+    if (allEpisodes.length === 0) {
+      // Sonarr has not fetched the show's episodes yet: its refresh is
+      // queued behind whatever else it is doing (see episodesOncePopulated).
+      // This used to be reported as "no episodes for this season yet", a 502
+      // the button showed as a failure within seconds of the click -- and a
+      // retry failed at once, because an existing series does not wait. The
+      // ask is good; it is finished when the episodes arrive. The season is
+      // monitored now so Sonarr's refresh brings its episodes in monitored,
+      // under TMDB's number, which is the best guess without the episodes;
+      // the search re-monitors in Sonarr's numbering once it has them.
+      await monitorSonarrSeasons(series.sonarrId, [seasonNumber]);
+      void searchSeasonOncePopulated(series.sonarrId, tmdbId, seasonNumber);
+      return { ok: true };
     }
-
-    await sonarrFetch(`/api/v3/episode/monitor`, {
-      method: "PUT",
-      body: JSON.stringify({ episodeIds: ids, monitored: true }),
-    });
-
-    // The opening episodes go through the ordered queue; everything else goes
-    // out as one SeasonSearch.
-    //
-    // Measured on this setup: a single EpisodeSearch takes 147s, while one
-    // SeasonSearch covering 21 episodes takes 208s. Per episode that is 147s
-    // against 10s, because the cost is Sonarr's per-search overhead -- eight
-    // indexers queried and ~300 releases scored, once per search, regardless
-    // of how many episodes the search is for.
-    //
-    // Searching a season an episode at a time therefore cost roughly fifteen
-    // times what it needed to. A 13-episode season was half an hour of
-    // searching before the last episode was even looked for.
-    //
-    // The ordered queue is still what makes a show watchable from the start,
-    // so the opening episodes keep it: they are searched individually and
-    // first, which gets episode 1 grabbed in ~147s rather than waiting on a
-    // 208s batch. The batch then fetches the rest in one go, and the drain
-    // skips anything the batch already has in flight.
-    const lead = ids.slice(0, LEAD_EPISODES);
-    const rest = ids.slice(LEAD_EPISODES);
-    await searchEpisodesInOrder(series.sonarrId, lead);
-    await recordBatchedEpisodes(series.sonarrId, rest);
-
-    for (const sonarrSeason of sonarrSeasons) {
-      if (rest.length > 0) {
-        // Fire-and-forget, and deliberately not part of the ordered queue: this
-        // is one command for the whole season, and waiting on it would make the
-        // request block for the length of a full search.
-        sonarrFetch(`/api/v3/command`, {
-          method: "POST",
-          body: JSON.stringify({
-            name: "SeasonSearch",
-            seriesId: series.sonarrId,
-            seasonNumber: sonarrSeason,
-          }),
-        }).catch((err) => {
-          // The lead episodes are already queued, and the healer re-searches
-          // anything still wanted, so a failed batch degrades to the old
-          // behaviour rather than losing the season.
-          console.error(`[sonarr] SeasonSearch failed for ${sonarrSeason}:`, err);
-        });
-      }
-      // Alongside, not after: the ordinary search can only report "nothing" for
-      // a pack Sonarr cannot place, and a viewer who just asked should not wait
-      // on the healer's second idle retry to find that out. Never awaited.
-      void deepSearchSonarrSeason(series.sonarrId, sonarrSeason).catch((err) =>
-        console.error(`[sonarr] season deep search failed for ${tmdbId} S${sonarrSeason}:`, err)
-      );
-    }
-    return { ok: true };
+    return await searchSeason(series.sonarrId, tmdbId, seasonNumber, allEpisodes, tmdb);
   } catch (err) {
     console.error(`[sonarr] requestSeason failed for ${tmdbId} S${seasonNumber}:`, err);
     return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
+}
+
+/** Monitors the given seasons of a series, so future episodes are picked up too. */
+async function monitorSonarrSeasons(seriesId: number, seasonNumbers: number[]): Promise<void> {
+  const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
+    `/api/v3/series/${seriesId}`
+  );
+  const updated = {
+    ...full,
+    seasons: full.seasons.map((s) => (seasonNumbers.includes(s.seasonNumber) ? { ...s, monitored: true } : s)),
+  };
+  await sonarrFetch(`/api/v3/series/${seriesId}`, { method: "PUT", body: JSON.stringify(updated) });
+}
+
+/** Monitors and searches TMDB's season of a series whose episodes Sonarr has. */
+async function searchSeason(
+  seriesId: number,
+  tmdbId: string,
+  seasonNumber: number,
+  allEpisodes: SonarrEpisode[],
+  tmdb: SeasonCounts | null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // TMDB's season in Sonarr's numbering, which can span several of
+  // Sonarr's seasons: Frieren's one TMDB season is Sonarr's S1 and S2.
+  const inOrder = tmdbSeasonInSonarr(tmdb, allEpisodes, seasonNumber);
+  const sonarrSeasons = [...new Set(inOrder.map((e) => e.seasonNumber))];
+  if (sonarrSeasons.length === 0) sonarrSeasons.push(seasonNumber);
+
+  await monitorSonarrSeasons(seriesId, sonarrSeasons);
+
+  const ids = inOrder.map((e) => e.id);
+  // An error, not a silent ok. Reporting success for a request that queued
+  // nothing left the row showing "Starting..." for a season that was never
+  // going to start, which is harder to diagnose than a plain failure.
+  if (ids.length === 0) {
+    return { ok: false, error: "Sonarr has no episodes for this season yet" };
+  }
+
+  await sonarrFetch(`/api/v3/episode/monitor`, {
+    method: "PUT",
+    body: JSON.stringify({ episodeIds: ids, monitored: true }),
+  });
+
+  // The opening episodes go through the ordered queue; everything else goes
+  // out as one SeasonSearch.
+  //
+  // Measured on this setup: a single EpisodeSearch takes 147s, while one
+  // SeasonSearch covering 21 episodes takes 208s. Per episode that is 147s
+  // against 10s, because the cost is Sonarr's per-search overhead -- eight
+  // indexers queried and ~300 releases scored, once per search, regardless
+  // of how many episodes the search is for.
+  //
+  // Searching a season an episode at a time therefore cost roughly fifteen
+  // times what it needed to. A 13-episode season was half an hour of
+  // searching before the last episode was even looked for.
+  //
+  // The ordered queue is still what makes a show watchable from the start,
+  // so the opening episodes keep it: they are searched individually and
+  // first, which gets episode 1 grabbed in ~147s rather than waiting on a
+  // 208s batch. The batch then fetches the rest in one go, and the drain
+  // skips anything the batch already has in flight.
+  const lead = ids.slice(0, LEAD_EPISODES);
+  const rest = ids.slice(LEAD_EPISODES);
+  await searchEpisodesInOrder(seriesId, lead);
+  await recordBatchedEpisodes(seriesId, rest);
+
+  for (const sonarrSeason of sonarrSeasons) {
+    if (rest.length > 0) {
+      // Fire-and-forget, and deliberately not part of the ordered queue: this
+      // is one command for the whole season, and waiting on it would make the
+      // request block for the length of a full search.
+      sonarrFetch(`/api/v3/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "SeasonSearch", seriesId, seasonNumber: sonarrSeason }),
+      }).catch((err) => {
+        // The lead episodes are already queued, and the healer re-searches
+        // anything still wanted, so a failed batch degrades to the old
+        // behaviour rather than losing the season.
+        console.error(`[sonarr] SeasonSearch failed for ${sonarrSeason}:`, err);
+      });
+    }
+    // Alongside, not after: the ordinary search can only report "nothing" for
+    // a pack Sonarr cannot place, and a viewer who just asked should not wait
+    // on the healer's second idle retry to find that out. Never awaited.
+    void deepSearchSonarrSeason(seriesId, sonarrSeason).catch((err) =>
+      console.error(`[sonarr] season deep search failed for ${tmdbId} S${sonarrSeason}:`, err)
+    );
+  }
+  return { ok: true };
+}
+
+/** Finishes a season request once Sonarr has the show's episodes. Never throws. */
+async function searchSeasonOncePopulated(seriesId: number, tmdbId: string, seasonNumber: number): Promise<void> {
+  try {
+    const episodes = await episodesOncePopulated(seriesId);
+    if (episodes.length === 0) return;
+    const result = await searchSeason(seriesId, tmdbId, seasonNumber, episodes, await getTmdbSeasonCounts(tmdbId));
+    if (!result.ok) console.error(`[sonarr] late season search for ${tmdbId} S${seasonNumber}: ${result.error}`);
+  } catch (err) {
+    console.error(`[sonarr] late season search for ${tmdbId} S${seasonNumber} failed:`, err);
   }
 }
 
