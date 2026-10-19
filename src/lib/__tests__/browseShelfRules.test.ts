@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ROW_WINDOW,
+  rowOverflows,
   rowWindow,
   clampPages,
   dedupeById,
@@ -103,5 +104,21 @@ describe("rowWindow", () => {
   it("leaves a row without a shelf, or a short one, whole", () => {
     expect(rowWindow(items, false)).toHaveLength(100);
     expect(rowWindow(items.slice(0, 10), true)).toHaveLength(10);
+  });
+});
+
+describe("the tile at the end of a row", () => {
+  it("is offered only when the shelf holds more than the row shows", () => {
+    expect(rowOverflows(20, 153, true)).toBe(true);
+    expect(rowOverflows(20, 20, true)).toBe(false);
+    expect(rowOverflows(5, 5, true)).toBe(false);
+    expect(rowOverflows(2, 1, true)).toBe(false);
+  });
+
+  it("is offered for a paged list with no count, and never without a shelf", () => {
+    expect(rowOverflows(8, null, true)).toBe(true);
+    expect(rowOverflows(8, null, false)).toBe(false);
+    expect(rowOverflows(8, 500, false)).toBe(false);
+    expect(rowOverflows(8, undefined, true)).toBe(false);
   });
 });

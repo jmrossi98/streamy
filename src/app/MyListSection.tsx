@@ -1,4 +1,4 @@
-import { getWatchlistMovies, getWatchlistShows } from "@/lib/watchlist";
+import { countWatchlist, getWatchlistMovies, getWatchlistShows } from "@/lib/watchlist";
 import { MovieRow } from "@/components/MovieRow";
 import { TVRow } from "@/components/TVRow";
 import { shelfHref, ROW_WINDOW } from "@/lib/browseShelfRules";
@@ -19,9 +19,10 @@ import { shelfHref, ROW_WINDOW } from "@/lib/browseShelfRules";
  * browsed by kind.
  */
 export async function MyListSection({ userId }: { userId: string }) {
-  const [movies, shows] = await Promise.all([
+  const [movies, shows, saved] = await Promise.all([
     getWatchlistMovies(userId, ROW_WINDOW),
     getWatchlistShows(userId, ROW_WINDOW),
+    countWatchlist(userId),
   ]);
 
   if (movies.length === 0 && shows.length === 0) return null;
@@ -32,9 +33,16 @@ export async function MyListSection({ userId }: { userId: string }) {
           on Home both strips are visible at once, and two rows both called
           "My List" read as one row that broke rather than two kinds. */}
       {movies.length > 0 && (
-        <MovieRow title="My List - Movies" movies={movies} href={shelfHref("movies", { kind: "my-list" })} />
+        <MovieRow
+          title="My List - Movies"
+          movies={movies}
+          href={shelfHref("movies", { kind: "my-list" })}
+          total={saved.movies}
+        />
       )}
-      {shows.length > 0 && <TVRow title="My List - Shows" shows={shows} href={shelfHref("tv", { kind: "my-list" })} />}
+      {shows.length > 0 && (
+        <TVRow title="My List - Shows" shows={shows} href={shelfHref("tv", { kind: "my-list" })} total={saved.shows} />
+      )}
     </>
   );
 }

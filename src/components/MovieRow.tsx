@@ -8,7 +8,7 @@ import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
 import { setMovieInCache } from "@/lib/movieCache";
-import { rowWindow } from "@/lib/browseShelfRules";
+import { rowOverflows, rowWindow } from "@/lib/browseShelfRules";
 
 /** Warm movie cache on hover so /watch/[id] play loads fast when they click. */
 function prefetchMovie(id: string) {
@@ -23,6 +23,12 @@ type MovieRowProps = {
   progressMap?: Record<string, MovieProgress>;
   /** The full shelf this row is a window onto; makes the heading a link to it. */
   href?: string;
+  /**
+   * How many the shelf holds, when the row was cut before it got here (the
+   * browse rows are twenty of a shelf's hundreds); null for a shelf with more
+   * but no count. Left out, the row's own length is the shelf's.
+   */
+  total?: number | null;
 };
 
 function progressPercent(progressSeconds: number, runtimeMinutes: number | null): number {
@@ -97,13 +103,15 @@ export function MovieCard({
   );
 }
 
-export function MovieRow({ title, movies, progressMap = {}, href }: MovieRowProps) {
+export function MovieRow({ title, movies, progressMap = {}, href, total }: MovieRowProps) {
   const shown = rowWindow(movies, Boolean(href));
   useEffect(() => {
     shown.forEach((m) => setMovieInCache(m.id, m));
   }, [shown]);
+  const shelfTotal = total === undefined ? movies.length : total;
+  const more = href && rowOverflows(shown.length, shelfTotal, true) ? { href, total: shelfTotal } : undefined;
   return (
-    <ScrollableRow title={title} href={href}>
+    <ScrollableRow title={title} href={href} more={more}>
       {shown.map((movie) => (
         <MovieCard key={movie.id} movie={movie} progress={progressMap[movie.id]} />
       ))}

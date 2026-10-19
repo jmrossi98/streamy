@@ -211,3 +211,15 @@ async function resolveShowProgress(
   );
   return Object.fromEntries(entries);
 }
+
+/**
+ * How many movies and shows a viewer has saved, for the row that shows only
+ * the first ROW_WINDOW of them and offers the rest at its end.
+ */
+export async function countWatchlist(userId: string): Promise<{ movies: number; shows: number }> {
+  const [movies, shows] = await Promise.all([
+    prisma.watchlistItem.count({ where: { userId } }),
+    prisma.watchlistShowItem.count({ where: { userId } }),
+  ]);
+  return { movies, shows };
+}

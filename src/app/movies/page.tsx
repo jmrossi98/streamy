@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { pullJellyfinProgressForPage } from "@/lib/progressSync";
 import { ROW_WINDOW } from "@/lib/browseShelfRules";
-import { getWatchlistMovies } from "@/lib/watchlist";
+import { countWatchlist, getWatchlistMovies } from "@/lib/watchlist";
 import { MoviesContent } from "@/components/MoviesContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 import { getMovieBrowse } from "@/lib/browseRows";
@@ -17,7 +17,7 @@ export default async function MoviesPage() {
   await pullJellyfinProgressForPage(session);
 
   // Single wave only: no getMovieById — client fetches runtimes for progress bars
-  const [browse, allProgress, myList] = await Promise.all([
+  const [browse, allProgress, myList, saved] = await Promise.all([
     getMovieBrowse(),
     session?.user?.id
       ? prisma.watchProgress.findMany({ where: { userId: session.user.id } })
@@ -26,6 +26,7 @@ export default async function MoviesPage() {
     // everything else, so making it wait on the rows below would delay the
     // top of the page behind the bottom of it.
     session?.user?.id ? getWatchlistMovies(session.user.id, ROW_WINDOW) : Promise.resolve([]),
+    session?.user?.id ? countWatchlist(session.user.id) : Promise.resolve(null),
   ]);
 
   const movieIdsOnPage = new Set([
@@ -46,11 +47,13 @@ export default async function MoviesPage() {
     <div className={BROWSE_PAGE_CLASS}>
       <MoviesContent
         trending={browse.trending}
+        trendingTotal={browse.trendingTotal}
         holiday={browse.holiday}
         all={browse.all}
         rows={browse.rows}
         progressList={progressList}
         myList={myList}
+        myListTotal={saved?.movies}
       />
     </div>
   );

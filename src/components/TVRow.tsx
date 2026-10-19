@@ -6,7 +6,7 @@ import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
 import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
-import { rowWindow } from "@/lib/browseShelfRules";
+import { rowOverflows, rowWindow } from "@/lib/browseShelfRules";
 import { showProgressLabel, showProgressPercent, type ShowProgress } from "@/lib/showProgressRules";
 
 type TVRowProps = {
@@ -16,6 +16,8 @@ type TVRowProps = {
   progressMap?: Record<string, ShowProgress>;
   /** The full shelf this row is a window onto; makes the heading a link to it. */
   href?: string;
+  /** How many the shelf holds; see MovieRow. */
+  total?: number | null;
 };
 
 /** A row's fixed card widths; a grid passes "w-full" and lets its columns decide. */
@@ -67,10 +69,13 @@ export function ShowCard({
   );
 }
 
-export function TVRow({ title, shows, progressMap = {}, href }: TVRowProps) {
+export function TVRow({ title, shows, progressMap = {}, href, total }: TVRowProps) {
+  const shown = rowWindow(shows, Boolean(href));
+  const shelfTotal = total === undefined ? shows.length : total;
+  const more = href && rowOverflows(shown.length, shelfTotal, true) ? { href, total: shelfTotal } : undefined;
   return (
-    <ScrollableRow title={title} href={href}>
-      {rowWindow(shows, Boolean(href)).map((show) => (
+    <ScrollableRow title={title} href={href} more={more}>
+      {shown.map((show) => (
         <ShowCard key={show.id} show={show} progress={progressMap[String(show.id)]} />
       ))}
     </ScrollableRow>
