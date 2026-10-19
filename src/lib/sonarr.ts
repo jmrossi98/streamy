@@ -18,8 +18,8 @@ import {
   type SonarrCommand,
 } from "./searchQueueRules";
 import { cached } from "./ttlCache";
-import { getTmdbSeasonCounts, getTvExternalIds } from "./tmdb";
-import { seasonInOtherNumbering, toOtherNumbering, type SeasonCounts } from "./episodeNumbering";
+import { getTmdbSeasonLayout, getTvExternalIds } from "./tmdb";
+import { seasonInOtherNumbering, toOtherNumbering, type TmdbLayout } from "./episodeNumbering";
 import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
 import { expireBlocklist, QUEUE_PAGE_SIZE, toQueueHealth } from "./radarr";
@@ -1271,6 +1271,8 @@ export type SonarrEpisode = {
   hasFile: boolean;
   monitored: boolean;
   lastSearchTime?: string | null;
+  /** "2026-10-18"; matches TMDB's numbering across layouts that differ. */
+  airDate?: string | null;
 };
 
 /**
@@ -1399,7 +1401,7 @@ async function waitForSeriesRefresh(seriesId: number, deadline: number): Promise
 /** Every episode Sonarr knows about for one season. */
 /** Sonarr's episodes as {season, episode}, for episodeNumbering.ts. */
 function asRefs<E extends SonarrEpisode>(episodes: E[]) {
-  return episodes.map((e) => ({ season: e.seasonNumber, episode: e.episodeNumber, ep: e }));
+  return episodes.map((e) => ({ season: e.seasonNumber, episode: e.episodeNumber, airDate: e.airDate ?? null, ep: e }));
 }
 
 /**
@@ -1407,7 +1409,7 @@ function asRefs<E extends SonarrEpisode>(episodes: E[]) {
  * episodeNumbering.ts. Frieren's single TMDB season is Sonarr's S1 and S2.
  */
 function tmdbSeasonInSonarr<E extends SonarrEpisode>(
-  tmdb: SeasonCounts | null,
+  tmdb: TmdbLayout | null,
   all: E[],
   seasonNumber: number
 ): (E & { tmdbEpisode: number })[] {
@@ -1416,7 +1418,7 @@ function tmdbSeasonInSonarr<E extends SonarrEpisode>(
 
 /** Sonarr's episode for TMDB's season/episode: Frieren's TMDB S1E29 is Sonarr's S2E1. */
 function tmdbEpisodeInSonarr<E extends SonarrEpisode>(
-  tmdb: SeasonCounts | null,
+  tmdb: TmdbLayout | null,
   all: E[],
   seasonNumber: number,
   episodeNumber: number
@@ -1436,7 +1438,7 @@ export async function getSonarrSeasonEpisodes(
     if (!series[0]) return [];
     const [all, tmdb] = await Promise.all([
       sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${series[0].id}`),
-      getTmdbSeasonCounts(tmdbId),
+      getTmdbSeasonLayout(tmdbId),
     ]);
     return tmdbSeasonInSonarr(tmdb, all, seasonNumber);
   } catch (err) {
@@ -1546,7 +1548,7 @@ export async function requestEpisode(
     // several of Sonarr's (see episodeNumbering.ts).
     const [episodes, tmdb] = await Promise.all([
       episodesWhenReady(series.sonarrId, null, series.created),
-      getTmdbSeasonCounts(tmdbId),
+      getTmdbSeasonLayout(tmdbId),
     ]);
     if (episodes.length === 0) {
       // Sonarr has not fetched the show's episodes yet -- see
@@ -1568,7 +1570,7 @@ async function searchEpisode(
   seasonNumber: number,
   episodeNumber: number,
   episodes: SonarrEpisode[],
-  tmdb: SeasonCounts | null
+  tmdb: TmdbLayout | null
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const episode = tmdbEpisodeInSonarr(tmdb, episodes, seasonNumber, episodeNumber);
   if (!episode) return { ok: false, error: "Episode not found in Sonarr" };
@@ -1602,7 +1604,7 @@ async function searchEpisodeOncePopulated(
   try {
     const episodes = await episodesOncePopulated(seriesId);
     if (episodes.length === 0) return;
-    const result = await searchEpisode(seriesId, tmdbId, seasonNumber, episodeNumber, episodes, await getTmdbSeasonCounts(tmdbId));
+    const result = await searchEpisode(seriesId, tmdbId, seasonNumber, episodeNumber, episodes, await getTmdbSeasonLayout(tmdbId));
     if (!result.ok) console.error(`[sonarr] late search for ${tmdbId} S${seasonNumber}E${episodeNumber}: ${result.error}`);
   } catch (err) {
     console.error(`[sonarr] late search for ${tmdbId} S${seasonNumber}E${episodeNumber} failed:`, err);
@@ -2230,7 +2232,7 @@ export async function requestSeason(
 
     const [allEpisodes, tmdb] = await Promise.all([
       episodesWhenReady(series.sonarrId, null, series.created),
-      getTmdbSeasonCounts(tmdbId),
+      getTmdbSeasonLayout(tmdbId),
     ]);
     if (allEpisodes.length === 0) {
       // Sonarr has not fetched the show's episodes yet: its refresh is
@@ -2271,7 +2273,7 @@ async function searchSeason(
   tmdbId: string,
   seasonNumber: number,
   allEpisodes: SonarrEpisode[],
-  tmdb: SeasonCounts | null
+  tmdb: TmdbLayout | null
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   // TMDB's season in Sonarr's numbering, which can span several of
   // Sonarr's seasons: Frieren's one TMDB season is Sonarr's S1 and S2.
@@ -2347,7 +2349,7 @@ async function searchSeasonOncePopulated(seriesId: number, tmdbId: string, seaso
   try {
     const episodes = await episodesOncePopulated(seriesId);
     if (episodes.length === 0) return;
-    const result = await searchSeason(seriesId, tmdbId, seasonNumber, episodes, await getTmdbSeasonCounts(tmdbId));
+    const result = await searchSeason(seriesId, tmdbId, seasonNumber, episodes, await getTmdbSeasonLayout(tmdbId));
     if (!result.ok) console.error(`[sonarr] late season search for ${tmdbId} S${seasonNumber}: ${result.error}`);
   } catch (err) {
     console.error(`[sonarr] late season search for ${tmdbId} S${seasonNumber} failed:`, err);
@@ -2376,7 +2378,7 @@ export async function manageSonarrEpisodes(
     // In Sonarr's numbering, which may split TMDB's season differently.
     const [all, tmdb] = await Promise.all([
       sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`),
-      getTmdbSeasonCounts(tmdbId),
+      getTmdbSeasonLayout(tmdbId),
     ]);
     if (episodeNumber != null) {
       const ep = tmdbEpisodeInSonarr(tmdb, all, seasonNumber, episodeNumber);

@@ -1,10 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { seasonInOtherNumbering, toOtherNumbering, type EpisodeRef } from "../episodeNumbering";
+import {
+  airDay,
+  seasonInOtherNumbering,
+  toOtherNumbering,
+  type AirDates,
+  type EpisodeRef,
+  type SeasonCounts,
+  type TmdbLayout,
+} from "../episodeNumbering";
 
 const season = (s: number, n: number): EpisodeRef[] => Array.from({ length: n }, (_, i) => ({ season: s, episode: i + 1 }));
+const layout = (counts: SeasonCounts, airDates?: AirDates): TmdbLayout => ({ counts, airDates });
 
 // Frieren, 2026-10-17: TMDB one season of 38, TVDB (Sonarr/Jellyfin) 28 + 10.
-const FRIEREN_TMDB = { 1: 38 };
+const FRIEREN_TMDB = layout({ 1: 38 });
 const FRIEREN_TVDB = [...season(0, 3), ...season(1, 28), ...season(2, 10)];
 
 describe("toOtherNumbering", () => {
@@ -15,13 +24,13 @@ describe("toOtherNumbering", () => {
   });
   it("leaves an episode both sides number the same alone", () => {
     expect(toOtherNumbering(FRIEREN_TMDB, FRIEREN_TVDB, { season: 1, episode: 5 })).toEqual({ season: 1, episode: 5 });
-    const tmdb = { 1: 10, 2: 10 };
+    const tmdb = layout({ 1: 10, 2: 10 });
     const other = [...season(1, 10), ...season(2, 12)]; // TVDB lists two more, unaired
     expect(toOtherNumbering(tmdb, other, { season: 2, episode: 3 })).toEqual({ season: 2, episode: 3 });
   });
   it("matches by position when an earlier season is split differently", () => {
     // TMDB 12 + 12, TVDB one season of 24.
-    expect(toOtherNumbering({ 1: 12, 2: 12 }, season(1, 24), { season: 2, episode: 1 })).toEqual({ season: 1, episode: 13 });
+    expect(toOtherNumbering(layout({ 1: 12, 2: 12 }), season(1, 24), { season: 2, episode: 1 })).toEqual({ season: 1, episode: 13 });
   });
   it("never translates specials, nor anything without TMDB's layout", () => {
     expect(toOtherNumbering(FRIEREN_TMDB, FRIEREN_TVDB, { season: 0, episode: 2 })).toEqual({ season: 0, episode: 2 });
@@ -37,9 +46,63 @@ describe("seasonInOtherNumbering", () => {
   });
   it("is the other side's whole season when the layouts agree, extra episodes included", () => {
     const other = [...season(1, 10), ...season(2, 12)];
-    const got = seasonInOtherNumbering({ 1: 10, 2: 10 }, other, 2);
+    const got = seasonInOtherNumbering(layout({ 1: 10, 2: 10 }), other, 2);
     expect(got).toHaveLength(12);
     expect(got[11]).toEqual({ tmdbEpisode: 12, other: { season: 2, episode: 12 } });
     expect(seasonInOtherNumbering(null, other, 2)).toHaveLength(12);
+  });
+});
+
+describe("air dates settle layouts that differ", () => {
+  // Potomac, 2026-10-19: TMDB counts 23 in season 6, TVDB 22, and every later
+  // season agreed -- but by position alone S11E02 came out as S11E03.
+  const tvdb: EpisodeRef[] = [
+    ...season(1, 12),
+    ...season(6, 22),
+    ...season(10, 20),
+    { season: 11, episode: 1, airDate: "2026-10-11" },
+    { season: 11, episode: 2, airDate: "2026-10-18" },
+    { season: 11, episode: 3, airDate: "2026-10-25" },
+  ];
+  const tmdb = layout(
+    { 1: 12, 6: 23, 10: 20, 11: 10 },
+    { "11:1": "2026-10-11", "11:2": "2026-10-18", "11:3": "2026-10-25", "11:4": "2026-11-01" }
+  );
+
+  it("matches the episode that aired the same day, whatever the count before it", () => {
+    expect(toOtherNumbering(tmdb, tvdb, { season: 11, episode: 2 })).toMatchObject({ season: 11, episode: 2 });
+    expect(toOtherNumbering(tmdb, tvdb, { season: 11, episode: 3 })).toMatchObject({ season: 11, episode: 3 });
+  });
+
+  it("has nothing for an episode the other side has not listed yet", () => {
+    expect(toOtherNumbering(tmdb, tvdb, { season: 11, episode: 4 })).toBeNull();
+  });
+
+  it("lists a season by air date too", () => {
+    const got = seasonInOtherNumbering(tmdb, tvdb, 11);
+    expect(got.map((g) => [g.tmdbEpisode, g.other.episode])).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+    ]);
+  });
+
+  it("keeps the episode's own number on a night two aired, and falls back to position without a date", () => {
+    const night: EpisodeRef[] = [
+      ...season(1, 10),
+      { season: 2, episode: 1, airDate: "2026-01-05" },
+      { season: 2, episode: 2, airDate: "2026-01-05" },
+    ];
+    const twoCount = layout({ 1: 11, 2: 2 }, { "2:2": "2026-01-05" });
+    expect(toOtherNumbering(twoCount, night, { season: 2, episode: 2 })).toMatchObject({ season: 2, episode: 2 });
+    // No date known for TMDB's episode: the old positional rule still applies.
+    expect(toOtherNumbering(layout({ 1: 12, 2: 12 }), season(1, 24), { season: 2, episode: 1 })).toEqual({ season: 1, episode: 13 });
+  });
+
+  it("reads a day from a date or an ISO datetime", () => {
+    expect(airDay("2026-10-18")).toBe("2026-10-18");
+    expect(airDay("2026-10-18T00:00:00.0000000Z")).toBe("2026-10-18");
+    expect(airDay("")).toBeNull();
+    expect(airDay(null)).toBeNull();
   });
 });
