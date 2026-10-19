@@ -3,6 +3,8 @@
  * downloads before upgrades (see sabPriorityRules.ts). Server-side only.
  */
 import { priorityChanges, type ArrJob, type SabSlot } from "./sabPriorityRules";
+import { progressKey, sabPercent, type ClientProgress } from "./liveProgressRules";
+import { sharedRead } from "./sharedRead";
 
 const SAB_TIMEOUT_MS = 10_000;
 
@@ -52,4 +54,34 @@ export async function prioritizeNewDownloads(jobs: ArrJob[]): Promise<number> {
     }
   }
   return changed;
+}
+
+/** Shorter than the panel's refresh, so each refresh sees new progress; shared across its renders. */
+const PROGRESS_TTL_MS = 2_000;
+
+/**
+ * Percent complete for every job in SABnzbd's queue, by nzo_id -- the
+ * download id Radarr and Sonarr carry for a usenet transfer. Empty when
+ * SABnzbd is not configured or unreadable (the *arr's own figure then stands,
+ * see liveProgressRules.ts).
+ */
+export async function getSabProgress(): Promise<ClientProgress> {
+  if (!config()) return new Map();
+  try {
+    return await sharedRead("sab:queue:progress", PROGRESS_TTL_MS, async () => {
+      const data = await sabApi<{ queue: { slots: { nzo_id: string; percentage?: string }[] } }>({
+        mode: "queue",
+        limit: "500",
+      });
+      const out: ClientProgress = new Map();
+      for (const slot of data.queue.slots) {
+        const pct = sabPercent(slot.percentage);
+        if (pct !== null) out.set(progressKey(slot.nzo_id), pct);
+      }
+      return out;
+    });
+  } catch (err) {
+    console.error("[sabnzbd] could not read queue progress:", err);
+    return new Map();
+  }
 }

@@ -234,8 +234,15 @@ export async function getSonarrDownloadProgress(sonarrId: number): Promise<numbe
   }
 }
 
-/** Shorter than the panel's 2.5s refresh, so each refresh still sees new progress. */
-const ACTIVE_QUEUE_TTL_MS = 2_000;
+/**
+ * The downloads panel refreshes every 5 s while anything is active; one queue
+ * read per refresh. It used to be 2 s so each refresh saw new progress, but
+ * progress now comes from the download clients (clientProgress.ts) -- Sonarr's
+ * own figure only moves when its RefreshMonitoredDownloads task gets a turn,
+ * which behind a season search can be minutes -- so this read only has to say
+ * what is in flight.
+ */
+const ACTIVE_QUEUE_TTL_MS = 5_000;
 
 /** Every episode currently in Sonarr's active download queue, with live progress. */
 export async function getSonarrActiveDownloads(): Promise<ActiveDownload[]> {

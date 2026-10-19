@@ -334,18 +334,24 @@ export type ActiveDownload = {
  */
 export const IMPORTING_STATES = new Set(["importPending", "importing"]);
 
+/** The downloads panel refreshes every 5 s while anything is active; one queue read per refresh. */
+const ACTIVE_QUEUE_TTL_MS = 5_000;
+
 /** Every movie currently in Radarr's active download queue, with live progress. */
 export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
   if (!isRadarrConfigured()) return [];
   try {
-    // Shared between overlapping renders -- see sharedRead.ts.
-    const queue = await sharedRead("radarr:queue:active", 2_000, () => radarrFetch<{
+    // Shared between overlapping renders -- see sharedRead.ts. Held for the
+    // panel's whole refresh interval: progress now comes from the download
+    // clients (clientProgress.ts), so this only has to say what is in flight.
+    const queue = await sharedRead("radarr:queue:active", ACTIVE_QUEUE_TTL_MS, () => radarrFetch<{
       records: {
         id: number;
         movieId: number;
         title: string;
         size: number;
         sizeleft: number;
+        downloadId?: string;
         added?: string;
         protocol?: string;
         trackedDownloadState?: string;
@@ -356,6 +362,7 @@ export async function getRadarrActiveDownloads(): Promise<ActiveDownload[]> {
       const unsafe = classifyBadRelease(r);
       return {
         queueId: r.id,
+        downloadId: r.downloadId,
         // When it was grabbed -- the Sonarr side always set this; without it
         // an in-flight movie had no date and sorted below the whole library.
         startedAt: r.added ?? null,

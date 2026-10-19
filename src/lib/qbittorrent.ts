@@ -12,6 +12,8 @@
 
 import { mustKeepSeeding } from "./privateSeedRules";
 import { cached } from "./ttlCache";
+import { progressKey, type ClientProgress } from "./liveProgressRules";
+import { sharedRead } from "./sharedRead";
 
 const QBITTORRENT_URL = process.env.QBITTORRENT_URL?.replace(/\/$/, "");
 const QBITTORRENT_USER = process.env.QBITTORRENT_USER;
@@ -26,7 +28,29 @@ function baseHeaders(): Record<string, string> {
   return { Referer: QBITTORRENT_URL! };
 }
 
+/**
+ * The session cookie, kept for a while rather than fetched per call. Every
+ * read here used to log in first: the downloads panel polls every five
+ * seconds, the healer and the seeding guard poll too, and each was a login
+ * round trip to the home box before the real request. qBittorrent's default
+ * session lasts an hour; a stale one is dropped on the first rejection (see
+ * forgetSession) and the next call logs in again.
+ */
+const SESSION_TTL_MS = 10 * 60_000;
+let session: { cookie: string; at: number } | null = null;
+
 async function login(): Promise<string | null> {
+  if (session && Date.now() - session.at < SESSION_TTL_MS) return session.cookie;
+  const cookie = await freshLogin();
+  session = cookie ? { cookie, at: Date.now() } : null;
+  return cookie;
+}
+
+function forgetSession(): void {
+  session = null;
+}
+
+async function freshLogin(): Promise<string | null> {
   try {
     const res = await fetch(`${QBITTORRENT_URL}/api/v2/auth/login`, {
       method: "POST",
@@ -222,7 +246,12 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // A 403 is a session qBittorrent no longer accepts (it restarted);
+      // the next call logs in afresh instead of failing for the TTL.
+      if (res.status === 403) forgetSession();
+      return null;
+    }
     const body = (await res.json()) as {
       hash?: string;
       name?: string;
@@ -312,4 +341,25 @@ export function stalledDownloads(torrents: TorrentHealth[]): TorrentHealth[] {
       t.progress < 1 &&
       (t.state === "stalledDL" || (t.state === "downloading" && t.dlSpeed === 0))
   );
+}
+
+/** Shorter than the panel's refresh, so each refresh sees new progress; shared across its renders. */
+const PROGRESS_TTL_MS = 2_000;
+
+/**
+ * Percent complete for every torrent, by info hash -- the download id Radarr
+ * and Sonarr carry for a torrent. Empty when the client is not configured or
+ * unreadable (the *arr's own figure then stands, see liveProgressRules.ts).
+ */
+export async function getTorrentProgress(): Promise<ClientProgress> {
+  if (!isQbittorrentConfigured()) return new Map();
+  try {
+    return await sharedRead("qbt:torrents:progress", PROGRESS_TTL_MS, async () => {
+      const torrents = (await getTorrentHealth()) ?? [];
+      return new Map(torrents.map((t) => [progressKey(t.hash), t.progress * 100]));
+    });
+  } catch (err) {
+    console.error("[qbittorrent] could not read torrent progress:", err);
+    return new Map();
+  }
 }
