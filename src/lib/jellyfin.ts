@@ -594,6 +594,20 @@ export async function stopJellyfinTranscode(playSessionId: string): Promise<void
   }
 }
 
+/**
+ * Tells Jellyfin one transcode session is still being watched, so its
+ * one-minute kill timer starts over. Fire-and-forget: a missed ping costs
+ * nothing by itself, and the next one is 30 s away (playbackKeepalive.ts).
+ */
+export function pingJellyfinPlaySession(playSessionId: string): void {
+  if (!isJellyfinConfigured() || !playSessionId) return;
+  void fetch(`${JELLYFIN_URL}/Sessions/Playing/Ping?playSessionId=${encodeURIComponent(playSessionId)}`, {
+    method: "POST",
+    headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+    signal: AbortSignal.timeout(JELLYFIN_TIMEOUT_MS),
+  }).catch(() => {});
+}
+
 // Jellyfin stores position as 100ns "ticks" -- its own long-standing unit,
 // shared with .NET's TimeSpan. 10,000,000 ticks per second.
 const TICKS_PER_SECOND = 10_000_000;

@@ -10,6 +10,8 @@ import {
 import { trickplayVersion } from "./trickplayRules";
 import { windowLivePlaylist } from "./hlsPlaylistRules";
 import { streamMeter, type MeterTag } from "./streamMeter";
+import { touchPlaybackSession } from "./playbackKeepalive";
+import { playSessionOf } from "./playbackKeepaliveRules";
 
 // Headers that must survive the hop for video playback to behave: the browser
 // relies on them for seeking (Range/Content-Range/Accept-Ranges), for knowing
@@ -172,6 +174,10 @@ export async function proxyJellyfinHlsResource(
   // itself tells the player to fetch next -- strip it back out here.
   const forwardedParams = new URLSearchParams(incoming.searchParams);
   forwardedParams.delete("startTimeTicks");
+  // A recorded title's session is kept alive on a timer between fetches;
+  // live pings on every request itself (keepLiveSessionAlive), since a live
+  // player never goes quiet. See playbackKeepaliveRules.ts.
+  if (!live) touchPlaybackSession(playSessionOf(incoming.searchParams));
   const upstreamUrl =
     jellyfinPath === "master.m3u8"
       ? jellyfinHlsMasterUrl(
