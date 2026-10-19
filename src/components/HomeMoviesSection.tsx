@@ -6,14 +6,17 @@ import { ShowCard, TVRow } from "@/components/TVRow";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie, TVShow } from "@/lib/tmdb";
-import { shelfHref } from "@/lib/browseShelfRules";
+import { rowOverflows, shelfHref } from "@/lib/browseShelfRules";
 
-type Row = { title: string; movies: Movie[]; href?: string };
-type ShowRow = { title: string; shows: TVShow[]; href?: string };
+type Row = { title: string; movies: Movie[]; href?: string; total?: number | null };
+type ShowRow = { title: string; shows: TVShow[]; href?: string; total?: number | null };
 type ProgressItem = { movieId: number; progressSeconds: number };
 
 type Props = {
   trending: Movie[];
+  /** How many the Trending shelves hold; see MovieRow. */
+  trendingTotal?: number | null;
+  trendingTVTotal?: number | null;
   /** Every movie row under Trending, in page order: the lead genres and the rows among them. */
   rows: Row[];
   /** The TV rows under Trending TV; Home has room for what is new. */
@@ -30,6 +33,8 @@ type Props = {
 
 export function HomeMoviesSection({
   trending,
+  trendingTotal,
+  trendingTVTotal,
   rows,
   showRows = [],
   trendingTV,
@@ -65,9 +70,17 @@ export function HomeMoviesSection({
     <>
       {/* First, so directly under My List: the way into the whole library. */}
       {allMovies && allMovies.movies.length > 0 && (
-        <MovieRow title={allMovies.title} movies={allMovies.movies} progressMap={progressMap} href={allMovies.href} />
+        <MovieRow
+          title={allMovies.title}
+          movies={allMovies.movies}
+          progressMap={progressMap}
+          href={allMovies.href}
+          total={allMovies.total}
+        />
       )}
-      {allShows && allShows.shows.length > 0 && <TVRow title={allShows.title} shows={allShows.shows} href={allShows.href} />}
+      {allShows && allShows.shows.length > 0 && (
+        <TVRow title={allShows.title} shows={allShows.shows} href={allShows.href} total={allShows.total} />
+      )}
       {/* Then the one row that changes with the
           calendar. Titled by kind for the reason My List is on this page --
           two rows both called "Halloween" read as one row that broke. */}
@@ -77,19 +90,34 @@ export function HomeMoviesSection({
           movies={holidayMovies.movies}
           progressMap={progressMap}
           href={holidayMovies.href}
+          total={holidayMovies.total}
         />
       )}
       {holidayShows && holidayShows.shows.length > 0 && (
-        <TVRow title={`${holidayShows.title} - Shows`} shows={holidayShows.shows} href={holidayShows.href} />
+        <TVRow
+          title={`${holidayShows.title} - Shows`}
+          shows={holidayShows.shows}
+          href={holidayShows.href}
+          total={holidayShows.total}
+        />
       )}
       <MovieRow
         title="Trending Now"
         movies={trending}
         progressMap={progressMap}
         href={shelfHref("movies", { kind: "trending" })}
+        total={trendingTotal}
       />
       {trendingTV.length > 0 && (
-        <ScrollableRow title="Trending TV" href={shelfHref("tv", { kind: "trending" })}>
+        <ScrollableRow
+          title="Trending TV"
+          href={shelfHref("tv", { kind: "trending" })}
+          more={
+            rowOverflows(trendingTV.length, trendingTVTotal ?? trendingTV.length, true)
+              ? { href: shelfHref("tv", { kind: "trending" }), total: trendingTVTotal ?? null }
+              : undefined
+          }
+        >
           {trendingTV.map((show) => (
             <ShowCard key={show.id} show={show} widthClass="w-[160px] sm:w-[180px] md:w-[240px]" />
           ))}
@@ -101,7 +129,13 @@ export function HomeMoviesSection({
       {showRows.map(
         (row) =>
           row.shows.length > 0 && (
-            <TVRow key={`tv-${row.title}`} title={`${row.title} - Shows`} shows={row.shows} href={row.href} />
+            <TVRow
+              key={`tv-${row.title}`}
+              title={`${row.title} - Shows`}
+              shows={row.shows}
+              href={row.href}
+              total={row.total}
+            />
           )
       )}
       {rows.map(
@@ -113,6 +147,7 @@ export function HomeMoviesSection({
               movies={row.movies}
               progressMap={progressMap}
               href={row.href}
+              total={row.total}
             />
           )
       )}

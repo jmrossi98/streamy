@@ -93,8 +93,9 @@ const MIN_FRESH_ROW = 3;
 const FALLBACK_TV_GENRES = 4;
 const FALLBACK_ROW_SIZE = 8;
 
-export type MovieRowData = { title: string; href: string; movies: Movie[] };
-export type ShowRowData = { title: string; href: string; shows: TVShow[] };
+/** `total` is how many the shelf behind the heading holds; null when it is TMDB's paged list. */
+export type MovieRowData = { title: string; href: string; movies: Movie[]; total: number | null };
+export type ShowRowData = { title: string; href: string; shows: TVShow[]; total: number | null };
 
 // Keywords and arrival dates are for building rows, not for the browser: a
 // title's keywords can run to thirty strings, sent once per row it appears in.
@@ -225,6 +226,8 @@ function showRowPlan(library: LibraryShow[], genres: Genre[], home: boolean, see
 
 export type MovieBrowse = {
   trending: Movie[];
+  /** How many the Trending shelf holds: the whole library, or null for TMDB's list. */
+  trendingTotal: number | null;
   /** Everything downloaded, A to Z. Null when the rows are TMDB's, not the library's. */
   all: MovieRowData | null;
   /** The holiday in season, when the library has anything for it. */
@@ -244,12 +247,14 @@ export async function getMovieBrowse({ home = false }: { home?: boolean } = {}):
     ]);
     return {
       trending,
+      trendingTotal: null,
       all: null,
       holiday: null,
       rows: LEAD_MOVIE_GENRES.map((id, i) => ({
         title: genres.find((g) => g.id === id)?.name ?? "Genre",
         href: shelfHref("movies", { kind: "genre", genreId: id }),
         movies: lists[i] ?? [],
+        total: null,
       })),
     };
   }
@@ -266,23 +271,36 @@ export async function getMovieBrowse({ home = false }: { home?: boolean } = {}):
 
   return {
     trending: trendingWindow.map(movieCard),
+    trendingTotal: library.length,
     all: {
       title: ALL_MOVIES,
       href: shelfHref("movies", { kind: "all" }),
       movies: alphabetical(library, (m) => m.title).slice(0, ROW_LIMIT).map(movieCard),
+      total: library.length,
     },
     holiday:
       holiday && holidayMovies.length > 0
-        ? { title: holiday.title, href: shelfHref("movies", { kind: "holiday" }), movies: holidayWindow.map(movieCard) }
+        ? {
+            title: holiday.title,
+            href: shelfHref("movies", { kind: "holiday" }),
+            movies: holidayWindow.map(movieCard),
+            total: holidayMovies.length,
+          }
         : null,
     rows: plan
-      .map((row, i) => ({ title: row.title, href: shelfHref("movies", row.shelf), movies: windows[i].map(movieCard) }))
+      .map((row, i) => ({
+        title: row.title,
+        href: shelfHref("movies", row.shelf),
+        movies: windows[i].map(movieCard),
+        total: row.titles.length,
+      }))
       .filter((row) => row.movies.length > 0),
   };
 }
 
 export type ShowBrowse = {
   trending: TVShow[];
+  trendingTotal: number | null;
   all: ShowRowData | null;
   holiday: ShowRowData | null;
   rows: ShowRowData[];
@@ -294,17 +312,19 @@ export async function getShowBrowse({ home = false }: { home?: boolean } = {}): 
 
   if (!library) {
     const trending = getTrendingTV(10);
-    if (home) return { trending: await trending, all: null, holiday: null, rows: [] };
+    if (home) return { trending: await trending, trendingTotal: null, all: null, holiday: null, rows: [] };
     const genres = (await getTVGenres()).slice(0, FALLBACK_TV_GENRES);
     const lists = await Promise.all(genres.map((g) => getDiscoverTVByGenre(g.id, FALLBACK_ROW_SIZE)));
     return {
       trending: await trending,
+      trendingTotal: null,
       all: null,
       holiday: null,
       rows: genres.map((g, i) => ({
         title: g.name,
         href: shelfHref("tv", { kind: "genre", genreId: g.id }),
         shows: lists[i] ?? [],
+        total: null,
       })),
     };
   }
@@ -316,17 +336,29 @@ export async function getShowBrowse({ home = false }: { home?: boolean } = {}): 
 
   return {
     trending: trendingWindow.map(showCard),
+    trendingTotal: library.length,
     all: {
       title: ALL_SHOWS,
       href: shelfHref("tv", { kind: "all" }),
       shows: alphabetical(library, (s) => s.name).slice(0, ROW_LIMIT).map(showCard),
+      total: library.length,
     },
     holiday:
       holiday && holidayShows.length > 0
-        ? { title: holiday.title, href: shelfHref("tv", { kind: "holiday" }), shows: holidayWindow.map(showCard) }
+        ? {
+            title: holiday.title,
+            href: shelfHref("tv", { kind: "holiday" }),
+            shows: holidayWindow.map(showCard),
+            total: holidayShows.length,
+          }
         : null,
     rows: plan
-      .map((row, i) => ({ title: row.title, href: shelfHref("tv", row.shelf), shows: windows[i].map(showCard) }))
+      .map((row, i) => ({
+        title: row.title,
+        href: shelfHref("tv", row.shelf),
+        shows: windows[i].map(showCard),
+        total: row.titles.length,
+      }))
       .filter((row) => row.shows.length > 0),
   };
 }

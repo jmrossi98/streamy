@@ -14,8 +14,38 @@ type ScrollableRowProps = {
    * it because a row of 24 is a window onto a few hundred.
    */
   href?: string;
+  /**
+   * When the row is a window onto a bigger shelf: a tile at its end that
+   * opens the shelf, with the count when it is known. Only for overflow --
+   * a row showing everything in its category ends with its last title.
+   */
+  more?: { href: string; total: number | null };
   children: React.ReactNode;
 };
+
+/** The card widths MovieRow and TVRow use, so the tile sits in line with them. */
+const END_TILE_WIDTH = "w-[160px] sm:w-[180px] md:w-[240px]";
+
+function SeeAllTile({ href, total }: { href: string; total: number | null }) {
+  return (
+    <Link
+      href={href}
+      prefetch={false}
+      className={`group/more relative block shrink-0 snap-start ${END_TILE_WIDTH} overflow-hidden rounded bg-white/[0.04] ring-1 ring-inset ring-white/10 transition-colors hover:bg-white/[0.08] hover:ring-white/20 max-md:rounded-2xl`}
+    >
+      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2">
+        <span
+          aria-hidden
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-white/20 text-xl text-white/80 transition-transform group-hover/more:translate-x-0.5"
+        >
+          &rsaquo;
+        </span>
+        <span className="text-sm font-medium text-white/85">See all</span>
+        {total !== null && <span className="text-xs text-white/50">{total.toLocaleString()} titles</span>}
+      </div>
+    </Link>
+  );
+}
 
 function useRowScrollState(scrollRef: React.RefObject<HTMLDivElement | null>) {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -57,7 +87,7 @@ function useRowScrollState(scrollRef: React.RefObject<HTMLDivElement | null>) {
   return { canScrollLeft, canScrollRight };
 }
 
-export function ScrollableRow({ title, href, children }: ScrollableRowProps) {
+export function ScrollableRow({ title, href, more, children }: ScrollableRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { canScrollLeft, canScrollRight } = useRowScrollState(scrollRef);
 
@@ -116,6 +146,7 @@ export function ScrollableRow({ title, href, children }: ScrollableRowProps) {
              Mobile: 1rem - 0.75rem = 0.25rem (w-1). Desktop: 1.5rem - 0.5rem = 1rem (md:w-4). */}
           <div aria-hidden className="shrink-0 w-1 min-w-1 md:w-4 md:min-w-4 snap-start" />
           {children}
+          {more && <SeeAllTile href={more.href} total={more.total} />}
           <div aria-hidden className="shrink-0 w-1 min-w-1 md:w-4 md:min-w-4 snap-start" />
         </div>
         <button

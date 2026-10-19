@@ -127,6 +127,8 @@ export default async function HomePage() {
         </Suspense>
         <HomeMoviesSection
           trending={trending}
+          trendingTotal={movieBrowse.trendingTotal}
+          trendingTVTotal={showBrowse.trendingTotal}
           rows={rows}
           showRows={showBrowse.rows}
           trendingTV={trendingTV}

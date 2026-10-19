@@ -83,6 +83,18 @@ export const ROW_WINDOW = 40;
 export function rowWindow<T>(items: T[], hasShelf: boolean): T[] {
   return hasShelf && items.length > ROW_WINDOW ? items.slice(0, ROW_WINDOW) : items;
 }
+
+/**
+ * Whether a row is a window onto more than it shows, so its end should offer
+ * the shelf. `total` is how many the shelf holds; null means "more, count
+ * unknown" (TMDB's paged lists). A row that shows everything in its category
+ * has no shelf to offer at its end, however long it is.
+ */
+export function rowOverflows(shown: number, total: number | null | undefined, hasShelf: boolean): boolean {
+  if (!hasShelf) return false;
+  if (total === null) return true;
+  return typeof total === "number" && total > shown;
+}
 /** As far as "Load more" goes: 200 titles, by which point search is the better tool. */
 export const MAX_SHELF_PAGES = 10;
 
