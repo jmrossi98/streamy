@@ -28,7 +28,7 @@ export default async function TVPage() {
           <TVRow title={browse.holiday.title} shows={browse.holiday.shows} href={browse.holiday.href} />
         )}
         <TVRow title="Trending TV" shows={browse.trending} href={shelfHref("tv", { kind: "trending" })} />
-        {browse.genreRows.map((row) => (
+        {browse.rows.map((row) => (
           <TVRow key={row.title} title={row.title} shows={row.shows} href={row.href} />
         ))}
       </div>

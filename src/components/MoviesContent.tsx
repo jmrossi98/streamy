@@ -6,24 +6,25 @@ import type { MovieProgress } from "@/components/MovieRow";
 import type { Movie } from "@/lib/tmdb";
 import { shelfHref } from "@/lib/browseShelfRules";
 
-type GenreRow = { title: string; movies: Movie[]; href?: string };
+type Row = { title: string; movies: Movie[]; href?: string };
 type ProgressItem = { movieId: number; progressSeconds: number };
 
 type Props = {
   trending: Movie[];
-  genreRows: GenreRow[];
+  /** Every row under Trending, in page order: genres and the rows among them. */
+  rows: Row[];
   progressList: ProgressItem[];
   /** The viewer's saved movies. Empty for a signed-out viewer, or an empty list. */
   myList?: Movie[];
   /** The holiday in season, when the library has anything for it. */
-  holiday?: GenreRow | null;
+  holiday?: Row | null;
   /** Everything downloaded, A to Z; its heading opens the full grid. */
-  all?: GenreRow | null;
+  all?: Row | null;
 };
 
 export function MoviesContent({
   trending,
-  genreRows,
+  rows,
   progressList,
   myList = [],
   holiday = null,
@@ -76,7 +77,7 @@ export function MoviesContent({
         progressMap={progressMap}
         href={shelfHref("movies", { kind: "trending" })}
       />
-      {genreRows.map(
+      {rows.map(
         (row) =>
           row.movies.length > 0 && (
             <MovieRow

@@ -21,6 +21,14 @@ describe("shelf addresses", () => {
     { kind: "all" },
     { kind: "my-list" },
     { kind: "genre", genreId: 878 },
+    { kind: "recent" },
+    { kind: "top-rated" },
+    { kind: "hidden-gems" },
+    { kind: "picks" },
+    { kind: "short" },
+    { kind: "long" },
+    { kind: "decade", decade: 1990 },
+    { kind: "collection", slug: "time-travel" },
   ];
 
   it("round-trips every shelf through its URL segment", () => {
@@ -33,7 +41,21 @@ describe("shelf addresses", () => {
   });
 
   it("refuses anything that is not a shelf", () => {
-    for (const bad of ["", "genre-", "genre-abc", "genre-28/extra", "popular", "downloaded", "genre--1"]) {
+    for (const bad of [
+      "",
+      "genre-",
+      "genre-abc",
+      "genre-28/extra",
+      "popular",
+      "downloaded",
+      "genre--1",
+      "decade-90",
+      "decade-abcd",
+      "collection-",
+      "collection-Heists",
+      "collection--x",
+      "collection-x-",
+    ]) {
       expect(parseShelf(bad)).toBeNull();
     }
   });
