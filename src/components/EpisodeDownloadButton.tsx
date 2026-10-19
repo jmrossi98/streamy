@@ -350,15 +350,12 @@ export function EpisodeDownloadButton({
     }
     if (unaired && state.status !== "downloading") {
       // Monitored ahead of its air date: Sonarr picks it up once it is out,
-      // so there is nothing to search again or watch start. Cancel stays, to
-      // un-monitor it.
+      // so there is nothing to search again, watch start, or cancel -- no
+      // search is running and nothing is on its way.
       return (
-        <div className={`flex shrink-0 items-center gap-3 ${className}`}>
-          <span className="text-xs font-medium text-white/40" title="Sonarr will pick it up once it airs">
-            Not aired yet
-          </span>
-          {authStatus === "authenticated" && manageButton}
-        </div>
+        <span className={`shrink-0 text-xs font-medium text-white/40 ${className}`} title="Sonarr will pick it up once it airs">
+          Not aired yet
+        </span>
       );
     }
     if (state.status === "noReleaseFound") {
