@@ -101,9 +101,11 @@ function mockEpisode(season: number, ep: number): TVEpisode {
     name: `Episode ${ep}`,
     overview: "Mock episode overview.",
     still: PLACEHOLDER,
+    hasStill: false,
     seasonNumber: season,
     episodeNumber: ep,
     runtime: 45,
+    airDate: null,
   };
 }
 

@@ -383,9 +383,13 @@ export type TVEpisode = {
   name: string;
   overview: string;
   still: string;
+  /** False when `still` is the placeholder because TMDB has no image. */
+  hasStill: boolean;
   seasonNumber: number;
   episodeNumber: number;
   runtime: number | null;
+  /** YYYY-MM-DD, or null when TMDB has no date for the episode. */
+  airDate: string | null;
 };
 
 type TmdbTVResult = {
@@ -627,6 +631,7 @@ export async function getSeason(showId: string, seasonNumber: number): Promise<T
                 season_number: number;
                 episode_number: number;
                 runtime: number | null;
+                air_date?: string | null;
               }[];
             }>(`tv/${showId}/season/${seasonNumber}`);
             if (!data?.episodes) return null;
@@ -640,9 +645,11 @@ export async function getSeason(showId: string, seasonNumber: number): Promise<T
                 overview: ep.overview || "",
                 // Shown at most 160 px wide (320 on a 2x screen).
                 still: imageUrl(ep.still_path, "w300"),
+                hasStill: !!ep.still_path,
                 seasonNumber: ep.season_number,
                 episodeNumber: ep.episode_number,
                 runtime: ep.runtime ?? null,
+                airDate: ep.air_date || null,
               })),
             };
           } catch (err) {

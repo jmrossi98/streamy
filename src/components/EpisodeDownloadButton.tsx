@@ -271,6 +271,10 @@ type Props = {
    *  not "not downloaded". Renders a placeholder instead of a Download button
    *  that would be wrong a moment later. */
   statusLoading?: boolean;
+  /** The episode has a future air date. A search that found nothing is then
+   *  the expected result, so it reads "Not aired yet" rather than as a dead
+   *  end to search again. Downloaded and downloading states still win. */
+  unaired?: boolean;
   onRequested: () => void;
   /** Paints the new state immediately, before the server round trip lands. */
   onOptimistic?: (next: EpisodeState | null) => void;
@@ -285,6 +289,7 @@ export function EpisodeDownloadButton({
   onRequested,
   onOptimistic,
   statusLoading = false,
+  unaired = false,
   className = "",
 }: Props) {
   const { status: authStatus } = useSession();
@@ -339,6 +344,19 @@ export function EpisodeDownloadButton({
       return (
         <div className={`flex shrink-0 items-center gap-3 ${className}`}>
           <span className="text-xs font-medium text-white/40">Downloaded</span>
+          {authStatus === "authenticated" && manageButton}
+        </div>
+      );
+    }
+    if (unaired && state.status !== "downloading") {
+      // Monitored ahead of its air date: Sonarr picks it up once it is out,
+      // so there is nothing to search again or watch start. Cancel stays, to
+      // un-monitor it.
+      return (
+        <div className={`flex shrink-0 items-center gap-3 ${className}`}>
+          <span className="text-xs font-medium text-white/40" title="Sonarr will pick it up once it airs">
+            Not aired yet
+          </span>
           {authStatus === "authenticated" && manageButton}
         </div>
       );
