@@ -91,11 +91,14 @@ describe("parseSegments", () => {
 
 describe("skipOfferAt", () => {
   const segs = { intro: { start: 30, end: 60 }, recap: { start: 0, end: 25 }, credits: null };
-  it("offers the span being played", () => {
-    expect(skipOfferAt(5, segs)).toEqual({ kind: "recap", label: "Skip recap", to: 25 });
+  it("offers the intro while it plays", () => {
     expect(skipOfferAt(30, segs)).toEqual({ kind: "intro", label: "Skip intro", to: 60 });
   });
-  it("offers nothing outside them, or in a span's last second", () => {
+  it("never offers the recap: a first episode's cold open gets marked as one", () => {
+    expect(skipOfferAt(5, segs)).toBeNull();
+    expect(skipOfferAt(5, { ...NO_SEGMENTS, recap: { start: 0, end: 123 } })).toBeNull();
+  });
+  it("offers nothing outside the intro, or in its last second", () => {
     expect(skipOfferAt(27, segs)).toBeNull();
     expect(skipOfferAt(59.5, segs)).toBeNull();
     expect(skipOfferAt(100, NO_SEGMENTS)).toBeNull();
