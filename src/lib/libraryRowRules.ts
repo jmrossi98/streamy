@@ -107,8 +107,13 @@ export type SpreadRow<T> = {
  * forty shows cannot fill thirty rows of twenty with anything but repeats;
  * this is how the bonus rows come and go with the size of the library.
  */
-export function spreadRows<T extends Identified>(rows: SpreadRow<T>[], limit = ROW_LIMIT): T[][] {
-  const seen = new Set<string>();
+export function spreadRows<T extends Identified>(
+  rows: SpreadRow<T>[],
+  limit = ROW_LIMIT,
+  /** Titles rows elsewhere on the page already lead with (Home's mixed rows). */
+  alreadyShown: Iterable<string> = []
+): T[][] {
+  const seen = new Set<string>(alreadyShown);
   return rows.map(({ titles, minFresh = 0 }) => {
     const fresh = titles.filter((t) => !seen.has(String(t.id)));
     const shown = titles.filter((t) => seen.has(String(t.id)));

@@ -59,6 +59,11 @@ describe("spreading titles across rows", () => {
     expect(rows.map(ids)).toEqual([["a", "b", "c"], ["d"]]);
   });
 
+  it("treats titles already on the page as shown, so a row leads with others", () => {
+    const rows = spreadRows([{ titles: [a, b, c] }], 2, ["a"]);
+    expect(rows.map(ids)).toEqual([["b", "c"]]);
+  });
+
   it("shows a row with no threshold whatever it adds, and an empty row as empty", () => {
     const rows = spreadRows([{ titles: [a, b] }, { titles: [a, b] }, { titles: [a, b], minFresh: 2 }, { titles: [] }]);
     expect(rows.map(ids)).toEqual([["a", "b"], ["a", "b"], [], []]);
