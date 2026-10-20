@@ -1,9 +1,10 @@
 /**
  * OpenRouter client for the admin chat panel.
  *
- * One key reaches both the cheap open-weight models and Claude, which is the
- * whole reason this is OpenRouter rather than two provider SDKs: the panel's
- * model switch becomes a change of string, not a change of code path.
+ * One key reaches both the cheap open-weight models and Claude. Claude can
+ * also be reached directly (anthropic.ts) so prepaid Anthropic credit gets
+ * spent; which provider a job uses is the routing in llmRoutingRules.ts, and
+ * llm.ts is the switch. Call sites go through llm.ts, not this module.
  *
  * Unlike the Ollama backend, this one costs money per token, so the key is
  * expected to carry a spend limit set on OpenRouter's side. Nothing here can

@@ -2,11 +2,7 @@ import { getVaultIndex, VAULT_CONTEXT_HEADER } from "@/lib/vaultIndex";
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
-import {
-  isOpenRouterConfigured,
-  modelChain,
-  streamOpenRouterChat,
-} from "@/lib/openrouter";
+import { getRoute, streamChat } from "@/lib/llm";
 import { isRemoteBackend, normalizeBackend } from "@/lib/chatModels";
 import {
   buildSearchContext,
@@ -37,19 +33,20 @@ import { investigateThenAnswer } from "@/lib/diagInvestigation";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
 
 /**
- * Admin chat proxy. Three backends, chosen per request by the panel:
- * the self-hosted model, an open-weight model via OpenRouter, or Claude via
- * OpenRouter.
+ * Admin chat proxy. Three slots, chosen per request by the panel: the
+ * self-hosted model, an open-weight model, or Claude. Which cloud provider
+ * answers the two metered slots (OpenRouter, or Anthropic directly) and on
+ * which model is the admin-editable routing in llm.ts, not this file.
  *
  * The local model has no authentication of its own and is reachable from this
  * box over Tailscale, so this route is the only thing in front of it. The
- * OpenRouter backends are metered, so this route is also the only thing
- * between an unauthenticated request and a bill. Admin only, re-checked
- * against the database on every request, for both reasons.
+ * cloud slots are metered, so this route is also the only thing between an
+ * unauthenticated request and a bill. Admin only, re-checked against the
+ * database on every request, for both reasons.
  *
  * The upstream stream is piped straight through rather than buffered: at ~26
- * tok/s a buffered reply reads as a hang. OpenRouter's SSE is rewritten into
- * the same NDJSON shape by the client module, so the browser parses one format
+ * tok/s a buffered reply reads as a hang. Both cloud clients rewrite their
+ * wire format into the same NDJSON shape, so the browser parses one format
  * regardless of who answered.
  */
 export const dynamic = "force-dynamic";
@@ -122,9 +119,17 @@ export async function POST(request: Request) {
   const backend = normalizeBackend(body.backend);
   const remote = isRemoteBackend(backend);
 
-  if (remote && !isOpenRouterConfigured()) {
+  // Resolved once, up front: the routing can change between requests, and
+  // the investigation loop and the answer must agree on who is answering.
+  const route = remote ? await getRoute(backend === "claude" ? "chatClaude" : "chatOpen") : null;
+  if (remote && !route) {
     return NextResponse.json(
-      { error: "Cloud models aren't configured - OPENROUTER_API_KEY is unset on the server." },
+      {
+        error:
+          backend === "open"
+            ? "The open-weight model isn't configured - OPENROUTER_API_KEY is unset on the server."
+            : "Cloud models aren't configured - set OPENROUTER_API_KEY or ANTHROPIC_API_KEY on the server.",
+      },
       { status: 503 }
     );
   }
@@ -247,17 +252,17 @@ export async function POST(request: Request) {
     // Same gate as the status block -- a greeting needs neither. Falls back to
     // a plain answer when the diagnostics service can't be reached.
     const investigated =
-      remote &&
+      route &&
       body.stackStatus !== false &&
       statusQuery != null &&
       shouldIncludeStatus(statusQuery)
-        ? await investigateThenAnswer(messages, modelChain(backend), admin.name, request.signal)
+        ? await investigateThenAnswer(messages, route, admin.name, request.signal)
         : null;
 
     const stream =
       investigated ??
-      (remote
-        ? await streamOpenRouterChat(messages, modelChain(backend), request.signal)
+      (route
+        ? await streamChat(route, messages, request.signal)
         : await streamOllamaChat(messages, request.signal));
 
     return new Response(recordingStream(stream, usageId), {

@@ -1,7 +1,7 @@
 /**
  * Which model answers a given admin chat turn.
  *
- * Three backends, picked by hand in the panel rather than routed automatically.
+ * Three slots, picked by hand in the panel rather than routed automatically.
  * The choice is deliberate: an automatic router either guesses wrong on cost
  * (escalating a "is Jellyfin up" to a frontier model) or guesses wrong on
  * quality (answering an architecture question with a 3B model), and neither
@@ -47,8 +47,12 @@ export type ChatBackend = {
   label: string;
   /** One line under the picker, so the cost tradeoff isn't invisible. */
   hint: string;
-  /** Which client the route dispatches to. */
-  provider: "ollama" | "openrouter";
+  /**
+   * Where the route dispatches: the local card, or a metered cloud provider.
+   * *Which* cloud provider (OpenRouter or Anthropic directly) is a runtime
+   * routing decision -- see llmRoutingRules.ts -- not a property of the slot.
+   */
+  provider: "ollama" | "cloud";
 };
 
 export const CHAT_BACKENDS: readonly ChatBackend[] = [
@@ -62,13 +66,13 @@ export const CHAT_BACKENDS: readonly ChatBackend[] = [
     id: "open",
     label: "Open",
     hint: "Open-weight model via OpenRouter. Cheap, much stronger than local.",
-    provider: "openrouter",
+    provider: "cloud",
   },
   {
     id: "claude",
     label: "Claude",
-    hint: "Frontier model via OpenRouter. Best answers, most expensive.",
-    provider: "openrouter",
+    hint: "Frontier Claude model. Best answers, most expensive.",
+    provider: "cloud",
   },
 ];
 
@@ -116,7 +120,7 @@ export function backendById(id: ChatBackendId): ChatBackend {
   return CHAT_BACKENDS.find((b) => b.id === id) ?? CHAT_BACKENDS[0];
 }
 
-/** Whether this choice goes out to OpenRouter rather than the local card. */
+/** Whether this choice goes out to a metered cloud provider rather than the local card. */
 export function isRemoteBackend(id: ChatBackendId): boolean {
-  return backendById(id).provider === "openrouter";
+  return backendById(id).provider === "cloud";
 }

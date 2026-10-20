@@ -49,7 +49,7 @@ describe("backend defaults", () => {
 });
 
 describe("isRemoteBackend", () => {
-  it("marks only the OpenRouter-backed choices as remote", () => {
+  it("marks only the cloud-backed choices as remote", () => {
     expect(isRemoteBackend("local")).toBe(false);
     expect(isRemoteBackend("open")).toBe(true);
     expect(isRemoteBackend("claude")).toBe(true);
@@ -60,7 +60,7 @@ describe("backendById", () => {
   it("returns the matching backend", () => {
     expect(backendById("claude").label).toBe("Claude");
     expect(backendById("local").provider).toBe("ollama");
-    expect(backendById("open").provider).toBe("openrouter");
+    expect(backendById("open").provider).toBe("cloud");
   });
 
   it("gives every backend a label and a hint for the picker", () => {
