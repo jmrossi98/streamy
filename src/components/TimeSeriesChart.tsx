@@ -53,6 +53,8 @@ type Props = {
   height?: number;
   /** Forces the y-axis floor to 0. True for rates, false for temperatures. */
   zeroBased?: boolean;
+  /** Shown with fewer than two points. The default names the 5-minute sampler. */
+  emptyMessage?: string;
 };
 
 const PAD = { top: 8, right: 8, bottom: 18, left: 44 };
@@ -84,6 +86,7 @@ export function TimeSeriesChart({
   unit,
   height = 240,
   zeroBased = true,
+  emptyMessage = "Not enough history yet - the sampler runs every 5 minutes.",
 }: Props) {
   const format = FORMATTERS[unit];
   const [hover, setHover] = useState<number | null>(null);
@@ -113,9 +116,7 @@ export function TimeSeriesChart({
 
   if (times.length < 2) {
     return (
-      <p className="py-8 text-center text-sm text-white/30">
-        Not enough history yet - the sampler runs every 5 minutes.
-      </p>
+      <p className="py-8 text-center text-sm text-white/30">{emptyMessage}</p>
     );
   }
 
