@@ -10,11 +10,12 @@ import { isVaultConfigured, listVaultNotes, readVaultNote } from "./vault";
 
 /**
  * The vault folders holding the master resume and every experience note.
- * "Resume" is the laptop/Syncthing layout; the phone syncs through Remotely
+ * Folder names follow Jake's vault convention: lowercase, dashes for spaces.
+ * "resume" is the laptop/Syncthing layout; the phone syncs through Remotely
  * Save, which writes under a folder named after the phone's vault ("main"), so
- * its Resume folder arrives as main/Resume. A missing folder lists as empty.
+ * its resume folder arrives as main/resume. A missing folder lists as empty.
  */
-export const RESUME_VAULT_DIRS = ["Resume", "main/Resume"];
+export const RESUME_VAULT_DIRS = ["resume", "main/resume"];
 
 export async function listingText(url: string): Promise<string> {
   try {
@@ -58,7 +59,7 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
   if (bank.every((n) => !n.text.trim())) {
     return {
       ok: false,
-      error: `No experience yet: add your master resume and experience notes to a "Resume" folder in the Obsidian vault.`,
+      error: `No experience yet: add your master resume and experience notes to a "resume" folder in the Obsidian vault.`,
     };
   }
 
