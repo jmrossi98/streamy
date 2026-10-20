@@ -2,6 +2,7 @@ import { AdminSection } from "@/components/ui";
 import { StreamingLivePanel } from "@/components/StreamingLivePanel";
 import { StreamingHistoryPanel } from "@/components/StreamingHistoryPanel";
 import { ViewerActivityPanel } from "@/components/ViewerActivityPanel";
+import { ExitNodeClientsPanel } from "@/components/ExitNodeClientsPanel";
 import { AdminLiveTvManage } from "@/components/AdminLiveTvManage";
 
 /**
@@ -24,6 +25,13 @@ export default function AdminStreamingPage() {
 
       <AdminSection title="Viewers">
         <ViewerActivityPanel />
+      </AdminSection>
+
+      {/* Devices on the Tailscale exit nodes, their path and throughput over the
+          day -- added 2026-10-20 after the third "exit node slow on my phone"
+          that had to be reconstructed from counters after the fact. */}
+      <AdminSection title="Exit node clients">
+        <ExitNodeClientsPanel />
       </AdminSection>
 
       <AdminSection title="History">
