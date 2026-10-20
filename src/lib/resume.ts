@@ -8,8 +8,13 @@ import { htmlToText } from "./pageWatchRules";
 import { buildResumeMessages, splitResumeOutput, type NoteSource } from "./resumeRules";
 import { isVaultConfigured, listVaultNotes, readVaultNote } from "./vault";
 
-/** The vault folder holding the master resume and every experience note. */
-export const RESUME_VAULT_DIR = "Resume";
+/**
+ * The vault folders holding the master resume and every experience note.
+ * "Resume" is the laptop/Syncthing layout; the phone syncs through Remotely
+ * Save, which writes under a folder named after the phone's vault ("main"), so
+ * its Resume folder arrives as main/Resume. A missing folder lists as empty.
+ */
+export const RESUME_VAULT_DIRS = ["Resume", "main/Resume"];
 
 export async function listingText(url: string): Promise<string> {
   try {
@@ -26,7 +31,7 @@ export async function listingText(url: string): Promise<string> {
 }
 
 async function experienceBank(): Promise<NoteSource[]> {
-  const notes = await listVaultNotes(RESUME_VAULT_DIR, 200);
+  const notes = (await Promise.all(RESUME_VAULT_DIRS.map((dir) => listVaultNotes(dir, 200)))).flat();
   // The master resume first, so it survives the size cap whatever else is there.
   notes.sort((a, b) => Number(/master/i.test(b.path)) - Number(/master/i.test(a.path)) || a.path.localeCompare(b.path));
   const out: NoteSource[] = [];
@@ -53,7 +58,7 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
   if (bank.every((n) => !n.text.trim())) {
     return {
       ok: false,
-      error: `No experience yet: add your master resume and experience notes to the "${RESUME_VAULT_DIR}" folder in the Obsidian vault.`,
+      error: `No experience yet: add your master resume and experience notes to a "Resume" folder in the Obsidian vault.`,
     };
   }
 
