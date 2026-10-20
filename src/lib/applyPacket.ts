@@ -16,7 +16,7 @@ import {
   type Answer,
   type ApplicantProfile,
 } from "./applyAnswerRules";
-import { completeOpenRouter, isOpenRouterConfigured, modelChain } from "./openrouter";
+import { complete, getRoute } from "./llm";
 import { generateTailoredResume, listingText } from "./resume";
 
 const PROFILE_KEY = "job_applicant_profile";
@@ -103,16 +103,18 @@ export async function prepareApplication(postingId: string): Promise<PacketResul
     answers = answers.map((a) => (a.fileRole === "resume" ? { ...a, value: null, display: undefined, source: "you" } : a));
   }
 
-  if (forModel.length > 0 && isOpenRouterConfigured()) {
+  const route = forModel.length > 0 ? await getRoute("apply") : null;
+  if (route) {
     try {
-      const { text } = await completeOpenRouter(
+      const { text } = await complete(
+        route,
         buildAnswerMessages(forModel, profile, resume?.markdown ?? "", {
           company: posting.company,
           title: posting.title,
           location: posting.location,
           text: postingText,
         }),
-        { models: modelChain("claude"), maxTokens: 4096, timeoutMs: 180_000 }
+        { maxTokens: 4096, timeoutMs: 180_000 }
       );
       answers = applyModelAnswers(answers, parseAnswerJson(text));
     } catch (err) {

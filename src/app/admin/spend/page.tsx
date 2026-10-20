@@ -3,16 +3,19 @@ import { AdminSection } from "@/components/ui";
 import { SpendPanel } from "@/components/SpendPanel";
 import { computeTotals, daysUntil } from "@/lib/spendRules";
 import { awsSpend, openRouterCredits } from "@/lib/spend";
+import { anthropicMonthSpend } from "@/lib/anthropic";
 import { getAutomaticRenewals } from "@/lib/renewals";
 
 export default async function AdminSpendPage() {
-  const [subscriptions, aws, openRouter, autoRenewals] = await Promise.all([
+  const [subscriptions, aws, openRouter, anthropic, autoRenewals] = await Promise.all([
     prisma.subscription.findMany({ orderBy: [{ active: "desc" }, { name: "asc" }] }),
-    // Both swallow their own failures and answer null, so an expired AWS
+    // All three swallow their own failures and answer null, so an expired AWS
     // credential or an unreachable OpenRouter costs those figures and not the
     // page. The panel then names what it could not read.
     awsSpend(),
     openRouterCredits(),
+    // A local estimate, not a balance: see the panel's note.
+    anthropicMonthSpend(),
     // Cert, domain and IPTV expiry. Each answers for itself.
     getAutomaticRenewals(),
   ]);
@@ -27,6 +30,7 @@ export default async function AdminSpendPage() {
     const name = sub.name.toLowerCase();
     if (name.includes("aws")) meteredActuals[sub.name] = aws.ok ? aws.monthToDate : null;
     else if (name.includes("openrouter")) meteredActuals[sub.name] = openRouter?.used ?? null;
+    else if (name.includes("anthropic")) meteredActuals[sub.name] = anthropic?.usd ?? null;
     else meteredActuals[sub.name] = null;
   }
 
@@ -68,6 +72,7 @@ export default async function AdminSpendPage() {
             totals={spendTotals}
             aws={aws}
             openRouter={openRouter}
+            anthropic={anthropic}
             autoRenewals={autoRenewals}
           />
         </div>

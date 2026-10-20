@@ -3,7 +3,7 @@
  * Obsidian vault. See resumeRules.ts for the prompt and its one fixed rule.
  */
 import { prisma } from "./db";
-import { completeOpenRouter, isOpenRouterConfigured, modelChain } from "./openrouter";
+import { complete, getRoute } from "./llm";
 import { htmlToText } from "./pageWatchRules";
 import { buildResumeMessages, splitResumeOutput, type NoteSource } from "./resumeRules";
 import { isVaultConfigured, listVaultNotes, readVaultNote } from "./vault";
@@ -37,7 +37,8 @@ async function experienceBank(): Promise<NoteSource[]> {
 export type ResumeResult = { ok: true; id: string } | { ok: false; error: string };
 
 export async function generateTailoredResume(postingId: string): Promise<ResumeResult> {
-  if (!isOpenRouterConfigured()) return { ok: false, error: "OpenRouter is not configured." };
+  const route = await getRoute("resume");
+  if (!route) return { ok: false, error: "No cloud model is configured (set ANTHROPIC_API_KEY or OPENROUTER_API_KEY)." };
   if (!isVaultConfigured()) return { ok: false, error: "The Obsidian vault is not configured." };
 
   const posting = await prisma.jobPosting.findUnique({ where: { id: postingId } });
@@ -67,8 +68,7 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
     bank
   );
   try {
-    const { text, model } = await completeOpenRouter(messages, {
-      models: modelChain("claude"),
+    const { text, model } = await complete(route, messages, {
       maxTokens: 4096,
       webSearch: true,
       timeoutMs: 240_000,

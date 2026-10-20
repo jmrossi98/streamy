@@ -26,15 +26,21 @@ function ProposalFor({ content }: { content: string }) {
   return <ActionProposal actionId={proposal.actionId} target={proposal.target} />;
 }
 
+export type ChatSlot = {
+  /** Something can answer this slot right now. */
+  available: boolean;
+  /** Upstream model id, shown so it's never ambiguous who answered. */
+  model: string;
+  /** The vendor it goes to, for the metered slots; null for the local card. */
+  provider: string | null;
+  /** Why it is greyed out, naming the server variable that would fix it. */
+  unavailableHint: string;
+};
+
+export type ChatSlots = Record<ChatBackendId, ChatSlot>;
+
 type Props = {
-  /** OLLAMA_URL is set -- the self-hosted model can be picked. */
-  localAvailable: boolean;
-  /** OPENROUTER_API_KEY is set -- the two cloud models can be picked. */
-  remoteAvailable: boolean;
-  /** Upstream model ids, shown so it's never ambiguous who answered. */
-  localModel: string;
-  openModel: string;
-  claudeModel: string;
+  slots: ChatSlots;
   statusError?: string | null;
   searchAvailable: boolean;
   /** Fill the available height instead of capping the transcript at 24rem. */
@@ -46,11 +52,7 @@ type Props = {
 const TURNS_KEY = "streamy.assistant.turns.v1";
 
 export function OpsChat({
-  localAvailable,
-  remoteAvailable,
-  localModel,
-  openModel,
-  claudeModel,
+  slots,
   statusError,
   searchAvailable,
   fullHeight = false,
@@ -63,10 +65,13 @@ export function OpsChat({
   // about this stack, and without it the model correctly but uselessly
   // explains that it can't see any of it.
   const [stackStatus, setStackStatus] = useState(true);
-  // The open-weight slot when the key is there, local when it isn't -- opening
-  // on a backend the server would reject is worse than opening on a weaker one.
+  // The open-weight slot when something serves it, else the first slot that
+  // can answer -- opening on a backend the server would reject is worse than
+  // opening on a different one.
   const [backend, setBackend] = useState<ChatBackendId>(
-    remoteAvailable ? DEFAULT_BACKEND : "local"
+    slots[DEFAULT_BACKEND].available
+      ? DEFAULT_BACKEND
+      : (CHAT_BACKENDS.find((b) => slots[b.id].available)?.id ?? "local")
   );
   const [turns, setTurns] = useState<Turn[]>([]);
   const [turnsLoaded, setTurnsLoaded] = useState(false);
@@ -95,16 +100,9 @@ export function OpsChat({
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const available = useCallback(
-    (id: ChatBackendId) => (isRemoteBackend(id) ? remoteAvailable : localAvailable),
-    [localAvailable, remoteAvailable]
-  );
+  const available = useCallback((id: ChatBackendId) => slots[id].available, [slots]);
 
-  const modelId = useMemo(() => {
-    if (backend === "claude") return claudeModel;
-    if (backend === "open") return openModel;
-    return localModel;
-  }, [backend, claudeModel, openModel, localModel]);
+  const modelId = useMemo(() => slots[backend].model, [backend, slots]);
 
   // Follow the output as it generates, which is the whole point of streaming.
   useEffect(() => {
@@ -201,10 +199,11 @@ export function OpsChat({
     }
   }
 
-  if (!localAvailable && !remoteAvailable) {
+  if (!CHAT_BACKENDS.some((b) => slots[b.id].available)) {
     return (
       <p className="text-sm text-white/50">
-        Chat isn&apos;t configured - set <code className="text-white/70">OLLAMA_URL</code> or{" "}
+        Chat isn&apos;t configured - set <code className="text-white/70">OLLAMA_URL</code>,{" "}
+        <code className="text-white/70">ANTHROPIC_API_KEY</code> or{" "}
         <code className="text-white/70">OPENROUTER_API_KEY</code> on the server.
       </p>
     );
@@ -231,13 +230,7 @@ export function OpsChat({
                 // the wrong model, so the picker locks while one is in flight.
                 disabled={!enabled || streaming}
                 aria-pressed={selected}
-                title={
-                  enabled
-                    ? b.hint
-                    : `Unavailable - ${
-                        isRemoteBackend(b.id) ? "OPENROUTER_API_KEY" : "OLLAMA_URL"
-                      } is unset on the server.`
-                }
+                title={enabled ? b.hint : `Unavailable - ${slots[b.id].unavailableHint}`}
                 className={`rounded px-2 py-1 transition-colors ${
                   selected
                     ? "bg-netflix-red text-white"
@@ -284,6 +277,7 @@ export function OpsChat({
         ) : (
           <>
             <span className="text-white/50">{modelId}</span>
+            {slots[backend].provider && <span className="text-white/35"> via {slots[backend].provider}</span>}
             {" - "}
             {backendById(backend).hint}
             {/* The local model never leaves the house; the cloud ones do. That

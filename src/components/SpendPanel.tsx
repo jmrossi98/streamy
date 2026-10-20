@@ -9,6 +9,7 @@ import {
 } from "@/lib/spendRules";
 // Type-only: renewals.ts opens a TLS socket and must not reach the browser.
 import type { Renewal } from "@/lib/renewals";
+import type { AnthropicMonthSpend } from "@/lib/anthropicRules";
 
 export type SpendRow = {
   id: string;
@@ -32,6 +33,8 @@ type Props = {
   totals: SpendTotals;
   aws: AwsSpend;
   openRouter: { used: number; limit: number | null } | null;
+  /** Estimated from per-response usage; null when the provider is off. */
+  anthropic: AnthropicMonthSpend | null;
   /** The probed expiries -- IPTV, the cert, the domain. Read-only. */
   autoRenewals: Renewal[];
 };
@@ -56,7 +59,14 @@ type Props = {
  * the domain) have no price and nothing to edit, so they sit underneath in
  * the same list rather than in a separate card.
  */
-export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Props) {
+/** 1234567 -> "1.2M", 45000 -> "45k". Token counts, where the order of magnitude is the point. */
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+export function SpendPanel({ rows, totals, aws, openRouter, anthropic, autoRenewals }: Props) {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-white/10 bg-netflix-dark/80 p-4">
@@ -127,6 +137,24 @@ export function SpendPanel({ rows, totals, aws, openRouter, autoRenewals }: Prop
             {openRouter.limit === null && (
               <p className="mt-1 text-xs text-white/40">No spend limit set on this key.</p>
             )}
+          </div>
+        )}
+
+        {anthropic && (
+          <div className="rounded-lg border border-white/10 bg-black/30 p-4">
+            <h4 className="mb-2 text-sm font-semibold text-white">Anthropic</h4>
+            <p className="text-sm text-white/70">
+              ~{formatUsd(anthropic.usd)} this month
+              <span className="text-white/40"> · {anthropic.calls} call{anthropic.calls === 1 ? "" : "s"}</span>
+            </p>
+            <p className="mt-1 text-xs text-white/40">
+              {/* Estimated locally from each response's token counts at list
+                  price: a plain API key cannot ask the account what is left
+                  of its prepaid credit. The Console has the exact figure. */}
+              Estimated from {formatTokens(anthropic.inputTokens + anthropic.cacheReadTokens + anthropic.cacheWriteTokens)} in /{" "}
+              {formatTokens(anthropic.outputTokens)} out at list price
+              {anthropic.unpricedCalls > 0 ? `; ${anthropic.unpricedCalls} on an unpriced model not counted` : ""}.
+            </p>
           </div>
         )}
       </div>

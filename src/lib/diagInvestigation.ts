@@ -23,7 +23,8 @@ import {
 } from "./diagRules";
 import { withContext } from "./chatLimits";
 import type { ChatMessage } from "./ollama";
-import { completeOpenRouter, streamOpenRouterChat } from "./openrouter";
+import { complete, streamChat } from "./llm";
+import type { ResolvedRoute } from "./llmRoutingRules";
 
 /** Enough for a few RUN lines; the answer itself is streamed separately. */
 const STEP_MAX_TOKENS = 300;
@@ -41,7 +42,7 @@ const line = (text: string) => encoder.encode(JSON.stringify({ message: { conten
  */
 export async function investigateThenAnswer(
   messages: ChatMessage[],
-  models: string[],
+  route: ResolvedRoute,
   actorName: string,
   signal: AbortSignal
 ): Promise<ReadableStream<Uint8Array> | null> {
@@ -58,10 +59,13 @@ export async function investigateThenAnswer(
       try {
         for (let step = 0; step < MAX_STEPS && total < MAX_COMMANDS_TOTAL; step++) {
           if (signal.aborted) break;
-          const { text } = await completeOpenRouter(convo, {
-            models,
+          // Low effort: this step picks a few commands from a catalogue, and
+          // on a model that reasons by default the reasoning would otherwise
+          // outweigh the three lines it produces.
+          const { text } = await complete(route, convo, {
             maxTokens: STEP_MAX_TOKENS,
             timeoutMs: STEP_TIMEOUT_MS,
+            effort: "low",
           });
           const commands = parseRunLines(text).slice(0, MAX_COMMANDS_TOTAL - total);
           // No commands asked for: it has what it needs (or needs nothing).
@@ -85,9 +89,9 @@ export async function investigateThenAnswer(
 
         if (signal.aborted) return controller.close();
         if (total > 0) controller.enqueue(line("\n"));
-        const answer = await streamOpenRouterChat(
+        const answer = await streamChat(
+          route,
           [...convo, { role: "system", content: "Answer the admin now, in prose. Do not write RUN lines." }],
-          models,
           signal
         );
         const reader = answer.getReader();
