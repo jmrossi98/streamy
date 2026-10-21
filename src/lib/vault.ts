@@ -3,7 +3,7 @@
  * (the same share the phone syncs through). Used by the resume builder and the
  * admin assistant. Nothing here writes.
  */
-import { encodeVaultPath, isHiddenVaultPath, isReadableNote, parsePropfind, type VaultEntry } from "./vaultRules";
+import { encodeVaultPath, isHiddenVaultPath, isReadableNote, isSafeVaultPath, parsePropfind, type VaultEntry } from "./vaultRules";
 
 const TIMEOUT_MS = 10_000;
 /** A note bigger than this is not a note; refuse rather than pull it into a prompt. */
@@ -38,12 +38,17 @@ export async function listVaultDir(dir = ""): Promise<VaultEntry[]> {
 
 /** Every note under a folder, depth-first, up to `limit`. */
 export async function listVaultNotes(dir = "", limit = 500): Promise<VaultEntry[]> {
+  return listVaultFiles(dir, isReadableNote, limit);
+}
+
+/** Every file under a folder that `accept` allows, depth-first, up to `limit`. */
+export async function listVaultFiles(dir: string, accept: (path: string) => boolean, limit = 500): Promise<VaultEntry[]> {
   const out: VaultEntry[] = [];
   const queue = [dir];
   while (queue.length > 0 && out.length < limit) {
     for (const entry of await listVaultDir(queue.shift()!)) {
       if (entry.isDir) queue.push(entry.path);
-      else if (isReadableNote(entry.path)) out.push(entry);
+      else if (accept(entry.path)) out.push(entry);
       if (out.length >= limit) break;
     }
   }
@@ -64,4 +69,23 @@ export async function readVaultNote(path: string): Promise<string> {
   const text = await res.text();
   if (text.length > MAX_NOTE_BYTES) throw new Error(`${path} is larger than ${MAX_NOTE_BYTES / 1024} KB`);
   return text;
+}
+
+/** Largest binary file read (a resume PDF or Word file is well under this). */
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+/** One file's raw bytes, for attachments such as PDF and Word documents. */
+export async function readVaultFile(path: string): Promise<Buffer> {
+  if (!isSafeVaultPath(path)) throw new Error(`Not a readable path: ${path}`);
+  const cfg = config();
+  if (!cfg) throw new Error("The vault is not configured.");
+  const res = await fetch(`${cfg.base}/${encodeVaultPath(path)}`, {
+    headers: { Authorization: cfg.auth },
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS * 3),
+  });
+  if (!res.ok) throw new Error(`Could not read ${path}: HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_FILE_BYTES) throw new Error(`${path} is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB`);
+  return buf;
 }

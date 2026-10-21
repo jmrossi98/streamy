@@ -6,6 +6,7 @@ import { HEALTH_RANK, scrapedSiteHealth, sourceHealth } from "@/lib/jobSourceHea
 import { getJobAlertLevels } from "@/lib/appSettings";
 import { listResumeVersions } from "@/lib/resume";
 import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
+import { ResumeKnowledgeBasePanel } from "@/components/ResumeKnowledgeBasePanel";
 import { ApplicantProfilePanel } from "@/components/ApplicantProfilePanel";
 import { getApplicantProfile } from "@/lib/applyPacket";
 import { prisma } from "@/lib/db";
@@ -77,6 +78,10 @@ export default async function AdminJobsPage() {
 
       <AdminSection title="Applicant profile">
         <ApplicantProfilePanel initial={profile} />
+      </AdminSection>
+
+      <AdminSection title="Resume knowledge base">
+        <ResumeKnowledgeBasePanel />
       </AdminSection>
 
       <AdminSection title="Tailored resumes">

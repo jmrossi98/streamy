@@ -23,13 +23,14 @@ export type PostingInput = {
 /** Longest posting text sent, in characters: the useful part is the first few thousand. */
 export const MAX_POSTING_CHARS = 12_000;
 /** Longest experience bank sent, in characters. */
-export const MAX_BANK_CHARS = 60_000;
+export const MAX_BANK_CHARS = 120_000;
 
 export const RESUME_SYSTEM_PROMPT = `You tailor a software engineer's resume to one specific job listing.
 
 SOURCE OF TRUTH
 - The EXPERIENCE BANK below is the only source of facts about the candidate: employers, titles, dates, projects, technologies, results.
 - Never invent or embellish an employer, title, date, degree, technology, team size, or metric. Never inflate a number or round it upward. If a result has no number in the bank, describe it without one.
+- Each source starts with its vault path. Folders group sources by employer or period (for example a folder named after the current employer, and one for everything before it). Older saved resume versions may carry outdated titles or wording: when sources conflict, trust hand-written notes first, then the newest version.
 - You may select, reorder, merge, trim and reword; mirror the listing's own vocabulary where the candidate genuinely has that experience; and choose the strongest truthful framing.
 
 RESEARCH
