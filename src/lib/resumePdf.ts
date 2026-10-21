@@ -130,12 +130,16 @@ class Writer {
       // spaces, not word by word at computed offsets: parsers (applicant
       // tracking systems included) recover spaces from the text, and some
       // read a computed gap as no gap at all ("MATLABfactory").
-      for (const run of runs(line)) {
+      const lineRuns = runs(line);
+      lineRuns.forEach((run, i) => {
         const font = run.bold ? this.bold : this.regular;
-        const text = run.words.join(" ");
+        // The space between runs is a glyph inside the run, not a gap, for
+        // the same reason: a gap between a bold label and the text after it
+        // is what a parser is most likely to drop ("Testing:FastAPI").
+        const text = run.words.join(" ") + (i < lineRuns.length - 1 ? " " : "");
         this.page.drawText(text, { x, y: this.y - size, size, font, color: rgb(0.1, 0.1, 0.1) });
-        x += font.widthOfTextAtSize(text, size) + space;
-      }
+        x += font.widthOfTextAtSize(text, size);
+      });
       this.y -= lineH;
       line = [];
       lineW = 0;
