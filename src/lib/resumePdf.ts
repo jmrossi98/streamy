@@ -55,6 +55,17 @@ function words(text: string): { word: string; bold: boolean }[] {
   return out.filter((w) => w.word);
 }
 
+/** Adjacent same-style words grouped, so each group draws as one string. */
+export function runs(words: { word: string; bold: boolean }[]): { bold: boolean; words: string[] }[] {
+  const out: { bold: boolean; words: string[] }[] = [];
+  for (const w of words) {
+    const last = out[out.length - 1];
+    if (last && last.bold === w.bold) last.words.push(w.word);
+    else out.push({ bold: w.bold, words: [w.word] });
+  }
+  return out;
+}
+
 class Writer {
   page: PDFPage;
   y: number;
@@ -115,10 +126,15 @@ class Writer {
       this.ensure(lineH);
       const start = first ? x0 : indent;
       let x = opts.center ? (PAGE_W - lineW) / 2 : start;
-      for (const w of line) {
-        const font = w.bold ? this.bold : this.regular;
-        this.page.drawText(w.word, { x, y: this.y - size, size, font, color: rgb(0.1, 0.1, 0.1) });
-        x += font.widthOfTextAtSize(w.word, size) + space;
+      // Consecutive words of one style are drawn as a single string with real
+      // spaces, not word by word at computed offsets: parsers (applicant
+      // tracking systems included) recover spaces from the text, and some
+      // read a computed gap as no gap at all ("MATLABfactory").
+      for (const run of runs(line)) {
+        const font = run.bold ? this.bold : this.regular;
+        const text = run.words.join(" ");
+        this.page.drawText(text, { x, y: this.y - size, size, font, color: rgb(0.1, 0.1, 0.1) });
+        x += font.widthOfTextAtSize(text, size) + space;
       }
       this.y -= lineH;
       line = [];
