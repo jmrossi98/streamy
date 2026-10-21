@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { renderResume, resumeToPdf, splitHeading, toWinAnsi } from "../resumePdf";
+import { renderResume, resumeToPdf, runs, splitHeading, toWinAnsi } from "../resumePdf";
 
 describe("splitHeading", () => {
   it("separates a role heading into bold company, title, and right-aligned dates", () => {
@@ -60,5 +60,14 @@ describe("resumeToPdf", () => {
   it("accepts a second page when no squeeze fits", async () => {
     const pdf = await PDFDocument.load(await resumeToPdf(sample(40), "Resume"));
     expect(pdf.getPageCount()).toBeGreaterThan(1);
+  });
+});
+
+describe("runs", () => {
+  it("groups adjacent words of one style so they draw as one string", () => {
+    expect(runs([{ word: "a", bold: true }, { word: "b", bold: true }, { word: "c", bold: false }, { word: "d", bold: false }])).toEqual([
+      { bold: true, words: ["a", "b"] },
+      { bold: false, words: ["c", "d"] },
+    ]);
   });
 });
