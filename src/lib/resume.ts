@@ -6,7 +6,7 @@ import { prisma } from "./db";
 import { complete, getRoute } from "./llm";
 import { htmlToText } from "./pageWatchRules";
 import { assembleBank, isBankFile, orderBankFiles, pickBankFiles, type BankFile, type BankItem } from "./resumeBankRules";
-import { buildResumeMessages, MAX_BANK_CHARS, splitResumeOutput, type NoteSource } from "./resumeRules";
+import { buildResumeMessages, buildReviewMessages, MAX_BANK_CHARS, splitResumeOutput, type NoteSource, type PostingInput } from "./resumeRules";
 import { isVaultConfigured, listVaultFiles, readVaultFile } from "./vault";
 
 /**
@@ -110,23 +110,43 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
     };
   }
 
-  const messages = buildResumeMessages(
-    {
-      company: posting.company,
-      title: posting.title,
-      location: posting.location,
-      url: posting.url,
-      postingText: await listingText(posting.url),
-    },
-    bank
-  );
+  const input: PostingInput = {
+    company: posting.company,
+    title: posting.title,
+    location: posting.location,
+    url: posting.url,
+    postingText: await listingText(posting.url),
+  };
   try {
-    const { text, model } = await complete(route, messages, {
-      maxTokens: 4096,
+    // Two passes. The draft researches the company and writes; the review
+    // reads the draft as the parser, the recruiter and the hiring manager
+    // would, checks every claim against the bank, and tightens it to a page.
+    // A failed review keeps the draft rather than failing the whole thing.
+    const draft = await complete(route, buildResumeMessages(input, bank), {
+      maxTokens: 8192,
       webSearch: true,
-      timeoutMs: 240_000,
+      timeoutMs: 300_000,
+      effort: "high",
     });
-    const { resume, notes } = splitResumeOutput(text);
+    let { resume, notes } = splitResumeOutput(draft.text);
+    let model = draft.model;
+    if (resume.trim()) {
+      try {
+        const review = await complete(route, buildReviewMessages(input, bank, { resume, notes }), {
+          maxTokens: 8192,
+          timeoutMs: 300_000,
+          effort: "high",
+        });
+        const revised = splitResumeOutput(review.text);
+        if (/^#\s+\S/m.test(revised.resume) && /##\s+Experience/i.test(revised.resume)) {
+          resume = revised.resume;
+          notes = revised.notes || notes;
+          model = review.model === draft.model ? draft.model : `${draft.model} + ${review.model}`;
+        }
+      } catch (err) {
+        notes += `\n\n**Review**\n- The review pass failed (${err instanceof Error ? err.message : String(err)}); this is the unreviewed draft.`;
+      }
+    }
     const row = await prisma.resumeVersion.create({
       data: {
         postingId,

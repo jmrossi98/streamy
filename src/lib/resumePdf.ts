@@ -4,7 +4,12 @@
  * Real text in a standard font, single column, no images -- what an applicant
  * tracking system parses best, and the same layout rules the resume prompt
  * already follows. Handles the Markdown subset that prompt produces: "# Name",
- * a contact line, "## Section", "### Role", "- bullets", paragraphs, **bold**.
+ * a contact line, "## Section", "### Company | Title | Dates" (dates
+ * right-aligned), "- bullets", paragraphs, **bold**.
+ *
+ * One page is the standard for under ten years of experience, so a resume
+ * that overflows is re-rendered a little smaller, down to a floor, before a
+ * second page is accepted.
  */
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 
@@ -56,10 +61,16 @@ class Writer {
   constructor(
     private doc: PDFDocument,
     private regular: PDFFont,
-    private bold: PDFFont
+    private bold: PDFFont,
+    /** Multiplies every font size and gap; < 1 squeezes a long resume onto one page. */
+    private scale = 1
   ) {
     this.page = doc.addPage([PAGE_W, PAGE_H]);
     this.y = PAGE_H - MARGIN_Y;
+  }
+
+  get pages(): number {
+    return this.doc.getPageCount();
   }
 
   private ensure(height: number) {
@@ -70,7 +81,26 @@ class Writer {
   }
 
   /** Word-wrapped styled text starting at x, hanging-indented to `indent`. */
-  paragraph(text: string, opts: { size: number; x?: number; indent?: number; bold?: boolean; center?: boolean; gap?: number }) {
+  paragraph(text: string, opts: { size: number; x?: number; indent?: number; bold?: boolean; center?: boolean; gap?: number; right?: string }) {
+    const size = opts.size * this.scale;
+    if (opts.right) this.heading(text, opts.right, size, opts.gap ?? 0);
+    else this.flow(text, { ...opts, size });
+  }
+
+  /**
+   * A role heading: "**Company** Title" on the left, the dates flush right,
+   * on one line. The left part wraps under itself only if it truly must.
+   */
+  private heading(left: string, right: string, size: number, gap: number) {
+    const lineH = size * 1.28;
+    const rightText = toWinAnsi(right);
+    const rightW = this.regular.widthOfTextAtSize(rightText, size);
+    this.ensure(lineH);
+    this.page.drawText(rightText, { x: PAGE_W - MARGIN_X - rightW, y: this.y - size, size, font: this.regular, color: rgb(0.1, 0.1, 0.1) });
+    this.flow(left, { size, gap, avail: WIDTH - rightW - 12 });
+  }
+
+  private flow(text: string, opts: { size: number; x?: number; indent?: number; bold?: boolean; center?: boolean; gap?: number; avail?: number }) {
     const size = opts.size;
     const lineH = size * 1.28;
     const x0 = MARGIN_X + (opts.x ?? 0);
@@ -97,18 +127,19 @@ class Writer {
     };
     for (const w of items) {
       const width = (w.bold ? this.bold : this.regular).widthOfTextAtSize(w.word, size);
-      const avail = PAGE_W - MARGIN_X - (first ? x0 : indent);
+      const avail = opts.avail ?? PAGE_W - MARGIN_X - (first ? x0 : indent);
       if (line.length && lineW + space + width > avail) flush();
       lineW += (line.length ? space : 0) + width;
       line.push(w);
     }
     flush();
-    this.y -= opts.gap ?? 0;
+    this.y -= (opts.gap ?? 0) * this.scale;
   }
 
   bullet(text: string, size: number) {
-    this.ensure(size * 1.28);
-    this.page.drawText("•", { x: MARGIN_X + 6, y: this.y - size, size, font: this.regular });
+    const s = size * this.scale;
+    this.ensure(s * 1.28);
+    this.page.drawText("•", { x: MARGIN_X + 6, y: this.y - s, size: s, font: this.regular });
     this.paragraph(text, { size, x: 18, indent: 18, gap: 1.5 });
   }
 
@@ -123,17 +154,45 @@ class Writer {
   }
 
   space(h: number) {
-    this.y -= h;
+    this.y -= h * this.scale;
   }
 }
 
+/**
+ * "Company, City | Title | Mon YYYY – Present" -> the heading's left text and
+ * its right-aligned dates. Two parts means no title ("Name | 2024"); one part
+ * is a plain heading.
+ */
+export function splitHeading(text: string): { left: string; right: string | null } {
+  const parts = text.split(/\s+\|\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return { left: text.trim(), right: null };
+  const right = parts[parts.length - 1];
+  const [first, ...rest] = parts.slice(0, -1);
+  const left = rest.length ? `**${first}** ${rest.join(" | ")}` : `**${first}**`;
+  return { left, right };
+}
+
+/** Scale steps tried before a second page is accepted. */
+const FIT_SCALES = [1, 0.96, 0.92, 0.88, 0.85];
+
 export async function resumeToPdf(markdown: string, title: string): Promise<Uint8Array> {
+  let last: PDFDocument | null = null;
+  for (const scale of FIT_SCALES) {
+    const doc = await renderResume(markdown, title, scale);
+    last = doc;
+    if (doc.getPageCount() === 1) break;
+  }
+  return last!.save();
+}
+
+/** One rendering at a fixed scale; exported for tests, resumeToPdf picks the scale. */
+export async function renderResume(markdown: string, title: string, scale: number): Promise<PDFDocument> {
   const doc = await PDFDocument.create();
   doc.setTitle(toWinAnsi(title));
   doc.setCreator("Streamy");
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const w = new Writer(doc, regular, bold);
+  const w = new Writer(doc, regular, bold, scale);
 
   let sawName = false;
   let afterName = false;
@@ -159,7 +218,9 @@ export async function resumeToPdf(markdown: string, title: string): Promise<Uint
     }
     if ((m = /^#{3,}\s+(.*)/.exec(line))) {
       w.space(2);
-      w.paragraph(m[1], { size: 10.5, bold: true, gap: 1 });
+      const { left, right } = splitHeading(m[1]);
+      if (right) w.paragraph(left, { size: 10.5, gap: 1, right });
+      else w.paragraph(left, { size: 10.5, bold: true, gap: 1 });
       continue;
     }
     if ((m = /^\s*[-*+]\s+(.*)/.exec(line))) {
@@ -173,5 +234,5 @@ export async function resumeToPdf(markdown: string, title: string): Promise<Uint
     }
     w.paragraph(line, { size: 10, gap: 1.5 });
   }
-  return doc.save();
+  return doc;
 }

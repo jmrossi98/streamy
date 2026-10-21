@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildResumeMessages, MAX_BANK_CHARS, resumeFileName, splitResumeOutput } from "../resumeRules";
+import { buildResumeMessages, MAX_BANK_CHARS, resumeFileName, splitResumeOutput, buildReviewMessages } from "../resumeRules";
 
 const posting = {
   company: "Stripe",
@@ -16,6 +16,42 @@ describe("buildResumeMessages", () => {
     expect(user.content).toContain("Company: Stripe");
     expect(user.content).toContain("We want Go");
     expect(user.content).toContain("--- Resume/Master Resume.md ---");
+  });
+
+  it("lets the model pick among documented titles per listing, never an invented one", () => {
+    const [system] = buildResumeMessages(posting, []);
+    expect(system.content).toMatch(/TITLES/);
+    expect(system.content).toMatch(/Every title the bank documents for that job is fair to use/);
+    expect(system.content).toMatch(/a title the bank does not document is not/);
+    expect(system.content).toMatch(/Say in NOTES which title you chose/);
+  });
+
+  it("never lets a plain title win over a senior or levelled one for the same job", () => {
+    const [system] = buildResumeMessages(posting, []);
+    expect(system.content).toMatch(/the plain one is never the pick/);
+  });
+
+  it("carries the standards and the exact heading shape the PDF renders", () => {
+    const [system] = buildResumeMessages(posting, []);
+    expect(system.content).toMatch(/One page/);
+    expect(system.content).toMatch(/XYZ pattern/);
+    expect(system.content).toMatch(/"### Company \| Title \| Mon YYYY – Mon YYYY"/);
+    expect(system.content).toMatch(/Summary: omit it, unless/);
+  });
+});
+
+describe("buildReviewMessages", () => {
+  it("hands the reviewer the listing, the bank, the draft and the truth check", () => {
+    const [system, user] = buildReviewMessages(posting, [{ path: "resume/notes.md", text: "Built X." }], {
+      resume: "# Jakob Rossi\n## Experience\n- Built X.",
+      notes: "Chose title A.",
+    });
+    expect(system.content).toMatch(/TRUTH CHECK/);
+    expect(system.content).toMatch(/Never the plain title when a senior or levelled one is documented/);
+    expect(user.content).toContain("Company: Stripe");
+    expect(user.content).toContain("--- resume/notes.md ---");
+    expect(user.content).toContain("DRAFT RESUME\n# Jakob Rossi");
+    expect(user.content).toContain("DRAFT NOTES\nChose title A.");
   });
 
   it("says so when the listing could not be read", () => {
