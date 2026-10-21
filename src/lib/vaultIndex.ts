@@ -6,47 +6,36 @@
  * that index is built on the desktop, where the repos are. Read over WebDAV,
  * chunked by heading, cached for a few minutes so a conversation does not
  * re-read the vault on every message.
+ *
+ * Reads Word and PDF files as well as notes: the resumes are .docx/.pdf, and
+ * a Markdown-only index left the assistant insisting it could see no job
+ * history at all. The many saved versions of one resume are collapsed the way
+ * the resume builder does it (resumeBankRules.ts) -- one file per name, and an
+ * older version only adds the lines no newer one has -- so a search does not
+ * come back with the same bullet from twenty files.
  */
 import { cached } from "./ttlCache";
-import { tokenize, type Chunk, type DocsIndex } from "./docsRetrieval";
-import { isVaultConfigured, listVaultNotes, readVaultNote } from "./vault";
+import type { DocsIndex } from "./docsRetrieval";
+import { isVaultConfigured, listVaultFiles } from "./vault";
+import { assembleBank, bankKind, isBankFile, orderBankFiles, pickBankFiles, sourceBlock } from "./resumeBankRules";
+import { extractText, loadKnowledgeBase, mapLimit } from "./resume";
+import { CAREER_CONTEXT_HEADER, indexNotes } from "./vaultIndexRules";
 
 const CACHE_MS = 5 * 60_000;
-const MAX_NOTES = 400;
-const MAX_CHUNK_CHARS = 1500;
+const MAX_FILES = 1200;
+/** Word/PDF text kept in the index, after de-duplication. */
+const MAX_DOC_CHARS = 300_000;
 
-/** Splits a note into heading-led chunks, each at most MAX_CHUNK_CHARS. */
-export function chunkNote(path: string, text: string): Chunk[] {
-  const chunks: Chunk[] = [];
-  const noteTitle = path.split("/").pop()!.replace(/\.md$/i, "");
-  let title = noteTitle;
-  let buf: string[] = [];
-  const flush = () => {
-    const body = buf.join("\n").trim();
-    buf = [];
-    for (let i = 0; i < body.length; i += MAX_CHUNK_CHARS) {
-      const piece = body.slice(i, i + MAX_CHUNK_CHARS);
-      if (piece.trim()) chunks.push({ id: `vault:${path}:${chunks.length}`, repo: "vault", path, title, text: piece });
-    }
-  };
-  for (const line of text.split("\n")) {
-    const h = /^#{1,6}\s+(.*)$/.exec(line);
-    if (h) {
-      flush();
-      title = `${noteTitle} > ${h[1].trim()}`;
-    }
-    buf.push(line);
-  }
-  flush();
-  return chunks;
-}
-
-export function indexNotes(notes: { path: string; text: string }[]): DocsIndex {
-  const chunks = notes.flatMap((n) => chunkNote(n.path, n.text));
-  const df: Record<string, number> = {};
-  for (const c of chunks) for (const t of new Set(tokenize(c.text))) df[t] = (df[t] ?? 0) + 1;
-  return { generatedAt: new Date().toISOString(), chunks, df };
-}
+export {
+  CLAUDE_MEMORY_CONTEXT_HEADER,
+  CLAUDE_MEMORY_DIR,
+  VAULT_CONTEXT_HEADER,
+  chunkNote,
+  indexNotes,
+  isClaudeMemoryPath,
+  isResumePath,
+  splitVaultHits,
+} from "./vaultIndexRules";
 
 export async function getVaultIndex(): Promise<DocsIndex | null> {
   if (!isVaultConfigured()) return null;
@@ -54,24 +43,56 @@ export async function getVaultIndex(): Promise<DocsIndex | null> {
     "vault-index",
     CACHE_MS,
     async () => {
-      const notes = await listVaultNotes("", MAX_NOTES);
-      const read: { path: string; text: string }[] = [];
-      for (const n of notes) {
+      const files = await listVaultFiles("", isBankFile, MAX_FILES);
+      // Notes are read whole; documents go through the same de-duplication
+      // as the resume builder, so twenty saved versions read as one.
+      const isNote = (p: string) => bankKind(p) === "md" || bankKind(p) === "txt";
+      const notes = files.filter((f) => isNote(f.path));
+      const { chosen } = pickBankFiles(files.filter((f) => !isNote(f.path)));
+      const docs = orderBankFiles(chosen);
+
+      const readNotes = await mapLimit(notes, 6, async (n) => {
         try {
-          read.push({ path: n.path, text: await readVaultNote(n.path) });
+          return { path: n.path, text: await extractText({ path: n.path, kind: bankKind(n.path)!, modified: n.modified }) };
         } catch {
           // One unreadable note must not cost the rest of the vault.
+          return null;
         }
-      }
-      return indexNotes(read);
+      });
+      const readDocs = await mapLimit(docs, 4, async (d) => {
+        try {
+          return { path: d.path, kind: d.kind, text: await extractText(d) };
+        } catch (err) {
+          return { path: d.path, kind: d.kind, text: null, error: err instanceof Error ? err.message : String(err) };
+        }
+      });
+      const { sources } = assembleBank(readDocs, MAX_DOC_CHARS);
+      return indexNotes([...readNotes.filter((n): n is { path: string; text: string } => n !== null), ...sources]);
     },
     { skipCacheIf: (i) => i.chunks.length === 0 }
   );
 }
 
-export const VAULT_CONTEXT_HEADER = [
-  "Excerpts from the admin's own Obsidian notes, retrieved for this question.",
-  "They are the admin's words about their own setup and plans -- prefer them",
-  "over assumptions and cite the note when you use one. If they do not answer",
-  "the question, say so.",
-];
+/**
+ * The resume material as one block, for questions about the admin's own
+ * career: a summary of their experience needs the whole resume, and keyword
+ * search returns three fragments of it. Newest versions and hand-written
+ * notes first, so a tight budget cuts the oldest material.
+ */
+export async function getCareerContext(maxChars: number): Promise<string | null> {
+  if (!isVaultConfigured()) return null;
+  const kb = await cached("vault-career", CACHE_MS, () => loadKnowledgeBase(), { skipCacheIf: (k) => k.sources.length === 0 });
+  if (kb.sources.length === 0) return null;
+  let body = "";
+  for (const s of kb.sources) {
+    const block = sourceBlock(s.path, s.text);
+    if (body.length + block.length > maxChars) {
+      const room = maxChars - body.length;
+      if (room > 500) body += `${block.slice(0, room)}\n[... cut for length]\n`;
+      break;
+    }
+    body += block;
+  }
+  return body ? [...CAREER_CONTEXT_HEADER, "", body].join("\n") : null;
+}
+

@@ -13,6 +13,15 @@
 import type { NoteSource } from "./resumeRules";
 import { isSafeVaultPath } from "./vaultRules";
 
+/**
+ * The vault folders holding the master resume and every experience note.
+ * Folder names follow Jake's vault convention: lowercase, dashes for spaces.
+ * "resume" is the laptop/Syncthing layout; the phone syncs through Remotely
+ * Save, which writes under a folder named after the phone's vault ("main"), so
+ * its resume folder arrives as main/resume. A missing folder lists as empty.
+ */
+export const RESUME_VAULT_DIRS = ["resume", "main/resume"];
+
 export type BankKind = "md" | "txt" | "docx" | "pdf";
 
 /** Preference when one folder holds the same name in several formats. */

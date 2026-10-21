@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitMessage, copyableText, type Segment } from "../chatSegments";
+import { splitMessage, copyableText, inlineSpans, type Segment } from "../chatSegments";
 
 const F = "```";
 const code = (s: Segment[]) => s.filter((x) => x.kind === "code");
@@ -80,5 +80,24 @@ describe("copyableText", () => {
 
   it("leaves an inner blank line alone", () => {
     expect(copyableText("a\n\nb\n\n")).toBe("a\n\nb");
+  });
+});
+
+describe("inlineSpans", () => {
+  it("splits bold and code out of prose", () => {
+    expect(inlineSpans("**Only one user** ran `api jellyfin Sessions` today")).toEqual([
+      { kind: "bold", text: "Only one user" },
+      { kind: "text", text: " ran " },
+      { kind: "code", text: "api jellyfin Sessions" },
+      { kind: "text", text: " today" },
+    ]);
+  });
+  it("keeps code inside bold as part of the bold text", () => {
+    expect(inlineSpans("- **`download-warden.sh`** (cron)")[1]).toEqual({ kind: "bold", text: "`download-warden.sh`" });
+  });
+  it("leaves unclosed markers and plain text alone", () => {
+    expect(inlineSpans("a ** b")).toEqual([{ kind: "text", text: "a ** b" }]);
+    expect(inlineSpans("price is `5")).toEqual([{ kind: "text", text: "price is `5" }]);
+    expect(inlineSpans("")).toEqual([]);
   });
 });

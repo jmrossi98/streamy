@@ -7,6 +7,7 @@
 import { prisma } from "./db";
 import { applyFilters, parseApiCommand, redactJson, redactText, splitPipes, type ApiService } from "./diagApiRules";
 import type { CommandResult } from "./diagRules";
+import { buildViewerReport } from "./viewerReportRules";
 
 const TIMEOUT_MS = 120_000; // a Radarr /release search asks every indexer
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -133,6 +134,25 @@ async function runReport(args: string): Promise<{ ok: boolean; text: string }> {
           select: { ranAt: true, success: true, summary: true, detail: true, testTitle: true, durationMs: true },
         })
       );
+    case "viewers": {
+      // Who watched what through Streamy's player: the source of truth for
+      // "who streamed", which Jellyfin's short activity log is not.
+      const days = clampN(arg, 7, 60);
+      const since = new Date(Date.now() - days * 86_400_000);
+      const [events, sessions] = await Promise.all([
+        prisma.playbackEvent.findMany({
+          where: { at: { gte: since } },
+          orderBy: { at: "desc" },
+          take: 5000,
+          select: { userName: true, at: true, kind: true, media: true, sessionId: true },
+        }),
+        prisma.viewerSession.findMany({
+          where: { lastSeenAt: { gte: new Date(Date.now() - 10 * 60_000) } },
+          select: { userName: true, lastSeenAt: true, playing: true, userAgent: true },
+        }),
+      ]);
+      return show(buildViewerReport(events, sessions, since));
+    }
     case "audit":
       return show(
         await prisma.auditLogEntry.findMany({
@@ -179,7 +199,7 @@ async function runReport(args: string): Promise<{ ok: boolean; text: string }> {
     default:
       return {
         ok: false,
-        text: "refused: reports are probes, playback, audit, requests, rejected, pending-searches, job-sources, applications, users, assistant-usage",
+        text: "refused: reports are probes, playback, viewers, audit, requests, rejected, pending-searches, job-sources, applications, users, assistant-usage",
       };
   }
 }

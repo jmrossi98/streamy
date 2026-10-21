@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { searchDocs } from "../docsRetrieval";
-import { chunkNote, indexNotes } from "../vaultIndex";
+import { chunkNote, indexNotes } from "../vaultIndexRules";
 
 describe("chunkNote", () => {
   it("splits on headings and titles each chunk", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { splitMessage, copyableText } from "@/lib/chatSegments";
+import { splitMessage, copyableText, inlineSpans } from "@/lib/chatSegments";
 
 /**
  * A command the assistant suggested, with a way to get it onto the clipboard.
@@ -59,6 +59,27 @@ function CodeBlock({ text, lang, open }: { text: string; lang: string; open: boo
   );
 }
 
+/** Prose with **bold** and `code` styled; everything else stays as written. */
+function Prose({ text, nested = false }: { text: string; nested?: boolean }) {
+  return (
+    <>
+      {inlineSpans(text).map((s, i) =>
+        s.kind === "bold" && !nested ? (
+          <strong key={i} className="font-semibold text-white">
+            <Prose text={s.text} nested />
+          </strong>
+        ) : s.kind === "code" ? (
+          <code key={i} className="rounded bg-black/40 px-1 py-px font-mono text-[0.85em] text-white/90">
+            {s.text}
+          </code>
+        ) : (
+          <span key={i}>{s.kind === "bold" ? `**${s.text}**` : s.text}</span>
+        )
+      )}
+    </>
+  );
+}
+
 /**
  * One chat turn.
  *
@@ -72,9 +93,8 @@ export function ChatMessage({
   role: "user" | "assistant";
   content: string;
 }) {
-  if (role === "user" || !content.includes("```")) {
-    return <>{content}</>;
-  }
+  if (role === "user") return <>{content}</>;
+  if (!content.includes("```")) return <Prose text={content} />;
 
   return (
     <>
@@ -82,7 +102,7 @@ export function ChatMessage({
         seg.kind === "code" ? (
           <CodeBlock key={i} text={seg.text} lang={seg.lang} open={seg.open} />
         ) : (
-          <span key={i}>{seg.text}</span>
+          <Prose key={i} text={seg.text} />
         )
       )}
     </>

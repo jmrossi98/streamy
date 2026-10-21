@@ -62,6 +62,14 @@ const BASE_PROMPT =
   "those can cut the admin's own access or interrupt someone watching, so they " +
   "are done by hand. Only include a block when an action is genuinely the next " +
   "step; a diagnosis on its own is usually the more useful answer.\n\n" +
+  // The same lesson as search below: the vault block was there, but nothing
+  // said the model could read the vault, so it asked the admin to paste their
+  // resume.
+  "You DO have read access to the admin's Obsidian vault -- notes, Word files " +
+  "and PDFs, including their resumes, plus Claude Code's memory from their " +
+  "other machines. Relevant excerpts are retrieved for you and appear below; " +
+  "use them. When none appear, nothing relevant was found: say that, rather " +
+  "than asking the admin to paste something.\n\n" +
   // Without this the model used search results while insisting it couldn't
   // search, because nothing told it the results block was its own lookup.
   "You DO have web search, run for you automatically when the user enables it. " +
@@ -183,6 +191,22 @@ export function shouldSearch(query: string): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Whether a question is about the admin's own career -- their resume, jobs,
+ * experience, skills -- and so needs the whole resume rather than search
+ * fragments of it. "Summarize my job experience" once got "your job history
+ * isn't in anything I can see", because three keyword hits are not a resume.
+ */
+const CAREER_QUESTION =
+  // Letter/digit lookarounds, not \b: \b treats "é" as a non-word character,
+  // so "résumé?" never matched. A bare "cv" is left out -- it is an episode
+  // code as often as a resume.
+  /(?<![\p{L}\p{N}])(r[eé]sum[eé]s?|my cv|career|linkedin|cover letter|work history|employment|employers?|accomplish(ed|ments?)?|job (history|experience)|work experience|(my|his|jake'?s|jakob'?s) (jobs?|experience|skills|background|roles?|positions?|titles?|work)|where (have|did|do) i work(ed)?|worked (at|for)|(interview|apply|applying|application)s? (for|to|at))(?![\p{L}\p{N}])/iu;
+
+export function isCareerQuestion(query: string): boolean {
+  return CAREER_QUESTION.test(query);
 }
 
 export type IncomingMessage = { role?: unknown; content?: unknown };
