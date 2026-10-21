@@ -1105,10 +1105,17 @@ model ChatSession {
   /// JSON array of {role, content}.
   turns       String   @default("[]")
   turnCount   Int      @default(0)
+  /// The Claude Code session this chat is shared with, if any: turns flow
+  /// both ways through the chat bridge (chatBridge.ts).
+  claudeSessionId String?
+  /// How many turns Claude Code has been shown; later ones are handed to it
+  /// on its next prompt.
+  claudeSeenTurns Int     @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, updatedAt])
+  @@index([claudeSessionId])
 }

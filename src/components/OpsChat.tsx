@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "@/components/ChatMessage";
-import { ChatSessionList } from "@/components/ChatSessionList";
+import { ChatSessionList, type ClaudeCodeSessionItem } from "@/components/ChatSessionList";
 import { Button, TextArea } from "@/components/ui";
 import {
   CHAT_BACKENDS,
@@ -72,17 +72,33 @@ function writeStorage(store: "local" | "session", key: string, value: string | n
   }
 }
 
+class ApiError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: init?.body ? { "Content-Type": "application/json" } : undefined,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status);
   return (await res.json()) as T;
 }
 
+/** How often the open chat is checked for turns added elsewhere (a linked Claude Code session). */
+const REFRESH_MS = 15_000;
+
 function summaryOf(s: ChatSessionFull): ChatSessionSummary {
-  return { id: s.id, title: s.title, backend: s.backend, turnCount: s.turnCount, updatedAt: s.updatedAt };
+  return {
+    id: s.id,
+    title: s.title,
+    backend: s.backend,
+    turnCount: s.turnCount,
+    updatedAt: s.updatedAt,
+    claudeSessionId: s.claudeSessionId,
+  };
 }
 
 export function OpsChat({ slots: initialSlots, statusError, searchAvailable, fullHeight = false }: Props) {
@@ -111,6 +127,13 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   const [currentId, setCurrentId] = useState<string | null>(null);
   // Read by the send loop, which outlives the render that started it.
   const currentIdRef = useRef<string | null>(null);
+  // How many turns the open chat had when the server last sent it, and when
+  // it last changed: what a save is reconciled against, and how a change made
+  // elsewhere (a linked Claude Code session) is noticed.
+  const syncedCountRef = useRef(0);
+  const syncedAtRef = useRef<string | null>(null);
+  const streamingRef = useRef(false);
+  const [claudeSessions, setClaudeSessions] = useState<ClaudeCodeSessionItem[]>([]);
   const slotsRef = useRef(slots);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -154,6 +177,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
     (s: ChatSessionFull) => {
       selectSession(s.id);
       setTurns(s.turns);
+      syncedCountRef.current = s.turns.length;
+      syncedAtRef.current = s.updatedAt;
       setEditing(null);
       setConfirmDeleteTurn(null);
       setError(null);
@@ -209,22 +234,76 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
    * message. A failure is reported but never interrupts the conversation.
    */
   const persist = useCallback(
-    async (next: Turn[], slot: ChatBackendId) => {
+    async (next: Turn[], slot: ChatBackendId): Promise<Turn[] | null> => {
+      const id = currentIdRef.current;
       try {
-        const id = currentIdRef.current;
-        const body = JSON.stringify({ turns: next, backend: slot });
+        // baseTurnCount: turns a linked Claude Code session appended since the
+        // last sync are kept by the server, and this save goes after them.
+        const body = JSON.stringify({ turns: next, backend: slot, ...(id ? { baseTurnCount: syncedCountRef.current } : {}) });
         const { session } = id
           ? await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${id}`, { method: "PATCH", body })
           : await api<{ session: ChatSessionFull }>("/api/admin/chat-sessions", { method: "POST", body });
         if (!currentIdRef.current) selectSession(session.id);
+        syncedCountRef.current = session.turns.length;
+        syncedAtRef.current = session.updatedAt;
         upsertSummary(summaryOf(session));
         setSaveError(null);
-      } catch {
+        return session.turns;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409 && id) {
+          // History was edited here while Claude Code added to it: take the
+          // server's copy rather than overwrite what was added.
+          try {
+            const { session } = await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${id}`);
+            applySession(session);
+            setSaveError("This chat changed in Claude Code meanwhile, so it was reloaded. Make the edit again.");
+            return null;
+          } catch {
+            // Fall through to the generic message.
+          }
+        }
         setSaveError("Couldn't save this chat. It still works, but won't be kept.");
+        return null;
       }
     },
-    [selectSession, upsertSummary]
+    [applySession, selectSession, upsertSummary]
   );
+
+  // Turns added elsewhere -- a linked Claude Code session -- show up here
+  // without a reload. Only while nothing is being typed over or streamed.
+  useEffect(() => {
+    if (!currentId) return;
+    const timer = setInterval(async () => {
+      if (streamingRef.current || editing || document.visibilityState !== "visible") return;
+      try {
+        const { sessions: list } = await api<{ sessions: ChatSessionSummary[] }>("/api/admin/chat-sessions");
+        setSessions(list);
+        const mine = list.find((x) => x.id === currentIdRef.current);
+        if (!mine || mine.updatedAt === syncedAtRef.current) return;
+        const { session } = await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${mine.id}`);
+        if (streamingRef.current || session.id !== currentIdRef.current) return;
+        setTurns(session.turns);
+        syncedCountRef.current = session.turns.length;
+        syncedAtRef.current = session.updatedAt;
+      } catch {
+        // A missed refresh is caught by the next one.
+      }
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [currentId, editing]);
+
+  const loadClaudeSessions = useCallback(async () => {
+    try {
+      const { sessions: list } = await api<{ sessions: ClaudeCodeSessionItem[] }>("/api/admin/chat-sessions/claude-code");
+      setClaudeSessions(list);
+    } catch {
+      // The vault being unreachable only hides this list.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadClaudeSessions();
+  }, [loadClaudeSessions]);
 
   const available = useCallback((id: ChatBackendId) => slots[id].available, [slots]);
 
@@ -254,6 +333,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
 
   /** Has the model answer the last question in `history`, then saves the chat. */
   async function runTurn(history: Turn[]) {
+    streamingRef.current = true;
     setError(null);
     setEditing(null);
     setConfirmDeleteTurn(null);
@@ -334,10 +414,19 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
       if (!answer) setTurns(history);
     } finally {
       setStreaming(false);
+      streamingRef.current = false;
       abortRef.current = null;
-      // After the question's own save, so the chat exists to save into.
-      await saving;
-      if (answer) await persist([...history, { role: "assistant", content: answer }], slot);
+      // After the question's own save, so the chat exists to save into. That
+      // save may have folded in turns a linked Claude Code session added; the
+      // answer goes after them.
+      const saved = (await saving) ?? history;
+      if (answer) {
+        const final = [...saved, { role: "assistant" as const, content: answer }];
+        setTurns(final);
+        await persist(final, slot);
+      } else if (saved.length !== history.length) {
+        setTurns(saved);
+      }
     }
   }
 
@@ -377,10 +466,29 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
     if (streaming) return;
     selectSession(null);
     setTurns([]);
+    syncedCountRef.current = 0;
+    syncedAtRef.current = null;
     setEditing(null);
     setConfirmDeleteTurn(null);
     setError(null);
     setListOpen(false);
+  }
+
+  /** Continues a Claude Code session here: its linked chat, created on first open. */
+  async function openClaudeSession(key: string) {
+    setListOpen(false);
+    if (streaming) return;
+    try {
+      const { session } = await api<{ session: ChatSessionFull }>("/api/admin/chat-sessions/claude-code", {
+        method: "POST",
+        body: JSON.stringify({ key }),
+      });
+      upsertSummary(summaryOf(session));
+      applySession(session);
+      void loadClaudeSessions();
+    } catch {
+      setSaveError("Couldn't open that Claude Code session.");
+    }
   }
 
   async function renameSession(id: string, title: string) {
@@ -419,7 +527,9 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   // shown while a cloud model is selected -- the card being asleep says
   // nothing about whether Claude will answer.
   const showStatusError = backend === "local" && !!statusError;
-  const currentTitle = sessions.find((s) => s.id === currentId)?.title ?? "New chat";
+  const currentSummary = sessions.find((s) => s.id === currentId);
+  const currentTitle = currentSummary?.title ?? "New chat";
+  const linkedToClaude = !!currentSummary?.claudeSessionId;
 
   const list = (
     <ChatSessionList
@@ -428,6 +538,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
       currentId={currentId}
       locked={streaming}
       onOpen={(id) => void openSession(id)}
+      claudeSessions={claudeSessions}
+      onOpenClaude={(key) => void openClaudeSession(key)}
       onNew={newSession}
       onRename={(id, title) => void renameSession(id, title)}
       onDelete={(id) => void removeSession(id)}
@@ -514,6 +626,14 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
 
         <p className="-mt-1 text-xs text-white/40">
           <span className="text-white/60 md:hidden">{currentTitle} · </span>
+          {linkedToClaude && (
+            <span
+              className="mr-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-200"
+              title="Shared with a Claude Code session: turns flow both ways."
+            >
+              Shared with Claude Code
+            </span>
+          )}
           {showStatusError ? (
             <span className="text-amber-400">Model unreachable: {statusError}</span>
           ) : (
@@ -594,6 +714,11 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
             }
             return (
               <div key={i} className={`group ${isUser ? "text-right" : ""}`}>
+                {t.via === "claude-code" && (
+                  <div className="mb-0.5 text-[10px] uppercase tracking-wide text-sky-300/60">
+                    {isUser ? "In Claude Code" : "Claude Code"}
+                  </div>
+                )}
                 <div
                   className={`inline-block max-w-[85%] whitespace-pre-wrap rounded px-3 py-2 text-sm text-left ${
                     isUser ? "bg-netflix-red/80 text-white" : "bg-white/10 text-white/90"
