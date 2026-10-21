@@ -1,8 +1,11 @@
 /**
- * Read-only access to the Obsidian vault, served from mediabox over WebDAV
- * (the same share the phone syncs through). Used by the resume builder and the
- * admin assistant. Nothing here writes.
+ * Access to the Obsidian vault, served from mediabox over WebDAV (the same
+ * share the phone syncs through). Used by the resume builder and the admin
+ * assistant, which only read it. The one write is the admin chat's own saved
+ * conversations, and only into main/ai/chats/streamy/ (isWritableVaultPath):
+ * everything else in the vault is the admin's or another machine's.
  */
+import { isWritableVaultPath } from "./sharedVaultRules";
 import { encodeVaultPath, isHiddenVaultPath, isReadableNote, isSafeVaultPath, parsePropfind, type VaultEntry } from "./vaultRules";
 
 const TIMEOUT_MS = 10_000;
@@ -88,4 +91,50 @@ export async function readVaultFile(path: string): Promise<Buffer> {
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > MAX_FILE_BYTES) throw new Error(`${path} is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB`);
   return buf;
+}
+
+/** Creates each missing folder on the way to `dir`. WebDAV has no "mkdir -p". */
+async function ensureVaultDir(cfg: { base: string; auth: string }, dir: string): Promise<void> {
+  let path = "";
+  for (const part of dir.split("/").filter(Boolean)) {
+    path = path ? `${path}/${part}` : part;
+    const res = await fetch(`${cfg.base}/${encodeVaultPath(path)}/`, {
+      method: "MKCOL",
+      headers: { Authorization: cfg.auth },
+      cache: "no-store",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    // 405: it already exists.
+    if (!res.ok && res.status !== 405) throw new Error(`Could not create ${path}/: HTTP ${res.status}`);
+  }
+}
+
+/** Writes one note, replacing it. Only where isWritableVaultPath allows. */
+export async function writeVaultNote(path: string, text: string): Promise<void> {
+  if (!isWritableVaultPath(path)) throw new Error(`Not a writable vault path: ${path}`);
+  const cfg = config();
+  if (!cfg) throw new Error("The vault is not configured.");
+  await ensureVaultDir(cfg, path.slice(0, path.lastIndexOf("/")));
+  const res = await fetch(`${cfg.base}/${encodeVaultPath(path)}`, {
+    method: "PUT",
+    headers: { Authorization: cfg.auth, "Content-Type": "text/markdown; charset=utf-8" },
+    body: text,
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Could not write ${path}: HTTP ${res.status}`);
+}
+
+/** Deletes one note. Only where isWritableVaultPath allows; a missing file is fine. */
+export async function deleteVaultNote(path: string): Promise<void> {
+  if (!isWritableVaultPath(path)) throw new Error(`Not a writable vault path: ${path}`);
+  const cfg = config();
+  if (!cfg) throw new Error("The vault is not configured.");
+  const res = await fetch(`${cfg.base}/${encodeVaultPath(path)}`, {
+    method: "DELETE",
+    headers: { Authorization: cfg.auth },
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok && res.status !== 404) throw new Error(`Could not delete ${path}: HTTP ${res.status}`);
 }

@@ -33,6 +33,7 @@ export {
   chunkNote,
   indexNotes,
   isClaudeMemoryPath,
+  isSharedChatPath,
   isResumePath,
   splitVaultHits,
 } from "./vaultIndexRules";

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { scheduleChatExport } from "@/lib/chatExport";
 import {
   normalizeSessionBackend,
   normalizeTitle,
@@ -13,6 +14,9 @@ import {
  * Saved assistant chats, per admin account. Every read and write is scoped to
  * the caller's user id: a chat id from another account is "not found", never
  * someone else's transcript.
+ *
+ * Every change is also copied into the Obsidian vault (chatExport.ts), so
+ * other assistants and devices can read the conversation.
  */
 
 /** Chats shown in the list; older ones stay stored, just not listed. */
@@ -67,6 +71,7 @@ export async function createChatSession(userId: string, patch: ChatSessionPatch)
       turnCount: turns.length,
     },
   });
+  scheduleChatExport(row.id);
   return { ...summary(row), turns };
 }
 
@@ -103,10 +108,12 @@ export async function updateChatSession(
       ...(patch.turns !== undefined ? { turns: JSON.stringify(turns), turnCount: turns.length } : {}),
     },
   });
+  scheduleChatExport(row.id);
   return { ...summary(row), turns };
 }
 
 export async function deleteChatSession(userId: string, id: string): Promise<boolean> {
   const { count } = await prisma.chatSession.deleteMany({ where: { id, userId } });
+  if (count > 0) scheduleChatExport(id);
   return count > 0;
 }
