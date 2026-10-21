@@ -81,6 +81,18 @@ export function anthropicMaxTokens(visible: number): number {
   return Math.max(1, Math.floor(visible)) + THINKING_HEADROOM;
 }
 
+/**
+ * Why an answer came back with no text, for the error the caller shows. The
+ * usual cause is the output ceiling spent on reasoning (stop "max_tokens"),
+ * which the caller fixes by asking for more; naming it saves a guess.
+ */
+export function emptyAnswerMessage(stopReason: string | null, outputTokens: number, maxTokens: number): string {
+  if (stopReason === "max_tokens") {
+    return `The model ran out of output budget before writing an answer (${outputTokens} of ${maxTokens} tokens spent on reasoning). Ask for a larger maxTokens.`;
+  }
+  return `The model returned an empty answer (stop reason: ${stopReason ?? "none"}, ${outputTokens} output tokens).`;
+}
+
 export type Effort = "low" | "medium" | "high";
 
 /**

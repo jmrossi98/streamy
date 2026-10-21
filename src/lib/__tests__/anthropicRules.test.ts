@@ -3,6 +3,7 @@ import {
   THINKING_HEADROOM,
   addCall,
   anthropicMaxTokens,
+  emptyAnswerMessage,
   emptyMonthSpend,
   estimateUsd,
   parseMonthSpend,
@@ -148,5 +149,15 @@ describe("month tally", () => {
     expect(parseMonthSpend(JSON.stringify(t), "2026-11")).toEqual(emptyMonthSpend("2026-11"));
     expect(parseMonthSpend("{not json", "2026-10")).toEqual(emptyMonthSpend("2026-10"));
     expect(parseMonthSpend(null, "2026-10")).toEqual(emptyMonthSpend("2026-10"));
+  });
+});
+
+describe("emptyAnswerMessage", () => {
+  it("names a spent output budget so the caller raises it", () => {
+    expect(emptyAnswerMessage("max_tokens", 12288, 12288)).toMatch(/ran out of output budget.*12288 of 12288/);
+  });
+  it("names any other stop reason", () => {
+    expect(emptyAnswerMessage("pause_turn", 40, 1000)).toMatch(/stop reason: pause_turn, 40 output tokens/);
+    expect(emptyAnswerMessage(null, 0, 1000)).toMatch(/stop reason: none/);
   });
 });
