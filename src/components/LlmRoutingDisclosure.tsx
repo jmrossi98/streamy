@@ -1,5 +1,5 @@
 import { LlmRoutingPanel } from "@/components/LlmRoutingPanel";
-import { getResolvedRoutes, getRouting, modelSuggestions, providersConfigured } from "@/lib/llm";
+import { routingSnapshot } from "@/lib/llm";
 
 /**
  * The model routing, folded shut under a one-line disclosure, with room on
@@ -11,7 +11,7 @@ import { getResolvedRoutes, getRouting, modelSuggestions, providersConfigured } 
  * transcript to a strip a few lines tall.
  */
 export async function LlmRoutingDisclosure({ aside }: { aside?: React.ReactNode }) {
-  const [routing, resolved, suggestions] = await Promise.all([getRouting(), getResolvedRoutes(), modelSuggestions()]);
+  const initial = await routingSnapshot();
   return (
     <div className="relative flex items-start justify-between gap-3 text-xs">
       <details className="group min-w-0 flex-1">
@@ -20,7 +20,7 @@ export async function LlmRoutingDisclosure({ aside }: { aside?: React.ReactNode 
           Model routing
         </summary>
         <div className="absolute inset-x-0 top-full z-20 mt-2 max-h-[70vh] overflow-y-auto rounded-lg border border-white/15 bg-netflix-dark p-4 shadow-2xl shadow-black/60">
-          <LlmRoutingPanel initial={{ routing, resolved, configured: providersConfigured(), suggestions }} />
+          <LlmRoutingPanel initial={initial} />
         </div>
       </details>
       {aside}

@@ -29,12 +29,15 @@ import {
   streamOpenRouterChat,
 } from "./openrouter";
 import {
+  LLM_USES,
   OPENROUTER_MODEL_SUGGESTIONS,
   defaultRouting,
+  providerDefaultRoute,
   modelChainFor,
   normalizeRouting,
   resolveRoute,
   type LlmProvider,
+  type LlmRoute,
   type LlmRouting,
   type LlmUse,
   type ResolvedRoute,
@@ -84,6 +87,27 @@ export async function saveRouting(raw: unknown): Promise<LlmRouting> {
     update: { value },
   });
   return clean;
+}
+
+/**
+ * The env-default route for every use on every provider it allows -- what a
+ * row becomes when the admin switches its provider, so the switch can save
+ * at once instead of waiting for a model id to be typed.
+ */
+export function providerDefaults(): Record<LlmUse, Partial<Record<LlmProvider, LlmRoute>>> {
+  const env = routingEnv();
+  const out = {} as Record<LlmUse, Partial<Record<LlmProvider, LlmRoute>>>;
+  for (const use of LLM_USES) {
+    out[use.id] = {};
+    for (const p of use.providers) out[use.id][p] = providerDefaultRoute(use.id, p, env);
+  }
+  return out;
+}
+
+/** Everything the routing panel shows, in one read. */
+export async function routingSnapshot() {
+  const [routing, resolved, suggestions] = await Promise.all([getRouting(), getResolvedRoutes(), modelSuggestions()]);
+  return { routing, resolved, configured: providersConfigured(), suggestions, defaults: providerDefaults() };
 }
 
 /** Back to the env defaults. */

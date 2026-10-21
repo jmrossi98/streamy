@@ -45,6 +45,7 @@ model User {
   watchlistChannels   WatchlistChannelItem[]
   hiddenChannels      HiddenChannelItem[]
   gameChannelChoices  GameChannelChoice[]
+  chatSessions        ChatSession[]
   progress            WatchProgress[]
   episodeProgress     EpisodeProgress[]
 }
@@ -1083,4 +1084,31 @@ model StreamLoadSample {
   torrentUpMbps Float?
 
   @@index([at])
+}
+
+/// A saved conversation with the admin assistant (Admin -> Chat).
+///
+/// The whole transcript lives in one JSON column rather than a row per turn:
+/// the panel always loads, edits and saves a chat as a unit, and every turn is
+/// re-validated on the way in and out (chatSessionRules.ts). Kept per admin
+/// account, and deleted with it.
+model ChatSession {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  /// True once the admin renamed it, so the automatic title stops following
+  /// the first question.
+  titleEdited Boolean  @default(false)
+  /// The picker slot last used here ("local", "open", "claude"), restored
+  /// when the chat is reopened. Empty for none.
+  backend     String   @default("")
+  /// JSON array of {role, content}.
+  turns       String   @default("[]")
+  turnCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
 }

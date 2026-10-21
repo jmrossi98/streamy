@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { logAudit } from "@/lib/auditLog";
-import {
-  getResolvedRoutes,
-  getRouting,
-  modelSuggestions,
-  providersConfigured,
-  resetRouting,
-  saveRouting,
-} from "@/lib/llm";
+import { resetRouting, routingSnapshot, saveRouting } from "@/lib/llm";
 
 /**
  * Which provider and model answer each cloud-model job.
@@ -19,16 +12,11 @@ import {
  */
 export const runtime = "nodejs";
 
-async function snapshot() {
-  const [routing, resolved, suggestions] = await Promise.all([getRouting(), getResolvedRoutes(), modelSuggestions()]);
-  return { routing, resolved, configured: providersConfigured(), suggestions };
-}
-
 export async function GET() {
   if (!(await requireAdmin(await getSession()))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
-  return NextResponse.json(await snapshot());
+  return NextResponse.json(await routingSnapshot());
 }
 
 export async function PUT(request: Request) {
@@ -51,5 +39,5 @@ export async function PUT(request: Request) {
         .join(" ")
     );
   }
-  return NextResponse.json(await snapshot());
+  return NextResponse.json(await routingSnapshot());
 }
