@@ -89,3 +89,24 @@ export function copyableText(code: string): string {
     .join("\n")
     .replace(/\n+$/, "");
 }
+
+export type InlineSpan = { kind: "text" | "bold" | "code"; text: string };
+
+/**
+ * Inline styling in prose: **bold** and `code`, nothing else. The models
+ * write both constantly and the panel showed the asterisks raw. Rendered as
+ * React elements by ChatMessage, never as HTML, so a reply can't inject
+ * markup. An unclosed marker stays literal text.
+ */
+export function inlineSpans(text: string): InlineSpan[] {
+  const out: InlineSpan[] = [];
+  const re = /\*\*([^*\n](?:[^*\n]|\*(?!\*))*?)\*\*|`([^`\n]+)`/g;
+  let last = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > last) out.push({ kind: "text", text: text.slice(last, m.index) });
+    out.push(m[1] !== undefined ? { kind: "bold", text: m[1] } : { kind: "code", text: m[2] });
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+  return out;
+}

@@ -1,4 +1,10 @@
-import { getVaultIndex, VAULT_CONTEXT_HEADER } from "@/lib/vaultIndex";
+import {
+  CLAUDE_MEMORY_CONTEXT_HEADER,
+  getCareerContext,
+  getVaultIndex,
+  splitVaultHits,
+  VAULT_CONTEXT_HEADER,
+} from "@/lib/vaultIndex";
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
@@ -7,6 +13,7 @@ import { isRemoteBackend, normalizeBackend } from "@/lib/chatModels";
 import {
   buildSearchContext,
   hasUserTurn,
+  isCareerQuestion,
   latestUserQuery,
   prepareChatMessages,
   shouldIncludeStatus,
@@ -195,12 +202,34 @@ export async function POST(request: Request) {
   }
 
   // The admin's Obsidian vault, retrieved the same way as the docs: notes on
-  // plans, the homelab, ideas -- things written down that no repo holds.
+  // plans, the homelab, ideas, resumes -- things written down that no repo
+  // holds -- and Claude Code's memory from the other machines, framed apart
+  // because another model wrote it. A question about the admin's own career
+  // gets the whole resume set instead of fragments: the cloud models have the
+  // room; the local model's 8k context gets a slice.
   if (docsQuery && shouldSearch(docsQuery)) {
+    let career = false;
+    if (isCareerQuestion(docsQuery)) {
+      try {
+        const block = await getCareerContext(remote ? 40_000 : 5_000);
+        if (block) {
+          messages = withContext(messages, { role: "system", content: block });
+          career = true;
+        }
+      } catch (err) {
+        console.error("[chat] resume context failed:", err);
+      }
+    }
     try {
       const vault = await getVaultIndex();
-      const block = vault && buildDocsContextBlock(searchDocs(vault, docsQuery, 3), VAULT_CONTEXT_HEADER);
-      if (block) messages = withContext(messages, { role: "system", content: block });
+      if (vault) {
+        const { notes, memory } = splitVaultHits(searchDocs(vault, docsQuery, remote ? 10 : 5), { dropResume: career });
+        const limit = remote ? 6 : 3;
+        const noteBlock = buildDocsContextBlock(notes.slice(0, limit), VAULT_CONTEXT_HEADER);
+        if (noteBlock) messages = withContext(messages, { role: "system", content: noteBlock });
+        const memoryBlock = buildDocsContextBlock(memory.slice(0, remote ? 4 : 2), CLAUDE_MEMORY_CONTEXT_HEADER);
+        if (memoryBlock) messages = withContext(messages, { role: "system", content: memoryBlock });
+      }
     } catch (err) {
       // Answering without the notes beats failing the turn.
       console.error("[chat] vault retrieval failed:", err);

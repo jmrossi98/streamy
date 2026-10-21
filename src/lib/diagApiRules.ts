@@ -190,6 +190,7 @@ export const LOCAL_HELP = [
   "  api qbittorrent <path>     torrents/info, torrents/properties?hash=, torrents/trackers?hash=, transfer/info, log/main",
   "  api jellyfin <path>        Sessions, System/ActivityLog/Entries?limit=30, ScheduledTasks, LiveTv/Info, System/Logs, Items?...",
   "  api dispatcharr <path>     proxy/ts/status, api/channels/channels/, api/channels/streams/, api/epg/sources/, api/epg/grid/",
-  "  streamy probes [n] | playback [n] | audit [n] | requests | rejected | pending-searches | job-sources | applications | users | assistant-usage [n]",
+  "  streamy viewers [days]     WHO WATCHED WHAT: every user's plays, titles and stalls from Streamy's own player log (default 7 days), plus who is watching now. Use this for any question about users streaming -- Jellyfin's ActivityLog is short and misses people.",
+  "  streamy probes [n] | playback [n] (automated playback health checks, not people) | audit [n] | requests | rejected | pending-searches | job-sources | applications | users | assistant-usage [n]",
   "  All output is JSON, one field per line, so | grep and | head work. Narrow with query parameters (pageSize, limit) before asking for more.",
 ].join("\n");

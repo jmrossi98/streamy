@@ -17,7 +17,7 @@ export default async function AssistantPage() {
   if (!session) redirect("/login?callbackUrl=/assistant");
   if (!(await requireAdmin(session))) redirect("/");
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-2 p-4 sm:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-2 px-2 pb-2 pt-1 sm:px-4 sm:pb-4">
       <LlmRoutingDisclosure />
       <div className="min-h-0 flex-1">
         <AssistantChatPanel />

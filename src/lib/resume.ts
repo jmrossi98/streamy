@@ -5,18 +5,11 @@
 import { prisma } from "./db";
 import { complete, getRoute } from "./llm";
 import { htmlToText } from "./pageWatchRules";
-import { assembleBank, isBankFile, orderBankFiles, pickBankFiles, type BankFile, type BankItem } from "./resumeBankRules";
+import { assembleBank, isBankFile, RESUME_VAULT_DIRS, orderBankFiles, pickBankFiles, type BankFile, type BankItem } from "./resumeBankRules";
 import { buildResumeMessages, buildReviewMessages, MAX_BANK_CHARS, splitResumeOutput, type NoteSource, type PostingInput } from "./resumeRules";
 import { isVaultConfigured, listVaultFiles, readVaultFile } from "./vault";
 
-/**
- * The vault folders holding the master resume and every experience note.
- * Folder names follow Jake's vault convention: lowercase, dashes for spaces.
- * "resume" is the laptop/Syncthing layout; the phone syncs through Remotely
- * Save, which writes under a folder named after the phone's vault ("main"), so
- * its resume folder arrives as main/resume. A missing folder lists as empty.
- */
-export const RESUME_VAULT_DIRS = ["resume", "main/resume"];
+export { RESUME_VAULT_DIRS } from "./resumeBankRules";
 
 export async function listingText(url: string): Promise<string> {
   try {
@@ -32,8 +25,29 @@ export async function listingText(url: string): Promise<string> {
   }
 }
 
-/** Plain text from one knowledge-base file. */
-async function extractText(file: BankFile): Promise<string> {
+/**
+ * Extracted text by path and modified time. Word and PDF extraction is the
+ * slow part of reading the vault, and the assistant reads it far more often
+ * than the files change; a file saved again gets a new modified time and is
+ * read fresh.
+ */
+const extracted = new Map<string, string>();
+const MAX_EXTRACTED = 1000;
+
+/** Plain text from one vault file (Markdown, text, Word or PDF). */
+export async function extractText(file: BankFile): Promise<string> {
+  const key = file.modified ? `${file.path}|${file.modified}` : null;
+  const hit = key ? extracted.get(key) : undefined;
+  if (hit !== undefined) return hit;
+  const text = await extractUncached(file);
+  if (key) {
+    if (extracted.size >= MAX_EXTRACTED) extracted.clear();
+    extracted.set(key, text);
+  }
+  return text;
+}
+
+async function extractUncached(file: BankFile): Promise<string> {
   const buf = await readVaultFile(file.path);
   if (file.kind === "md" || file.kind === "txt") return buf.toString("utf8");
   if (file.kind === "docx") {
@@ -46,7 +60,7 @@ async function extractText(file: BankFile): Promise<string> {
   return text;
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   await Promise.all(
