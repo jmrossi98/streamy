@@ -1,5 +1,5 @@
 # ---- Builder (must match runner OS for Prisma: both Debian bullseye) ----
-FROM node:20-bullseye-slim AS builder
+FROM node:22-bullseye-slim AS builder
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ ENV NEXTAUTH_URL=${NEXTAUTH_URL}
 RUN npx prisma generate && npm run build
 
 # ---- Runner ----
-FROM node:20-bullseye-slim AS runner
+FROM node:22-bullseye-slim AS runner
 
 WORKDIR /app
 
