@@ -80,6 +80,8 @@ EXPOSE 3000
 # tells us immediately.
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY --from=builder /app/scripts/pending-migrations.cjs /app/pending-migrations.cjs
+# The Claude Code end of the chat bridge (src/lib/chatBridge.ts), run via docker exec.
+COPY --from=builder /app/scripts/chat-bridge.cjs /app/chat-bridge.cjs
 RUN chmod +x /app/docker-entrypoint.sh
 
 CMD ["/app/docker-entrypoint.sh"]

@@ -74,6 +74,7 @@ export async function exportChatToVault(id: string): Promise<void> {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       turns,
+      claudeSessionId: row.claudeSessionId,
     })
   );
   await removeCopies(id, path);

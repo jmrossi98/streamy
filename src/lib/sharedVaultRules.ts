@@ -84,6 +84,8 @@ export type ChatNoteInput = {
   createdAt: Date;
   updatedAt: Date;
   turns: ChatTurn[];
+  /** The Claude Code session this chat is shared with, if any. */
+  claudeSessionId?: string | null;
 };
 
 /**
@@ -101,6 +103,7 @@ export function renderChatNote(chat: ChatNoteInput): string {
     `created: ${chat.createdAt.toISOString()}`,
     `updated: ${chat.updatedAt.toISOString()}`,
     `turns: ${chat.turns.length}`,
+    ...(chat.claudeSessionId ? [`claude-session: ${JSON.stringify(chat.claudeSessionId)}`] : []),
     "---",
     "",
     `# ${chat.title}`,
@@ -109,9 +112,15 @@ export function renderChatNote(chat: ChatNoteInput): string {
     "",
   ].join("\n");
 
-  const blocks = chat.turns.map(
-    (t) => `### ${t.role === "user" ? chat.author : "Assistant"}\n\n${t.content.trim()}\n`
-  );
+  const speaker = (t: ChatTurn) =>
+    t.role === "user"
+      ? t.via === "claude-code"
+        ? `${chat.author} (in Claude Code)`
+        : chat.author
+      : t.via === "claude-code"
+        ? "Claude Code"
+        : "Assistant";
+  const blocks = chat.turns.map((t) => `### ${speaker(t)}\n\n${t.content.trim()}\n`);
   let budget = MAX_CHAT_NOTE_CHARS - head.length - 200;
   const kept: string[] = [];
   for (let i = blocks.length - 1; i >= 0; i--) {

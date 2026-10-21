@@ -13,7 +13,11 @@
 
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
 
-export type ChatTurn = { role: "user" | "assistant"; content: string };
+/**
+ * One turn. `via` marks a turn that happened in a linked Claude Code session
+ * rather than in this panel; absent means here.
+ */
+export type ChatTurn = { role: "user" | "assistant"; content: string; via?: "claude-code" };
 
 export type ChatSessionSummary = {
   id: string;
@@ -21,6 +25,8 @@ export type ChatSessionSummary = {
   backend: ChatBackendId | null;
   turnCount: number;
   updatedAt: string;
+  /** The Claude Code session this chat is shared with, or null. */
+  claudeSessionId: string | null;
 };
 
 export type ChatSessionFull = ChatSessionSummary & { turns: ChatTurn[] };
@@ -40,10 +46,12 @@ export function normalizeTurns(raw: unknown): ChatTurn[] {
   const out: ChatTurn[] = [];
   for (const t of raw) {
     if (!t || typeof t !== "object") continue;
-    const { role, content } = t as Record<string, unknown>;
+    const { role, content, via } = t as Record<string, unknown>;
     if (role !== "user" && role !== "assistant") continue;
     if (typeof content !== "string") continue;
-    out.push({ role, content: content.slice(0, MAX_TURN_CHARS) });
+    const turn: ChatTurn = { role, content: content.slice(0, MAX_TURN_CHARS) };
+    if (via === "claude-code") turn.via = "claude-code";
+    out.push(turn);
   }
   return out.slice(-MAX_SESSION_TURNS);
 }
@@ -79,6 +87,29 @@ export function titleFromTurns(turns: ChatTurn[]): string {
 /** A stored slot name, or null for one this build doesn't know. */
 export function normalizeSessionBackend(raw: unknown): ChatBackendId | null {
   return CHAT_BACKENDS.some((b) => b.id === raw) ? (raw as ChatBackendId) : null;
+}
+
+function sameTurn(a: ChatTurn, b: ChatTurn): boolean {
+  return a.role === b.role && a.content === b.content;
+}
+
+/**
+ * A whole-transcript save from the panel, reconciled with turns added
+ * elsewhere (a linked Claude Code session) since the panel last synced.
+ *
+ * `base` is how many turns the panel last received from the server, so the
+ * first `base` turns it sends are its copy of the stored ones. When nothing
+ * was added since, the save simply replaces the transcript (edits, deletes).
+ * When turns were added and the panel's copy of the old ones still matches,
+ * the added turns are kept and the panel's new turns go after them. When the
+ * old ones no longer match -- the panel edited history while something else
+ * appended -- there is no safe merge: null, and the caller refuses the save.
+ */
+export function mergeConcurrentTurns(stored: ChatTurn[], incoming: ChatTurn[], base: number | null): ChatTurn[] | null {
+  if (base === null || base === stored.length) return incoming;
+  if (base > stored.length || base > incoming.length) return null;
+  for (let i = 0; i < base; i++) if (!sameTurn(stored[i], incoming[i])) return null;
+  return [...stored, ...incoming.slice(base)].slice(-MAX_SESSION_TURNS);
 }
 
 /** The transcript with one turn's text replaced. Out of range is a no-op. */

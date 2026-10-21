@@ -4,8 +4,21 @@ import { useState } from "react";
 import { Button, TextInput, cx } from "@/components/ui";
 import { relativeAge, type ChatSessionSummary } from "@/lib/chatSessionRules";
 
+/** A Claude Code session from the vault, offered to continue here. */
+export type ClaudeCodeSessionItem = {
+  key: string;
+  machine: string;
+  title: string;
+  modified: string | null;
+  /** The saved chat already continuing it, if any. */
+  chatId: string | null;
+};
+
 type Props = {
   sessions: ChatSessionSummary[];
+  /** Claude Code sessions from the vault, newest first. */
+  claudeSessions: ClaudeCodeSessionItem[];
+  onOpenClaude: (key: string) => void;
   loaded: boolean;
   currentId: string | null;
   /** Switching is locked while a reply streams into the open chat. */
@@ -19,8 +32,22 @@ type Props = {
 /**
  * The saved chats, newest first: open one, start a new one, rename or delete.
  * Delete asks inline (a second click) rather than through a browser dialog.
+ * Below them, Claude Code sessions from the vault: opening one continues it
+ * here as a chat shared with that session.
  */
-export function ChatSessionList({ sessions, loaded, currentId, locked, onOpen, onNew, onRename, onDelete }: Props) {
+export function ChatSessionList({
+  sessions,
+  claudeSessions,
+  onOpenClaude,
+  loaded,
+  currentId,
+  locked,
+  onOpen,
+  onNew,
+  onRename,
+  onDelete,
+}: Props) {
+  const [showClaude, setShowClaude] = useState(true);
   const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -36,7 +63,8 @@ export function ChatSessionList({ sessions, loaded, currentId, locked, onOpen, o
       <Button variant="secondary" size="sm" onClick={onNew} disabled={locked} className="w-full">
         + New chat
       </Button>
-      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1" aria-label="Saved chats">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <ul className="space-y-0.5" aria-label="Saved chats">
         {loaded && sessions.length === 0 && <li className="px-2 py-3 text-xs text-white/35">No saved chats yet.</li>}
         {!loaded && <li className="px-2 py-3 text-xs text-white/35">Loading…</li>}
         {sessions.map((s) => {
@@ -123,6 +151,51 @@ export function ChatSessionList({ sessions, loaded, currentId, locked, onOpen, o
           );
         })}
       </ul>
+      {claudeSessions.length > 0 && (
+        <div className="mt-3 border-t border-white/10 pt-2">
+          <button
+            type="button"
+            onClick={() => setShowClaude((v) => !v)}
+            aria-expanded={showClaude}
+            className="flex w-full items-center justify-between px-2 py-1 text-[11px] uppercase tracking-wide text-white/40 hover:text-white/70"
+          >
+            <span>Claude Code sessions</span>
+            <span aria-hidden>{showClaude ? "−" : "+"}</span>
+          </button>
+          {showClaude && (
+            <ul className="space-y-0.5" aria-label="Claude Code sessions">
+              {claudeSessions.map((c) => {
+                const active = !!c.chatId && c.chatId === currentId;
+                return (
+                  <li key={c.key}>
+                    <button
+                      type="button"
+                      disabled={locked}
+                      onClick={() => (c.chatId ? onOpen(c.chatId) : onOpenClaude(c.key))}
+                      aria-current={active ? "true" : undefined}
+                      title={c.chatId ? `${c.title} (continued here)` : `Continue “${c.title}” here`}
+                      className={cx(
+                        "flex w-full flex-col rounded px-2 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                        active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/5 hover:text-white/90"
+                      )}
+                    >
+                      <span className="flex w-full items-baseline gap-2">
+                        <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                        {c.chatId && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-label="Continued here" />}
+                      </span>
+                      <span className="text-[10px] text-white/30">
+                        {c.machine}
+                        {c.modified ? ` · ${relativeAge(c.modified)}` : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+      </div>
     </div>
   );
 }

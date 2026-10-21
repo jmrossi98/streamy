@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { scheduleChatExport } from "@/lib/chatExport";
 import {
+  mergeConcurrentTurns,
   normalizeSessionBackend,
   normalizeTitle,
   normalizeTurns,
@@ -28,6 +29,7 @@ type Row = {
   backend: string;
   turnCount: number;
   updatedAt: Date;
+  claudeSessionId: string | null;
 };
 
 function summary(row: Row): ChatSessionSummary {
@@ -37,6 +39,7 @@ function summary(row: Row): ChatSessionSummary {
     backend: normalizeSessionBackend(row.backend),
     turnCount: row.turnCount,
     updatedAt: row.updatedAt.toISOString(),
+    claudeSessionId: row.claudeSessionId,
   };
 }
 
@@ -45,7 +48,7 @@ export async function listChatSessions(userId: string): Promise<ChatSessionSumma
     where: { userId },
     orderBy: { updatedAt: "desc" },
     take: LIST_LIMIT,
-    select: { id: true, title: true, backend: true, turnCount: true, updatedAt: true },
+    select: { id: true, title: true, backend: true, turnCount: true, updatedAt: true, claudeSessionId: true },
   });
   return rows.map(summary);
 }
@@ -56,7 +59,19 @@ export async function getChatSession(userId: string, id: string): Promise<ChatSe
   return { ...summary(row), turns: parseStoredTurns(row.turns) };
 }
 
-export type ChatSessionPatch = { title?: unknown; backend?: unknown; turns?: unknown };
+/**
+ * `baseTurnCount`: how many turns the panel last received from the server
+ * (see mergeConcurrentTurns). Sent with every transcript save, so turns a
+ * linked Claude Code session appended meanwhile are kept, not overwritten.
+ */
+export type ChatSessionPatch = { title?: unknown; backend?: unknown; turns?: unknown; baseTurnCount?: unknown };
+
+/** The transcript changed elsewhere in a way this save cannot be merged with. */
+export class ChatConflictError extends Error {
+  constructor() {
+    super("This chat changed elsewhere since it was loaded.");
+  }
+}
 
 export async function createChatSession(userId: string, patch: ChatSessionPatch): Promise<ChatSessionFull> {
   const turns = normalizeTurns(patch.turns);
@@ -88,7 +103,13 @@ export async function updateChatSession(
   const existing = await prisma.chatSession.findFirst({ where: { id, userId } });
   if (!existing) return null;
 
-  const turns = patch.turns !== undefined ? normalizeTurns(patch.turns) : parseStoredTurns(existing.turns);
+  let turns = parseStoredTurns(existing.turns);
+  if (patch.turns !== undefined) {
+    const base = typeof patch.baseTurnCount === "number" && Number.isInteger(patch.baseTurnCount) ? patch.baseTurnCount : null;
+    const merged = mergeConcurrentTurns(turns, normalizeTurns(patch.turns), base);
+    if (!merged) throw new ChatConflictError();
+    turns = merged;
+  }
   let title = existing.title;
   let titleEdited = existing.titleEdited;
   if (patch.title !== undefined) {

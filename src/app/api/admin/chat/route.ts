@@ -16,6 +16,7 @@ import {
   newestChatNotes,
 } from "@/lib/sharedVaultRules";
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
 import { getRoute, streamChat } from "@/lib/llm";
@@ -252,6 +253,28 @@ export async function POST(request: Request) {
     } catch (err) {
       // Answering without the notes beats failing the turn.
       console.error("[chat] vault retrieval failed:", err);
+    }
+  }
+
+  // A chat shared with a Claude Code session: turns marked as from Claude
+  // Code happened there, and the admin may carry on there afterwards.
+  if (sessionId) {
+    try {
+      const linked = await prisma.chatSession.findFirst({
+        where: { id: sessionId, userId: admin.id, claudeSessionId: { not: null } },
+        select: { id: true },
+      });
+      if (linked) {
+        messages = withContext(messages, {
+          role: "system",
+          content:
+            "This chat is shared with a Claude Code session on the admin's machine. Earlier turns may have happened " +
+            "there (Claude Code worked with full tool access; its tool output is not in this transcript), and the " +
+            "admin may continue this conversation there after you answer. Pick up where it left off.",
+        });
+      }
+    } catch (err) {
+      console.error("[chat] linked-session check failed:", err);
     }
   }
 
