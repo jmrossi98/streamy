@@ -274,7 +274,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
       const res = await fetch("/api/admin/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, webSearch, backend: slot, stackStatus }),
+        body: JSON.stringify({ messages: history, webSearch, backend: slot, stackStatus, sessionId: currentIdRef.current }),
         signal: controller.signal,
       });
 

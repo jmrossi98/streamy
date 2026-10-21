@@ -5,6 +5,16 @@ import {
   splitVaultHits,
   VAULT_CONTEXT_HEADER,
 } from "@/lib/vaultIndex";
+import { isVaultConfigured, listVaultFiles, readVaultNote } from "@/lib/vault";
+import { isReadableNote } from "@/lib/vaultRules";
+import {
+  AI_CHATS_DIR,
+  buildRecentChatsBlock,
+  CHAT_HISTORY_CONTEXT_HEADER,
+  chatNoteSuffix,
+  isRecentChatQuestion,
+  newestChatNotes,
+} from "@/lib/sharedVaultRules";
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
@@ -114,6 +124,7 @@ export async function POST(request: Request) {
     webSearch?: unknown;
     backend?: unknown;
     stackStatus?: unknown;
+    sessionId?: unknown;
   };
   try {
     body = await request.json();
@@ -125,6 +136,9 @@ export async function POST(request: Request) {
   // erroring -- and never to a metered one.
   const backend = normalizeBackend(body.backend);
   const remote = isRemoteBackend(backend);
+  // The saved chat this turn belongs to, so its own copy in the vault is never
+  // handed back to it as "a past conversation".
+  const sessionId = typeof body.sessionId === "string" && /^[a-z0-9]{8,40}$/i.test(body.sessionId) ? body.sessionId : null;
 
   // Resolved once, up front: the routing can change between requests, and
   // the investigation loop and the answer must agree on who is answering.
@@ -223,16 +237,38 @@ export async function POST(request: Request) {
     try {
       const vault = await getVaultIndex();
       if (vault) {
-        const { notes, memory } = splitVaultHits(searchDocs(vault, docsQuery, remote ? 10 : 5), { dropResume: career });
+        const { notes, memory, chats } = splitVaultHits(searchDocs(vault, docsQuery, remote ? 12 : 6), {
+          dropResume: career,
+          currentChatSuffix: sessionId ? chatNoteSuffix(sessionId) : null,
+        });
         const limit = remote ? 6 : 3;
         const noteBlock = buildDocsContextBlock(notes.slice(0, limit), VAULT_CONTEXT_HEADER);
         if (noteBlock) messages = withContext(messages, { role: "system", content: noteBlock });
         const memoryBlock = buildDocsContextBlock(memory.slice(0, remote ? 4 : 2), CLAUDE_MEMORY_CONTEXT_HEADER);
         if (memoryBlock) messages = withContext(messages, { role: "system", content: memoryBlock });
+        const chatBlock = buildDocsContextBlock(chats.slice(0, remote ? 4 : 2), CHAT_HISTORY_CONTEXT_HEADER);
+        if (chatBlock) messages = withContext(messages, { role: "system", content: chatBlock });
       }
     } catch (err) {
       // Answering without the notes beats failing the turn.
       console.error("[chat] vault retrieval failed:", err);
+    }
+  }
+
+  // "What did we talk about last time", "what did Claude Code do today": the
+  // words name a time, not a topic, so keyword search finds nothing. The
+  // newest conversations from every assistant are listed instead, with the
+  // newest one's text. Read live rather than from the index, which lags a few
+  // minutes behind the chat that just ended.
+  if (docsQuery && isVaultConfigured() && isRecentChatQuestion(docsQuery)) {
+    try {
+      const entries = await listVaultFiles(AI_CHATS_DIR, isReadableNote, 600);
+      const list = newestChatNotes(entries, sessionId, 8);
+      const latest = list[0] ? { ref: list[0], text: await readVaultNote(list[0].path) } : null;
+      const block = buildRecentChatsBlock(list, latest, remote ? 24_000 : 4_000);
+      if (block) messages = withContext(messages, { role: "system", content: block });
+    } catch (err) {
+      console.error("[chat] recent conversations read failed:", err);
     }
   }
 
