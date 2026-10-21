@@ -48,10 +48,14 @@ export function isHiddenVaultPath(path: string): boolean {
  * PDFs -- and nothing here needs them.
  */
 export function isReadableNote(path: string): boolean {
+  return isSafeVaultPath(path) && /\.md$/i.test(path);
+}
+
+/** Relative, inside the vault, no traversal, not hidden. Says nothing about the file type. */
+export function isSafeVaultPath(path: string): boolean {
   if (!path || path.startsWith("/") || path.includes("\\")) return false;
   if (path.split("/").some((p) => p === ".." || p === ".")) return false;
-  if (isHiddenVaultPath(path)) return false;
-  return /\.md$/i.test(path);
+  return !isHiddenVaultPath(path);
 }
 
 /** URL-encodes each segment, keeping the slashes. */

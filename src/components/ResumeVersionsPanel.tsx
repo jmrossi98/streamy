@@ -13,8 +13,8 @@ export function ResumeVersionsPanel({
   if (versions.length === 0) {
     return (
       <p className="text-sm text-white/50">
-        None yet. Use &ldquo;tailor resume&rdquo; on a listing above. It reads your master resume and experience notes
-        from the <code className="text-white/70">Resume</code> folder in the Obsidian vault.
+        None yet. Use &ldquo;tailor resume&rdquo; on a listing above. It reads the knowledge base above: the notes,
+        Word files and PDFs in the Obsidian vault&apos;s <code className="text-white/70">resume</code> folder.
       </p>
     );
   }
