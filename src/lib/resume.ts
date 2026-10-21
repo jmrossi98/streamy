@@ -123,7 +123,7 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
     // would, checks every claim against the bank, and tightens it to a page.
     // A failed review keeps the draft rather than failing the whole thing.
     const draft = await complete(route, buildResumeMessages(input, bank), {
-      maxTokens: 8192,
+      maxTokens: 24_000,
       webSearch: true,
       timeoutMs: 300_000,
       effort: "high",
@@ -133,7 +133,7 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
     if (resume.trim()) {
       try {
         const review = await complete(route, buildReviewMessages(input, bank, { resume, notes }), {
-          maxTokens: 8192,
+          maxTokens: 24_000,
           timeoutMs: 300_000,
           effort: "high",
         });

@@ -26,6 +26,7 @@ import type { ChatMessage } from "./ollama";
 import {
   addCall,
   anthropicMaxTokens,
+  emptyAnswerMessage,
   parseMonthSpend,
   spendMonth,
   supportsEffort,
@@ -40,6 +41,8 @@ import { ANTHROPIC_MODEL_SUGGESTIONS, DEFAULT_ANTHROPIC_MODEL } from "./llmRouti
 
 /** As OpenRouter's: a frontier model can think a while before the first token. */
 const REQUEST_TIMEOUT_MS = 180_000;
+/** Continuations after a "pause_turn" stop, each a billed call. */
+const MAX_PAUSE_CONTINUATIONS = 3;
 const MODELS_TTL_MS = 60 * 60_000;
 
 export function isAnthropicConfigured(): boolean {
@@ -195,13 +198,21 @@ export async function completeAnthropic(
   let lastErr: unknown = new Error("no model to try");
   for (const model of opts.models) {
     try {
-      const res = await api.messages.create(baseParams(model, messages, opts), {
-        timeout: opts.timeoutMs ?? REQUEST_TIMEOUT_MS,
-      });
-      void recordAnthropicSpend(res.model, res.usage);
-      if (res.stop_reason === "refusal") throw new Error("Claude declined to answer this request.");
-      const text = textFromContent(res.content);
-      if (!text.trim()) throw new Error("The model returned an empty answer.");
+      const params = baseParams(model, messages, opts);
+      let text = "";
+      let res: Anthropic.Message;
+      // A server-tool loop (web search) can stop with "pause_turn" before the
+      // answer is written; the turn continues from the content so far. Each
+      // continuation is its own billed call, so the number is bounded.
+      for (let turn = 0; ; turn++) {
+        res = await api.messages.create(params, { timeout: opts.timeoutMs ?? REQUEST_TIMEOUT_MS });
+        void recordAnthropicSpend(res.model, res.usage);
+        if (res.stop_reason === "refusal") throw new Error("Claude declined to answer this request.");
+        text += textFromContent(res.content);
+        if (res.stop_reason !== "pause_turn" || turn >= MAX_PAUSE_CONTINUATIONS) break;
+        params.messages = [...params.messages, { role: "assistant", content: res.content }];
+      }
+      if (!text.trim()) throw new Error(emptyAnswerMessage(res.stop_reason, res.usage.output_tokens, params.max_tokens));
       return { text, model: res.model };
     } catch (err) {
       lastErr = err;
