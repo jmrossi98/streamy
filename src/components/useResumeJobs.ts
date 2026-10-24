@@ -13,12 +13,6 @@ export function isJob(s: TailorState | undefined): s is ResumeJobView {
   return !!s && "status" in s;
 }
 
-/** "1:07" from a start time to now. */
-export function elapsed(startedAt: string, now: number): string {
-  const s = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
 /**
  * Tailoring jobs per posting, polled while they run.
  *
@@ -29,7 +23,6 @@ export function elapsed(startedAt: string, now: number): string {
  */
 export function useResumeJobs(initial: Record<string, ResumeJobView>) {
   const [jobs, setJobs] = useState<Record<string, TailorState>>(initial);
-  const [now, setNow] = useState(() => Date.now());
 
   const activeIds = Object.values(jobs)
     .filter((j): j is ResumeJobView => isJob(j) && isActive(j.status))
@@ -59,24 +52,18 @@ export function useResumeJobs(initial: Record<string, ResumeJobView>) {
     if (!activeIds) return;
     const ids = activeIds.split(",");
     const pollTimer = setInterval(() => void poll(ids), POLL_MS);
-    const clock = setInterval(() => setNow(Date.now()), 1_000);
     const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        setNow(Date.now());
-        void poll(ids);
-      }
+      if (document.visibilityState === "visible") void poll(ids);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(pollTimer);
-      clearInterval(clock);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [activeIds, poll]);
 
   const start = useCallback(async (postingId: string) => {
     setJobs((prev) => ({ ...prev, [postingId]: { starting: true } }));
-    setNow(Date.now());
     try {
       const res = await fetch("/api/admin/jobs/resume", {
         method: "POST",
@@ -93,5 +80,5 @@ export function useResumeJobs(initial: Record<string, ResumeJobView>) {
     }
   }, []);
 
-  return { jobs, now, start };
+  return { jobs, start };
 }
