@@ -2,6 +2,7 @@
 
 import { useEffect, useReducer, useState } from "react";
 import { Badge, Button, Field, Select, TextArea, TextInput } from "@/components/ui";
+import { ChatMessage } from "@/components/ChatMessage";
 import {
   argsText,
   initialRunCard,
@@ -271,7 +272,13 @@ export function SkillRunCard({
       </div>
       <p className="break-words font-mono text-[11px] text-white/50">{args}</p>
 
-      {summary && <p className="whitespace-pre-wrap text-white/85">{summary}</p>}
+      {/* The skill writes markdown (it is Claude Code); rendered the same way
+          as a reply, never as HTML. */}
+      {summary && (
+        <div className="text-[13px] text-white/85">
+          <ChatMessage role="assistant" content={summary} />
+        </div>
+      )}
       {links.length > 0 && (
         <ul className="space-y-0.5">
           {links.map((l) => (
