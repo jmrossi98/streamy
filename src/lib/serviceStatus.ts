@@ -22,7 +22,8 @@ import { cached } from "./ttlCache";
 import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "./ollama";
 import { getLiveChannels, isJellyfinConfiguredForLiveTv } from "./liveTv";
 import { isFlashLibraryConfigured, listFlashFiles } from "./flashLibrary";
-import { isWebSearchConfigured } from "./webSearch";
+import { isWebSearchConfigured, webSearchState } from "./webSearch";
+import { searxngHealthUrl } from "./webSearchRules";
 import { connect } from "node:tls";
 import { statfs, stat } from "node:fs/promises";
 import { geoStatus } from "./geoip";
@@ -356,23 +357,25 @@ async function searxngStatus(): Promise<ServiceStatus> {
   if (!isWebSearchConfigured()) {
     return { name: "SearXNG", group, state: "unconfigured", detail: "Not configured" };
   }
-  // Queries the JSON API rather than the homepage: the homepage answers even
-  // when JSON output is disabled, which is the failure mode that actually
-  // breaks search.
-  const res = await probe(`${env("SEARXNG_URL")}/search?q=ping&format=json`);
+  // /healthz and nothing else. Until 2026-10-12 this ran a real search for
+  // "ping" every ten minutes, and that alone got the home address CAPTCHA'd by
+  // DuckDuckGo and rate-limited by Brave until real searches failed (#397).
+  // /healthz answers from SearXNG itself and contacts no engine. It does not
+  // prove JSON output is enabled; the first real search reports that.
+  const res = await probe(searxngHealthUrl(env("SEARXNG_URL")));
   if (!res.ok) {
-    return {
-      name: "SearXNG",
-      group,
-      state: "down",
-      detail: res.status === 403 ? "JSON format disabled in settings.yml" : res.error ?? `HTTP ${res.status}`,
-    };
+    return { name: "SearXNG", group, state: "down", detail: res.error ?? `HTTP ${res.status}` };
   }
+  // Resting is still "up": the instance is fine, Streamy is choosing not to
+  // send it searches for a while. A down state would page for nothing.
+  const { resting, usage } = webSearchState();
   return {
     name: "SearXNG",
     group,
     state: "up",
-    detail: "JSON API responding",
+    detail: resting
+      ? `resting until ${new Date(resting.until).toISOString().slice(11, 16)} UTC (${resting.reason})`
+      : `healthy - ${usage.today}/${usage.perDay} searches today`,
     address: env("SEARXNG_URL"),
   };
 }

@@ -78,6 +78,35 @@ export async function streamOllamaChat(
   return res.body;
 }
 
+/**
+ * One buffered completion, for the tool loop's "do you need to look anything
+ * up" steps (assistantToolLoop.ts, 2026-10-24). Short by design: num_predict
+ * caps it at a few tool lines, and Ollama reuses the KV cache for the shared
+ * prefix when the streamed answer follows, so a step costs little more than
+ * its own output.
+ */
+export async function completeOllama(
+  messages: ChatMessage[],
+  opts: { maxTokens: number; signal?: AbortSignal }
+): Promise<string> {
+  if (!isOllamaConfigured()) throw new Error("OLLAMA_URL is not set");
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const res = await fetch(`${baseUrl()}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: ollamaModel(),
+      messages,
+      stream: false,
+      options: { num_ctx: 8192, num_predict: opts.maxTokens },
+    }),
+    signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
+  });
+  if (!res.ok) throw new Error(`Ollama returned HTTP ${res.status}`);
+  const data = (await res.json()) as { message?: { content?: string } };
+  return data.message?.content ?? "";
+}
+
 export type OllamaStatus =
   | { ok: true; model: string; loaded: boolean }
   | { ok: false; error: string };
