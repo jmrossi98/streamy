@@ -8,6 +8,7 @@ import {
   looksLikePlaceholder,
   channelCarriesNetwork,
   findCandidateChannels,
+  wholeWord,
   namesBothTeams,
   findEpgElsewhereChannelNames,
   gameReferenceTime,
@@ -831,3 +832,29 @@ describe("Grizzlies at Warriors, 2026-10-23: never another sport's channel", () 
     expect(findEpgConfirmedChannelNames(fixture, programs, "2026-10-24T03:04:00Z")).toEqual(["NBA LEAGUE PASS 1"]);
   });
 });
+
+describe("wholeWord", () => {
+  it("is a real word boundary (it used to be a backspace and never matched)", () => {
+    expect(wholeWord("Memphis").test("USA - WMC 5 MEMPHIS TN (NBC)")).toBe(true);
+    expect(wholeWord("Memphis").test("MEMPHISFLIX")).toBe(false);
+  });
+  it("escapes regex characters in a city", () => {
+    expect(wholeWord("St. Louis").test("FOX 2 ST. LOUIS")).toBe(true);
+    expect(wholeWord("St. Louis").test("STX LOUIS")).toBe(false);
+  });
+});
+
+describe("findCandidateChannels city match", () => {
+  it("finds a team's local station by city name", () => {
+    const channels = [
+      { id: "1", name: "USA - WMC 5 MEMPHIS TN (NBC)" },
+      { id: "2", name: "USA - KTVU 2 OAKLAND (FOX)" },
+    ];
+    const ids = findCandidateChannels(
+      { league: "NBA", homeTeam: "Golden State Warriors", awayTeam: "Memphis Grizzlies" },
+      channels
+    ).map((c) => c.id);
+    expect(ids).toContain("1");
+  });
+});
+
