@@ -166,7 +166,7 @@ export function classifyRoleType(title: string): RoleType {
 export const FORMAT_LIMITS = {
   totalBullets: [14, 16],
   currentRole: [5, 6],
-  previousRole: [4, 5],
+  previousRole: [4, 6],
   internshipMax: 1,
   projectBulletsMax: 1,
   bulletWords: [15, 25],
@@ -216,7 +216,7 @@ export function checkResumeFormat(markdown: string, roleType: RoleType): FormatI
     issues.push({ severity: "trim", message: `${total} bullets in total; the limit is ${L.totalBullets[1]}. Cut ${total - L.totalBullets[1]}, oldest and least relevant first, never the current role's impact.` });
   } else if (total < L.totalBullets[0] && total < perRoleCeiling(jobs.length, interns.length, r.projects.length)) {
     // Only when the roles have room: three roles and no projects cap out at
-    // 6 + 5 + 1 = 12, and the per-role caps win (the 2026-10-24 Meta
+    // 6 + 6 + 1 = 13, and the per-role caps win (the 2026-10-24 Meta
     // Technical Leadership draft hit exactly this and rightly didn't pad).
     issues.push({ severity: "note", message: `${total} bullets in total; aim for ${L.totalBullets[0]}-${L.totalBullets[1]} if the bank supports more.` });
   }

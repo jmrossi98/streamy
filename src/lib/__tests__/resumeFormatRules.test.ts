@@ -88,9 +88,9 @@ describe("checkResumeFormat", () => {
   });
 
   it("names the role over its bullet budget", () => {
-    const out = trims(resume({ current: 7, previous: 6 }));
+    const out = trims(resume({ current: 7, previous: 7 }));
     expect(out.some((m) => m.startsWith("Current role (Capital One, Senior Software Engineer) has 7 bullets"))).toBe(true);
-    expect(out.some((m) => m.startsWith("Previous role (Capital One, Software Engineer) has 6 bullets"))).toBe(true);
+    expect(out.some((m) => m.startsWith("Previous role (Capital One, Software Engineer) has 7 bullets"))).toBe(true);
     expect(out.some((m) => m.startsWith("17 bullets in total"))).toBe(false);
   });
 
@@ -102,8 +102,8 @@ describe("checkResumeFormat", () => {
   });
 
   it("doesn't ask for more bullets than the per-role caps allow", () => {
-    // Three roles, no projects: 6 + 5 + 1 = 12 is the most there can be.
-    const full = checkResumeFormat(resume({ current: 6, previous: 5, intern: 1 }), "leadership");
+    // Three roles, no projects: 6 + 6 + 1 = 13 is the most there can be.
+    const full = checkResumeFormat(resume({ current: 6, previous: 6, intern: 1 }), "leadership");
     expect(full.some((i) => /bullets in total/.test(i.message))).toBe(false);
     const short = checkResumeFormat(resume({ current: 5, previous: 4, intern: 1 }), "product");
     expect(short.some((i) => /^10 bullets in total; aim for 14-16/.test(i.message))).toBe(true);

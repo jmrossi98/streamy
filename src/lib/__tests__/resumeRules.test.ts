@@ -38,7 +38,7 @@ describe("buildResumeMessages", () => {
     expect(system.content).toMatch(/"### Company \| Title \| Mon YYYY – Mon YYYY"/);
     // Jake's approved format rules, 2026-10-24.
     expect(system.content).toMatch(/Summary \(auto\): include one only when the ROLE TYPE is leadership/);
-    expect(system.content).toMatch(/14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-5, internship 1 or none/);
+    expect(system.content).toMatch(/14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-6, internship 1 or none/);
     expect(system.content).toMatch(/Every bullet is 15-25 words, with the result in the first few words/);
     expect(system.content).toMatch(/At most 3 technologies in one bullet/);
   });
