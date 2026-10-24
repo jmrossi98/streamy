@@ -1,4 +1,5 @@
 import { nameHasBothTeams } from "./teamNames";
+import { looksLikeTalkShow, programmeSportConflict, sportConflict } from "./sportMatchRules";
 import { channelInTeamMarket, inMarketTeam, teamMarketRank } from "./teamMarkets";
 
 /**
@@ -352,12 +353,15 @@ export function isLocalNetwork(network: string): boolean {
 }
 
 export function findChannelForFixture<C extends { id: string; name: string }>(
-  fixture: { awayTeam: string | null; homeTeam: string | null },
-  channels: C[]
+  fixture: { awayTeam: string | null; homeTeam: string | null; league?: string },
+  allChannels: C[]
 ): C | null {
   const nicknames = [teamNickname(fixture.awayTeam), teamNickname(fixture.homeTeam)]
     .filter((n): n is string => n != null);
   if (nicknames.length === 0) return null;
+  // A nickname two leagues share is not this game: "NHL LA KINGS" for the
+  // Sacramento Kings (sportMatchRules.ts, 2026-10-23).
+  const channels = allChannels.filter((c) => !sportConflict(c.name, fixture));
 
   for (const nickname of nicknames) {
     // Whole-word, case-insensitive: "Jets" must not match "Jetstream Sports".
@@ -422,6 +426,10 @@ export function findEpgConfirmedChannelNames(
       return Number.isFinite(start) && Number.isFinite(end) && now >= start && now < end;
     });
     if (!current) continue;
+    // Not a game of this sport, or not a game: "Live: NHL Hockey" never
+    // confirms an NBA game, and neither does a preview show naming both
+    // teams (2026-10-23, sportMatchRules.ts).
+    if (programmeSportConflict(current, fixture) || looksLikeTalkShow(current.title)) continue;
 
     const text = `${current.title} ${current.description}`.toLowerCase();
     const mentions =
@@ -580,7 +588,7 @@ export function findEpgConfirmedChannel<C extends { id: string; name: string }>(
  * `findChannelForFixture` makes when there is no EPG data to ask.
  */
 export function resolveChannelForFixture<C extends { id: string; name: string }>(
-  fixture: { awayTeam: string | null; homeTeam: string | null },
+  fixture: { awayTeam: string | null; homeTeam: string | null; league?: string },
   channels: C[],
   epgConfirmedNames: string[] = [],
   quality?: (name: string) => number
@@ -828,6 +836,10 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
 
   for (const channel of channels) {
     const n = channel.name.toLowerCase();
+    // Another sport, whatever else matches: the Warriors' market includes San
+    // Jose, so "NHL SAN JOSE SHARKS" was an in-market channel for Grizzlies at
+    // Warriors (2026-10-23, an NHL Sharks picture on an NBA game's page).
+    if (sportConflict(channel.name, fixture)) continue;
     // An event feed naming both sides of this very game ("Sharks vs Predators
     // (Sharks Broadcast)") is the most specific guess there is, below only
     // the guide itself. The distrust of event feeds is about channels named

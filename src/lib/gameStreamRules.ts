@@ -13,6 +13,7 @@ import { channelCarriesNetwork, looksLikePlaceholder } from "./liveTimeline";
 import { eventSlotState } from "./eventSlotRules";
 import { namesGameDate, namesOtherDate } from "./liveGuideGrid";
 import { nameHasTeam, teamSearchTerms } from "./teamNames";
+import { entryStatus, looksLikeTalkShow, sportConflict } from "./sportMatchRules";
 
 export type GameStreamCandidate = { id: number; name: string; stale?: boolean; provider?: string | null };
 export type GameFixture = {
@@ -60,13 +61,29 @@ export function gameStreamQueries(f: GameFixture): string[] {
   return [...new Set(out.filter((q): q is string => !!q && q.length >= 3).map((q) => q.toLowerCase()))];
 }
 
+/** Where a show about the game ranks: below every guess that might be the game itself. */
+export const TALK_SHOW_SCORE = 5;
+
 /**
  * Lower is more likely: 0 names both teams, 1 one team with the league or a
- * carrying network, 2 one team, 3 a carrying network, 4 a team's city.
- * Null when there is no reason to think it has this game.
+ * carrying network, 2 one team, 3 a carrying network, 4 a team's city, 5 a
+ * show about the game (TALK_SHOW_SCORE). Null when there is no reason to
+ * think it has this game -- or every reason to think it doesn't: a finished
+ * entry ("End | ..."), or another sport (sportMatchRules.ts; 2026-10-23, an
+ * NHL Sharks picture on the Grizzlies at Warriors page).
  */
 export function gameStreamScore(name: string, f: GameFixture): number | null {
   if (looksLikePlaceholder(name)) return null;
+  if (entryStatus(name) === "end" || sportConflict(name, f)) return null;
+  const score = gameStreamMatch(name, f);
+  // A talk show naming both teams ("End | Grizzlies Vs. Warriors Preview ...
+  // Jessica Benson Show") scored 0, level with the game's own feed, and was
+  // checked three times on 2026-10-23. Still offered, last, in case it is all
+  // there is -- never auto-added (pickAutoAdd takes 1 at most).
+  return score !== null && looksLikeTalkShow(name) ? TALK_SHOW_SCORE : score;
+}
+
+function gameStreamMatch(name: string, f: GameFixture): number | null {
   const sides = [
     [f.awayTeam, f.homeTeam],
     [f.homeTeam, f.awayTeam],
@@ -106,14 +123,21 @@ export function rankGameStreams<S extends GameStreamCandidate>(
     })
     .map((s) => ({ s, score: gameStreamScore(s.name, f), dated: !!f.startUtc && namesGameDate(s.name, Date.parse(f.startUtc)) }))
     .filter((x): x is { s: S; score: number; dated: boolean } => x.score !== null)
-    // Within a score: English commentary first (feedLanguageRank), then a
-    // name carrying the game's own date -- labelled for this game, where a
+    // A show about the game only when there is nothing that might be the game.
+    .filter((x, _, all) => x.score !== TALK_SHOW_SCORE || all.every((y) => y.score === TALK_SHOW_SCORE))
+    // "NEXT | ..." is the provider's entry for a booking still to come; next
+    // to the "LIVE | ..." one for the same game it is at best a second way to
+    // the same feed (2026-10-23: both were checked).
+    .filter((x, _, all) => entryStatus(x.s.name) !== "next" || !all.some((y) => entryStatus(y.s.name) === "live"))
+    // Within a score: English commentary first (feedLanguageRank), then one
+    // the provider marks "LIVE |", then a name carrying the game's own date -- labelled for this game, where a
     // standing slot's label may be a day old and its content something else
     // (namesGameDate) -- then a slot that is not open yet behind one that is.
     .sort(
       (a, b) =>
         a.score - b.score ||
         feedLanguageRank(a.s.name) - feedLanguageRank(b.s.name) ||
+        Number(entryStatus(b.s.name) === "live") - Number(entryStatus(a.s.name) === "live") ||
         Number(b.dated) - Number(a.dated) ||
         Number(eventSlotState(a.s.name, now) === "upcoming") - Number(eventSlotState(b.s.name, now) === "upcoming")
     )

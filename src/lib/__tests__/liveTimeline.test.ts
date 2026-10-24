@@ -788,3 +788,46 @@ describe("channelMarketTeam", () => {
     expect(channelMarketTeam("FOX 29 BUFFALO NY (WUTV)", fixture)).toBeNull();
   });
 });
+
+describe("Grizzlies at Warriors, 2026-10-23: never another sport's channel", () => {
+  const fixture = {
+    league: "NBA",
+    awayTeam: "Memphis Grizzlies",
+    homeTeam: "Golden State Warriors",
+    broadcasts: ["NBA League Pass"],
+    startUtc: "2026-10-24T02:00:00Z",
+  };
+
+  it("doesn't offer an NHL team channel because the Warriors' market includes San Jose", () => {
+    const channels = [
+      { id: "sharks", name: "NHL SAN JOSE SHARKS" },
+      { id: "nbcsca", name: "NBC SPORTS CALIFORNIA (SHARKS)" },
+      { id: "nbatv", name: "NBA TV" },
+    ];
+    expect(findCandidateChannels(fixture, channels, 8).map((c) => c.id)).toEqual(["nbatv"]);
+  });
+
+  it("doesn't take a shared nickname from another league", () => {
+    const kings = { league: "NBA", awayTeam: "Portland Trail Blazers", homeTeam: "Sacramento Kings" };
+    const channels = [
+      { id: "lak", name: "NHL | 10 - 10pm Kings vs Ducks" },
+      { id: "sac", name: "NBA SACRAMENTO KINGS" },
+    ];
+    expect(findChannelForFixture(kings, channels)?.id).toBe("sac");
+    expect(resolveChannelForFixture(kings, channels)?.id).toBe("sac");
+    // Without the league, as before.
+    expect(findChannelForFixture({ awayTeam: kings.awayTeam, homeTeam: kings.homeTeam }, channels)?.id).toBe("lak");
+  });
+
+  it("doesn't confirm a channel from another sport's guide entry or a preview show", () => {
+    const at = (title: string, description = ""): ChannelProgramme[] => [
+      { title, description, startUtc: "2026-10-24T02:00:00Z", endUtc: "2026-10-24T05:00:00Z" },
+    ];
+    const programs = new Map<string, ChannelProgramme[]>([
+      ["NBA LEAGUE PASS 1", at("Golden State Warriors vs. Memphis Grizzlies", "NBA basketball from San Francisco.")],
+      ["NHL ON NBCS", at("NHL Hockey: Sharks at Senators", "Replay. Golden State Warriors and Memphis Grizzlies are on later.")],
+      ["DAZN 4", at("Jessica Benson Show", "Golden State Warriors vs Memphis Grizzlies preview.")],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, programs, "2026-10-24T03:04:00Z")).toEqual(["NBA LEAGUE PASS 1"]);
+  });
+});
