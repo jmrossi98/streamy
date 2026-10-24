@@ -46,8 +46,8 @@ export function isEgressEnabled(): Promise<boolean> {
 /** Key for which job levels are included in new-role alert emails. */
 export const JOB_ALERT_LEVELS_KEY = "job_alert_levels";
 
-/** The three levels in lib/jobFilters.ts; duplicated to keep this file import-free. */
-const JOB_LEVELS = ["entry", "midsenior", "staff"] as const;
+/** The levels in lib/jobFilters.ts; duplicated to keep this file import-free. */
+const JOB_LEVELS = ["entry", "midsenior", "staff", "management"] as const;
 
 /**
  * Job levels that get emailed about. Everything is still stored and shown in

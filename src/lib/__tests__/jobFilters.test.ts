@@ -75,9 +75,12 @@ describe("isSoftwareRole", () => {
     expect(isSoftwareRole("Support Engineer")).toBe(false);
   });
 
-  it("vetoes management, which is not the role being looked for", () => {
-    expect(isSoftwareRole("Engineering Manager, Payments")).toBe(false);
-    expect(isSoftwareRole("Director, Software Engineering")).toBe(false);
+  it("keeps engineering management since 2026-10-24, but not other managers", () => {
+    // Stored under the Management level; director/VP ones are then gated on
+    // the listing's years (jobManagementRules.ts).
+    expect(isSoftwareRole("Engineering Manager, Payments")).toBe(true);
+    expect(isSoftwareRole("Director, Software Engineering")).toBe(true);
+    expect(isSoftwareRole("Director of Sales")).toBe(false);
   });
 
   it("ignores titles with no engineering in them at all", () => {
@@ -168,7 +171,9 @@ describe("classifyRole", () => {
     expect(classifyRole("Sales Engineer")).toBeNull();
     expect(classifyRole("Mechanical Engineer")).toBeNull();
     expect(classifyRole("Technical Recruiter, Engineering")).toBeNull();
-    expect(classifyRole("Engineering Manager, Payments")).toBeNull();
+    // Kept since 2026-10-24 (Management level); a sales manager still isn't.
+    expect(classifyRole("Engineering Manager, Payments")).toBe("swe");
+    expect(classifyRole("Sales Engineering Manager")).toBeNull();
     // "security" and "quant" have their own impostors.
     expect(classifyRole("Security Guard")).toBeNull();
     expect(classifyRole("Quantitative UX Researcher")).toBeNull();

@@ -153,9 +153,12 @@ export function JobListingsPanel({
   listings,
   configured,
   resumeJobs = {},
+  hiddenExec = [],
 }: {
   listings: JobListingRow[];
   configured: boolean;
+  /** Director/VP postings kept out of the list, and why (jobManagementRules). */
+  hiddenExec?: { id: string; company: string; title: string; url: string; reason: string }[];
   /** The newest tailoring job per posting from the last day, by posting id. */
   resumeJobs?: Record<string, ResumeJobView>;
 }) {
@@ -443,6 +446,28 @@ export function JobListingsPanel({
           label: LEVEL_LABELS[l],
         }))}
       />
+
+      {hiddenExec.length > 0 && (levels.size === 0 || levels.has("management")) && (
+        // 2026-10-24: director/VP roles are shown only when the listing's
+        // minimum experience is within a year of Jake's. Listed here, folded,
+        // so a hidden one can still be checked by hand.
+        <details className="text-[11px] text-white/40">
+          <summary className="cursor-pointer hover:text-white/70">
+            {hiddenExec.length} director/VP {hiddenExec.length === 1 ? "role" : "roles"} hidden (requirements above your
+            experience, or not stated)
+          </summary>
+          <ul className={scrollListClass({}, "mt-1 space-y-0.5 pl-3")}>
+            {hiddenExec.map((h) => (
+              <li key={h.id}>
+                <a href={h.url} target="_blank" rel="noreferrer noopener" className="text-white/60 hover:underline">
+                  {h.company} · {h.title}
+                </a>{" "}
+                <span className="text-white/35">— {h.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       {listings.length === 0 ? (
         <p className="text-sm text-white/50">
