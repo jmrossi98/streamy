@@ -730,6 +730,23 @@ model Subscription {
   updatedAt DateTime @updatedAt
 }
 
+/// An expiry date typed in for one IPTV line (a Dispatcharr profile).
+///
+/// The panel reports each line's own exp_date, and that stays the source of
+/// truth once it moves past what was typed (a renewal). This covers a line
+/// the panel reports wrongly or not at all -- see effectiveLineExpiry in
+/// iptvLineRules.ts. Keyed by Dispatcharr's account and profile ids;
+/// lineName is a snapshot so a removed line's row still reads.
+model IptvLineExpiry {
+  accountId Int
+  lineId    Int
+  lineName  String
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@id([accountId, lineId])
+}
+
 /// A live TV channel on a user's My List.
 ///
 /// Unlike the movie, show, game and Flash-game lists, there is no local row to

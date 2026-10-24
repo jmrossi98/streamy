@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
-import { addCredentialLine, listCredentialTargets, removeCredentialLine, updateCredential } from "@/lib/credentials";
+import { addCredentialLine, listCredentialTargets, removeCredentialLine, setLineExpiry, updateCredential } from "@/lib/credentials";
 import { logAudit } from "@/lib/auditLog";
 
 /**
@@ -37,7 +37,9 @@ export async function POST(request: Request) {
       ? await addCredentialLine(key, values)
       : action === "remove-line"
         ? await removeCredentialLine(key, Number(body.lineId))
-        : await updateCredential(key, values);
+        : action === "line-expiry"
+          ? await setLineExpiry(key, Number(body.lineId), typeof body.lineName === "string" ? body.lineName : "Line", body.date)
+          : await updateCredential(key, values);
   const verb = action === "update" ? "credentials.update" : `credentials.${action}`;
   logAudit(admin.name, result.ok ? verb : `${verb}.failed`, name, result.changed.join(", ") || result.message);
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });

@@ -30,10 +30,53 @@ export type IptvLine = {
   maxStreams: number;
   /** Connections in use right now, as Dispatcharr counts them. */
   viewers: number;
+  /** The date in effect: the typed one or the panel's, per effectiveLineExpiry. */
   expiresUtc: string | null;
+  /** What the panel itself reports for the line, before any typed date. */
+  panelExpiresUtc?: string | null;
+  /** A date typed in for this line (IptvLineExpiry), if any. */
+  manualExpiresUtc?: string | null;
   /** The panel's own word for the line: "Active", "Expired", "Banned"... */
   status: string | null;
 };
+
+/**
+ * Which expiry a line shows: the typed date, unless the panel reports a later
+ * one.
+ *
+ * Jake wants to set each line's date by hand (2026-10-23), for a panel that
+ * reports it wrongly or not at all. But a typed date never follows a renewal,
+ * and the panel's does -- so once the panel says the line runs past the typed
+ * date, the line was renewed and the panel wins.
+ */
+export function effectiveLineExpiry(panelUtc: string | null | undefined, manualUtc: string | null | undefined): string | null {
+  const panel = panelUtc && Number.isFinite(Date.parse(panelUtc)) ? panelUtc : null;
+  const manual = manualUtc && Number.isFinite(Date.parse(manualUtc)) ? manualUtc : null;
+  if (!manual) return panel;
+  if (!panel) return manual;
+  return Date.parse(panel) > Date.parse(manual) ? panel : manual;
+}
+
+/** Applies typed dates (keyed by line id) to an account's lines. */
+export function withManualExpiry(lines: IptvLine[], manual: Map<number, string>): IptvLine[] {
+  return lines.map((l) => {
+    const panelExpiresUtc = l.panelExpiresUtc !== undefined ? l.panelExpiresUtc : l.expiresUtc;
+    const manualExpiresUtc = manual.get(l.id) ?? null;
+    return { ...l, panelExpiresUtc, manualExpiresUtc, expiresUtc: effectiveLineExpiry(panelExpiresUtc, manualExpiresUtc) };
+  });
+}
+
+/** Whole days until a line's date in effect; negative once lapsed, null with no date. */
+export function lineDaysLeft(line: Pick<IptvLine, "expiresUtc">, now: number = Date.now()): number | null {
+  return line.expiresUtc ? Math.floor((Date.parse(line.expiresUtc) - now) / 86_400_000) : null;
+}
+
+/** A YYYY-MM-DD from the date input, as the end of that day UTC; null if it isn't one. */
+export function parseLineExpiryInput(value: unknown): Date | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const d = new Date(`${value}T23:59:00Z`);
+  return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === value ? d : null;
+}
 
 /** What a panel login looks like; anything else is a typo or an injection attempt on the rewrite. */
 export function isLineLogin(value: string): boolean {
@@ -100,6 +143,6 @@ export function lineSummary(lines: IptvLine[]): string {
 
 /** The same expired/expiring warning a provider login gets, for one line. */
 export function lineAlert(line: IptvLine, now: number = Date.now()): CredentialAlert | null {
-  const daysLeft = line.expiresUtc ? Math.floor((Date.parse(line.expiresUtc) - now) / 86_400_000) : null;
+  const daysLeft = lineDaysLeft(line, now);
   return providerAlert({ daysLeft, detail: line.status ?? undefined });
 }
