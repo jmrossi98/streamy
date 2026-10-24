@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { leagueTag } from "@/lib/leagueTags";
 import { Badge, Button, ButtonLink } from "@/components/ui";
 import { formatFileSize } from "@/lib/formatBytes";
 import type { SportsGame } from "@/lib/sportarr";
@@ -40,8 +41,8 @@ export function SportsGameRow({ game, onChange }: { game: SportsGame; onChange: 
 
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded bg-white/5 px-3 py-2">
-      <Badge tone="neutral" className="w-12 shrink-0 justify-center uppercase tracking-wide">
-        {game.league}
+      <Badge tone="neutral" title={game.league} className="min-w-12 shrink-0 justify-center uppercase tracking-wide">
+        {leagueTag(game.league)}
       </Badge>
       {/* Full-width line of its own on a phone, where the badge, the score
           and the control leave no room for two team names. */}

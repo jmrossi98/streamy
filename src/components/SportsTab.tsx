@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { leagueTag } from "@/lib/leagueTags";
 import { Badge, ButtonLink, Panel } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import type { SportsGame } from "@/lib/sportarr";
@@ -187,8 +188,8 @@ export function SportsTab() {
 function FixtureRow({ fixture: f, live = false }: { fixture: ScheduleFixture; live?: boolean }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded bg-white/5 px-3 py-2">
-      <Badge tone={live ? "danger" : "neutral"} className="w-12 shrink-0 justify-center uppercase tracking-wide">
-        {f.league}
+      <Badge tone={live ? "danger" : "neutral"} title={f.league} className="min-w-12 shrink-0 justify-center uppercase tracking-wide">
+        {leagueTag(f.league)}
       </Badge>
       <p className="order-last w-full min-w-0 flex-1 truncate text-sm text-white/90 sm:order-none sm:w-auto" title={f.name}>
         {f.name}
