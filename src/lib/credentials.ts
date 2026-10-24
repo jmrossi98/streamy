@@ -12,7 +12,8 @@
  */
 import { filledValues, iptvUpdateMessage, isServerUrl, maskSecret, maskUsername, providerAlert, type CredentialAlert } from "./credentialRules";
 import { addIptvLine, listIptvAccounts, removeIptvLine, updateIptvAccount } from "./dispatcharr";
-import { isLineLogin, lineAlert, type IptvLine } from "./iptvLineRules";
+import { isLineLogin, lineAlert, parseLineExpiryInput, withManualExpiry, type IptvLine } from "./iptvLineRules";
+import { prisma } from "./db";
 import { getAutomaticRenewals } from "./renewals";
 import { invalidateCache } from "./ttlCache";
 import { serviceKey } from "./spendRules";
@@ -80,6 +81,9 @@ export async function listCredentialTargets(): Promise<CredentialTarget[]> {
     sabServers().catch(() => null),
     getAutomaticRenewals().catch(() => []),
   ]);
+  const typed = await prisma.iptvLineExpiry.findMany().catch(() => []);
+  const typedFor = (accountId: number) =>
+    new Map(typed.filter((t) => t.accountId === accountId).map((t) => [t.lineId, t.expiresAt.toISOString()] as const));
   const iptvRenewal = (name: string) => renewals.find((r) => r.source === "iptv" && serviceKey(r.name) === serviceKey(name));
   for (const a of iptv ?? []) {
     out.push({
@@ -87,7 +91,7 @@ export async function listCredentialTargets(): Promise<CredentialTarget[]> {
       service: "IPTV provider",
       name: a.name,
       alert: providerAlert(iptvRenewal(a.name)),
-      lines: a.lines,
+      lines: withManualExpiry(a.lines, typedFor(a.id)),
       fields: [
         { name: "serverUrl", label: "Server URL", secret: false, current: a.serverUrl ? new URL(a.serverUrl).host : "not set" },
         { name: "username", label: "Username", secret: false, current: maskUsername(a.username) },
@@ -142,6 +146,31 @@ export async function addCredentialLine(key: string, values: Record<string, unkn
       ? `${line.name} added, but the panel says: ${alert.text}`
       : `${line.name} added. Viewers use it automatically whenever the other lines are busy.`,
   };
+}
+
+/**
+ * Sets or clears the typed expiry for one line. `date` is YYYY-MM-DD from the
+ * date input; empty clears it, leaving whatever the panel reports.
+ */
+export async function setLineExpiry(key: string, lineId: number, lineName: string, date: unknown): Promise<UpdateResult> {
+  const [kind, id] = key.split(":");
+  const accountId = Number(id);
+  if (kind !== "iptv" || !Number.isInteger(accountId) || !Number.isInteger(lineId)) {
+    return { ok: false, message: "No such line.", changed: [] };
+  }
+  if (date === "" || date === null || date === undefined) {
+    await prisma.iptvLineExpiry.deleteMany({ where: { accountId, lineId } });
+    return { ok: true, changed: ["expiry"], message: `${lineName}: typed date cleared; showing what the panel reports.` };
+  }
+  const expiresAt = parseLineExpiryInput(date);
+  if (!expiresAt) return { ok: false, message: "That isn't a date.", changed: [] };
+  await prisma.iptvLineExpiry.upsert({
+    where: { accountId_lineId: { accountId, lineId } },
+    create: { accountId, lineId, lineName: lineName.slice(0, 80), expiresAt },
+    update: { lineName: lineName.slice(0, 80), expiresAt },
+  });
+  const pretty = expiresAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  return { ok: true, changed: ["expiry"], message: `${lineName} now expires ${pretty}.` };
 }
 
 /** Removes an extra line. The account's own login stays. */

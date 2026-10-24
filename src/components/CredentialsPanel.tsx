@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Field, TextInput, scrollListClass } from "@/components/ui";
 // Type-only: credentials.ts calls the services with Streamy's own keys and must not reach the browser.
 import type { CredentialTarget } from "@/lib/credentials";
-import { lineAlert, lineSummary, type IptvLine } from "@/lib/iptvLineRules";
+import { lineAlert, lineDaysLeft, lineSummary, type IptvLine } from "@/lib/iptvLineRules";
 
 /**
  * The outside-provider logins and API keys (see lib/credentials.ts), loaded
@@ -41,6 +41,8 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
   const [values, setValues] = useState({ username: "", password: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The line whose expiry is being edited, and the date in its input.
+  const [dating, setDating] = useState<{ id: number; value: string } | null>(null);
   const lines = target.lines ?? [];
 
   async function send(body: Record<string, unknown>): Promise<void> {
@@ -56,6 +58,7 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
       const out = (await res.json().catch(() => ({ ok: false, message: "No answer." }))) as { ok: boolean; message: string };
       if (out.ok) {
         setAdding(false);
+        setDating(null);
         onChanged(out.message);
       } else setError(out.message);
     } finally {
@@ -64,8 +67,19 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
     }
   }
 
-  const expiry = (l: IptvLine) =>
-    l.expiresUtc ? `expires ${new Date(l.expiresUtc).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "no expiry read";
+  const fmt = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const expiry = (l: IptvLine) => {
+    if (!l.expiresUtc) return "no expiry date";
+    const days = lineDaysLeft(l);
+    const left = days === null ? "" : days < 0 ? " (lapsed)" : days === 0 ? " (today)" : ` (${days}d)`;
+    return `expires ${fmt(l.expiresUtc)}${left}`;
+  };
+  // Where the date in effect came from, when it isn't simply the panel's.
+  const source = (l: IptvLine) => {
+    if (!l.manualExpiresUtc) return null;
+    if (l.expiresUtc === l.manualExpiresUtc) return l.panelExpiresUtc ? `typed; panel says ${fmt(l.panelExpiresUtc)}` : "typed";
+    return "panel renewed past the typed date";
+  };
 
   return (
     <div className="mt-1 space-y-1">
@@ -78,12 +92,43 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
               <span>{l.name}</span>
               {l.isDefault && <span className="text-white/30">account login</span>}
               <span className="text-white/30">{expiry(l)}</span>
+              {source(l) && <span className="text-white/25">{source(l)}</span>}
               {l.viewers > 0 && <span className="text-white/30">{l.viewers} watching</span>}
               {alert && <span className={alert.tone === "danger" ? "text-red-300/80" : "text-amber-200/80"}>{alert.text}</span>}
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setDating(dating?.id === l.id ? null : { id: l.id, value: l.expiresUtc?.slice(0, 10) ?? "" })}
+                disabled={busy}
+              >
+                {dating?.id === l.id ? "Cancel" : "Edit date"}
+              </Button>
               {!l.isDefault && (
                 <Button size="xs" variant="ghost" onClick={() => void send({ action: "remove-line", lineId: l.id })} disabled={busy}>
                   Remove
                 </Button>
+              )}
+              {dating?.id === l.id && (
+                <form
+                  className="flex w-full flex-wrap items-end gap-2 pb-1"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void send({ action: "line-expiry", lineId: l.id, lineName: l.name, date: dating.value });
+                  }}
+                >
+                  <Field label={`${l.name} expires on`} hint="A later date from the panel (a renewal) replaces this on its own">
+                    <TextInput type="date" value={dating.value} onChange={(e) => setDating({ id: l.id, value: e.target.value })} />
+                  </Field>
+                  <Button type="submit" variant="primary" size="sm" disabled={busy || !dating.value}>
+                    {busy ? "Saving…" : "Save"}
+                  </Button>
+                  {l.manualExpiresUtc && (
+                    <Button size="sm" variant="ghost" onClick={() => void send({ action: "line-expiry", lineId: l.id, lineName: l.name, date: "" })} disabled={busy}>
+                      Use panel date
+                    </Button>
+                  )}
+                  {error && <p className="w-full text-xs text-amber-200/80">{error}</p>}
+                </form>
               )}
             </li>
           );
