@@ -138,6 +138,78 @@ export async function writeVaultNote(path: string, text: string, opts: { dirRead
   if (!res.ok) throw new Error(`Could not write ${path}: HTTP ${res.status}`);
 }
 
+/**
+ * A note's version: its ETag, else its modified time. The WebDAV server
+ * (Apache mod_dav) sends both; either changes when Obsidian saves the file.
+ */
+function versionOf(res: Response): string {
+  // mod_deflate appends "-gzip" to a compressed response's ETag; stripped so
+  // a GET and a HEAD of the same file agree.
+  const etag = (res.headers.get("etag") ?? "").replace(/-(gzip|br|deflate)"$/, '"');
+  return [etag, res.headers.get("last-modified") ?? ""].filter(Boolean).join(" ");
+}
+
+/** One note with its version, for an edit that must not overwrite a newer save. Null when it doesn't exist. */
+export async function readVaultNoteVersioned(path: string): Promise<{ text: string; version: string } | null> {
+  if (!isReadableNote(path)) throw new Error(`Not a readable note: ${path}`);
+  const cfg = config();
+  if (!cfg) throw new Error("The vault is not configured.");
+  const res = await fetch(`${cfg.base}/${encodeVaultPath(path)}`, {
+    headers: { Authorization: cfg.auth },
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Could not read ${path}: HTTP ${res.status}`);
+  const text = await res.text();
+  if (text.length > MAX_NOTE_BYTES) throw new Error(`${path} is larger than ${MAX_NOTE_BYTES / 1024} KB`);
+  return { text, version: versionOf(res) };
+}
+
+/**
+ * Replaces a note only if it is still at `version` (2026-10-24, the Jobs
+ * tab's Resume rules editor), checked by a HEAD just before the PUT.
+ * Returns the new version, or "conflict".
+ *
+ * Not If-Match on the PUT: Apache refuses If-Match against the "-gzip"
+ * ETags mod_deflate hands out, which would make every save a conflict. The
+ * gap the HEAD leaves is milliseconds against an edit that took minutes.
+ */
+export async function writeVaultNoteIfUnchanged(
+  path: string,
+  text: string,
+  version: string
+): Promise<{ version: string } | "conflict"> {
+  if (!isWritableVaultPath(path)) throw new Error(`Not a writable vault path: ${path}`);
+  const cfg = config();
+  if (!cfg) throw new Error("The vault is not configured.");
+  const url = `${cfg.base}/${encodeVaultPath(path)}`;
+  const head = await fetch(url, {
+    method: "HEAD",
+    headers: { Authorization: cfg.auth },
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const current = head.status === 404 ? "" : versionOf(head);
+  if (current !== version) return "conflict";
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: cfg.auth, "Content-Type": "text/markdown; charset=utf-8" },
+    body: text,
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.status === 412) return "conflict";
+  if (!res.ok) throw new Error(`Could not write ${path}: HTTP ${res.status}`);
+  const after = await fetch(url, {
+    method: "HEAD",
+    headers: { Authorization: cfg.auth },
+    cache: "no-store",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  return { version: versionOf(after) };
+}
+
 /** Deletes one note. Only where isWritableVaultPath allows; a missing file is fine. */
 export async function deleteVaultNote(path: string): Promise<void> {
   if (!isWritableVaultPath(path)) throw new Error(`Not a writable vault path: ${path}`);

@@ -10,6 +10,7 @@ import { listResumeVersions } from "@/lib/resume";
 import { recentResumeJobs } from "@/lib/resumeJobs";
 import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
 import { ResumeKnowledgeBasePanel } from "@/components/ResumeKnowledgeBasePanel";
+import { ResumeRulesPanel } from "@/components/ResumeRulesPanel";
 import { ApplicantProfilePanel } from "@/components/ApplicantProfilePanel";
 import { getApplicantProfile } from "@/lib/applyPacket";
 import { prisma } from "@/lib/db";
@@ -91,6 +92,10 @@ export default async function AdminJobsPage() {
 
       <AdminSection title="Resume knowledge base">
         <ResumeKnowledgeBasePanel />
+      </AdminSection>
+
+      <AdminSection title="Resume rules">
+        <ResumeRulesPanel />
       </AdminSection>
 
       <AdminSection title="Tailored resumes">

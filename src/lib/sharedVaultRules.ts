@@ -57,8 +57,13 @@ export function isWritableVaultPath(path: string): boolean {
   if (!isReadableNote(path)) return false;
   if (path.startsWith(`${STREAMY_CHATS_DIR}/`)) return !path.slice(STREAMY_CHATS_DIR.length + 1).includes("/");
   if (path.startsWith(`${APPLE_NOTES_DIR}/`)) return path.slice(APPLE_NOTES_DIR.length + 1).split("/").length <= 2;
-  return false;
+  // 2026-10-24: the resume rules note, edited from the Jobs tab. That one
+  // file only; the rest of the resume folders is the admin's.
+  return RESUME_RULES_NOTES.includes(path);
 }
+
+/** Where the resume rules note may be (resumeBankRules.guidancePaths("resume-rules.md")). */
+export const RESUME_RULES_NOTES = ["main/resume/resume-rules.md", "resume/resume-rules.md"];
 
 // ---- Saved chats as notes -------------------------------------------------
 
