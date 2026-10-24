@@ -9,6 +9,8 @@
 import { logAudit } from "./auditLog";
 import { prisma } from "./db";
 import { generateTailoredResume } from "./resume";
+import { isDraining } from "./deployDrain";
+import { HELD_STEP } from "./deployDrainRules";
 import {
   bootDecision,
   GAVE_UP_ERROR,
@@ -57,10 +59,65 @@ async function start(postingId: string, requestedBy: string): Promise<StartResul
   const posting = await prisma.jobPosting.findUnique({ where: { id: postingId }, select: { id: true } });
   if (!posting) return { ok: false, status: 404, error: "That listing no longer exists." };
 
-  const job = await prisma.resumeJob.create({ data: { postingId, requestedBy, status: "queued" } });
-  void logAudit(requestedBy, "resume.generate.start", postingId, `job ${job.id}`);
-  void run(job.id, postingId, job.startedAt.getTime(), requestedBy);
+  // 2026-10-24: deploys every 5-10 min killed a 7-minute resume job four
+  // times. While a deploy is draining, a new job is held (queued, HELD_STEP)
+  // rather than started into the restart; the new container's boot recovery
+  // or the watcher below starts it.
+  const held = await isDraining();
+  const job = await prisma.resumeJob.create({
+    data: { postingId, requestedBy, status: "queued", ...(held ? { step: HELD_STEP } : {}) },
+  });
+  void logAudit(requestedBy, "resume.generate.start", postingId, `job ${job.id}${held ? " (held for a deploy)" : ""}`);
+  if (held) {
+    console.log(resumeLog("held", 0, { job: job.id, posting: postingId }));
+    watchHeldJobs();
+  } else {
+    void run(job.id, postingId, job.startedAt.getTime(), requestedBy);
+  }
   return { ok: true, job: toView(job, Date.now()), existing: false };
+}
+
+let heldWatcher: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Keeps held jobs alive (heartbeat, so they don't read as dead) and starts
+ * them here once the drain ends without a restart: the deploy gave up waiting
+ * and cleared the flag, the image was unchanged, or the flag's TTL ran out.
+ * When the deploy does restart the app, the new process's
+ * recoverInterruptedJobs picks them up instead.
+ */
+function watchHeldJobs(): void {
+  if (heldWatcher) return;
+  const tick = async () => {
+    heldWatcher = null;
+    const held = await prisma.resumeJob.findMany({ where: { status: "queued", step: HELD_STEP } }).catch(() => []);
+    if (held.length === 0) return;
+    if (await isDraining()) {
+      await prisma.resumeJob
+        .updateMany({ where: { status: "queued", step: HELD_STEP }, data: { heartbeatAt: new Date() } })
+        .catch(() => undefined);
+    } else {
+      for (const job of held) {
+        const startedAt = new Date();
+        const claimed = await prisma.resumeJob
+          .updateMany({
+            where: { id: job.id, status: "queued", step: HELD_STEP },
+            data: { step: "", startedAt, heartbeatAt: startedAt },
+          })
+          .catch(() => ({ count: 0 }));
+        if (claimed.count !== 1) continue;
+        console.log(resumeLog("released", 0, { job: job.id, posting: job.postingId }));
+        void run(job.id, job.postingId, startedAt.getTime(), job.requestedBy);
+      }
+      return;
+    }
+    schedule();
+  };
+  const schedule = () => {
+    heldWatcher = setTimeout(() => void tick(), HEARTBEAT_MS);
+    heldWatcher.unref?.();
+  };
+  schedule();
 }
 
 async function markFailed(id: string, error: string): Promise<void> {
@@ -150,13 +207,17 @@ export async function recoverInterruptedJobs(retry = true): Promise<void> {
     }
     if (decision !== "requeue") continue;
     const startedAt = new Date();
+    // A job held for the deploy never ran, so starting it is its first
+    // attempt, not a retry. It runs even if the flag is still set: the
+    // restart it was waiting for has happened.
+    const attempts = job.step === HELD_STEP ? job.attempts : job.attempts + 1;
     const claimed = await prisma.resumeJob.updateMany({
       where: { id: job.id, status: ACTIVE, heartbeatAt: job.heartbeatAt },
-      data: { status: "queued", step: "", attempts: job.attempts + 1, startedAt, heartbeatAt: startedAt, error: null },
+      data: { status: "queued", step: "", attempts, startedAt, heartbeatAt: startedAt, error: null },
     });
     if (claimed.count !== 1) continue;
-    console.log(resumeLog("recover", 0, { job: job.id, decision, attempt: job.attempts + 1, posting: job.postingId }));
-    void logAudit(job.requestedBy || "resume", "resume.generate.resume", job.postingId, `job ${job.id} attempt ${job.attempts + 1}`);
+    console.log(resumeLog("recover", 0, { job: job.id, decision, attempt: attempts, posting: job.postingId }));
+    void logAudit(job.requestedBy || "resume", "resume.generate.resume", job.postingId, `job ${job.id} attempt ${attempts}`);
     void run(job.id, job.postingId, startedAt.getTime(), job.requestedBy);
   }
   // A job whose heartbeat was too fresh to take over: look again once it can't be.

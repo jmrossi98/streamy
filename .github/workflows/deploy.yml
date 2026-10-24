@@ -356,7 +356,11 @@ jobs:
           # and extracting the ~1.3GB image can run past that, and a timeout mid-
           # extraction leaves the box thrashing -- which is exactly how a deploy
           # took the site down. 20m gives a slow pull room to finish.
-          command_timeout: 20m
+          #
+          # 2026-10-24: plus up to 12 minutes waiting for long-running work
+          # before the swap (see "deploy-drain" in the script), and the wait
+          # for the new container to answer afterwards: 40m.
+          command_timeout: 40m
           envs: DATABASE_URL,TMDB_API_KEY,NEXTAUTH_SECRET,NEXTAUTH_URL,ADMIN_NAME,RADARR_URL,RADARR_API_KEY,RADARR_ROOT_FOLDER,RADARR_QUALITY_PROFILE_ID,RADARR_QUALITY_PROFILE_ID_4K,SONARR_URL,SONARR_API_KEY,SONARR_ROOT_FOLDER,SONARR_QUALITY_PROFILE_ID,SONARR_QUALITY_PROFILE_ID_4K,PROWLARR_URL,PROWLARR_API_KEY,SPORTARR_URL,SPORTARR_API_KEY,MAXMIND_LICENSE_KEY,PAGE_WATCH_SECRET,PAGE_WATCH_PROXY_URL,PAGE_WATCH_REQUIRE_PROXY,PAGE_WATCH_USER_AGENT,VPN_ENABLED,VPN_SERVICE_PROVIDER,VPN_TYPE,OPENVPN_USER,OPENVPN_PASSWORD,WIREGUARD_PRIVATE_KEY,WIREGUARD_ADDRESSES,VPN_SERVER_REGIONS,VPN_SERVER_COUNTRIES,MEDIA_WEBHOOK_SECRET,JELLYFIN_URL,JELLYFIN_API_KEY,JELLYFIN_USER_ID,QBITTORRENT_URL,QBITTORRENT_USER,QBITTORRENT_PASSWORD,GAMARR_URL,GAMARR_API_KEY,SGDB_API_KEY,ALERT_SNS_TOPIC_ARN,ALERT_AWS_ACCESS_KEY_ID,ALERT_AWS_SECRET_ACCESS_KEY,AWS_COST_ALERT_THRESHOLD_USD,OLLAMA_URL,OLLAMA_MODEL,OPENROUTER_API_KEY,OPENROUTER_OPEN_MODEL,OPENROUTER_CLAUDE_MODEL,OPENROUTER_MAX_TOKENS,OPENROUTER_OPEN_FALLBACKS,OPENROUTER_CLAUDE_FALLBACKS,ANTHROPIC_API_KEY,ANTHROPIC_MODEL,ANTHROPIC_FALLBACKS,SEARXNG_URL,FLASH_LIBRARY_URL,FLASHPOINT_API_URL,PUBLIC_PROBE_HOST,PUBLIC_PROBE_HOST_V6,GITHUB_BLOG_TOKEN,GITHUB_BLOG_REPO,GITHUB_BLOG_BRANCH,LITESTREAM_ACCESS_KEY_ID,LITESTREAM_SECRET_ACCESS_KEY,LITESTREAM_BUCKET,PLAYBACK_CHECK_SECRET,HEALTH_PROBE_SECRET,JOB_LISTINGS_SECRET,DOWNLOAD_WARDEN_SECRET,JOB_BOARD_SOURCES,JOB_INCLUDE_REMOTE,GAMES_ARTWORK_CRON_SECRET,DISPATCHARR_URL,DISPATCHARR_USER,DISPATCHARR_PASSWORD,SABNZBD_URL,SABNZBD_API_KEY,FLARESOLVERR_URL,SYNCTHING_URL,WEBDAV_URL,WEBDAV_USERNAME,WEBDAV_PASSWORD,PORTAINER_URL,PORTAINER_API_KEY,PORTAINER_ENDPOINT_ID,DIAG_URL,DIAG_TOKEN,SKILL_RUNNER_URL,SKILL_RUNNER_TOKEN,STREAM_PROBE_URL,STREAM_PROBE_TOKEN,UPLOAD_BUDGET_MBPS
           script: |
             set -e
@@ -505,6 +509,90 @@ jobs:
             COMPOSE_PROFILES=""
             if [ "${VPN_ENABLED}" = "true" ]; then COMPOSE_PROFILES="--profile vpn"; fi
             docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} pull
+
+            # ---- deploy-drain: don't swap the container under long work ----
+            # 2026-10-24: deploys every 5-10 min killed a 7-minute resume job
+            # four times (Jake's Roblox posting), and each restart-recovery
+            # re-run cost a full model run. The image is already pulled above,
+            # so waiting here costs nothing and the swap below stays short.
+            # The running app is asked through `docker exec` with its own
+            # DOWNLOAD_WARDEN_SECRET (src/app/api/cron/deploy-drain), so the
+            # secret never leaves the box. Draining also holds new resume jobs
+            # for the new container. Anything going wrong here -- no container,
+            # an old image without the endpoint, an unset secret -- means "don't
+            # wait": this must never be what blocks a deploy.
+            DRAIN_MAX_WAIT=720
+            DRAIN_TTL_MS=1200000
+            drain_call() {
+              docker exec -e DRAIN_METHOD="$2" -e DRAIN_QUERY="$3" "$1" node -e '
+                const q = process.env.DRAIN_QUERY || "";
+                fetch("http://127.0.0.1:3000/api/cron/deploy-drain" + q, {
+                  method: process.env.DRAIN_METHOD,
+                  headers: { authorization: "Bearer " + (process.env.DOWNLOAD_WARDEN_SECRET || "") },
+                  signal: AbortSignal.timeout(20000),
+                }).then(async (r) => {
+                  const t = await r.text();
+                  if (!r.ok) { console.log("HTTP " + r.status + " " + t.slice(0, 200)); process.exit(1); }
+                  const b = JSON.parse(t);
+                  const jobs = (b.jobs || []).map((j) => j.kind + ":" + j.id + " started " + j.startedAt + (j.eta ? " eta " + j.eta : "")).join("; ");
+                  console.log((b.busy ? "BUSY " : "IDLE ") + jobs + (b.draining ? " [draining until " + b.until + "]" : ""));
+                }).catch((e) => { console.log("ERROR " + e.message); process.exit(1); });
+              '
+            }
+            app_container() { docker compose -f docker-compose.prod.yml ps -q app 2>/dev/null | head -n 1; }
+            DRAIN_SET=0
+            clear_drain() {
+              rc=$?
+              if [ "$DRAIN_SET" = "1" ]; then
+                # The new container runs migrations before it listens; give it
+                # up to ~3 min. If it never answers, the flag's 20-min TTL ends
+                # the drain on its own.
+                i=0
+                while [ $i -lt 36 ]; do
+                  C=$(app_container || true)
+                  if [ -n "$C" ] && out=$(drain_call "$C" DELETE ""); then
+                    echo "deploy-drain: flag cleared ($out)"
+                    break
+                  fi
+                  i=$((i + 1))
+                  sleep 5
+                done
+                [ $i -lt 36 ] || echo "deploy-drain: could not clear the flag; it expires on its own within 20 min"
+              fi
+              exit $rc
+            }
+            trap clear_drain EXIT
+            OLD_APP=$(app_container || true)
+            if [ -z "$OLD_APP" ]; then
+              echo "deploy-drain: no app container running, nothing to wait for"
+            elif ! out=$(drain_call "$OLD_APP" POST "?ttl=${DRAIN_TTL_MS}"); then
+              echo "deploy-drain: the running app can't be asked ($out); deploying without waiting"
+            else
+              DRAIN_SET=1
+              echo "deploy-drain: draining set: $out"
+              DRAIN_START=$(date +%s)
+              while :; do
+                WAITED=$(( $(date +%s) - DRAIN_START ))
+                if ! out=$(drain_call "$OLD_APP" GET ""); then
+                  echo "deploy-drain: busy check failed after ${WAITED}s ($out); deploying"
+                  break
+                fi
+                case "$out" in
+                  IDLE*) echo "deploy-drain: nothing busy after ${WAITED}s; deploying"; break ;;
+                esac
+                if [ "$WAITED" -ge "$DRAIN_MAX_WAIT" ]; then
+                  # Still busy at the cap: deploy anyway; #534's restart
+                  # recovery re-runs what this kills. The flag stays set
+                  # through the swap so nothing new starts into it, and the
+                  # EXIT trap clears it once the new container answers.
+                  echo "deploy-drain: gave up waiting after ${WAITED}s, deploying anyway; still running: $out"
+                  break
+                fi
+                echo "deploy-drain: waiting (${WAITED}s): $out"
+                sleep 15
+              done
+            fi
+
             docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} up -d --remove-orphans
             # Old :latest becomes untagged (<none>) after each pull — prune frees disk (layers still shared).
             docker image prune -f

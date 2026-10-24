@@ -82,7 +82,17 @@ export async function getAppleNotesStatus(): Promise<AppleNotesStatus> {
 // ---- syncing ------------------------------------------------------------
 
 let running = false;
+let runningSince: Date | null = null;
 let queued: IncomingNote[] | null = null;
+
+/**
+ * Whether a sync is writing right now, for a deploy deciding whether to wait
+ * (deployDrainRules.ts). 2026-10-24: the request is answered 200 before the
+ * writing, so a restart mid-sync loses notes the phone thinks it delivered.
+ */
+export function appleNotesSyncActivity(): { running: boolean; startedAt: Date | null } {
+  return { running, startedAt: runningSince };
+}
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -93,6 +103,7 @@ export function startAppleNotesSync(notes: IncomingNote[]): void {
     return;
   }
   running = true;
+  runningSince = new Date();
   void (async () => {
     let next: IncomingNote[] | null = notes;
     while (next) {
@@ -102,6 +113,7 @@ export function startAppleNotesSync(notes: IncomingNote[]): void {
       next = queued;
     }
     running = false;
+    runningSince = null;
   })();
 }
 
