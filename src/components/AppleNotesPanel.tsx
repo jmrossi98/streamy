@@ -185,9 +185,13 @@ export function AppleNotesPanel() {
             <i>Below</i> End Repeat, add <b>Text</b>, and insert the variable <b>Repeat Results</b> into it.
           </li>
           <li>
-            Add <b>Get Contents of URL</b>. Shortcuts may fill its URL with the <i>Text</i> variable: delete that
-            bubble and paste the <b>URL</b> instead (an error like <i>&quot;mailto:… is missing a hostname&quot;</i>
-            means the notes ended up in the URL field). Tap the <b>›</b> arrow to show more and set:
+            Below the Text, add a <b>URL</b> action (plain &quot;URL&quot;, blue link icon) and paste the <b>URL</b>{" "}
+            into it. This step matters: each action takes the one above it as its input, and without it Get Contents
+            of URL takes your notes as its address and tries to send them to every link inside them.
+          </li>
+          <li>
+            Below that, add <b>Get Contents of URL</b>. Its address should show the <b>URL</b> bubble; if it shows
+            anything else, delete it and pick the <b>URL</b> variable. Tap the <b>›</b> arrow to show more and set:
             <ul className="mt-1 list-disc pl-5">
               <li>
                 Method: <b>POST</b>
@@ -208,9 +212,14 @@ export function AppleNotesPanel() {
             <i>&quot;trying to share N Notes items, which is not allowed&quot;</i>.
           </li>
           <li>
-            Tap <b>▶</b> to run it. Allow access to Notes, and when asked whether it may send notes to this site choose{" "}
-            <b>Always Allow</b> (otherwise the automation stops to ask every time). Then tap <b>Refresh</b> above: it
-            should show your note count.
+            Tap <b>▶</b> to run it and allow access to Notes. When iOS asks to send notes, check it names{" "}
+            <b>only this site</b>; if it lists other websites (links from your notes), tap <b>Don&apos;t Allow</b>{" "}
+            and fix the URL step above. If it names only this site, choose <b>Always Allow</b> (otherwise the
+            automation stops to ask every time). Then tap <b>Refresh</b> above: it should show your note count.
+            <div className="mt-1 text-white/50">
+              Order when done: Find Notes → Repeat with Each → Dictionary → End Repeat → Text → URL → Get Contents of
+              URL.
+            </div>
           </li>
         </ol>
       </section>
