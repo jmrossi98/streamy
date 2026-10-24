@@ -1,8 +1,9 @@
 /**
  * Access to the Obsidian vault, served from mediabox over WebDAV (the same
  * share the phone syncs through). Used by the resume builder and the admin
- * assistant, which only read it. The one write is the admin chat's own saved
- * conversations, and only into main/ai/chats/streamy/ (isWritableVaultPath):
+ * assistant, which only read it. The writes are the admin chat's own saved
+ * conversations (main/ai/chats/streamy/) and the Apple Notes mirror
+ * (main/apple-notes/), and only there (isWritableVaultPath):
  * everything else in the vault is the admin's or another machine's.
  */
 import { isWritableVaultPath } from "./sharedVaultRules";
@@ -109,12 +110,24 @@ async function ensureVaultDir(cfg: { base: string; auth: string }, dir: string):
   }
 }
 
-/** Writes one note, replacing it. Only where isWritableVaultPath allows. */
-export async function writeVaultNote(path: string, text: string): Promise<void> {
+/** Creates a folder and its parents once, ahead of a batch of writes into it. */
+export async function ensureVaultFolder(dir: string): Promise<void> {
+  if (!isWritableVaultPath(`${dir}/x.md`)) throw new Error(`Not a writable vault folder: ${dir}`);
+  const cfg = config();
+  if (!cfg) throw new Error("The vault is not configured.");
+  await ensureVaultDir(cfg, dir);
+}
+
+/**
+ * Writes one note, replacing it. Only where isWritableVaultPath allows.
+ * dirReady skips creating its folder (a MKCOL per path segment) when the
+ * caller already did that once for a batch with ensureVaultFolder.
+ */
+export async function writeVaultNote(path: string, text: string, opts: { dirReady?: boolean } = {}): Promise<void> {
   if (!isWritableVaultPath(path)) throw new Error(`Not a writable vault path: ${path}`);
   const cfg = config();
   if (!cfg) throw new Error("The vault is not configured.");
-  await ensureVaultDir(cfg, path.slice(0, path.lastIndexOf("/")));
+  if (!opts.dirReady) await ensureVaultDir(cfg, path.slice(0, path.lastIndexOf("/")));
   const res = await fetch(`${cfg.base}/${encodeVaultPath(path)}`, {
     method: "PUT",
     headers: { Authorization: cfg.auth, "Content-Type": "text/markdown; charset=utf-8" },
