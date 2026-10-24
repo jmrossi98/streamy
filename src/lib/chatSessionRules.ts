@@ -15,9 +15,12 @@ import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
 
 /**
  * One turn. `via` marks a turn that happened in a linked Claude Code session
- * rather than in this panel; absent means here.
+ * rather than in this panel, or ("skill-run", 2026-10-24) a Claude Code skill
+ * run on mediabox -- a user-role turn, so the model reads the result as input
+ * and can carry on from it (skillRunnerRules.ts). Absent means typed here.
  */
-export type ChatTurn = { role: "user" | "assistant"; content: string; via?: "claude-code" };
+export type ChatTurnVia = "claude-code" | "skill-run";
+export type ChatTurn = { role: "user" | "assistant"; content: string; via?: ChatTurnVia };
 
 export type ChatSessionSummary = {
   id: string;
@@ -50,7 +53,7 @@ export function normalizeTurns(raw: unknown): ChatTurn[] {
     if (role !== "user" && role !== "assistant") continue;
     if (typeof content !== "string") continue;
     const turn: ChatTurn = { role, content: content.slice(0, MAX_TURN_CHARS) };
-    if (via === "claude-code") turn.via = "claude-code";
+    if (via === "claude-code" || via === "skill-run") turn.via = via;
     out.push(turn);
   }
   return out.slice(-MAX_SESSION_TURNS);

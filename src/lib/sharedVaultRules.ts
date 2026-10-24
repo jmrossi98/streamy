@@ -113,7 +113,9 @@ export function renderChatNote(chat: ChatNoteInput): string {
   ].join("\n");
 
   const speaker = (t: ChatTurn) =>
-    t.role === "user"
+    t.via === "skill-run"
+      ? "mediabox skill run"
+      : t.role === "user"
       ? t.via === "claude-code"
         ? `${chat.author} (in Claude Code)`
         : chat.author

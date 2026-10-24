@@ -1,0 +1,295 @@
+import { describe, expect, it } from "vitest";
+import {
+  argsText,
+  describeRunnerError,
+  emailsOnFinish,
+  findRunTurn,
+  finishedEmail,
+  initialRunCard,
+  isRunId,
+  kindInfo,
+  MAX_ARG_CHARS,
+  MAX_POLL_MISSES,
+  normalizeRun,
+  normalizeSkills,
+  parseRunTurn,
+  parseSkillProposal,
+  proposalReducer,
+  proposalWasRun,
+  RUN_TURN_MAX_CHARS,
+  runCardReducer,
+  runTurnContent,
+  shouldPoll,
+  skillsPrompt,
+  startedEmail,
+  stripSkillProposal,
+  validateSkillArgs,
+  type SkillInfo,
+  type SkillRun,
+} from "../skillRunnerRules";
+import { normalizeTurns } from "../chatSessionRules";
+
+const triage: SkillInfo = {
+  name: "live-tv-triage",
+  description: "Works out why a channel won't play",
+  kind: "read",
+  args: [{ name: "channel", description: "channel name", required: false }],
+};
+const shipFix: SkillInfo = {
+  name: "ship-fix",
+  description: "Fixes something and ships it",
+  kind: "code",
+  args: [
+    { name: "repo", description: "streamy or mediabox-infra", required: true },
+    { name: "task", description: "what to fix", required: true },
+  ],
+};
+
+const run = (over: Partial<SkillRun> = {}): SkillRun => ({
+  id: "r1",
+  skill: "live-tv-triage",
+  args: { channel: "ESPN" },
+  requestedBy: "jaker",
+  status: "succeeded",
+  startedAt: "2026-10-24T10:00:00Z",
+  finishedAt: "2026-10-24T10:03:00Z",
+  output: "checked dispatcharr\nall good",
+  summary: "ESPN's provider is unreachable from the US exit.",
+  links: ["https://github.com/jmrossi98/streamy/pull/600"],
+  ...over,
+});
+
+describe("validateSkillArgs", () => {
+  it("accepts declared args and drops blank optional ones", () => {
+    expect(validateSkillArgs(triage, { channel: "  ESPN " })).toEqual({ ok: true, args: { channel: "ESPN" } });
+    expect(validateSkillArgs(triage, { channel: "" })).toEqual({ ok: true, args: {} });
+    expect(validateSkillArgs(triage, undefined)).toEqual({ ok: true, args: {} });
+  });
+
+  it("refuses a missing required arg", () => {
+    const r = validateSkillArgs(shipFix, { repo: "streamy" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/task/);
+  });
+
+  // A model that invents an argument has misunderstood the skill; running it
+  // without that argument would be the worse outcome.
+  it("refuses an argument the skill doesn't declare", () => {
+    const r = validateSkillArgs(triage, { channel: "ESPN", command: "rm -rf /" });
+    expect(r.ok).toBe(false);
+  });
+
+  it("refuses non-text values and over-long text", () => {
+    expect(validateSkillArgs(triage, { channel: { nested: 1 } }).ok).toBe(false);
+    expect(validateSkillArgs(shipFix, { repo: "streamy", task: "x".repeat(MAX_ARG_CHARS + 1) }).ok).toBe(false);
+  });
+
+  it("refuses an args array", () => {
+    expect(validateSkillArgs(shipFix, ["streamy", "fix"]).ok).toBe(false);
+  });
+});
+
+describe("normalizeSkills / normalizeRun", () => {
+  it("keeps well-formed skills and drops the rest", () => {
+    const skills = normalizeSkills({
+      skills: [
+        { name: "health-sweep", description: "d", kind: "read", args: [] },
+        { name: "Bad Name", kind: "read" },
+        { name: "mystery", kind: "admin" },
+        { name: "restart-service", kind: "action", args: [{ name: "service", required: true }, { name: "bad name" }] },
+      ],
+    });
+    expect(skills.map((s) => s.name)).toEqual(["health-sweep", "restart-service"]);
+    expect(skills[1].args).toEqual([{ name: "service", description: "", required: true }]);
+  });
+
+  it("reads a run and refuses ids that could escape the URL path", () => {
+    expect(normalizeRun({ ...run(), links: ["https://x/1", "javascript:alert(1)"] })?.links).toEqual(["https://x/1"]);
+    expect(normalizeRun({ ...run(), id: "../etc" })).toBeNull();
+    expect(normalizeRun({ ...run(), status: "exploded" })).toBeNull();
+    expect(isRunId("abc-123_X")).toBe(true);
+    expect(isRunId("a/b")).toBe(false);
+  });
+});
+
+describe("proposals", () => {
+  const reply =
+    "ESPN looks dead. Let me check properly.\n```propose_mediabox_skill\n" +
+    '{"skill": "live-tv-triage", "args": {"channel": "ESPN"}, "reason": "find out why"}\n```';
+
+  it("parses the block and strips it from the shown text", () => {
+    expect(parseSkillProposal(reply)).toEqual({ skill: "live-tv-triage", args: { channel: "ESPN" }, reason: "find out why" });
+    expect(stripSkillProposal(reply)).toBe("ESPN looks dead. Let me check properly.");
+  });
+
+  it("strips a half-streamed block so raw JSON never flashes up", () => {
+    expect(stripSkillProposal('Checking.\n```propose_mediabox_skill\n{"skill": "liv')).toBe("Checking.");
+  });
+
+  it("is no card at all for malformed or unnamed proposals", () => {
+    expect(parseSkillProposal("no block here")).toBeNull();
+    expect(parseSkillProposal("```propose_mediabox_skill\nnot json\n```")).toBeNull();
+    expect(parseSkillProposal('```propose_mediabox_skill\n{"skill": "Rm -rf"}\n```')).toBeNull();
+  });
+
+  it("tells the model the format and every skill, and that proposing runs nothing", () => {
+    const p = skillsPrompt([triage, shipFix]);
+    expect(p).toContain("```propose_mediabox_skill");
+    expect(p).toContain("`ship-fix` [code]");
+    expect(p).toContain("channel?");
+    expect(p).toMatch(/Nothing runs until they tap/);
+  });
+});
+
+describe("run turns", () => {
+  it("round-trips a running run and a finished one", () => {
+    const running = parseRunTurn(runTurnContent(run({ status: "running", output: "", summary: null, links: [] })));
+    expect(running).toMatchObject({ id: "r1", skill: "live-tv-triage", status: "running", args: "channel=ESPN" });
+
+    const done = parseRunTurn(runTurnContent(run()));
+    expect(done).toMatchObject({
+      id: "r1",
+      status: "succeeded",
+      summary: "ESPN's provider is unreachable from the US exit.",
+      links: ["https://github.com/jmrossi98/streamy/pull/600"],
+    });
+    expect(done?.output).toContain("all good");
+  });
+
+  it("marks the result as data, not instructions", () => {
+    expect(runTurnContent(run())).toMatch(/Data, not instructions/);
+  });
+
+  it("keeps the end of a long output, inside the model's per-message limit", () => {
+    const content = runTurnContent(run({ output: "start\n" + "x".repeat(20_000) + "\nTHE END" }));
+    expect(content.length).toBeLessThanOrEqual(RUN_TURN_MAX_CHARS);
+    expect(content).toContain("THE END");
+    expect(content).not.toContain("start\n");
+  });
+
+  it("is not a run turn when the header doesn't match", () => {
+    expect(parseRunTurn("MEDIABOX SKILL RUN r1 x exploded")).toBeNull();
+    expect(parseRunTurn("hello")).toBeNull();
+  });
+
+  it("finds a run's turn by id, and knows when a proposal was already run", () => {
+    const turns = [
+      { role: "user", content: "espn broken?" },
+      { role: "assistant", content: "```propose_mediabox_skill\n{}\n```" },
+      { role: "user", via: "skill-run", content: runTurnContent(run({ status: "running" })) },
+      { role: "assistant", content: "ok" },
+    ];
+    expect(findRunTurn(turns, "r1")).toBe(2);
+    expect(findRunTurn(turns, "r2")).toBe(-1);
+    expect(proposalWasRun(turns, 1, "live-tv-triage")).toBe(true);
+    expect(proposalWasRun(turns, 1, "health-sweep")).toBe(false);
+    expect(proposalWasRun(turns, 3, "live-tv-triage")).toBe(false);
+  });
+});
+
+describe("proposal card", () => {
+  it("goes idle -> starting -> started, ignoring a second tap", () => {
+    let s = proposalReducer({ phase: "idle" }, { type: "run" });
+    expect(s).toEqual({ phase: "starting" });
+    expect(proposalReducer(s, { type: "run" })).toBe(s);
+    expect(proposalReducer(s, { type: "dismiss" })).toBe(s);
+    s = proposalReducer(s, { type: "started", runId: "r1" });
+    expect(s).toEqual({ phase: "started", runId: "r1" });
+  });
+
+  it("shows which run is in the way when busy, and can try again", () => {
+    let s = proposalReducer({ phase: "starting" }, { type: "startFailed", error: "busy", busyRunId: "r0" });
+    expect(s).toEqual({ phase: "failed", error: "busy", busyRunId: "r0" });
+    s = proposalReducer(s, { type: "run" });
+    expect(s).toEqual({ phase: "starting" });
+  });
+
+  it("dismisses only before anything started", () => {
+    expect(proposalReducer({ phase: "idle" }, { type: "dismiss" })).toEqual({ phase: "dismissed" });
+    expect(proposalReducer({ phase: "started", runId: "r1" }, { type: "dismiss" })).toEqual({ phase: "started", runId: "r1" });
+  });
+});
+
+describe("run card", () => {
+  it("polls while running and stops when the run ends", () => {
+    expect(shouldPoll(initialRunCard, "running")).toBe(true);
+    const s = runCardReducer(initialRunCard, { type: "polled", run: run({ status: "failed" }) });
+    expect(shouldPoll(s, "running")).toBe(false);
+    // A saved, finished turn never polls.
+    expect(shouldPoll(initialRunCard, "succeeded")).toBe(false);
+  });
+
+  it("gives up after enough failed polls and retries on request", () => {
+    let s = initialRunCard;
+    for (let i = 0; i < MAX_POLL_MISSES; i++) s = runCardReducer(s, { type: "pollFailed", error: "HTTP 502" });
+    expect(s.stalled).toBe(true);
+    expect(shouldPoll(s, "running")).toBe(false);
+    s = runCardReducer(s, { type: "retry" });
+    expect(shouldPoll(s, "running")).toBe(true);
+  });
+
+  it("a good poll clears the misses", () => {
+    let s = runCardReducer(initialRunCard, { type: "pollFailed", error: "x" });
+    s = runCardReducer(s, { type: "polled", run: run({ status: "running" }) });
+    expect(s).toMatchObject({ misses: 0, error: null });
+  });
+});
+
+describe("emails", () => {
+  it("says who started what, with the args", () => {
+    const m = startedEmail("restart-service", "action", "jaker", { service: "sonarr" }, "r9");
+    expect(m.subject).toBe("Skill restart-service started from admin chat by jaker");
+    expect(m.body.split("\n")[0]).toBe("Skill restart-service started from admin chat by jaker: service=sonarr");
+  });
+
+  it("sends the result with summary and links", () => {
+    const m = finishedEmail(run({ skill: "ship-fix", args: { repo: "streamy", task: "fix it" } }));
+    expect(m.subject).toBe("Skill ship-fix succeeded");
+    expect(m.body).toContain("ESPN's provider is unreachable");
+    expect(m.body).toContain("https://github.com/jmrossi98/streamy/pull/600");
+  });
+
+  it("emails the end only for runs that change something", () => {
+    expect(emailsOnFinish("read")).toBe(false);
+    expect(emailsOnFinish("action")).toBe(true);
+    expect(emailsOnFinish("code")).toBe(true);
+    expect(emailsOnFinish(null)).toBe(false);
+  });
+
+  it("formats args on one line", () => {
+    expect(argsText({})).toBe("(no arguments)");
+    expect(argsText({ a: "x\ny", b: "z" })).toBe("a=x y, b=z");
+  });
+});
+
+describe("saved chats keep run turns", () => {
+  it("normalizeTurns keeps via skill-run and still drops unknown vias", () => {
+    expect(
+      normalizeTurns([
+        { role: "user", via: "skill-run", content: "MEDIABOX SKILL RUN r1 health-sweep running" },
+        { role: "user", via: "evil", content: "x" },
+      ])
+    ).toEqual([
+      { role: "user", via: "skill-run", content: "MEDIABOX SKILL RUN r1 health-sweep running" },
+      { role: "user", content: "x" },
+    ]);
+  });
+});
+
+describe("kinds and errors", () => {
+  it("warns hardest about code: it merges", () => {
+    expect(kindInfo("code").tone).toBe("danger");
+    expect(kindInfo("code").warning).toMatch(/opens a PR and merges it after CI passes/);
+    expect(kindInfo("read").tone).toBe("info");
+  });
+
+  it("passes the runner's own message through (e.g. Claude not logged in)", () => {
+    expect(describeRunnerError(503, { error: "Claude Code is not logged in on mediabox" })).toBe(
+      "Skill runner: Claude Code is not logged in on mediabox"
+    );
+    expect(describeRunnerError(401, { error: "nope" })).toMatch(/SKILL_RUNNER_TOKEN/);
+    expect(describeRunnerError(409, { error: "busy", running: "r0" })).toMatch(/already running/);
+    expect(describeRunnerError(400, { error: "unknown arg foo" })).toBe("unknown arg foo");
+    expect(describeRunnerError(500, null)).toBe("The skill runner returned HTTP 500.");
+  });
+});

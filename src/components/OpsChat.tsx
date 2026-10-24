@@ -22,6 +22,15 @@ import {
 } from "@/lib/chatSessionRules";
 import { LLM_ROUTING_EVENT, cloudSlots, type ChatSlots, type ResolvedRoutes } from "@/lib/chatSlots";
 import { ActionProposal } from "./ActionProposal";
+import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
+import {
+  findRunTurn,
+  parseSkillProposal,
+  proposalWasRun,
+  runTurnContent,
+  stripSkillProposal,
+  type SkillRun,
+} from "@/lib/skillRunnerRules";
 
 export type { ChatSlot, ChatSlots } from "@/lib/chatSlots";
 
@@ -144,6 +153,16 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   const [confirmDeleteTurn, setConfirmDeleteTurn] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Read by the skill handlers, which resolve after a fetch and must add to
+  // the transcript as it is then, not as it was when the tap happened.
+  const turnsRef = useRef<Turn[]>([]);
+  // Runs whose result has already gone into the chat: the card may report
+  // the end more than once before the rewritten turn reaches it.
+  const finishedRunsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    turnsRef.current = turns;
+  }, [turns]);
 
   useEffect(() => {
     slotsRef.current = slots;
@@ -430,6 +449,94 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
     }
   }
 
+  /** Adds a run's turn to the open chat and saves it. */
+  function appendRunTurn(run: SkillRun) {
+    if (findRunTurn(turnsRef.current, run.id) >= 0) return;
+    const next: Turn[] = [...turnsRef.current, { role: "user", via: "skill-run", content: runTurnContent(run) }];
+    turnsRef.current = next;
+    setTurns(next);
+    void persist(next, backend);
+  }
+
+  /**
+   * A Run tap, from a proposal card or the menu. The run becomes a turn of its
+   * own straight away, saved as "running", so a reload (or the phone locking)
+   * picks the polling back up from the saved chat.
+   */
+  async function startSkill(skill: string, args: Record<string, string>): Promise<StartOutcome> {
+    try {
+      const res = await fetch("/api/admin/skills/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill, args }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        id?: string;
+        args?: Record<string, string>;
+        error?: string;
+        running?: string;
+      };
+      if (!res.ok || !body.id) {
+        return { ok: false, error: body.error ?? `Couldn't start ${skill} (HTTP ${res.status}).`, busyRunId: body.running ?? null };
+      }
+      appendRunTurn({
+        id: body.id,
+        skill,
+        args: body.args ?? args,
+        requestedBy: "",
+        status: "running",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        output: "",
+        summary: null,
+        links: [],
+      });
+      return { ok: true, runId: body.id };
+    } catch {
+      return { ok: false, error: "Lost connection to Streamy.", busyRunId: null };
+    }
+  }
+
+  /** "Follow that run": the run already going on mediabox, added to this chat. */
+  async function followRun(id: string) {
+    if (findRunTurn(turnsRef.current, id) >= 0) return;
+    try {
+      const res = await fetch(`/api/admin/skills/runs/${encodeURIComponent(id)}`, { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as { run?: SkillRun; error?: string };
+      if (!res.ok || !body.run) {
+        setError(body.error ?? "Couldn't load that run.");
+        return;
+      }
+      // Already finished means its result goes straight in; the card won't
+      // poll it and so won't hand it over again.
+      if (body.run.status !== "running") finishedRunsRef.current.add(id);
+      appendRunTurn(body.run);
+    } catch {
+      setError("Lost connection to Streamy.");
+    }
+  }
+
+  /**
+   * A run ended: its turn is rewritten with the result, and when nothing has
+   * been said since, the model is asked to read it and carry on -- a triage
+   * is usually followed by "so here's the fix", which is the point of
+   * running it from the chat.
+   */
+  function finishRun(run: SkillRun) {
+    if (finishedRunsRef.current.has(run.id) || streamingRef.current) return;
+    const index = findRunTurn(turnsRef.current, run.id);
+    if (index < 0) return;
+    finishedRunsRef.current.add(run.id);
+    const next = editTurn(turnsRef.current, index, runTurnContent(run));
+    turnsRef.current = next;
+    if (index === next.length - 1 && available(backend)) {
+      void runTurn(next);
+    } else {
+      setTurns(next);
+      void persist(next, backend);
+    }
+  }
+
   /** Changes a turn's text and saves it, without asking anything again. */
   function saveEdit(index: number, text: string) {
     const next = editTurn(turns, index, text);
@@ -597,6 +704,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
           </div>
 
           <div className="flex items-center gap-3">
+            <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} />
             <label
               className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80"
               title="Include a live probe of every service in the stack with your question."
@@ -712,6 +820,37 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
                 </div>
               );
             }
+            if (t.via === "skill-run") {
+              return (
+                <div key={i} className="group">
+                  <SkillRunCard content={t.content} locked={streaming} onFinished={finishRun} />
+                  {!streaming && (
+                    <div
+                      className={`mt-0.5 flex gap-1 text-[11px] ${
+                        confirmDeleteTurn === i ? "" : "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100"
+                      }`}
+                    >
+                      {confirmDeleteTurn === i ? (
+                        <>
+                          <span className="self-center text-red-200/80">Remove this run from the chat? (It keeps running.)</span>
+                          <Button variant="danger" size="xs" onClick={() => removeTurn(i)}>
+                            Remove
+                          </Button>
+                          <Button variant="ghost" size="xs" onClick={() => setConfirmDeleteTurn(null)}>
+                            Keep
+                          </Button>
+                        </>
+                      ) : (
+                        <Button variant="ghost" size="xs" onClick={() => setConfirmDeleteTurn(i)}>
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            const skillProposal = t.role === "assistant" && !live ? parseSkillProposal(t.content) : null;
             return (
               <div key={i} className={`group ${isUser ? "text-right" : ""}`}>
                 {t.via === "claude-code" && (
@@ -725,7 +864,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
                   }`}
                 >
                   {t.content ? (
-                    <ChatMessage role={t.role} content={stripProposal(t.content)} />
+                    <ChatMessage role={t.role} content={stripSkillProposal(stripProposal(t.content))} />
                   ) : live ? (
                     <span className="text-white/40">thinking…</span>
                   ) : null}
@@ -733,6 +872,15 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
                       block parses as nothing, and a button that appears mid-token
                       invites a press before the reasoning above it is readable. */}
                   {t.role === "assistant" && !live && <ProposalFor content={t.content} />}
+                  {skillProposal && (
+                    <SkillProposalCard
+                      proposal={skillProposal}
+                      alreadyRun={proposalWasRun(turns, i, skillProposal.skill)}
+                      locked={streaming}
+                      onStart={startSkill}
+                      onFollow={(id) => void followRun(id)}
+                    />
+                  )}
                 </div>
                 {!streaming && (
                   <div
