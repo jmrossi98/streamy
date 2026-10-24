@@ -35,6 +35,7 @@ import {
   providerDefaultRoute,
   modelChainFor,
   normalizeRouting,
+  resetUses,
   resolveRoute,
   type LlmProvider,
   type LlmRoute,
@@ -110,8 +111,12 @@ export async function routingSnapshot() {
   return { routing, resolved, configured: providersConfigured(), suggestions, defaults: providerDefaults() };
 }
 
-/** Back to the env defaults. */
-export async function resetRouting(): Promise<LlmRouting> {
+/**
+ * Back to the env defaults: every use, or only the ones given (each panel
+ * resets its own rows; see llmRoutingRules.resetUses).
+ */
+export async function resetRouting(uses?: readonly LlmUse[]): Promise<LlmRouting> {
+  if (uses) return saveRouting(resetUses(await getRouting(), uses, defaultRouting(routingEnv())));
   await prisma.setting.deleteMany({ where: { key: LLM_ROUTING_KEY } });
   return defaultRouting(routingEnv());
 }

@@ -8,6 +8,9 @@ import {
   modelChainFor,
   normalizeRouting,
   parseModelList,
+  parseUseList,
+  resetUses,
+  usesIn,
   resolveRoute,
   type RoutingEnv,
 } from "../llmRoutingRules";
@@ -167,5 +170,30 @@ describe("modelChainFor / parseModelList", () => {
   it("splits a comma list and ignores blanks", () => {
     expect(parseModelList(" a, b ,,c ")).toEqual(["a", "b", "c"]);
     expect(parseModelList("")).toEqual([]);
+  });
+});
+
+describe("where each use is edited (2026-10-24)", () => {
+  it("puts the chat slots on the assistant and resume/apply on the Jobs tab", () => {
+    expect(usesIn("assistant")).toEqual(["chatClaude", "chatOpen"]);
+    expect(usesIn("jobs")).toEqual(["resume", "apply"]);
+    expect([...usesIn("assistant"), ...usesIn("jobs")].sort()).toEqual([...LLM_USE_IDS].sort());
+  });
+
+  it("resets only the panel's own rows", () => {
+    const defaults = defaultRouting(env({ anthropic: true }));
+    const edited = {
+      ...defaults,
+      chatClaude: { provider: "anthropic" as const, model: "claude-haiku-5-5", fallbacks: [] },
+      resume: { provider: "anthropic" as const, model: "claude-sonnet-5-5", fallbacks: [] },
+    };
+    const out = resetUses(edited, usesIn("jobs"), defaults);
+    expect(out.resume).toEqual(defaults.resume);
+    expect(out.chatClaude.model).toBe("claude-haiku-5-5");
+  });
+
+  it("keeps only real uses from a submitted list", () => {
+    expect(parseUseList(["resume", "bogus", "apply"])).toEqual(["resume", "apply"]);
+    expect(parseUseList("resume")).toEqual([]);
   });
 });

@@ -43,7 +43,18 @@ function fallbackTextOf(routing: LlmRouting): FallbackText {
  * Model ids are free text with suggestions, not a fixed list: the point of
  * runtime routing is reaching a model this build never heard of.
  */
-export function LlmRoutingPanel({ initial }: { initial: LlmRoutingSnapshot }) {
+export function LlmRoutingPanel({
+  initial,
+  uses,
+}: {
+  initial: LlmRoutingSnapshot;
+  /**
+   * The rows this panel shows and resets (llmRoutingRules.usesIn). The others
+   * are still sent unchanged on every save, since the setting is one record.
+   */
+  uses?: readonly LlmUse[];
+}) {
+  const shownUses = uses ? LLM_USES.filter((u) => uses.includes(u.id)) : LLM_USES;
   const [snapshot, setSnapshot] = useState(initial);
   const [routing, setRouting] = useState<LlmRouting>(initial.routing);
   // Fallbacks are edited as one comma-separated string per row, so a
@@ -170,7 +181,7 @@ export function LlmRoutingPanel({ initial }: { initial: LlmRoutingSnapshot }) {
       ))}
 
       <div className="grid gap-4 md:grid-cols-2">
-        {LLM_USES.map((use) => {
+        {shownUses.map((use) => {
           const route = routing[use.id];
           const resolved = snapshot.resolved[use.id];
           const providerOff = !snapshot.configured[route.provider];
@@ -235,7 +246,7 @@ export function LlmRoutingPanel({ initial }: { initial: LlmRoutingSnapshot }) {
           variant="ghost"
           size="sm"
           disabled={busy}
-          onClick={() => void send({ reset: true }, null)}
+          onClick={() => void send({ reset: uses ? [...uses] : true }, null)}
           title="Back to what the server's environment variables say."
         >
           Reset to defaults
