@@ -16,9 +16,18 @@
  * NFL, NBA or NHL game in progress anywhere -- so the picture cannot tell you
  * it is filler. And the schedule cannot tell you a channel is dead.
  */
-import { channelVerdict, liveAliases, streamQualityRank, type ChannelVerdict, type StreamHealth } from "./liveChannelRules";
+import {
+  channelVerdict,
+  hiddenForViewers,
+  liveAliases,
+  streamQualityRank,
+  type ChannelVerdict,
+  type StreamHealth,
+} from "./liveChannelRules";
 import { getTodaysFixtures } from "./sportsSchedule";
 import { eventSlotLabel, eventSlotState } from "./eventSlotRules";
+import { channelKey, withWorkingState } from "./liveChannelStateRules";
+import { channelWorkingMap } from "./liveChannelState";
 
 const PROBE_TIMEOUT_MS = 8_000;
 
@@ -33,6 +42,7 @@ type PublishedChannel = {
   speedAt?: string | null;
   failures?: number | null;
   downSince?: string | null;
+  checkedAt?: string | null;
 };
 
 type Published = { generatedAt?: string; channels?: PublishedChannel[] };
@@ -69,6 +79,7 @@ export async function fetchPublishedChannelHealth(): Promise<{
         speedAt: c.speedAt ?? undefined,
         failures: typeof c.failures === "number" ? c.failures : undefined,
         downSince: c.downSince ?? undefined,
+        checkedAt: c.checkedAt ?? undefined,
       });
     }
     return { generatedAt: body.generatedAt ?? null, health };
@@ -91,10 +102,27 @@ export async function channelHealthForRanking(now: number = Date.now()): Promise
   quality: Map<string, number>;
   /** Normalised name -> measured speed, for the ones measured recently. */
   speeds: Map<string, number>;
+  /**
+   * Normalised names of channels people could not get a picture from
+   * (liveChannelStateRules.ts): left out of game picking entirely. A channel
+   * offered again after its cool-off ("retrying") is in notResponding
+   * instead, so it can still be picked but never as the default.
+   */
+  notWorking: Set<string>;
 }> {
-  const empty = { notResponding: new Set<string>(), quality: new Map<string, number>(), speeds: new Map<string, number>() };
+  const empty = {
+    notResponding: new Set<string>(),
+    quality: new Map<string, number>(),
+    speeds: new Map<string, number>(),
+    notWorking: new Set<string>(),
+  };
   try {
     const published = await fetchPublishedChannelHealth();
+    const working = await channelWorkingMap(published?.health);
+    for (const [key, w] of working) {
+      if (w.state === "not-working") empty.notWorking.add(key);
+      else if (w.state === "retrying") empty.notResponding.add(key);
+    }
     const at = published?.generatedAt ? Date.parse(published.generatedAt) : NaN;
     if (!published || !Number.isFinite(at) || now - at > HEALTH_TRUST_MS) return empty;
     const quality = new Map<string, number>();
@@ -106,9 +134,13 @@ export async function channelHealthForRanking(now: number = Date.now()): Promise
       if (h.speed != null && rank !== 1 && !(h.playable && h.frozen)) speeds.set(name, h.speed);
     }
     return {
-      notResponding: new Set([...published.health].filter(([, h]) => !h.playable).map(([name]) => name)),
+      notResponding: new Set([
+        ...empty.notResponding,
+        ...[...published.health].filter(([, h]) => !h.playable).map(([name]) => name),
+      ]),
       quality,
       speeds,
+      notWorking: empty.notWorking,
     };
   } catch {
     return empty;
@@ -134,7 +166,7 @@ export async function notRespondingChannels(now: number = Date.now()): Promise<S
  * pretending to understand the naming.
  */
 export function normaliseName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return channelKey(name);
 }
 
 export type ChannelStatus = ChannelVerdict & { checkedAt: string | null };
@@ -160,6 +192,8 @@ export async function channelStatuses(
     fetchPublishedChannelHealth(),
     getTodaysFixtures().catch(() => null),
   ]);
+  // Whether people can actually get a picture, from their own tunes.
+  const working = await channelWorkingMap(published?.health);
   const live = fixtures ? liveAliases(fixtures) : null;
 
   const out = new Map<string, ChannelStatus>();
@@ -167,7 +201,13 @@ export async function channelStatuses(
   for (const name of channelNames) {
     const health = published?.health.get(normaliseName(name)) ?? null;
     out.set(name, {
-      ...eventSlotVerdict(name, now, channelVerdict(name, health, live, now)),
+      // The event slot's clock goes last: a game that is over hides its slot
+      // everywhere, working or not.
+      ...eventSlotVerdict(
+        name,
+        now,
+        withWorkingState(channelVerdict(name, health, live, now), working.get(normaliseName(name)))
+      ),
       checkedAt: published?.generatedAt ?? null,
     });
   }
@@ -184,4 +224,67 @@ function eventSlotVerdict(name: string, now: number, verdict: ChannelVerdict): C
   if (state === "upcoming") return { state: "no-event", detail: eventSlotLabel(name, now) ?? "Not started yet" };
   if (state === "over") return { state: "filler", detail: eventSlotLabel(name, now) ?? "Game over", hidden: true };
   return verdict;
+}
+
+/** One row of the admin "Not working" list. */
+export type NotWorkingRow = {
+  name: string;
+  state: "not-working" | "retrying";
+  /** "tunes": people could not get a picture. "checker": mediabox's scans found it dead. */
+  source: "tunes" | "checker";
+  failedTunes: number;
+  people: string[];
+  lastFailureAt: number | null;
+  lastError: string | null;
+  /** When a hidden channel is offered again on its own, for "tunes". */
+  retryAt: number | null;
+};
+
+/**
+ * Lineup channels hidden for not working, or back on trial, for the admin
+ * list. Never throws.
+ */
+export async function notWorkingReport(
+  channelNames: string[],
+  now: number = Date.now()
+): Promise<{ rows: NotWorkingRow[]; generatedAt: number }> {
+  try {
+    const published = await fetchPublishedChannelHealth();
+    const working = await channelWorkingMap(published?.health, now);
+    const rows: NotWorkingRow[] = [];
+    for (const name of channelNames) {
+      const key = normaliseName(name);
+      const w = working.get(key);
+      const health = published?.health.get(key);
+      if (health && hiddenForViewers(health)) {
+        // The checker's verdict wins here as it does on /live (withWorkingState).
+        const down = health.downSince ? Date.parse(health.downSince) : NaN;
+        rows.push({
+          name,
+          state: "not-working",
+          source: "checker",
+          failedTunes: w?.failedTunes ?? 0,
+          people: w?.people ?? [],
+          lastFailureAt: Number.isFinite(down) ? down : null,
+          lastError: health.detail ?? null,
+          retryAt: null,
+        });
+      } else if (w && w.state !== "working") {
+        rows.push({
+          name,
+          state: w.state,
+          source: "tunes",
+          failedTunes: w.failedTunes,
+          people: w.people,
+          lastFailureAt: w.lastFailureAt,
+          lastError: w.lastError,
+          retryAt: w.retryAt,
+        });
+      }
+    }
+    return { rows: rows.sort((a, b) => (b.lastFailureAt ?? 0) - (a.lastFailureAt ?? 0)), generatedAt: now };
+  } catch (err) {
+    console.error("[live] notWorkingReport failed:", err);
+    return { rows: [], generatedAt: now };
+  }
 }

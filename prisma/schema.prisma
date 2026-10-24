@@ -1136,3 +1136,19 @@ model ChatSession {
   @@index([userId, updatedAt])
   @@index([claudeSessionId])
 }
+
+/// Per-channel live TV bookkeeping that telemetry alone can't hold
+/// (liveChannelState.ts). Whether a channel works is derived from
+/// PlaybackEvent on read; this only records what a person or an email did:
+/// an admin putting a hidden channel back (evidence before clearedAt stops
+/// counting), and when the channel was last alerted on, so a bad evening is
+/// one email per channel per half hour across restarts.
+model LiveChannelState {
+  /// liveChannelStateRules.channelKey(name): lowercase letters and digits.
+  key       String    @id
+  name      String
+  clearedAt DateTime?
+  clearedBy String?
+  alertedAt DateTime?
+  updatedAt DateTime  @updatedAt
+}

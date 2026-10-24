@@ -66,7 +66,7 @@ export default async function GamePage({
   // no single-event endpoint in the shape getTodaysFixtures already parses
   // and tests, and today's slate is small enough that re-fetching it is
   // cheap -- the schedule panel pays the same cost on every load.
-  const [fixtures, channels] = await Promise.all([getTodaysFixtures(), getLiveChannels()]);
+  const [fixtures, allChannels] = await Promise.all([getTodaysFixtures(), getLiveChannels()]);
   const fixture = fixtures.find((f) => f.id === fixtureId);
   if (!fixture) notFound();
 
@@ -123,7 +123,10 @@ export default async function GamePage({
   // The same snapshot says how fast each stream is arriving. That orders
   // channels the schedule rates equally -- never across them: the right game
   // on a rough stream still beats the wrong game on a smooth one.
-  const { notResponding, quality, speeds } = await channelHealthForRanking();
+  const { notResponding, quality, speeds, notWorking } = await channelHealthForRanking();
+  // Channels nobody has been able to get a picture from are not options at
+  // all (liveChannelStateRules.ts); one back on trial is in notResponding.
+  const channels = allChannels.filter((c) => !notWorking.has(normaliseName(c.name)));
   const qualityOf = (name: string) => quality.get(normaliseName(name)) ?? 1;
   // "Stale" here means "do not default to this": the provider gave up on it,
   // it would not open at the last scan, or its own guide has something other

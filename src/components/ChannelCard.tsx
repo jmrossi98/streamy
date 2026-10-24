@@ -110,7 +110,9 @@ export function ChannelCard({
   logoFallback,
   providerState,
 }: Props) {
-  const unavailable = providerState === "full" || providerState === "down";
+  // Not working (liveChannelStateRules.ts) greys the card the same way: it is
+  // only on screen at all because it is in this person's My Stations.
+  const unavailable = providerState === "full" || providerState === "down" || status?.notWorking === "hidden";
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -230,7 +232,17 @@ export function ChannelCard({
         {/* Only the states worth acting on. "live" and "unknown" render
             nothing: a badge on every healthy card is noise, and "we haven't
             checked" is not information a viewer can use. */}
-        {status && (status.state === "down" || status.state === "filler" || status.state === "no-event") && (
+        {/* Not working, or back on trial after a day hidden. Before the
+            snapshot's own states: it is what viewers actually got. */}
+        {status?.notWorking === "hidden" && (
+          <p className="truncate text-[11px] text-red-400/80" title={status.detail}>
+            Not working right now
+          </p>
+        )}
+        {status?.notWorking === "retrying" && (
+          <p className="truncate text-[11px] text-amber-400/80">Retrying - didn&rsquo;t work earlier</p>
+        )}
+        {status && !status.notWorking && (status.state === "down" || status.state === "filler" || status.state === "no-event") && (
           <p
             className={
               "truncate text-[11px] " +

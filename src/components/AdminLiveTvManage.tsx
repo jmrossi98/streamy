@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { getLiveChannels, isJellyfinConfiguredForLiveTv, isJellyfinReachable } from "@/lib/liveTv";
 import { getChannelInfo, isDispatcharrConfigured, type ChannelInfo } from "@/lib/dispatcharr";
 import { EpgBackfillButton } from "@/components/EpgBackfillButton";
-import { channelStatuses } from "@/lib/liveChannelHealth";
+import { channelStatuses, notWorkingReport } from "@/lib/liveChannelHealth";
+import { AdminNotWorkingChannels } from "@/components/AdminNotWorkingChannels";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { resolveLogoFallbacks } from "@/lib/channelLogoResolve";
 import { AdminSection } from "@/components/ui";
@@ -29,7 +30,7 @@ export async function AdminLiveTvManage() {
 
   // The three reads that only need the channel list go out together, each best
   // effort: a Dispatcharr hiccup costs the provider labels, not the section.
-  const [info, statuses, hidden] = await Promise.all([
+  const [info, statuses, hidden, notWorking] = await Promise.all([
     getChannelInfo().catch((err) => {
       console.error("[admin/live-tv] getChannelInfo failed:", err);
       return null;
@@ -45,6 +46,8 @@ export async function AdminLiveTvManage() {
           orderBy: { name: "asc" },
         })
       : Promise.resolve([]),
+    // Never throws (empty on any failure).
+    notWorkingReport(channels.map((c) => c.name)),
   ]);
   const infoByChannel: Record<string, ChannelInfo> = info ? Object.fromEntries(info) : {};
   const statusByChannel: Record<string, ChannelVerdict> = Object.fromEntries(statuses);
@@ -70,6 +73,12 @@ export async function AdminLiveTvManage() {
         />
         {/* A guide action, so it lives with the lineup. */}
         <EpgBackfillButton configured={isDispatcharrConfigured()} />
+      </AdminSection>
+
+      {/* Channels out of the lineup because people could not get a picture
+          from them (2026-10-24), with a manual way back. */}
+      <AdminSection title="Not working">
+        <AdminNotWorkingChannels rows={notWorking.rows} generatedAt={notWorking.generatedAt} />
       </AdminSection>
 
       {/* Below the lineup. Rendered even when the tuner is unreachable, since an
