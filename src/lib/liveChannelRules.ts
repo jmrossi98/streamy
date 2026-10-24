@@ -120,6 +120,8 @@ export type StreamHealth = {
   /** Consecutive checks it has failed to open, and since when. */
   failures?: number;
   downSince?: string;
+  /** When the checker last looked at this channel itself (generatedAt moves on every run). */
+  checkedAt?: string;
 };
 
 /**
@@ -175,6 +177,14 @@ export type ChannelVerdict = {
   detail: string;
   /** Down for long enough that viewers no longer see it at all (admins still do). */
   hidden?: boolean;
+  /**
+   * Out of the lineup because it does not work (liveChannelStateRules.ts):
+   * "hidden" is gone from the rows, greyed in My Stations; "retrying" is back
+   * after a cool-off so a real tune can prove it either way. Unset for a
+   * channel hidden for another reason (an event slot whose game is over),
+   * which is not offered anywhere.
+   */
+  notWorking?: "hidden" | "retrying";
 };
 
 /**

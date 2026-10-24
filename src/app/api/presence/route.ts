@@ -2,6 +2,7 @@ import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { clientIpFromHeaders } from "@/lib/loginAttemptRules";
 import { parsePresence } from "@/lib/viewerActivityRules";
 import { recordPresence, sessionOwner } from "@/lib/viewerActivity";
+import { onPresenceRecorded } from "@/lib/liveStreamAlerts";
 
 /**
  * A signed-in tab's heartbeat: where it is, what it is playing, and any
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
       ip: clientIpFromHeaders(headers),
       userAgent: request.headers.get("user-agent")?.slice(0, 300) ?? null,
     });
+    // Emails the admin about a live stream that failed someone. Not awaited
+    // and never throws: the heartbeat answers at once (liveStreamAlerts.ts).
+    onPresenceRecorded(payload.events);
   } catch (err) {
     console.error("[presence] record failed:", err);
   }

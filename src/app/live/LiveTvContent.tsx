@@ -6,6 +6,7 @@ import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liv
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
 import type { ChannelInfo } from "@/lib/dispatcharr";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
+import { isNotWorking } from "@/lib/liveChannelStateRules";
 import { ChannelCard } from "@/components/ChannelCard";
 import { LiveGuideGrid } from "@/components/LiveGuideGrid";
 import { guideKey, programsForChannel, type GuideProgram } from "@/lib/liveGuideGrid";
@@ -96,12 +97,30 @@ export function LiveTvContent({
   // the checker has found dead three scans running, and a per-game event
   // slot whose game is over. Admins still see both, badged, so they can be
   // fixed or removed; nobody else should ever tune one.
+  //
+  // A channel that is not working (2026-10-24: liveChannelStateRules.ts,
+  // from tunes that never reached a picture, or the checker's dead verdict)
+  // stays in the lineup only for My Stations, greyed with "Not working right
+  // now" -- a list someone built on purpose should not silently lose a
+  // channel -- and is left out of everything that offers channels: the rows,
+  // the guide and the Live now games.
   const lineup = useMemo(
     () =>
       channels.filter(
-        (c) => !looksLikePlaceholder(c.name) && !hiddenIds.has(c.id) && (isAdmin || !statusByChannel[c.name]?.hidden)
+        (c) =>
+          !looksLikePlaceholder(c.name) &&
+          !hiddenIds.has(c.id) &&
+          (isAdmin || !statusByChannel[c.name]?.hidden || isNotWorking(statusByChannel[c.name]))
       ),
     [channels, hiddenIds, isAdmin, statusByChannel]
+  );
+  const offered = useMemo(
+    () => (isAdmin ? lineup : lineup.filter((c) => !isNotWorking(statusByChannel[c.name]))),
+    [lineup, isAdmin, statusByChannel]
+  );
+  const gameChannels = useMemo(
+    () => channels.filter((c) => !isNotWorking(statusByChannel[c.name])),
+    [channels, statusByChannel]
   );
 
   // The three states are deliberately distinguished. "Jellyfin is unreachable",
@@ -163,15 +182,15 @@ export function LiveTvContent({
           {/* The games row is independent of Jellyfin entirely, so it still
               renders above a broken lineup: someone landing here while Live
               TV is down should still see what's on. */}
-          <LiveNowGames channels={channels} initialFixtures={initialFixtures} />
-          {emptyPanel ?? <NowTab lineup={lineup} listed={listed} {...lookups} />}
+          <LiveNowGames channels={gameChannels} initialFixtures={initialFixtures} />
+          {emptyPanel ?? <NowTab lineup={lineup} offered={offered} listed={listed} {...lookups} />}
         </>
       )}
 
       {tab === "guide" &&
         (emptyPanel ?? (
           <GuideTab
-            lineup={lineup}
+            lineup={offered}
             listed={listed}
             truncated={truncated}
             total={channels.length}
@@ -209,16 +228,16 @@ function LiveTabBar({ active }: { active: LiveTab }) {
  * narrowed is a grid wearing a costume.
  */
 function NowTab({
-  lineup, listed, infoByChannel, statusByChannel, logoFallbacks, providerStateByChannel,
-}: { lineup: LiveChannel[]; listed: Set<string> } & CardLookups) {
+  lineup, offered, listed, infoByChannel, statusByChannel, logoFallbacks, providerStateByChannel,
+}: { lineup: LiveChannel[]; offered: LiveChannel[]; listed: Set<string> } & CardLookups) {
   // Pinned above the rest. Starred channels are left out of the rows below
   // on purpose -- a channel already on its own shelf, shown a second time
   // further down, was the literal meaning of "duplicated on the page",
   // reported live.
   const mine = lineup.filter((c) => listed.has(c.id));
   const shelves = useMemo(
-    () => groupIntoShelves([...lineup].filter((c) => !listed.has(c.id)).sort((a, b) => a.name.localeCompare(b.name))),
-    [lineup, listed]
+    () => groupIntoShelves([...offered].filter((c) => !listed.has(c.id)).sort((a, b) => a.name.localeCompare(b.name))),
+    [offered, listed]
   );
 
   const card = (c: LiveChannel) => (
