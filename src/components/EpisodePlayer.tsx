@@ -459,7 +459,7 @@ function EpisodeView({
       ref={containerRef}
       className="absolute inset-0"
       onMouseMove={() => showVideo && chrome.revealControls()}
-      onTouchStart={() => showVideo && chrome.revealControls()}
+      onTouchStart={() => showVideo && chrome.surfaceTouchStart()}
     >
       <video
         ref={videoRef}
@@ -472,8 +472,7 @@ function EpisodeView({
         controls={false}
         onClick={() => {
           if (!showVideo) return;
-          if (chrome.controlsVisible) chrome.togglePlay();
-          else chrome.revealControls();
+          chrome.surfaceClick();
         }}
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={`${showName} - ${episodeName}`}

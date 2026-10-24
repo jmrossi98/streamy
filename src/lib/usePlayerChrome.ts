@@ -158,6 +158,32 @@ export function usePlayerChrome(
     revealControls();
   }, [videoRef, revealControls]);
 
+  /*
+    A tap on the picture: reveal the controls if they're hidden, otherwise
+    play/pause.
+
+    A phone tap is touchstart and then click, and the player's surface reveals
+    on touchstart (so a tap anywhere brings the bars back). By the time the
+    click arrived the controls were already up, so it toggled too: one tap
+    meant to show the controls paused the video instead (reported 2026-10-23,
+    Jujutsu Kaisen on an iPhone). The touch now remembers that it was the one
+    that revealed, and its click stops there.
+  */
+  const touchRevealAtRef = useRef(0);
+  const surfaceTouchStart = useCallback(() => {
+    const v = videoRef.current;
+    const showing = controlsVisible || !v || v.paused;
+    touchRevealAtRef.current = showing ? 0 : Date.now();
+    revealControls();
+  }, [videoRef, controlsVisible, revealControls]);
+  const surfaceClick = useCallback(() => {
+    const revealedByTouch = touchRevealAtRef.current > 0 && Date.now() - touchRevealAtRef.current < 1000;
+    touchRevealAtRef.current = 0;
+    if (revealedByTouch) return;
+    if (controlsVisible) togglePlay();
+    else revealControls();
+  }, [controlsVisible, togglePlay, revealControls]);
+
   // Space is play/pause. Listened for on the window because nothing in the
   // player holds focus when a title starts, so the press lands on <body>.
   const keysEnabled = opts.keysEnabled ?? true;
@@ -328,6 +354,8 @@ export function usePlayerChrome(
     revealControls,
     setControlsVisible,
     togglePlay,
+    surfaceTouchStart,
+    surfaceClick,
     seek,
     toggleMute,
     setVolume,

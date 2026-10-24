@@ -87,7 +87,7 @@ export function RecordingPlayer({ eventId, title, subtitle, videoUrl, closeHref,
       // fixed/inset-0 only -- see EpisodePlayer for why nothing else goes here.
       className="bg-black fixed inset-0 z-30"
       onMouseMove={() => showVideo && chrome.revealControls()}
-      onTouchStart={() => showVideo && chrome.revealControls()}
+      onTouchStart={() => showVideo && chrome.surfaceTouchStart()}
     >
       <video
         ref={videoRef}
@@ -97,8 +97,7 @@ export function RecordingPlayer({ eventId, title, subtitle, videoUrl, closeHref,
         controls={false}
         onClick={() => {
           if (!showVideo) return;
-          if (chrome.controlsVisible) chrome.togglePlay();
-          else chrome.revealControls();
+          chrome.surfaceClick();
         }}
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={title}

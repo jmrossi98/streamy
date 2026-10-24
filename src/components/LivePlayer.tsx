@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { supportsNativeHls } from "@/lib/hlsSupport";
 import { liveSeekTarget } from "@/lib/liveTimeline";
+import { EdgeArrivalTracker, behindThreshold, cushionForGap } from "@/lib/liveCushion";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
 import { Button } from "@/components/ui";
@@ -80,6 +81,13 @@ const TUNE_TIMEOUT_MS = 30_000;
 const LIVE_SYNC_SECONDS = 4;
 
 /**
+ * The cushion each channel grew to this page session (liveCushion.ts), so
+ * re-tuning a clumpy channel starts far enough back instead of re-learning
+ * it through another stall.
+ */
+const learnedCushion = new Map<string, number>();
+
+/**
  * How much back-buffer hls.js keeps client-side.
  *
  * Used to be 1800s (30 minutes) to support scrubbing back through a DVR
@@ -140,7 +148,8 @@ const LIVE_PLAYLIST_LOAD_POLICY = {
  */
 function seekToLiveEdge(
   video: HTMLVideoElement,
-  opts: { forwardOnly?: boolean } = {}
+  opts: { forwardOnly?: boolean } = {},
+  cushion: number = LIVE_SYNC_SECONDS
 ): boolean {
   if (video.seekable.length === 0) return false;
   const edge = video.seekable.end(video.seekable.length - 1);
@@ -149,7 +158,7 @@ function seekToLiveEdge(
   // The decision lives in liveTimeline.ts so it can be tested without a
   // browser -- it is the logic whose unconditional version rewound the
   // playhead on every stall and replayed the same seconds indefinitely.
-  const target = liveSeekTarget(video.currentTime, start, edge, LIVE_SYNC_SECONDS, opts);
+  const target = liveSeekTarget(video.currentTime, start, edge, cushion, opts);
   if (target === null) return false;
 
   video.currentTime = target;
@@ -272,6 +281,14 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     as the player refusing to stay where it was put.
   */
   const stayBehindRef = useRef(false);
+  /*
+    Current cushion and "behind" threshold for this tune. Start at the
+    fast-tune default (or what this channel taught us earlier) and grow when
+    the feed turns out to arrive in clumps -- see liveCushion.ts.
+  */
+  const cushionRef = useRef(LIVE_SYNC_SECONDS);
+  const behindLimitRef = useRef(LIVE_SYNC_SECONDS + 4);
+  const [behindLimit, setBehindLimit] = useState(LIVE_SYNC_SECONDS + 4);
 
   // No knownDurationSeconds: a broadcast has no runtime to pin the bar to.
   const chrome = usePlayerChrome(videoRef, containerRef);
@@ -318,7 +335,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     // reliably produced an immediate stall -- the button appeared to break
     // playback rather than restore it.
     stayBehindRef.current = false;
-    if (!seekToLiveEdge(v)) return;
+    if (!seekToLiveEdge(v, {}, cushionRef.current)) return;
     resumePlayback(v);
   }, [resumePlayback]);
 
@@ -355,6 +372,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     */
     let lastCatchUpAt = 0;
     const CATCH_UP_COOLDOWN_MS = 4_000;
+
+    const arrivals = new EdgeArrivalTracker();
+    const startCushion = learnedCushion.get(channelId) ?? LIVE_SYNC_SECONDS;
+    cushionRef.current = startCushion;
+    behindLimitRef.current = behindThreshold(startCushion, 0);
+    setBehindLimit(behindLimitRef.current);
 
     /*
       The id this tune is opened under, minted here so this component can name
@@ -508,7 +531,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     const onPlay = () => {
       if (video.seekable.length === 0) return;
       const edge = video.seekable.end(video.seekable.length - 1);
-      if (edge - video.currentTime > LIVE_SYNC_SECONDS + 4) {
+      if (edge - video.currentTime > behindLimitRef.current) {
         setRebuffering(true);
         goLive();
       }
@@ -552,7 +575,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         // scrubbed back is ordinary buffering, not a reason to move them.
         if (stayBehindRef.current) return;
         // forwardOnly: recovery must never rewind (see seekToLiveEdge).
-        if (seekToLiveEdge(video, { forwardOnly: true })) {
+        if (seekToLiveEdge(video, { forwardOnly: true }, cushionRef.current)) {
           resumePlayback(video);
         }
       }, EDGE_STALL_RECOVERY_MS);
@@ -635,6 +658,22 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       const behindNow = Math.max(0, edge - video.currentTime);
       setBehind(behindNow);
 
+      // Learn the feed's rhythm before judging drift: the tick a clump lands
+      // is exactly when behindNow jumps, and it must be read against a
+      // threshold that already knows about that clump.
+      const now = Date.now();
+      if (arrivals.observe(edge, now) !== null) {
+        const gap = arrivals.longestGap(now);
+        const next = cushionForGap(gap, startCushion);
+        const limit = behindThreshold(next, gap);
+        if (next !== cushionRef.current || limit !== behindLimitRef.current) {
+          cushionRef.current = next;
+          behindLimitRef.current = limit;
+          setBehindLimit(limit);
+          if (next > LIVE_SYNC_SECONDS) learnedCushion.set(channelId, next);
+        }
+      }
+
       /*
         Corrects drift during otherwise-healthy playback, not just on a pause
         or a hard stall.
@@ -652,8 +691,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         times a second) while behind, and a seek that hasn't resolved yet
         must not be re-issued on the next tick.
       */
-      if (behindNow > LIVE_SYNC_SECONDS + 4 && !stayBehindRef.current) {
-        const now = Date.now();
+      if (behindNow > behindLimitRef.current && !stayBehindRef.current) {
         if (now - lastCatchUpAt > CATCH_UP_COOLDOWN_MS) {
           lastCatchUpAt = now;
           setRebuffering(true);
@@ -670,7 +708,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     const onSeeked = () => {
       if (video.seekable.length === 0) return;
       const edge = video.seekable.end(video.seekable.length - 1);
-      stayBehindRef.current = edge - video.currentTime > LIVE_SYNC_SECONDS + 4;
+      stayBehindRef.current = edge - video.currentTime > behindLimitRef.current;
     };
 
     video.addEventListener("seeked", onSeeked);
@@ -705,7 +743,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
           to three, which is not enough to absorb a hiccup on a residential
           IPTV feed.
         */
-        liveSyncDuration: LIVE_SYNC_SECONDS,
+        liveSyncDuration: startCushion,
         /*
           liveMaxLatencyDuration is deliberately NOT set.
 
@@ -738,7 +776,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         // Start at the edge, not wherever the playlist happens to begin.
         // With an EVENT playlist hls.js has no sliding window to infer the
         // live point from, so it is set explicitly.
-        seekToLiveEdge(video);
+        seekToLiveEdge(video, {}, startCushion);
         startPlayback();
       });
       hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -754,7 +792,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       });
     } else {
       clearTuneTimer();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setError("This browser can’t play live streams.");
        
       setLoading(false);
@@ -795,7 +833,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     above the cushion rather than far above it: at 20s a viewer who had scrubbed
     back fifteen seconds was still told they were live.
   */
-  const isBehind = behind !== null && behind > LIVE_SYNC_SECONDS + 4;
+  const isBehind = behind !== null && behind > behindLimit;
 
   return (
     <div className="w-full">
@@ -814,7 +852,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
             end is now rather than a finish.
           */
           playsInline
-          onClick={chrome.togglePlay}
+          onClick={chrome.surfaceClick}
           onMouseMove={chrome.revealControls}
           /*
             absolute inset-0 h-full w-full, not aspect-video on the video
