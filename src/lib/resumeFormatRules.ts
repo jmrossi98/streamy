@@ -93,7 +93,7 @@ export const TECH_TERMS = [
   "Ruby", "PHP", "SQL", "Bash", "React", "Angular", "Vue", "Next.js", "Node.js", "Django", "Flask", "FastAPI",
   "Spring", "Spring Boot", ".NET", "AWS", "AWS Lambda", "Lambda", "DynamoDB", "S3", "EC2", "ECS", "EKS", "SQS",
   "SNS", "Kinesis", "Kafka", "RabbitMQ", "Redis", "PostgreSQL", "MySQL", "MongoDB", "Cassandra", "Elasticsearch",
-  "Docker", "Kubernetes", "Terraform", "CloudFormation", "Jenkins", "GitHub Actions", "GraphQL", "gRPC", "REST",
+  "Docker", "Kubernetes", "Terraform", "CloudFormation", "Jenkins", "GitHub Actions", "GraphQL", "gRPC",
   "Spark", "Airflow", "Snowflake", "TensorFlow", "PyTorch", "Linux", "GCP", "Azure", "Datadog", "Splunk",
   "Grafana", "Prometheus", "New Relic", "OpenTelemetry", "Jest", "Playwright", "Cypress", "Tailwind", "HTML",
   "CSS", "Unity", "Unreal", "OpenGL", "Vulkan", "CUDA", "SPI", "I2C", "UART", "CAN", "FreeRTOS", "LangChain",
@@ -192,6 +192,13 @@ function preview(bullet: string): string {
   return words.length > 9 ? `${words.slice(0, 9).join(" ")}…` : bullet;
 }
 
+/** The most bullets the per-role caps allow; older roles get the previous role's cap. */
+export function perRoleCeiling(jobs: number, interns: number, projects: number): number {
+  const L = FORMAT_LIMITS;
+  const roles = (jobs > 0 ? L.currentRole[1] : 0) + Math.max(0, jobs - 1) * L.previousRole[1];
+  return roles + interns * L.internshipMax + projects * L.projectBulletsMax;
+}
+
 /**
  * Every deterministic problem with a draft, each naming the bullet so the
  * review can fix exactly that one.
@@ -207,7 +214,10 @@ export function checkResumeFormat(markdown: string, roleType: RoleType): FormatI
   const total = allBullets.length;
   if (total > L.totalBullets[1]) {
     issues.push({ severity: "trim", message: `${total} bullets in total; the limit is ${L.totalBullets[1]}. Cut ${total - L.totalBullets[1]}, oldest and least relevant first, never the current role's impact.` });
-  } else if (total < L.totalBullets[0]) {
+  } else if (total < L.totalBullets[0] && total < perRoleCeiling(jobs.length, interns.length, r.projects.length)) {
+    // Only when the roles have room: three roles and no projects cap out at
+    // 6 + 5 + 1 = 12, and the per-role caps win (the 2026-10-24 Meta
+    // Technical Leadership draft hit exactly this and rightly didn't pad).
     issues.push({ severity: "note", message: `${total} bullets in total; aim for ${L.totalBullets[0]}-${L.totalBullets[1]} if the bank supports more.` });
   }
 
