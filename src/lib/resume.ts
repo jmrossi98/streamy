@@ -42,12 +42,13 @@ export type ListingRead = { text: string; source: "fetch" | "render" | "none" };
 export async function readListing(url: string): Promise<ListingRead> {
   let t = Date.now();
   const fetched = await fetchListingText(url);
-  console.log(resumeLog("listing.fetch", Date.now() - t, { chars: fetched.length }));
+  const host = URL.canParse(url) ? new URL(url).hostname : "?";
+  console.log(resumeLog("listing.fetch", Date.now() - t, { host, chars: fetched.length }));
   if (!needsRender(fetched, url)) return pickListingText(fetched, null);
   t = Date.now();
   const rendered = await renderListing(url);
   console.log(
-    resumeLog("listing.render", Date.now() - t, "text" in rendered ? { chars: rendered.text.length } : { error: rendered.error })
+    resumeLog("listing.render", Date.now() - t, "text" in rendered ? { host, chars: rendered.text.length } : { host, error: rendered.error })
   );
   return pickListingText(fetched, "text" in rendered ? rendered.text : null);
 }
