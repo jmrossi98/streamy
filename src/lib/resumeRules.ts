@@ -18,7 +18,16 @@ export type PostingInput = {
   url: string;
   /** The listing page as text; empty when it could not be fetched. */
   postingText: string;
+  /** Where the candidate lives, from the saved profile: context, never written by the model. */
+  candidateLocation?: string;
 };
+
+/** The candidate-location line for both prompts, or nothing when unknown. */
+function candidateBlock(posting: PostingInput): string[] {
+  return posting.candidateLocation
+    ? ["", `CANDIDATE: lives in ${posting.candidateLocation} (from their saved profile; context only, the header is added from it).`]
+    : [];
+}
 
 /** Longest posting text sent, in characters: the useful part is the first few thousand. */
 export const MAX_POSTING_CHARS = 12_000;
@@ -51,11 +60,12 @@ STANDARDS (what recruiters, hiring managers and engineering-resume communities a
 - Skills: grouped by category (Languages; Frameworks; Cloud & Infrastructure; Data; Observability; AI/ML), each group ordered by relevance to this listing, the first item being what the candidate would be interviewed in. Only skills the candidate could discuss for several minutes; nothing from the listing that the bank does not support. No proficiency ratings.
 - Summary: omit it, unless the candidate is pivoting (a listing whose field differs from the work history) and one or two specific sentences of positioning help the reader. Never a generic objective.
 - Projects only when they add evidence the experience lacks for this listing (a language or domain the listing needs), one line each. Education last; certifications only if relevant to the listing.
-- Standard section names, no photo, no icons, no tables or columns, no colour, no graphics. Contact line: email, phone, location, then website, LinkedIn and GitHub as bare domains without "https://".
+- Standard section names, no photo, no icons, no tables or columns, no colour, no graphics.
+- Do NOT write the name or contact line: the header (name, email, phone, location, links) is added from the candidate's saved profile. Never put the candidate's home city or contact details anywhere else either; older resumes in the bank carry outdated ones.
 - Spell every product, language and framework the way its maker does (TypeScript, PostgreSQL, Node.js, React, AWS Lambda).
 
 FORMAT (the exact Markdown shape the PDF renderer expects; anything else renders badly)
-- "# Full Name" on the first line, then one contact line separated by " | ".
+- No "# Name" heading and no contact line; begin with the first "##" section.
 - Sections as "## Experience", "## Projects", "## Skills", "## Education" (and "## Summary" only when the rule above allows one).
 - Each job as a heading "### Company | Title | Mon YYYY – Mon YYYY" (three parts separated by " | "; "Present" for a current role), then its bullets as "- " lines. Location may follow the company after a comma.
 - Each project as "### Name | technologies | Year", then one bullet.
@@ -88,7 +98,7 @@ TITLES
 - One title per job, the one closest to the listing's title and vocabulary; otherwise the one that best conveys the candidate's level. Never the plain title when a senior or levelled one is documented for the same job.
 
 FORMAT (the exact Markdown shape the PDF renderer expects)
-- "# Full Name", then one contact line separated by " | ".
+- No "# Name" heading and no contact line: the header comes from the candidate's saved profile and is added afterwards. Begin with the first "##" section; never change or add a name, address, city, email, phone or link.
 - "## Experience", "## Projects", "## Skills", "## Education" ("## Summary" only for a pivot, two sentences at most).
 - Jobs as "### Company | Title | Mon YYYY – Mon YYYY" then "- " bullets; projects as "### Name | technologies | Year"; education as "### School | Degree | Mon YYYY".
 - Skills as "- **Category:** item, item" lines. Bold only category labels.
@@ -108,6 +118,7 @@ export function buildResumeMessages(posting: PostingInput, bank: NoteSource[]): 
     `Title: ${posting.title}`,
     `Location: ${posting.location}`,
     `URL: ${posting.url}`,
+    ...candidateBlock(posting),
     "",
     postingText
       ? `Listing text:\n${postingText}`
@@ -147,6 +158,7 @@ export function buildReviewMessages(
     `Title: ${posting.title}`,
     `Location: ${posting.location}`,
     `URL: ${posting.url}`,
+    ...candidateBlock(posting),
     "",
     postingText ? `Listing text:\n${postingText}` : "The listing page could not be read; judge from the title, company and URL.",
     "",
@@ -180,4 +192,57 @@ export function splitResumeOutput(text: string): { resume: string; notes: string
 export function resumeFileName(company: string, title: string): string {
   const clean = (s: string) => s.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
   return `Resume - ${clean(company)} - ${clean(title)}.md`;
+}
+
+// ---------------------------------------------------------------- header
+
+/** The profile fields the resume header is built from (applyAnswerRules.ApplicantProfile). */
+export type HeaderProfile = {
+  firstName: string;
+  lastName: string;
+  preferredName: string;
+  email: string;
+  phone: string;
+  city: string;
+  state: string;
+  linkedin: string;
+  github: string;
+  website: string;
+};
+
+/** "https://www.linkedin.com/in/x/" -> "linkedin.com/in/x". */
+export function bareDomain(url: string): string {
+  return url.trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, "");
+}
+
+/**
+ * The resume's name and contact line, from the saved applicant profile only.
+ *
+ * 2026-10-24: the model used to write the header and took the city from old
+ * resumes in the vault ("McLean, VA" from the Capital One years, "Victor, NY"
+ * from an older one) while Jake lives in Vienna, VA. The profile is the source
+ * of truth; a field it lacks is left out rather than guessed.
+ */
+export function profileHeader(p: HeaderProfile): string {
+  const first = (p.preferredName || p.firstName).trim();
+  const name = [first, p.lastName.trim()].filter(Boolean).join(" ");
+  const location = [p.city.trim(), p.state.trim()].filter(Boolean).join(", ");
+  const contact = [p.email.trim(), p.phone.trim(), location, ...[p.website, p.linkedin, p.github].map(bareDomain)].filter(Boolean);
+  return [name ? `# ${name}` : "", contact.join(" | ")].filter(Boolean).join("\n");
+}
+
+/**
+ * The resume with the model's header (anything before the first "##"
+ * section) replaced by the profile's. Deterministic whatever either pass wrote.
+ */
+export function withProfileHeader(resume: string, p: HeaderProfile): string {
+  const i = resume.search(/^##\s/m);
+  const body = (i === -1 ? resume.replace(/^#\s.*\n?/, "") : resume.slice(i)).trim();
+  const header = profileHeader(p);
+  return header ? `${header}\n\n${body}` : body;
+}
+
+/** Location for the prompt: context for the model, never something it writes. */
+export function profileLocation(p: Pick<HeaderProfile, "city" | "state">): string {
+  return [p.city.trim(), p.state.trim()].filter(Boolean).join(", ");
 }
