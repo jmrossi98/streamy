@@ -88,7 +88,8 @@ const BASE_PROMPT =
   // said the model could read the vault, so it asked the admin to paste their
   // resume.
   "You DO have read access to the admin's Obsidian vault -- notes, Word files " +
-  "and PDFs, including their resumes, plus Claude Code's memory from their " +
+  "and PDFs, including their resumes and a copy of their Apple Notes " +
+  "(main/apple-notes/), plus Claude Code's memory from their " +
   "other machines. Relevant excerpts are retrieved for you and appear below; " +
   "use them. When none appear, nothing relevant was found: say that, rather " +
   "than asking the admin to paste something.\n\n" +

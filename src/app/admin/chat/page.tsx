@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { AssistantChatPanel } from "@/components/AssistantChatPanel";
 import { LlmRoutingDisclosure } from "@/components/LlmRoutingDisclosure";
+import { AppleNotesPanel } from "@/components/AppleNotesPanel";
 
 /**
  * The assistant as an Admin tab. Given an explicit height -- the screen less
@@ -23,6 +24,18 @@ export default async function AdminChatPage() {
     <div className="flex h-[calc(100dvh-17rem)] min-h-[26rem] flex-col gap-2">
       <LlmRoutingDisclosure
         aside={
+          <>
+          {/* Floats over the chat like Model routing: the panel is absolute
+              against the same row, so it opens full width under it. */}
+          <details className="group/notes shrink-0">
+            <summary className="inline-flex cursor-pointer list-none items-center text-white/50 hover:text-white/80">
+              <span className="mr-1 inline-block transition-transform group-open/notes:rotate-90">▸</span>
+              Apple Notes
+            </summary>
+            <div className="absolute inset-x-0 top-full z-20 mt-2 max-h-[70vh] overflow-y-auto rounded-lg border border-white/15 bg-netflix-dark p-4 shadow-2xl shadow-black/60">
+              <AppleNotesPanel />
+            </div>
+          </details>
           <a
             href="/assistant"
             target="_blank"
@@ -31,6 +44,7 @@ export default async function AdminChatPage() {
           >
             Open in new window ↗
           </a>
+          </>
         }
       />
       <div className="min-h-0 flex-1">

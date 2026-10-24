@@ -41,10 +41,22 @@ export function vaultVoice(path: string): VaultVoice {
   return "note";
 }
 
-/** The only place Streamy writes in the vault: its own chats, one level deep, Markdown. */
+/**
+ * The mirror of the admin's Apple Notes, written from what the phone's
+ * Shortcut sends (appleNotes.ts): main/apple-notes/<folder>/<title>.md.
+ */
+export const APPLE_NOTES_DIR = "main/apple-notes";
+
+/**
+ * The only places Streamy writes in the vault, Markdown only: its own chats
+ * (one level deep) and the Apple Notes mirror (at most one folder deep).
+ * Everything else is the admin's or another machine's.
+ */
 export function isWritableVaultPath(path: string): boolean {
-  if (!isReadableNote(path) || !path.startsWith(`${STREAMY_CHATS_DIR}/`)) return false;
-  return !path.slice(STREAMY_CHATS_DIR.length + 1).includes("/");
+  if (!isReadableNote(path)) return false;
+  if (path.startsWith(`${STREAMY_CHATS_DIR}/`)) return !path.slice(STREAMY_CHATS_DIR.length + 1).includes("/");
+  if (path.startsWith(`${APPLE_NOTES_DIR}/`)) return path.slice(APPLE_NOTES_DIR.length + 1).split("/").length <= 2;
+  return false;
 }
 
 // ---- Saved chats as notes -------------------------------------------------

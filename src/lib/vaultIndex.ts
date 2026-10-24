@@ -22,7 +22,9 @@ import { extractText, loadKnowledgeBase, mapLimit } from "./resume";
 import { CAREER_CONTEXT_HEADER, indexNotes } from "./vaultIndexRules";
 
 const CACHE_MS = 5 * 60_000;
-const MAX_FILES = 1200;
+// Listing is the only per-rebuild cost (extraction is cached by modified
+// time), so this is sized for an Apple Notes mirror of a few thousand notes.
+const MAX_FILES = 5000;
 /** Word/PDF text kept in the index, after de-duplication. */
 const MAX_DOC_CHARS = 300_000;
 
