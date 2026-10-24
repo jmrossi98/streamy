@@ -41,7 +41,16 @@ export type LlmUseInfo = {
    * it to Claude would make the picker's "Open" button a lie.
    */
   providers: readonly LlmProvider[];
+  /**
+   * Where the use's controls live. 2026-10-24: the resume and apply-packet
+   * models moved from the assistant's Model routing panel to an "AI models"
+   * section on the Jobs tab, beside the work they pay for; the assistant
+   * panel keeps only the chat slots. Same stored setting either way.
+   */
+  area: LlmArea;
 };
+
+export type LlmArea = "assistant" | "jobs";
 
 export const LLM_USES: readonly LlmUseInfo[] = [
   {
@@ -50,12 +59,14 @@ export const LLM_USES: readonly LlmUseInfo[] = [
     description:
       "The admin chat's Claude slot, and the investigation loop it runs on stack questions.",
     providers: ["anthropic", "openrouter"],
+    area: "assistant",
   },
   {
     id: "chatOpen",
     label: "Assistant - Open",
     description: "The admin chat's open-weight slot.",
     providers: ["openrouter"],
+    area: "assistant",
   },
   {
     id: "resume",
@@ -63,16 +74,39 @@ export const LLM_USES: readonly LlmUseInfo[] = [
     description:
       "One resume per job listing, with web research. Long prompts; the model matters here.",
     providers: ["anthropic", "openrouter"],
+    area: "jobs",
   },
   {
     id: "apply",
     label: "Apply packets",
     description: "Drafts answers to the questions an application form asks.",
     providers: ["anthropic", "openrouter"],
+    area: "jobs",
   },
 ];
 
 export const LLM_USE_IDS: readonly LlmUse[] = LLM_USES.map((u) => u.id);
+
+/** The uses edited in one place: the assistant's panel or the Jobs tab. */
+export function usesIn(area: LlmArea): LlmUse[] {
+  return LLM_USES.filter((u) => u.area === area).map((u) => u.id);
+}
+
+/**
+ * The routing with only some uses put back to their defaults. Each panel's
+ * Reset covers its own rows: resetting the chat slots must not quietly reset
+ * the resume model edited on the Jobs tab, and the other way round.
+ */
+export function resetUses(routing: LlmRouting, uses: readonly LlmUse[], defaults: LlmRouting): LlmRouting {
+  const out = { ...routing };
+  for (const use of uses) out[use] = defaults[use];
+  return out;
+}
+
+/** A submitted list of uses, keeping only real ones. */
+export function parseUseList(raw: unknown): LlmUse[] {
+  return Array.isArray(raw) ? LLM_USE_IDS.filter((u) => raw.includes(u)) : [];
+}
 
 export type LlmRoute = {
   provider: LlmProvider;

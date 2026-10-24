@@ -1,5 +1,6 @@
 import { LlmRoutingPanel } from "@/components/LlmRoutingPanel";
 import { routingSnapshot } from "@/lib/llm";
+import { usesIn } from "@/lib/llmRoutingRules";
 
 /**
  * The model routing, folded shut under a one-line disclosure, with room on
@@ -20,7 +21,9 @@ export async function LlmRoutingDisclosure({ aside }: { aside?: React.ReactNode 
           Model routing
         </summary>
         <div className="absolute inset-x-0 top-full z-20 mt-2 max-h-[70vh] overflow-y-auto rounded-lg border border-white/15 bg-netflix-dark p-4 shadow-2xl shadow-black/60">
-          <LlmRoutingPanel initial={initial} />
+          {/* The chat slots only: the resume and apply-packet models are
+              edited on the Jobs tab since 2026-10-24. */}
+          <LlmRoutingPanel initial={initial} uses={usesIn("assistant")} />
         </div>
       </details>
       {aside}

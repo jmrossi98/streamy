@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { logAudit } from "@/lib/auditLog";
 import { resetRouting, routingSnapshot, saveRouting } from "@/lib/llm";
+import { parseUseList } from "@/lib/llmRoutingRules";
 
 /**
  * Which provider and model answer each cloud-model job.
@@ -29,6 +30,11 @@ export async function PUT(request: Request) {
   if (body.reset === true) {
     await resetRouting();
     logAudit(admin.name, "llm.routing.reset", "env defaults");
+  } else if (Array.isArray(body.reset)) {
+    // One panel's rows only: the assistant's chat slots, or the Jobs tab's.
+    const uses = parseUseList(body.reset);
+    await resetRouting(uses);
+    logAudit(admin.name, "llm.routing.reset", `env defaults: ${uses.join(" ")}`);
   } else {
     const saved = await saveRouting(body.routing);
     logAudit(

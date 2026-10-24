@@ -13,8 +13,13 @@ import { ResumeKnowledgeBasePanel } from "@/components/ResumeKnowledgeBasePanel"
 import { ApplicantProfilePanel } from "@/components/ApplicantProfilePanel";
 import { getApplicantProfile } from "@/lib/applyPacket";
 import { prisma } from "@/lib/db";
+import { LlmRoutingPanel } from "@/components/LlmRoutingPanel";
+import { routingSnapshot } from "@/lib/llm";
+import { usesIn } from "@/lib/llmRoutingRules";
 
 export default async function AdminJobsPage() {
+  // Started first, read below: the "AI models" section's routing.
+  const routingPromise = routingSnapshot();
   // Above the whole matched set, not a round number: filtering happens in the
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
@@ -96,6 +101,13 @@ export default async function AdminJobsPage() {
             createdAt: r.createdAt.toISOString(),
           }))}
         />
+      </AdminSection>
+
+      {/* 2026-10-24: moved here from the assistant's Model routing panel,
+          beside the resumes and apply packets these models write. Same
+          stored routing; the assistant panel keeps the chat slots. */}
+      <AdminSection title="AI models">
+        <LlmRoutingPanel initial={await routingPromise} uses={usesIn("jobs")} />
       </AdminSection>
 
       <AdminSection title="Boards watched">
