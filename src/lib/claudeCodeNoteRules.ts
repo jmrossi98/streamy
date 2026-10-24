@@ -3,14 +3,35 @@
  * (main/ai/chats/claude-code/<machine>/<day>-<slug>-<sid8>[-partN].md), read
  * back so a session can be continued in the admin chat.
  *
+ * Chats from the Claude app (claude.ai, the desktop and phone apps) are the
+ * same notes one folder over, main/ai/chats/claude-app/, written by
+ * mediabox-infra/scripts/claude_export_import.py from a claude.ai data export
+ * (2026-10-24). They list and open the same way, under the machine name
+ * "claude-app"; the difference is that nothing flows back to claude.ai, so
+ * the chat they open is an import and not a live link.
+ *
  * Pure, so it tests without the server stack. The format is set by
  * mediabox-infra/scripts/claude_memory_sync.py (render_session).
  */
-import type { ChatTurn } from "./chatSessionRules";
+import type { ChatTurn, ChatTurnVia } from "./chatSessionRules";
 import { AI_CHATS_DIR } from "./sharedVaultRules";
 import type { VaultEntry } from "./vaultRules";
 
 export const CLAUDE_CODE_CHATS_DIR = `${AI_CHATS_DIR}/claude-code`;
+export const CLAUDE_APP_CHATS_DIR = `${AI_CHATS_DIR}/claude-app`;
+/** The machine name a Claude app chat lists under. */
+export const CLAUDE_APP_MACHINE = "claude-app";
+/** Prefix of the stored session id of a chat opened from a Claude app import. */
+const CLAUDE_APP_ID_PREFIX = "app-";
+
+/** The id to store for a session continued here; the bridge ignores app imports. */
+export function storedSessionId(machine: string, sessionId: string): string {
+  return machine === CLAUDE_APP_MACHINE ? `${CLAUDE_APP_ID_PREFIX}${sessionId}` : sessionId;
+}
+
+export function isClaudeAppImport(storedId: string | null | undefined): boolean {
+  return !!storedId && storedId.startsWith(CLAUDE_APP_ID_PREFIX);
+}
 
 const NOTE_NAME = /^(\d{4}-\d{2}-\d{2}|undated)-(.+)-([0-9a-f]{8})(?:-part(\d+))?\.md$/;
 
@@ -37,10 +58,18 @@ function titleFromSlug(slug: string): string {
 export function listClaudeCodeSessions(entries: VaultEntry[]): ClaudeCodeSessionRef[] {
   const byKey = new Map<string, ClaudeCodeSessionRef & { partNos: number[] }>();
   for (const e of entries) {
-    if (e.isDir || !e.path.startsWith(`${CLAUDE_CODE_CHATS_DIR}/`)) continue;
-    const rest = e.path.slice(CLAUDE_CODE_CHATS_DIR.length + 1).split("/");
-    if (rest.length !== 2) continue;
-    const [machine, file] = rest;
+    if (e.isDir) continue;
+    let machine: string;
+    let file: string;
+    if (e.path.startsWith(`${CLAUDE_CODE_CHATS_DIR}/`)) {
+      const rest = e.path.slice(CLAUDE_CODE_CHATS_DIR.length + 1).split("/");
+      if (rest.length !== 2) continue;
+      [machine, file] = rest;
+    } else if (e.path.startsWith(`${CLAUDE_APP_CHATS_DIR}/`)) {
+      file = e.path.slice(CLAUDE_APP_CHATS_DIR.length + 1);
+      if (file.includes("/")) continue;
+      machine = CLAUDE_APP_MACHINE;
+    } else continue;
     const m = NOTE_NAME.exec(file);
     if (!m || !/^[a-z0-9-]+$/.test(machine)) continue;
     const [, day, slug, sid8, partNo] = m;
@@ -78,6 +107,7 @@ export function parseClaudeCodeNote(md: string): ParsedClaudeCodeNote {
   let body = md;
   let title: string | null = null;
   let sessionId: string | null = null;
+  let via: ChatTurnVia = "claude-code";
   const fm = /^---\n([\s\S]*?)\n---\n/.exec(md);
   if (fm) {
     body = md.slice(fm[0].length);
@@ -92,6 +122,7 @@ export function parseClaudeCodeNote(md: string): ParsedClaudeCodeNote {
         }
       }
       if (k === "session" && /^[0-9a-f-]{8,64}$/i.test(value)) sessionId = value.toLowerCase();
+      if (k === "source" && value === "claude-app") via = "claude-app";
     }
   }
   const turns: ChatTurn[] = [];
@@ -101,10 +132,10 @@ export function parseClaudeCodeNote(md: string): ParsedClaudeCodeNote {
     const end = i + 1 < heads.length ? heads[i + 1].index! : body.length;
     const text = body.slice(start, end).trim();
     if (!text) return;
-    if (h[1] === "User") turns.push({ role: "user", content: text, via: "claude-code" });
+    if (h[1] === "User") turns.push({ role: "user", content: text, via });
     else if (h[1].startsWith("Context summary"))
-      turns.push({ role: "assistant", content: `**Summary of the earlier conversation**\n\n${text}`, via: "claude-code" });
-    else turns.push({ role: "assistant", content: text, via: "claude-code" });
+      turns.push({ role: "assistant", content: `**Summary of the earlier conversation**\n\n${text}`, via });
+    else turns.push({ role: "assistant", content: text, via });
   });
   return { title, sessionId, turns };
 }

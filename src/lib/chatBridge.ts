@@ -81,7 +81,12 @@ export async function runBridge(req: BridgeRequest): Promise<{ status: number; b
       return { status: 200, body: { chat: view(row, parseStoredTurns(row.turns).slice(req.from)) } };
     }
     case "links": {
-      const rows = await prisma.chatSession.findMany({ where: { claudeSessionId: { not: null } }, select: { id: true, claudeSessionId: true } });
+      // Chats opened from a Claude app import carry an "app-" id: nothing on
+      // any machine continues those, so they are not links.
+      const rows = await prisma.chatSession.findMany({
+        where: { claudeSessionId: { not: null }, NOT: { claudeSessionId: { startsWith: "app-" } } },
+        select: { id: true, claudeSessionId: true },
+      });
       return { status: 200, body: { links: rows } };
     }
     case "byClaude": {

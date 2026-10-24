@@ -12,6 +12,7 @@ import {
   type ChatBackendId,
 } from "@/lib/chatModels";
 import { parseProposal, stripProposal } from "@/lib/remediation";
+import { isClaudeAppImport } from "@/lib/claudeCodeNoteRules";
 import {
   deleteTurn,
   editTurn,
@@ -153,6 +154,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   const [confirmDeleteTurn, setConfirmDeleteTurn] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   // Read by the skill handlers, which resolve after a fetch and must add to
   // the transcript as it is then, not as it was when the tap happened.
   const turnsRef = useRef<Turn[]>([]);
@@ -342,11 +344,18 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
     setStreaming(false);
   }, []);
 
-  async function send(e: React.FormEvent) {
-    e.preventDefault();
+  /** Height to fit the text, capped by the textarea's max-h; back to one line when emptied. */
+  function growComposer(el: HTMLTextAreaElement) {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
+
+  async function send(e?: { preventDefault(): void }) {
+    e?.preventDefault();
     const question = input.trim();
     if (!question || streaming) return;
     setInput("");
+    if (composerRef.current) composerRef.current.style.height = "auto";
     await runTurn([...turns, { role: "user", content: question }]);
   }
 
@@ -636,7 +645,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   const showStatusError = backend === "local" && !!statusError;
   const currentSummary = sessions.find((s) => s.id === currentId);
   const currentTitle = currentSummary?.title ?? "New chat";
-  const linkedToClaude = !!currentSummary?.claudeSessionId;
+  const linkedToClaude = !!currentSummary?.claudeSessionId && !isClaudeAppImport(currentSummary.claudeSessionId);
+  const fromClaudeApp = !!currentSummary?.claudeSessionId && isClaudeAppImport(currentSummary.claudeSessionId);
 
   const list = (
     <ChatSessionList
@@ -747,6 +757,14 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
               Shared with Claude Code
             </span>
           )}
+          {fromClaudeApp && (
+            <span
+              className="mr-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200"
+              title="Imported from a claude.ai data export; continues here only."
+            >
+              From the Claude app
+            </span>
+          )}
           {showStatusError ? (
             <span className="text-amber-400">Model unreachable: {statusError}</span>
           ) : (
@@ -764,7 +782,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
 
         <div
           ref={scrollRef}
-          className={`space-y-3 overflow-y-auto rounded border border-white/10 bg-black/30 p-3 ${
+          className={`overflow-y-auto px-1 sm:px-3 ${
             // Fixed, not max-h: a max-height collapses to nothing on an empty
             // transcript, so the panel jumped in size as soon as you asked
             // anything. Shorter on a phone, where 34rem is most of the screen.
@@ -772,12 +790,18 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
           }`}
           aria-live="polite"
         >
+          <div className="mx-auto w-full max-w-3xl space-y-6 py-3">
           {turns.length === 0 && (
-            <p className="py-6 text-center text-sm text-white/30">
-              Ask anything - with “Stack status” on it can also see live service
-              health, disk, and backups.
-              {searchAvailable ? " It searches the web by itself for anything current." : ""}
-            </p>
+            <div className="flex h-full flex-col items-center justify-center gap-2 py-16 text-center">
+              <div aria-hidden className="flex h-10 w-10 items-center justify-center rounded-full bg-netflix-red text-sm font-bold text-white">
+                S
+              </div>
+              <p className="text-lg font-medium text-white/80">What can I help with?</p>
+              <p className="max-w-md text-sm text-white/35">
+                With “Stack status” on, I can see live service health, disk and backups
+                {searchAvailable ? ", and I search the web by myself for anything current" : ""}.
+              </p>
+            </div>
           )}
           {turns.map((t, i) => {
             const live = streaming && i === turns.length - 1;
@@ -857,16 +881,27 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
             }
             const skillProposal = t.role === "assistant" && !live ? parseSkillProposal(t.content) : null;
             return (
-              <div key={i} className={`group ${isUser ? "text-right" : ""}`}>
-                {t.via === "claude-code" && (
-                  <div className="mb-0.5 text-[10px] uppercase tracking-wide text-sky-300/60">
-                    {isUser ? "In Claude Code" : "Claude Code"}
+              <div key={i} className={`group ${isUser ? "flex flex-col items-end" : "flex gap-3"}`}>
+                {!isUser && (
+                  <div
+                    aria-hidden
+                    className="mt-1 flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-full bg-netflix-red text-[11px] font-bold text-white"
+                  >
+                    S
+                  </div>
+                )}
+                <div className={`min-w-0 ${isUser ? "max-w-[85%]" : "flex-1"}`}>
+                {(t.via === "claude-code" || t.via === "claude-app") && (
+                  <div className={`mb-0.5 text-[10px] uppercase tracking-wide text-sky-300/60 ${isUser ? "text-right" : ""}`}>
+                    {t.via === "claude-app" ? "In the Claude app" : isUser ? "In Claude Code" : "Claude Code"}
                   </div>
                 )}
                 <div
-                  className={`inline-block max-w-[85%] whitespace-pre-wrap rounded px-3 py-2 text-sm text-left ${
-                    isUser ? "bg-netflix-red/80 text-white" : "bg-white/10 text-white/90"
-                  }`}
+                  className={
+                    isUser
+                      ? "whitespace-pre-wrap rounded-2xl rounded-br-md bg-white/10 px-4 py-2.5 text-[15px] leading-relaxed text-white"
+                      : "text-[15px] leading-7 text-white/90"
+                  }
                 >
                   {t.content ? (
                     <ChatMessage role={t.role} content={stripSkillProposal(stripProposal(t.content))} />
@@ -915,9 +950,11 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
                     )}
                   </div>
                 )}
+                </div>
               </div>
             );
           })}
+          </div>
         </div>
 
         {error && (
@@ -930,34 +967,55 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         {/* shrink-0 so the composer is never what gets compressed when the
             column runs short -- an input squeezed to nothing is the same bug as
             an input pushed off the screen. */}
-        <form onSubmit={send} className="flex shrink-0 gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask something…"
-            // text-base on mobile: iOS zooms the viewport when a focused input
-            // is under 16px, and there is no way back out without pinching.
-            className="min-w-0 flex-1 rounded border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder-white/30 focus:border-white/40 focus:outline-none sm:text-sm"
-            disabled={streaming}
-          />
-          {streaming ? (
-            <button
-              type="button"
-              onClick={stop}
-              className="rounded bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20"
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!input.trim()}
-              className="rounded bg-netflix-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40"
-            >
-              Send
-            </button>
-          )}
+        <form onSubmit={send} className="mx-auto w-full max-w-3xl shrink-0 px-1 sm:px-3">
+          <div className="flex items-end gap-2 rounded-2xl border border-white/15 bg-white/[0.06] py-2 pl-4 pr-2 transition-colors focus-within:border-white/35">
+            <textarea
+              ref={composerRef}
+              value={input}
+              rows={1}
+              onChange={(e) => {
+                setInput(e.target.value);
+                growComposer(e.currentTarget);
+              }}
+              onKeyDown={(e) => {
+                // Enter sends; Shift+Enter (and Enter while composing an IME
+                // character) is a line break, the convention every chat app uses.
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder="Ask something…"
+              aria-label="Message"
+              // text-base on mobile: iOS zooms the viewport when a focused input
+              // is under 16px, and there is no way back out without pinching.
+              className="max-h-48 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 text-white placeholder-white/30 focus:outline-none sm:text-[15px]"
+              disabled={streaming}
+            />
+            {streaming ? (
+              <button
+                type="button"
+                onClick={stop}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+                aria-label="Stop"
+                title="Stop"
+              >
+                <span aria-hidden className="block h-3 w-3 rounded-[2px] bg-white" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!input.trim()}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-black transition-colors hover:bg-white/85 disabled:bg-white/20 disabled:text-white/40"
+                aria-label="Send"
+                title="Send (Enter)"
+              >
+                <svg aria-hidden viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 16V4M4.5 9.5 10 4l5.5 5.5" />
+                </svg>
+              </button>
+            )}
+          </div>
         </form>
       </div>
     </div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, TextInput, cx } from "@/components/ui";
 import { relativeAge, type ChatSessionSummary } from "@/lib/chatSessionRules";
+import { CLAUDE_APP_MACHINE } from "@/lib/claudeCodeNoteRules";
 
 /** A Claude Code session from the vault, offered to continue here. */
 export type ClaudeCodeSessionItem = {
@@ -33,7 +34,8 @@ type Props = {
  * The saved chats, newest first: open one, start a new one, rename or delete.
  * Delete asks inline (a second click) rather than through a browser dialog.
  * Below them, Claude Code sessions from the vault: opening one continues it
- * here as a chat shared with that session.
+ * here as a chat shared with that session. Below those, chats imported from
+ * the Claude app, which open the same way but continue here only.
  */
 export function ChatSessionList({
   sessions,
@@ -48,6 +50,58 @@ export function ChatSessionList({
   onDelete,
 }: Props) {
   const [showClaude, setShowClaude] = useState(true);
+  const [showApp, setShowApp] = useState(true);
+  const codeSessions = claudeSessions.filter((c) => c.machine !== CLAUDE_APP_MACHINE);
+  const appChats = claudeSessions.filter((c) => c.machine === CLAUDE_APP_MACHINE);
+
+  /** One foldable section of vault sessions: Claude Code's, or the Claude app's. */
+  function vaultSection(label: string, items: ClaudeCodeSessionItem[], open: boolean, toggle: () => void, showMachine: boolean) {
+    if (items.length === 0) return null;
+    return (
+      <div className="mt-3 border-t border-white/10 pt-2">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="flex w-full items-center justify-between px-2 py-1 text-[11px] uppercase tracking-wide text-white/40 hover:text-white/70"
+        >
+          <span>{label}</span>
+          <span aria-hidden>{open ? "−" : "+"}</span>
+        </button>
+        {open && (
+          <ul className="space-y-0.5" aria-label={label}>
+            {items.map((c) => {
+              const active = !!c.chatId && c.chatId === currentId;
+              return (
+                <li key={c.key}>
+                  <button
+                    type="button"
+                    disabled={locked}
+                    onClick={() => (c.chatId ? onOpen(c.chatId) : onOpenClaude(c.key))}
+                    aria-current={active ? "true" : undefined}
+                    title={c.chatId ? `${c.title} (continued here)` : `Continue “${c.title}” here`}
+                    className={cx(
+                      "flex w-full flex-col rounded px-2 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                      active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/5 hover:text-white/90"
+                    )}
+                  >
+                    <span className="flex w-full items-baseline gap-2">
+                      <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                      {c.chatId && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-label="Continued here" />}
+                    </span>
+                    <span className="text-[10px] text-white/30">
+                      {showMachine ? c.machine : "claude.ai"}
+                      {c.modified ? ` · ${relativeAge(c.modified)}` : ""}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    );
+  }
   const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -151,50 +205,8 @@ export function ChatSessionList({
           );
         })}
       </ul>
-      {claudeSessions.length > 0 && (
-        <div className="mt-3 border-t border-white/10 pt-2">
-          <button
-            type="button"
-            onClick={() => setShowClaude((v) => !v)}
-            aria-expanded={showClaude}
-            className="flex w-full items-center justify-between px-2 py-1 text-[11px] uppercase tracking-wide text-white/40 hover:text-white/70"
-          >
-            <span>Claude Code sessions</span>
-            <span aria-hidden>{showClaude ? "−" : "+"}</span>
-          </button>
-          {showClaude && (
-            <ul className="space-y-0.5" aria-label="Claude Code sessions">
-              {claudeSessions.map((c) => {
-                const active = !!c.chatId && c.chatId === currentId;
-                return (
-                  <li key={c.key}>
-                    <button
-                      type="button"
-                      disabled={locked}
-                      onClick={() => (c.chatId ? onOpen(c.chatId) : onOpenClaude(c.key))}
-                      aria-current={active ? "true" : undefined}
-                      title={c.chatId ? `${c.title} (continued here)` : `Continue “${c.title}” here`}
-                      className={cx(
-                        "flex w-full flex-col rounded px-2 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                        active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/5 hover:text-white/90"
-                      )}
-                    >
-                      <span className="flex w-full items-baseline gap-2">
-                        <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                        {c.chatId && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-label="Continued here" />}
-                      </span>
-                      <span className="text-[10px] text-white/30">
-                        {c.machine}
-                        {c.modified ? ` · ${relativeAge(c.modified)}` : ""}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      )}
+      {vaultSection("Claude Code sessions", codeSessions, showClaude, () => setShowClaude((v) => !v), true)}
+      {vaultSection("Claude app chats", appChats, showApp, () => setShowApp((v) => !v), false)}
       </div>
     </div>
   );

@@ -5,13 +5,14 @@ import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 
 /**
- * Keeps the navbar but drops the footer, and pins the main area to the
- * viewport so the page itself never scrolls. The chat transcript does its own
- * scrolling inside that box -- a footer below it would push the input off
- * screen and put a second scrollbar on the page.
+ * Drops the footer and pins the main area to the viewport so the page itself
+ * never scrolls. The chat transcript does its own scrolling inside that box --
+ * a footer below it would push the input off screen and put a second
+ * scrollbar on the page. (The navbar went too, 2026-10-24: a chat app is the
+ * chat, and the page links back to the admin area itself.)
  */
 function isChromeOnlyRoute(pathname: string | null): boolean {
-  // The expanded assistant: one screen, navbar plus a chat that fills the rest.
+  // The expanded assistant: one screen, a chat that fills all of it.
   // (/admin/chat left this list when it went back inside the admin layout
   // with an explicit height of its own.)
   return /^\/assistant\/?$/.test(pathname ?? "");
@@ -25,7 +26,10 @@ function isFullscreenRoute(pathname: string | null): boolean {
     // A game recording: same full-screen player, so no navbar over its X.
     /^\/live\/recordings\/[^/]+\/?$/.test(pathname) ||
     // A tailored resume: a printable page, so no site chrome to print.
-    /^\/resume\/[^/]+\/?$/.test(pathname)
+    /^\/resume\/[^/]+\/?$/.test(pathname) ||
+    // The expanded assistant: the whole screen is the chat, like any chat
+    // app; it carries its own link back to the admin area.
+    /^\/assistant\/?$/.test(pathname)
   );
 }
 
