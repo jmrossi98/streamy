@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { ApplyReviewDialog } from "@/components/ApplyReviewDialog";
-import { Chip, scrollListClass } from "@/components/ui";
+import { Badge, Button, ButtonLink, Chip, scrollListClass } from "@/components/ui";
+import { elapsed, isJob, useResumeJobs, type TailorState } from "@/components/useResumeJobs";
+import type { ResumeJobView } from "@/lib/resumeJobRules";
 import {
   CATEGORY_LABELS,
   LEVEL_LABELS,
@@ -150,9 +152,12 @@ function toggleIn(set: Set<string>, key: string): Set<string> {
 export function JobListingsPanel({
   listings,
   configured,
+  resumeJobs = {},
 }: {
   listings: JobListingRow[];
   configured: boolean;
+  /** The newest tailoring job per posting from the last day, by posting id. */
+  resumeJobs?: Record<string, ResumeJobView>;
 }) {
   // Sets rather than single values: each filter holds any number of choices at
   // once, and an empty set means that filter is off.
@@ -180,8 +185,12 @@ export function JobListingsPanel({
    * the list you come back to looks untouched.
    */
   const [openedNow, setOpenedNow] = useState<Set<string>>(new Set());
-  /** Tailored-resume state per listing: working, the new version, or why it failed. */
-  const [tailoring, setTailoring] = useState<Record<string, "busy" | { id: string } | { error: string }>>({});
+  /**
+   * Tailored-resume jobs per listing. 2026-10-24: a background job on the
+   * server, polled here, rather than one ten-minute request whose result was
+   * lost on any reload, phone sleep or deploy.
+   */
+  const { jobs: tailoring, now: clock, start: tailorResume } = useResumeJobs(resumeJobs);
 
   /** Auto-apply per listing: preparing, the packet to review, or why it failed. */
   const [applying, setApplying] = useState<Record<string, "busy" | { id: string; status: string } | { error: string }>>({});
@@ -204,24 +213,6 @@ export function JobListingsPanel({
       }
     } catch {
       setApplying((prev) => ({ ...prev, [id]: { error: "Network error" } }));
-    }
-  }
-
-  async function tailorResume(id: string) {
-    setTailoring((prev) => ({ ...prev, [id]: "busy" }));
-    try {
-      const res = await fetch("/api/admin/jobs/resume", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postingId: id }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
-      setTailoring((prev) => ({
-        ...prev,
-        [id]: res.ok && data.id ? { id: data.id } : { error: data.error ?? `Failed (HTTP ${res.status})` },
-      }));
-    } catch {
-      setTailoring((prev) => ({ ...prev, [id]: { error: "Network error" } }));
     }
   }
 
@@ -522,33 +513,11 @@ export function JobListingsPanel({
                       : `First seen ${new Date(listing.firstSeen).toLocaleDateString()}`
                   }
                 >
-                  {(() => {
-                    const t = tailoring[listing.id];
-                    if (t === "busy") return <span className="text-white/50">tailoring resume…</span>;
-                    if (t && "id" in t)
-                      return (
-                        <a
-                          href={`/resume/${t.id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-emerald-300 hover:underline"
-                        >
-                          open resume
-                        </a>
-                      );
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => void tailorResume(listing.id)}
-                        title={t && "error" in t ? t.error : "Write a resume tailored to this listing"}
-                        className={`rounded border px-1.5 py-0.5 hover:bg-white/10 ${
-                          t && "error" in t ? "border-red-400/40 text-red-300" : "border-white/15 text-white/55"
-                        }`}
-                      >
-                        {t && "error" in t ? "retry resume" : "tailor resume"}
-                      </button>
-                    );
-                  })()}
+                  <TailorControl
+                    state={tailoring[listing.id]}
+                    now={clock}
+                    onTailor={() => void tailorResume(listing.id)}
+                  />
                   {canAutoApply(listing.id) &&
                     (() => {
                       const a = applying[listing.id] ?? listing.application;
@@ -593,6 +562,7 @@ export function JobListingsPanel({
                     : `seen ${timeAgo(listing.firstSeen)}`}
                 </span>
               </div>
+              <TailorStatus state={tailoring[listing.id]} />
               <div className="mt-1 flex flex-wrap gap-1">
                 {listing.metros
                   .split(",")
@@ -641,4 +611,44 @@ export function JobListingsPanel({
       )}
     </div>
   );
+}
+
+/** The Tailor button's place on a listing: start, progress, the resume, or Retry. */
+function TailorControl({ state, now, onTailor }: { state: TailorState | undefined; now: number; onTailor: () => void }) {
+  if (state && "starting" in state) return <Badge tone="info">starting…</Badge>;
+  if (isJob(state) && (state.status === "queued" || state.status === "running")) {
+    return (
+      <Badge tone="info" title="Tailoring runs on the server; you can leave this page and come back.">
+        {state.step || "Starting"}… {elapsed(state.startedAt, now)}
+      </Badge>
+    );
+  }
+  if (isJob(state) && state.status === "succeeded" && state.versionId) {
+    return (
+      <>
+        <ButtonLink href={`/resume/${state.versionId}`} target="_blank" rel="noreferrer" variant="secondary" size="xs" className="text-emerald-300">
+          open resume
+        </ButtonLink>
+        <Button variant="ghost" size="xs" onClick={onTailor} title="Tailor a fresh version">
+          again
+        </Button>
+      </>
+    );
+  }
+  const failed = (isJob(state) && state.status === "failed") || (!!state && "startError" in state);
+  return (
+    <Button variant={failed ? "danger" : "secondary"} size="xs" onClick={onTailor} title="Write a resume tailored to this listing">
+      {failed ? "Retry" : "tailor resume"}
+    </Button>
+  );
+}
+
+/** A plain line under the listing: why a run failed, or what it couldn't read. */
+function TailorStatus({ state }: { state: TailorState | undefined }) {
+  const error = state && "startError" in state ? state.startError : isJob(state) && state.status === "failed" ? state.error : null;
+  if (error) return <p className="mt-1 text-[11px] text-red-300">Resume: {error}</p>;
+  if (isJob(state) && state.status === "succeeded" && state.note) {
+    return <p className="mt-1 text-[11px] text-amber-300/80">Resume: {state.note}</p>;
+  }
+  return null;
 }

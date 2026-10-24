@@ -968,6 +968,32 @@ model ResumeVersion {
   @@index([postingId])
 }
 
+/// One tailoring run in the background (lib/resumeJobs.ts). 2026-10-24: the
+/// tailoring used to live inside one HTTP request that could need ten
+/// minutes; a deploy restart or a phone sleeping lost it and the button looked
+/// stuck. A row says where it got to. "running" with a stale heartbeatAt means
+/// the process died, which resumeJobRules.ts reports as failed on read.
+model ResumeJob {
+  id          String   @id @default(cuid())
+  postingId   String
+  /// queued | running | succeeded | failed
+  status      String   @default("queued")
+  /// The step in progress, one of RESUME_JOB_STEPS.
+  step        String   @default("")
+  error       String?
+  /// Shown with the result, e.g. that the listing page could not be read.
+  note        String?
+  /// The ResumeVersion it made.
+  versionId   String?
+  requestedBy String   @default("")
+  startedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  heartbeatAt DateTime @default(now())
+
+  @@index([postingId, startedAt])
+  @@index([startedAt])
+}
+
 /// An application prepared for one job: the form's questions with answers,
 /// and the resume to attach. Filled into the real form by the userscript,
 /// submitted by a person (the providers require a CAPTCHA).

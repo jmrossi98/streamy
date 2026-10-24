@@ -5,6 +5,7 @@ import { getJobPostings, isJobBoardConfigured, jobSources, scrapedSiteReport } f
 import { HEALTH_RANK, scrapedSiteHealth, sourceHealth } from "@/lib/jobSourceHealthRules";
 import { getJobAlertLevels } from "@/lib/appSettings";
 import { listResumeVersions } from "@/lib/resume";
+import { recentResumeJobs } from "@/lib/resumeJobs";
 import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
 import { ResumeKnowledgeBasePanel } from "@/components/ResumeKnowledgeBasePanel";
 import { ApplicantProfilePanel } from "@/components/ApplicantProfilePanel";
@@ -16,7 +17,7 @@ export default async function AdminJobsPage() {
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured, alertLevels, resumes, scrapeReport, profile, applications] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels, resumes, scrapeReport, profile, applications, resumeJobs] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
@@ -27,6 +28,8 @@ export default async function AdminJobsPage() {
     prisma.jobApplication
       .findMany({ orderBy: { createdAt: "asc" }, select: { id: true, postingId: true, status: true } })
       .catch(() => []),
+    // In-progress and recent tailoring runs, so the buttons come back as they were.
+    recentResumeJobs().catch(() => ({})),
   ]);
   // Newest wins: ordered oldest first, so later rows overwrite.
   const applicationByPosting = new Map(applications.map((a) => [a.postingId, { id: a.id, status: a.status }]));
@@ -57,6 +60,7 @@ export default async function AdminJobsPage() {
       <AdminSection title="Job listings">
         <JobListingsPanel
           configured={configured}
+          resumeJobs={resumeJobs}
           listings={jobListings.map((job) => ({
             id: job.id,
             company: job.company,

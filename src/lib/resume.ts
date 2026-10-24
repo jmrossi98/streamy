@@ -5,13 +5,16 @@
 import { prisma } from "./db";
 import { complete, getRoute } from "./llm";
 import { htmlToText } from "./pageWatchRules";
+import { renderListing } from "./listingRender";
+import { budgetFor, LISTING_UNREAD_NOTE, needsRender, pickListingText, resumeLog, type ResumeJobStep } from "./resumeJobRules";
 import { assembleBank, isBankFile, RESUME_VAULT_DIRS, orderBankFiles, pickBankFiles, type BankFile, type BankItem } from "./resumeBankRules";
 import { buildResumeMessages, buildReviewMessages, MAX_BANK_CHARS, splitResumeOutput, type NoteSource, type PostingInput } from "./resumeRules";
 import { isVaultConfigured, listVaultFiles, readVaultFile } from "./vault";
 
 export { RESUME_VAULT_DIRS } from "./resumeBankRules";
 
-export async function listingText(url: string): Promise<string> {
+/** The listing as text from a plain fetch; "" when it can't be read. */
+async function fetchListingText(url: string): Promise<string> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(15_000),
@@ -23,6 +26,34 @@ export async function listingText(url: string): Promise<string> {
   } catch {
     return "";
   }
+}
+
+export type ListingRead = { text: string; source: "fetch" | "render" | "none" };
+
+/**
+ * The listing as text. A plain fetch first; when that comes back empty or a
+ * JS shell (under ~500 characters of real text) and the site is one mediabox's
+ * browser will open, a render there.
+ *
+ * 2026-10-24: Meta's job pages return HTTP 400 to the fetch, so tailoring to a
+ * Meta posting ran blind; the render reads its responsibilities and
+ * qualifications in about 8 s.
+ */
+export async function readListing(url: string): Promise<ListingRead> {
+  let t = Date.now();
+  const fetched = await fetchListingText(url);
+  console.log(resumeLog("listing.fetch", Date.now() - t, { chars: fetched.length }));
+  if (!needsRender(fetched, url)) return pickListingText(fetched, null);
+  t = Date.now();
+  const rendered = await renderListing(url);
+  console.log(
+    resumeLog("listing.render", Date.now() - t, "text" in rendered ? { chars: rendered.text.length } : { error: rendered.error })
+  );
+  return pickListingText(fetched, "text" in rendered ? rendered.text : null);
+}
+
+export async function listingText(url: string): Promise<string> {
+  return (await readListing(url)).text;
 }
 
 /**
@@ -101,9 +132,28 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
   };
 }
 
-export type ResumeResult = { ok: true; id: string } | { ok: false; error: string };
+export type ResumeResult = { ok: true; id: string; note: string | null } | { ok: false; error: string };
 
-export async function generateTailoredResume(postingId: string): Promise<ResumeResult> {
+export type TailorOptions = {
+  /** Called as each step starts; resumeJobs.ts records it on the job row. */
+  onStep?: (step: ResumeJobStep) => Promise<void> | void;
+  /** When the job started, for the overall cap (JOB_CAP_MS). Defaults to now. */
+  startedAt?: number;
+};
+
+/** Each model call's own ceiling; the job's 8-minute cap usually binds first. */
+const MODEL_CALL_MAX_MS = 300_000;
+
+export async function generateTailoredResume(postingId: string, opts: TailorOptions = {}): Promise<ResumeResult> {
+  const startedAt = opts.startedAt ?? Date.now();
+  let stepStart = Date.now();
+  let current = "setup";
+  const step = async (next: ResumeJobStep) => {
+    console.log(resumeLog(current, Date.now() - stepStart, { posting: postingId }));
+    current = next;
+    stepStart = Date.now();
+    await opts.onStep?.(next);
+  };
   const route = await getRoute("resume");
   if (!route) return { ok: false, error: "No cloud model is configured (set ANTHROPIC_API_KEY or OPENROUTER_API_KEY)." };
   if (!isVaultConfigured()) return { ok: false, error: "The Obsidian vault is not configured." };
@@ -124,31 +174,43 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
     };
   }
 
+  await step("Reading the listing");
+  const listing = await readListing(posting.url);
+  const note = listing.source === "none" ? LISTING_UNREAD_NOTE : null;
   const input: PostingInput = {
     company: posting.company,
     title: posting.title,
     location: posting.location,
     url: posting.url,
-    postingText: await listingText(posting.url),
+    postingText: listing.text,
   };
   try {
     // Two passes. The draft researches the company and writes; the review
     // reads the draft as the parser, the recruiter and the hiring manager
     // would, checks every claim against the bank, and tightens it to a page.
     // A failed review keeps the draft rather than failing the whole thing.
+    await step("Researching and drafting");
+    const draftBudget = budgetFor(startedAt, Date.now(), MODEL_CALL_MAX_MS);
+    if (draftBudget < 30_000) return { ok: false, error: "Ran out of time before drafting (8-minute limit) — tap Tailor again." };
     const draft = await complete(route, buildResumeMessages(input, bank), {
       maxTokens: 24_000,
       webSearch: true,
-      timeoutMs: 300_000,
+      timeoutMs: draftBudget,
       effort: "high",
     });
     let { resume, notes } = splitResumeOutput(draft.text);
     let model = draft.model;
-    if (resume.trim()) {
+    // Whatever is left of the 8 minutes; too little and the draft is kept
+    // unreviewed rather than thrown away.
+    const reviewBudget = budgetFor(startedAt, Date.now(), MODEL_CALL_MAX_MS);
+    if (resume.trim() && reviewBudget < 30_000) {
+      notes += "\n\n**Review**\n- Skipped: the draft used up the 8-minute limit; this is the unreviewed draft.";
+    } else if (resume.trim()) {
+      await step("Reviewing");
       try {
         const review = await complete(route, buildReviewMessages(input, bank, { resume, notes }), {
           maxTokens: 24_000,
-          timeoutMs: 300_000,
+          timeoutMs: reviewBudget,
           effort: "high",
         });
         const revised = splitResumeOutput(review.text);
@@ -161,6 +223,8 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
         notes += `\n\n**Review**\n- The review pass failed (${err instanceof Error ? err.message : String(err)}); this is the unreviewed draft.`;
       }
     }
+    await step("Saving");
+    if (note) notes = `**Listing**\n- ${note}.\n\n${notes}`;
     const row = await prisma.resumeVersion.create({
       data: {
         postingId,
@@ -172,7 +236,9 @@ export async function generateTailoredResume(postingId: string): Promise<ResumeR
         model,
       },
     });
-    return { ok: true, id: row.id };
+    console.log(resumeLog(current, Date.now() - stepStart, { posting: postingId }));
+    console.log(resumeLog("total", Date.now() - startedAt, { posting: postingId, listing: listing.source }));
+    return { ok: true, id: row.id, note };
   } catch (err) {
     return { ok: false, error: `The model call failed: ${err instanceof Error ? err.message : String(err)}` };
   }

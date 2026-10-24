@@ -111,7 +111,9 @@ export function buildResumeMessages(posting: PostingInput, bank: NoteSource[]): 
     "",
     postingText
       ? `Listing text:\n${postingText}`
-      : "The listing page could not be read. Research the role and company from the title, company and URL.",
+      : // 2026-10-24: said plainly so the model searches for this exact
+        // posting and flags it, rather than writing to a guessed role.
+        "LISTING TEXT MISSING: the listing page could not be read (it needs a browser or a sign-in). Find this exact posting by web search from the title, company and URL, research the role and company, and say in the notes that the listing itself was not read.",
     "",
     "EXPERIENCE BANK",
     bankBlock(bank),
