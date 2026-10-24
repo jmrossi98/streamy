@@ -18,6 +18,7 @@ import { providerAlert } from "@/lib/credentialRules";
 import { channelProviderState, providerAvailability } from "@/lib/providerAvailability";
 import { fixtureGuidePrograms, trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
+import { getLiveScheduleForRender } from "@/lib/liveSchedule";
 import { parseLiveTab } from "@/lib/liveTabs";
 import { LiveTvContent } from "./LiveTvContent";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -41,6 +42,11 @@ export default async function LivePage({
   const tab = parseLiveTab(Array.isArray(rawTab) ? rawTab[0] : rawTab);
   const session = await getSession();
   if (!session) redirect("/login?callbackUrl=/live");
+
+  // Started now, awaited at the end: the schedule (ESPN + an EPG match) runs
+  // alongside the Jellyfin/Dispatcharr work below instead of after the page
+  // reaches the browser, so "Live now" arrives with the rest of the page.
+  const schedulePromise = tab === "now" ? getLiveScheduleForRender() : Promise.resolve(null);
 
   // Two probed facts, then the channels themselves. There is deliberately no
   // separate "is a tuner configured" probe: the one that existed asked a
@@ -154,6 +160,8 @@ export default async function LivePage({
       ])
     : [[], []];
 
+  const initialFixtures = await schedulePromise;
+
   return (
     <div className={BROWSE_PAGE_CLASS}>
       <LiveTvContent
@@ -169,6 +177,7 @@ export default async function LivePage({
         logoFallbacks={logoFallbacks}
         providerStateByChannel={providerStateByChannel}
         guidePrograms={guidePrograms}
+        initialFixtures={initialFixtures}
       />
     </div>
   );

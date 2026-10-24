@@ -12,6 +12,7 @@ import { guideKey, programsForChannel, type GuideProgram } from "@/lib/liveGuide
 import { SportsTab } from "@/components/SportsTab";
 import { RecordingsTab } from "@/components/RecordingsTab";
 import { LiveNowGames } from "@/components/LiveNowGames";
+import type { ScheduleFixture } from "@/lib/liveSchedule";
 import { Button, ButtonLink, Select, TabBar, TabLink, TextInput } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import { groupIntoShelves } from "@/lib/liveShelves";
@@ -44,6 +45,8 @@ type Props = {
   providerStateByChannel: Record<string, "ok" | "full" | "down">;
   /** guideKey(channel name) -> EPG listings for the Guide grid. Empty off the Guide tab. */
   guidePrograms: Record<string, GuideProgram[]>;
+  /** Today's schedule from the server render, so "Live now" needs no fetch of its own; null if it wasn't ready. */
+  initialFixtures?: ScheduleFixture[] | null;
 };
 
 /** What every tab needs to draw a channel card. */
@@ -74,7 +77,7 @@ function numberValue(number: string | null): number {
  */
 export function LiveTvContent({
   envSet, reachable, channels, truncated, myListIds, hiddenChannels, isAdmin, infoByChannel,
-  statusByChannel, logoFallbacks, providerStateByChannel, guidePrograms,
+  statusByChannel, logoFallbacks, providerStateByChannel, guidePrograms, initialFixtures = null,
 }: Props) {
   // The page is force-dynamic, so this is available on the server render too
   // and the tab arrives in the first HTML rather than after hydration.
@@ -160,7 +163,7 @@ export function LiveTvContent({
           {/* The games row is independent of Jellyfin entirely, so it still
               renders above a broken lineup: someone landing here while Live
               TV is down should still see what's on. */}
-          <LiveNowGames channels={channels} />
+          <LiveNowGames channels={channels} initialFixtures={initialFixtures} />
           {emptyPanel ?? <NowTab lineup={lineup} listed={listed} {...lookups} />}
         </>
       )}
