@@ -803,6 +803,19 @@ export function networksOnOtherGames(
  * outranks a generalist like ESPN that also covers nine other things this
  * list tracks.
  */
+/**
+ * A case-insensitive whole-word match for a city or market name.
+ *
+ * These used to be written inline as a template literal with "\b" in it, and
+ * inside a template literal that is a backspace (U+0008), not a word boundary
+ * -- so neither ever matched: no channel was ever found by a team's city or by
+ * the household's own market (found 2026-10-24). Escaped too, since names
+ * like "St. Louis" carry regex characters.
+ */
+export function wholeWord(name: string): RegExp {
+  return new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+}
+
 export function findCandidateChannels<C extends { id: string; name: string }>(
   fixture: {
     league: string;
@@ -877,7 +890,7 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     const inMarket =
       channelInTeamMarket(channel.name, fixture.homeTeam) ||
       channelInTeamMarket(channel.name, fixture.awayTeam) ||
-      cities.some((city) => new RegExp(`\b${city}\b`, "i").test(channel.name));
+      cities.some((city) => wholeWord(city).test(channel.name));
     if (inMarket) {
       consider(channel, 0);
     }
@@ -895,7 +908,7 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
       // secondary market city it airs in, then the household's own market, then
       // any other affiliate of the network.
       const rank = teamMarketRank(channel.name, fixture.homeTeam) ?? teamMarketRank(channel.name, fixture.awayTeam);
-      const atHome = homeMarkets.some((m) => new RegExp(`\b${m}\b`, "i").test(channel.name));
+      const atHome = homeMarkets.some((m) => wholeWord(m).test(channel.name));
       const spec = rank === 0 ? -3 : rank === 1 || inMarket ? -2.5 : atHome ? -2 : -1;
       consider(channel, spec);
     }
