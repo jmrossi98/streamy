@@ -376,10 +376,18 @@ const ROLE_VETOES = [
   "recruiter",
   "recruiting",
   "sourcer",
+  // Management titles that managementKind() did not accept (sales managers,
+  // a bank's "Vice President" IC grade, a director of product) stay vetoed.
   "engineering manager",
   "director",
   "vp,",
   "vice president",
+  // 2026-10-24: "manager" titles are now read, so the managers that are not
+  // engineering managers are named here, or "Product Manager, Software
+  // Engineering Tools" would land in Software.
+  "program manager",
+  "project manager",
+  "product manager",
   "ux research",
   "user research",
 ];
@@ -397,9 +405,100 @@ function titleHas(hay: string, pattern: string): boolean {
   return hasWord(hay, pattern.trim());
 }
 
+// -------------------------------------------------------------- management
+
+/**
+ * Software and engineering management, kept since 2026-10-24.
+ *
+ * Until then every manager, director and VP title was vetoed. Jake asked for
+ * engineering managers to be kept under their own level, and for director and
+ * VP of engineering roles to be kept when he could plausibly qualify -- which
+ * a title cannot say, so "exec" postings are gated on the years the listing
+ * asks for (jobManagementRules.ts). Tech leads are not management here: Jake
+ * wants them under Lead / staff+, where they have always been.
+ *
+ * "em": Engineering Manager, Manager of Software Engineering, Software
+ * Development Manager, Bloomberg's "Software Engineering Team Lead".
+ * "exec": Director / VP / Head of engineering.
+ */
+export type ManagementKind = "em" | "exec";
+
+/** A management title must say what it manages: software or engineering. */
+const MANAGEMENT_SIGNALS = ["engineering", "software", "sde"];
+
+/**
+ * Managers of something other than software. Checked on the whole title, so
+ * "Engineering Manager, Sales Engineering" goes too -- a rare false negative
+ * worth the many sales, risk and delivery managers it keeps out.
+ */
+const MANAGEMENT_VETOES = [
+  "sales",
+  "account",
+  "customer",
+  "solutions",
+  "solution engineer",
+  "field",
+  "support",
+  "program manager",
+  "project manager",
+  "product manager",
+  "product marketing",
+  "marketing",
+  "delivery manager",
+  "communications",
+  "risk",
+  "compliance",
+  "finance",
+  "legal",
+  "recruit",
+  "talent",
+  "facilities",
+  "manufacturing",
+  "mechanical",
+  "electrical",
+  "hardware",
+  "civil",
+  "construction",
+  "quality",
+  "test",
+  "process engineer",
+  "data center",
+  "supply",
+  "procurement",
+  "content",
+];
+
+const TECH_LEAD = ["tech lead", "technical lead"];
+
+/** Whether a title is software/engineering management, and which kind. */
+export function managementKind(title: string): ManagementKind | null {
+  const hay = title.toLowerCase();
+  if (TECH_LEAD.some((p) => hay.includes(p))) return null;
+  if (!MANAGEMENT_SIGNALS.some((p) => titleHas(hay, p))) return null;
+  // titleHas: "test" and "risk" as words, not inside "latest" or "brisk".
+  if (MANAGEMENT_VETOES.some((v) => titleHas(hay, v))) return null;
+  if (/\b(director|vp|svp|evp|vice president|head of)\b/.test(hay)) {
+    // Banks use "Vice President" as an individual-contributor grade
+    // ("Software Engineer - Vice President"): the person noun "engineer" with
+    // no "of engineering" is that, not an executive role, and stays vetoed.
+    if (/\bengineer\b/.test(hay)) return null;
+    return "exec";
+  }
+  if (/\b(manager|management)\b/.test(hay) || /\bteam lead(er)?\b/.test(hay)) return "em";
+  return null;
+}
+
 /** The category a title belongs to, or null when it is not a role we want. */
 export function classifyRole(title: string): JobCategory | null {
   const hay = title.toLowerCase();
+  if (managementKind(title)) {
+    // A manager of ML or security engineers is filed there like the
+    // engineers are; an unmarked engineering manager is Software.
+    for (const [category, patterns] of CATEGORY_PATTERNS) {
+      if (patterns.some((p) => titleHas(hay, p))) return category;
+    }
+    return "swe";
+  }
   if (ROLE_VETOES.some((v) => hay.includes(v))) return null;
   for (const [category, patterns] of CATEGORY_PATTERNS) {
     if (patterns.some((p) => titleHas(hay, p))) return category;
@@ -423,16 +522,19 @@ export function isSoftwareRole(title: string): boolean {
  * Finer grades (L4 vs L5, II vs III) are not comparable between companies and
  * are mostly absent from titles anyway.
  */
-export type JobLevel = "entry" | "midsenior" | "staff";
+export type JobLevel = "entry" | "midsenior" | "staff" | "management";
 
 export const LEVEL_LABELS: Record<JobLevel, string> = {
   entry: "Entry / new grad",
   midsenior: "Mid / senior",
   staff: "Lead / staff+",
+  // 2026-10-24: engineering managers, and the director/VP roles Jake could
+  // qualify for (see managementKind). A separate ladder, so after staff.
+  management: "Management",
 };
 
-/** Display order, junior to senior. */
-export const LEVEL_ORDER: JobLevel[] = ["entry", "midsenior", "staff"];
+/** Display order, junior to senior, then the management ladder. */
+export const LEVEL_ORDER: JobLevel[] = ["entry", "midsenior", "staff", "management"];
 
 /**
  * Checked before everything else, and worth stating why.
@@ -493,6 +595,9 @@ const LEVEL_PATTERNS: [JobLevel, string[]][] = [
  */
 export function classifyLevel(title: string): JobLevel {
   const hay = title.toLowerCase();
+  // Before the staff patterns, so "Principal Engineering Manager" is a
+  // manager; a tech lead never reaches here as one (managementKind).
+  if (managementKind(title)) return "management";
   for (const [level, patterns] of LEVEL_PATTERNS) {
     if (patterns.some((p) => titleHas(hay, p))) return level;
   }

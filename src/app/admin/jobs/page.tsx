@@ -1,7 +1,7 @@
 import { AdminSection } from "@/components/ui";
 import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { JobSourcesPanel } from "@/components/JobSourcesPanel";
-import { getJobPostings, isJobBoardConfigured, jobSources } from "@/lib/jobPostings";
+import { getHiddenExecPostings, getJobPostings, isJobBoardConfigured, jobSources } from "@/lib/jobPostings";
 import { SCRAPED_STALE_AFTER_MS, sourceHealth } from "@/lib/jobSourceHealthRules";
 import { isScrapedProvider, sortSourceRows } from "@/lib/jobBoardRules";
 import { nextDigestAt, parseDigestCadence } from "@/lib/jobDigestRules";
@@ -19,7 +19,7 @@ export default async function AdminJobsPage() {
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured, alertLevels, resumes, cadenceRaw, lastDigestAt, profile, applications, resumeJobs] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels, resumes, cadenceRaw, lastDigestAt, profile, applications, resumeJobs, hiddenExec] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
@@ -33,6 +33,7 @@ export default async function AdminJobsPage() {
       .catch(() => []),
     // In-progress and recent tailoring runs, so the buttons come back as they were.
     recentResumeJobs().catch(() => ({})),
+    getHiddenExecPostings(),
   ]);
   // Newest wins: ordered oldest first, so later rows overwrite.
   const applicationByPosting = new Map(applications.map((a) => [a.postingId, { id: a.id, status: a.status }]));
@@ -59,6 +60,7 @@ export default async function AdminJobsPage() {
         <JobListingsPanel
           configured={configured}
           resumeJobs={resumeJobs}
+          hiddenExec={hiddenExec}
           listings={jobListings.map((job) => ({
             id: job.id,
             company: job.company,

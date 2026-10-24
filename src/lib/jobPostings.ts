@@ -54,10 +54,19 @@ import {
   classifyLevel,
   classifyRole,
   isUsRemote,
+  managementKind,
   matchMetros,
   type JobCategory,
   type JobLevel,
 } from "./jobFilters";
+import {
+  careerExperience,
+  EXEC_CHECKS_PER_POLL,
+  execHiddenReason,
+  extractExecRequirement,
+  needsExecCheck,
+  type ExecCheck,
+} from "./jobManagementRules";
 
 const FETCH_TIMEOUT_MS = 20_000;
 
@@ -642,7 +651,11 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
   );
 
   for (const { posting, silent, metros, remote, category, level } of fresh) {
+    // A director/VP posting is stored hidden until its listing has been read
+    // (assessExecPostings, below); every other posting is never hidden.
+    const exec = managementKind(posting.title) === "exec";
     const data = {
+      ...(exec ? {} : { hiddenReason: null }),
       company: posting.company,
       title: posting.title,
       location: posting.location,
@@ -659,7 +672,12 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
       // firstSeen is left to its default on create and never written on update,
       // so it keeps meaning the first time we saw this posting. A silent seed
       // is stamped notified on create, so no email ever picks it up.
-      create: { id: posting.id, ...data, ...(silent ? { notifiedAt: now } : {}) },
+      create: {
+        id: posting.id,
+        ...data,
+        ...(exec ? { hiddenReason: execHiddenReason({ checkedAt: null, status: null, years: null, managerYears: null }, null) } : {}),
+        ...(silent ? { notifiedAt: now } : {}),
+      },
       update: data,
     });
     if (!known.has(posting.id)) outcome.created += 1;
@@ -684,9 +702,114 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
   });
 
   const announced = await announceNew(all, now);
+  // After the announcement, so slow listing reads never hold up the email; a
+  // director/VP role shown by this pass is announced on the next poll.
+  await assessExecPostings(now).catch((err) =>
+    outcome.errors.push(`director/VP check: ${err instanceof Error ? err.message : String(err)}`)
+  );
   outcome.announced = announced.count;
   outcome.notified = announced.notified;
   return outcome;
+}
+
+/**
+ * Jake's years of experience, from the resume knowledge base. Cached: it
+ * changes by the month, and reading the vault's Word files and PDFs takes
+ * seconds. A failed read is cached briefly so a vault outage costs one
+ * attempt per half hour, not one per poll of every director posting.
+ */
+const EXEC_READ_BUDGET_MS = 60_000;
+
+let experienceCache:{ at: number; years: number | null; ok: boolean } | null = null;
+const EXPERIENCE_TTL_MS = 6 * 3600_000;
+const EXPERIENCE_RETRY_MS = 30 * 60_000;
+
+async function experienceYears(now: Date): Promise<number | null> {
+  const c = experienceCache;
+  if (c && now.getTime() - c.at < (c.ok ? EXPERIENCE_TTL_MS : EXPERIENCE_RETRY_MS)) return c.years;
+  try {
+    const { loadKnowledgeBase } = await import("./resume");
+    const bank = await loadKnowledgeBase();
+    const exp = careerExperience(
+      bank.sources.map((s) => s.text),
+      now
+    );
+    console.log(
+      `[jobs] experience years=${exp.years ?? "?"} career=${exp.careerStart?.toISOString().slice(0, 7) ?? "?"} internship=${
+        exp.internshipStart?.toISOString().slice(0, 7) ?? "-"
+      }`
+    );
+    experienceCache = { at: now.getTime(), years: exp.years, ok: exp.years !== null };
+    return exp.years;
+  } catch (err) {
+    console.log(`[jobs] experience unreadable: ${err instanceof Error ? err.message : String(err)}`);
+    experienceCache = { at: now.getTime(), years: null, ok: false };
+    return null;
+  }
+}
+
+/**
+ * Reads the requirement of each director/VP posting not yet read (a few per
+ * poll; the same listing path the resume builder uses, render fallback and
+ * all) and decides which are shown. See jobManagementRules.ts.
+ */
+async function assessExecPostings(now: Date): Promise<void> {
+  const rows = (
+    await prisma.jobPosting.findMany({
+      where: { level: "management", archivedAt: null },
+      select: {
+        id: true,
+        title: true,
+        url: true,
+        reqYears: true,
+        reqManagerYears: true,
+        reqStatus: true,
+        reqCheckedAt: true,
+        hiddenReason: true,
+      },
+    })
+  ).filter((r) => managementKind(r.title) === "exec");
+  if (rows.length === 0) return;
+
+  const toCheck = (r: (typeof rows)[number]): ExecCheck => ({
+    checkedAt: r.reqCheckedAt,
+    status: r.reqStatus === "read" || r.reqStatus === "unread" ? r.reqStatus : null,
+    years: r.reqYears,
+    managerYears: r.reqManagerYears,
+  });
+
+  // The poll's caller gives up at 180 s (job-listings.yml); a render can wait
+  // a minute for the runner's one slot, so reads stop once this is spent and
+  // the rest wait for the next poll.
+  const readUntil = Date.now() + EXEC_READ_BUDGET_MS;
+  let reads = 0;
+  for (const row of rows) {
+    if (reads >= EXEC_CHECKS_PER_POLL || Date.now() > readUntil || !needsExecCheck(toCheck(row), now)) continue;
+    reads += 1;
+    const { readListing } = await import("./resume");
+    const listing = await readListing(row.url).catch(() => ({ text: "", source: "none" as const }));
+    const req = listing.source === "none" ? { years: null, managerYears: null } : extractExecRequirement(listing.text);
+    Object.assign(row, {
+      reqYears: req.years,
+      reqManagerYears: req.managerYears,
+      reqStatus: listing.source === "none" ? "unread" : "read",
+      reqCheckedAt: now,
+    });
+    console.log(
+      `[jobs] exec-check posting=${row.id} listing=${listing.source} years=${req.years ?? "-"} managerYears=${req.managerYears ?? "-"}`
+    );
+    await prisma.jobPosting.update({
+      where: { id: row.id },
+      data: { reqYears: row.reqYears, reqManagerYears: row.reqManagerYears, reqStatus: row.reqStatus, reqCheckedAt: now },
+    });
+  }
+
+  const years = await experienceYears(now);
+  for (const row of rows) {
+    const reason = execHiddenReason(toCheck(row), years);
+    if (reason === row.hiddenReason) continue;
+    await prisma.jobPosting.update({ where: { id: row.id }, data: { hiddenReason: reason } });
+  }
 }
 
 async function send(subject: string, body: string): Promise<boolean> {
@@ -711,7 +834,8 @@ async function announceNew(
 ): Promise<{ count: number; notified: boolean }> {
   const [pending, levels, cadenceRaw, lastDigestAt] = await Promise.all([
     prisma.jobPosting.findMany({
-      where: { notifiedAt: null, archivedAt: null },
+      // A hidden director/VP posting waits here, unannounced, until it is shown.
+      where: { notifiedAt: null, archivedAt: null, hiddenReason: null },
       orderBy: [{ company: "asc" }, { title: "asc" }],
     }),
     getJobAlertLevels(),
@@ -773,10 +897,25 @@ export type JobPostingRow = {
   firstSeen: Date;
 };
 
+/** Director/VP postings stored but hidden, with the reason, for the panel's folded list. */
+export async function getHiddenExecPostings(limit = 200) {
+  try {
+    const rows = await prisma.jobPosting.findMany({
+      where: { archivedAt: null, hiddenReason: { not: null } },
+      orderBy: { firstSeen: "desc" },
+      take: limit,
+      select: { id: true, company: true, title: true, url: true, hiddenReason: true },
+    });
+    return rows.map((r) => ({ id: r.id, company: r.company, title: r.title, url: r.url, reason: r.hiddenReason ?? "" }));
+  } catch {
+    return [];
+  }
+}
+
 export async function getJobPostings(limit = 100): Promise<JobPostingRow[]> {
   try {
     return await prisma.jobPosting.findMany({
-      where: { archivedAt: null },
+      where: { archivedAt: null, hiddenReason: null },
       orderBy: { firstSeen: "desc" },
       take: limit,
       select: {

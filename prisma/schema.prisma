@@ -468,6 +468,19 @@ model JobPosting {
   /// beats a fourth bucket holding most of the rows.
   level String @default("midsenior")
 
+  /// Director and VP postings only (2026-10-24): what the listing asks for,
+  /// read once from the listing page (lib/jobManagementRules.ts), so a poll
+  /// every 30 minutes doesn't fetch it again.
+  reqYears        Int?
+  reqManagerYears Int?
+  /// "read", or "unread" when the page couldn't be fetched or rendered.
+  reqStatus       String?
+  reqCheckedAt    DateTime?
+  /// Set when the posting is stored but not shown or emailed: a director/VP
+  /// role asking for more than Jake's experience + 1 year, or one whose
+  /// requirement couldn't be read. Null for everything else.
+  hiddenReason    String?
+
   /// When this listing was last opened from the panel.
   ///
   /// Server-side rather than browser history so "already looked at" survives a
@@ -494,6 +507,7 @@ model JobPosting {
   @@index([company])
   @@index([category])
   @@index([level])
+  @@index([hiddenReason])
   @@index([openedAt])
   @@index([archivedAt])
 }
