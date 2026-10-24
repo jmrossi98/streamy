@@ -18,11 +18,10 @@ import {
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession, requireAdmin } from "@/lib/auth";
-import { isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
-import { getRoute, streamChat } from "@/lib/llm";
+import { completeOllama, isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
+import { complete, getRoute, streamChat } from "@/lib/llm";
 import { isRemoteBackend, normalizeBackend } from "@/lib/chatModels";
 import {
-  buildSearchContext,
   hasUserTurn,
   isCareerQuestion,
   latestUserQuery,
@@ -31,6 +30,7 @@ import {
   shouldSearch,
   systemPromptFor,
   withContext,
+  worthRetrieving,
 } from "@/lib/chatLimits";
 import { buildStatusContext } from "@/lib/chatContext";
 import { recordAssistantReply, recordAssistantUsage } from "@/lib/assistantUsage";
@@ -47,8 +47,9 @@ import {
   searchDocs,
 } from "@/lib/docsRetrieval";
 import { getSnapshot } from "@/lib/chatStatus";
-import { investigateThenAnswer } from "@/lib/diagInvestigation";
-import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
+import { runAssistantTurn, type LoopBackend } from "@/lib/assistantToolLoop";
+import { LOCAL_LIMITS, REMOTE_LIMITS } from "@/lib/assistantToolRules";
+import { isWebSearchConfigured } from "@/lib/webSearch";
 import { skillsForPrompt } from "@/lib/skillRunner";
 import { skillsPrompt } from "@/lib/skillRunnerRules";
 
@@ -218,8 +219,16 @@ export async function POST(request: Request) {
   // Gated on there being a real question -- the same filler check search
   // uses, since retrieving against "hi" returns whatever chunk happens to
   // contain a common word and then the model dutifully uses it.
+  //
+  // Until 2026-10-24 this reused shouldSearch outright, which also skips
+  // anything naming the homelab ("my server", "jellyfin") because the *web*
+  // knows nothing about it -- so the docs and vault were left out of exactly
+  // the stack questions they are about. The cloud models now get them on any
+  // real question; the local model keeps the narrower gate, since its 8k
+  // context already carries the status block on those questions.
   const docsQuery = latestUserQuery(messages);
-  if (isDocsRetrievalConfigured() && docsQuery && shouldSearch(docsQuery)) {
+  const retrieve = docsQuery != null && (remote ? worthRetrieving(docsQuery) : shouldSearch(docsQuery));
+  if (isDocsRetrievalConfigured() && docsQuery && retrieve) {
     try {
       const index = await getDocsIndex();
       const block = index && buildDocsContextBlock(searchDocs(index, docsQuery));
@@ -236,7 +245,7 @@ export async function POST(request: Request) {
   // because another model wrote it. A question about the admin's own career
   // gets the whole resume set instead of fragments: the cloud models have the
   // room; the local model's 8k context gets a slice.
-  if (docsQuery && shouldSearch(docsQuery)) {
+  if (docsQuery && retrieve) {
     let career = false;
     if (isCareerQuestion(docsQuery)) {
       try {
@@ -323,49 +332,59 @@ export async function POST(request: Request) {
     }
   }
 
-  // Searched unconditionally when the toggle is on, rather than left to the
-  // model to decide -- a 3B model is not a reliable judge of when it needs a
-  // lookup, which is the whole reason this is a switch.
-  if (body.webSearch === true && isWebSearchConfigured()) {
-    const query = latestUserQuery(messages);
-    // Greetings and "can you search?" are answered from the transcript. Running
-    // a lookup on them is what turned "hey" into a definition of the word.
-    if (query && shouldSearch(query)) {
-      try {
-        const results = await searchWeb(query);
-        if (results.length > 0) {
-          messages = withContext(messages, buildSearchContext(query, results));
-        }
-      } catch (err) {
-        // A search failure degrades to answering without it. Losing the whole
-        // reply because the search box is down would be worse than an
-        // ungrounded answer the model is told to hedge.
-        console.error("[chat] web search failed:", err);
-      }
-    }
-  }
+  // Web tools since 2026-10-24: the model decides when to search or read a
+  // page (assistantToolRules.ts), on every backend, instead of a toggle that
+  // searched every message. The toggle is now "Always search": it runs one
+  // search on the question up front, and the model can still look further.
+  // shouldSearch still guards the forced search -- "hey" once came back as a
+  // dictionary definition of the word, and the web knows nothing about this
+  // homelab. Offered on any real question; a greeting gets neither tools nor
+  // the extra step.
+  const query = latestUserQuery(messages);
+  const realQuestion = query != null && shouldIncludeStatus(query);
+  const web = isWebSearchConfigured() && realQuestion;
+  const forceSearch = web && body.webSearch === true && query && shouldSearch(query) ? query : null;
+  // A question on a cloud model: let it look at the stack for itself
+  // (read-only commands on mediabox) rather than answer from the snapshot.
+  // Same gate as the status block. The local model doesn't drive the
+  // diagnostics -- several rounds of picking commands is beyond a 4B model,
+  // and each would take longer on the card than looking by hand.
+  const diag = !!route && body.stackStatus !== false && realQuestion;
 
   try {
     // request.signal so navigating away actually stops generation -- on the
     // local card that frees the GPU, and on a metered backend it stops paying
     // for tokens nobody will read.
-    // A question about the stack, on a cloud model: let it look for itself
-    // (read-only commands on mediabox) rather than answer from the snapshot.
-    // Same gate as the status block -- a greeting needs neither. Falls back to
-    // a plain answer when the diagnostics service can't be reached.
-    const investigated =
-      route &&
-      body.stackStatus !== false &&
-      statusQuery != null &&
-      shouldIncludeStatus(statusQuery)
-        ? await investigateThenAnswer(messages, route, admin.name, request.signal)
-        : null;
-
-    const stream =
-      investigated ??
-      (route
+    let stream: ReadableStream<Uint8Array>;
+    if (diag || web) {
+      const backendFns: LoopBackend = route
+        ? {
+            // Low effort and a short ceiling: a step writes a few tool lines,
+            // and on a model that reasons by default the reasoning would
+            // otherwise outweigh them.
+            step: async (convo) =>
+              (await complete(route, convo, { maxTokens: 300, timeoutMs: 60_000, effort: "low" })).text,
+            answer: (convo, signal) => streamChat(route, convo, signal),
+          }
+        : {
+            step: (convo, signal) => completeOllama(convo, { maxTokens: 120, signal }),
+            answer: (convo, signal) => streamOllamaChat(convo, signal),
+          };
+      stream = await runAssistantTurn({
+        messages,
+        backend: backendFns,
+        diag,
+        web,
+        forceSearch,
+        limits: route ? REMOTE_LIMITS : LOCAL_LIMITS,
+        actorName: admin.name,
+        signal: request.signal,
+      });
+    } else {
+      stream = route
         ? await streamChat(route, messages, request.signal)
-        : await streamOllamaChat(messages, request.signal));
+        : await streamOllamaChat(messages, request.signal);
+    }
 
     return new Response(recordingStream(stream, usageId), {
       headers: {

@@ -718,15 +718,20 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
               Stack status
             </label>
 
+            {/* Since 2026-10-24 the model searches and reads pages on its own
+                when a question needs it; this forces a search up front. */}
             {searchAvailable && (
-              <label className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80">
+              <label
+                className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80"
+                title="The assistant searches the web by itself when it needs to. Tick this to make it search every question."
+              >
                 <input
                   type="checkbox"
                   checked={webSearch}
                   onChange={(e) => setWebSearch(e.target.checked)}
                   className="accent-netflix-red"
                 />
-                Search the web
+                Always search
               </label>
             )}
           </div>
@@ -769,9 +774,9 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         >
           {turns.length === 0 && (
             <p className="py-6 text-center text-sm text-white/30">
-              Ask about the stack - with “Stack status” on it can see live service
+              Ask anything - with “Stack status” on it can also see live service
               health, disk, and backups.
-              {searchAvailable ? " Tick “Search the web” for anything current." : ""}
+              {searchAvailable ? " It searches the web by itself for anything current." : ""}
             </p>
           )}
           {turns.map((t, i) => {

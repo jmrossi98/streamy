@@ -3,8 +3,8 @@ import {
   prepareChatMessages,
   hasUserTurn,
   latestUserQuery,
-  buildSearchContext,
-  withSearchContext,
+  withContext,
+  worthRetrieving,
   shouldSearch,
   shouldIncludeStatus,
   systemPromptFor,
@@ -116,11 +116,14 @@ describe("systemPromptFor", () => {
   // local one. This replaced a flat "strictly read-only" claim, which stopped
   // being true once remediation landed -- the model still cannot act, but it
   // can now offer an action the admin confirms.
-  it("tells every backend it cannot run anything itself", () => {
+  // Since 2026-10-24 it can look things up (diagnostics, web), so the rule is
+  // "cannot change anything", and lookups are named as read-only.
+  it("tells every backend it cannot change anything itself", () => {
     for (const backend of ["local", "open", "claude"] as const) {
       const prompt = systemPromptFor(backend);
-      expect(prompt).toMatch(/cannot run anything yourself/i);
-      expect(prompt).toMatch(/no shell and no tools/i);
+      expect(prompt).toMatch(/cannot change anything yourself/i);
+      expect(prompt).toMatch(/no shell/i);
+      expect(prompt).toMatch(/read-only lookups/i);
       expect(prompt).toMatch(/confirms with a button/i);
     }
   });
@@ -134,6 +137,15 @@ describe("systemPromptFor", () => {
       expect(prompt).toMatch(/gluetun/);
       expect(prompt).toMatch(/tailscale-exit/);
       expect(prompt).toMatch(/jellyfin/i);
+    }
+  });
+
+  it("is a general assistant, not only an ops panel", () => {
+    for (const backend of ["local", "open", "claude"] as const) {
+      const prompt = systemPromptFor(backend);
+      expect(prompt).toMatch(/budgeting/i);
+      expect(prompt).toMatch(/politics/i);
+      expect(prompt).toMatch(/only bring up the stack when the question is about it/i);
     }
   });
 
@@ -184,34 +196,7 @@ describe("latestUserQuery", () => {
   });
 });
 
-describe("buildSearchContext", () => {
-  const results = [
-    { title: "A Title", url: "https://example.com/a", snippet: "some text" },
-  ];
-
-  it("includes the query, titles, urls and snippets", () => {
-    const msg = buildSearchContext("jfk", results);
-    expect(msg.content).toContain("jfk");
-    expect(msg.content).toContain("A Title");
-    expect(msg.content).toContain("https://example.com/a");
-    expect(msg.content).toContain("some text");
-  });
-
-  // Search results are pages anyone can publish. The framing has to say so, or
-  // a page containing "ignore your instructions" reads as a command.
-  it("frames results as untrusted data rather than instructions", () => {
-    const msg = buildSearchContext("q", results);
-    expect(msg.role).toBe("system");
-    expect(msg.content).toMatch(/untrusted/i);
-    expect(msg.content).toMatch(/not commands|must be ignored/i);
-  });
-
-  it("asks the model to say so rather than invent when results don't answer", () => {
-    expect(buildSearchContext("q", results).content).toMatch(/say so/i);
-  });
-});
-
-describe("withSearchContext", () => {
+describe("withContext", () => {
   const ctx = { role: "system" as const, content: "CTX" };
 
   // Small models weight the tail of the prompt, so the question must stay last.
@@ -221,14 +206,14 @@ describe("withSearchContext", () => {
       { role: "assistant", content: "reply" },
       { role: "user", content: "current" },
     ]);
-    const out = withSearchContext(msgs, ctx);
+    const out = withContext(msgs, ctx);
     expect(out[out.length - 1].content).toBe("current");
     expect(out[out.length - 2]).toBe(ctx);
   });
 
   it("returns the input unchanged when there is no user turn", () => {
     const msgs = prepareChatMessages([]);
-    expect(withSearchContext(msgs, ctx)).toEqual(msgs);
+    expect(withContext(msgs, ctx)).toEqual(msgs);
   });
 });
 
@@ -337,5 +322,20 @@ describe("shouldSearch — infrastructure and pasted content", () => {
     expect(shouldSearch("who is penguinz0")).toBe(true);
     expect(shouldSearch("what happened in the news today")).toBe(true);
     expect(shouldSearch("explain the raft consensus algorithm")).toBe(true);
+  });
+});
+
+describe("worthRetrieving", () => {
+  // The docs and vault are about the homelab, so unlike web search the
+  // homelab questions are exactly the ones that should retrieve.
+  it("retrieves for stack questions that web search skips", () => {
+    expect(shouldSearch("why is my jellyfin buffering")).toBe(false);
+    expect(worthRetrieving("why is my jellyfin buffering")).toBe(true);
+  });
+
+  it("still skips filler", () => {
+    expect(worthRetrieving("hi")).toBe(false);
+    expect(worthRetrieving("ok thanks")).toBe(false);
+    expect(worthRetrieving("who are you")).toBe(false);
   });
 });
