@@ -239,6 +239,36 @@ export function execHiddenReason(check: ExecCheck, experienceYears: number | nul
   return null;
 }
 
+// -------------------------------------------------------------- reading the listing
+
+/**
+ * The board's own JSON for one posting, when it has one: a cleaner read
+ * than the page, and the only one for some. 2026-10-24: Adobe and
+ * CrowdStrike's Workday pages are JS-only and not on the renderer's
+ * allowlist, and Greenhouse boards on custom career domains (nuro.ai,
+ * pinterestcareers.com) serve a JS shell, so their director roles all came
+ * back "Couldn't read the listing".
+ */
+export function listingApiUrl(postingId: string, url: string): string | null {
+  const gh = /^greenhouse:([^:]+):(\d+)$/.exec(postingId);
+  if (gh) return `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(gh[1])}/jobs/${gh[2]}`;
+  const wd = /^https:\/\/([\w-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([^/?#]+)\/(job\/[^?#]+)/.exec(url);
+  if (wd) return `https://${wd[1]}.${wd[2]}.myworkdayjobs.com/wday/cxs/${wd[1]}/${wd[3]}/${wd[4]}`;
+  return null;
+}
+
+/** The description HTML from a listingApiUrl() response, or "" when it has none. */
+export function listingApiHtml(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const p = payload as { content?: unknown; jobPostingInfo?: { jobDescription?: unknown } };
+  if (typeof p.content === "string") {
+    // Greenhouse escapes its HTML inside the JSON string.
+    return p.content.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  }
+  const d = p.jobPostingInfo?.jobDescription;
+  return typeof d === "string" ? d : "";
+}
+
 /** An unread listing is tried again after this long, in case it was a blip. */
 export const EXEC_RETRY_MS = 24 * 3600_000;
 
