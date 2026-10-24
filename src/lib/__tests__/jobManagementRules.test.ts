@@ -61,6 +61,21 @@ describe("managementKind", () => {
     }
   });
 
+  it("does not take an engineer working on a 'management' product for a manager (live, 2026-10-24)", () => {
+    for (const title of [
+      "Software Engineer, Ads Manager",
+      "Software Engineer, Fleet Management",
+      "Systems Software Engineer, Management Plane",
+      "Senior Software Engineer - Identity & Access Management",
+      "Strategic Sourcing Manager, Engineering Technology & Software",
+      "Director, Product Management - Data Transformation (Frontier Engineering)",
+    ]) {
+      expect(managementKind(title), title).toBeNull();
+    }
+    expect(classifyLevel("Software Engineer, Ads Manager")).toBe("midsenior");
+    expect(managementKind("Member of Technical Staff, Engineering Manager")).toBe("em");
+  });
+
   it("keeps tech leads under Lead / staff+, as Jake asked", () => {
     expect(managementKind("Tech Lead Manager, Ads")).toBeNull();
     expect(classifyLevel("Tech Lead Manager, Ads")).toBe("staff");
@@ -109,6 +124,25 @@ Preferred qualifications:
     const text = `- 8+ years of software engineering experience
 - 4+ years of experience managing managers`;
     expect(extractExecRequirement(text)).toEqual({ years: 8, managerYears: 4 });
+  });
+
+  it("ties each number to its own words (live director listings, 2026-10-24)", () => {
+    // Chime, Director Engineering.
+    expect(
+      extractExecRequirement(
+        "10+ years of software engineering experience, including 5+ years managing managers or leading multi-team engineering organizations"
+      )
+    ).toEqual({ years: 10, managerYears: 5 });
+    // Chime, Director, Growth Engineering.
+    expect(
+      extractExecRequirement(
+        "10+ years in software engineering, including 5+ years leading teams and at least 2 years leading tech lead managers or other leaders"
+      )
+    ).toEqual({ years: 10, managerYears: 2 });
+    // Clear, Director of Engineering: only a managing-managers bar.
+    expect(
+      extractExecRequirement("4+ years of leading and scaling engineering organizations, including managing managers and senior ICs")
+    ).toEqual({ years: null, managerYears: 4 });
   });
 
   it("falls back to people-management years when nothing else is stated", () => {
@@ -163,6 +197,26 @@ Aug 2014 – May 2019`;
 - Mentored two interns through their projects
 Aug 2019 – Present`;
     expect(careerExperience([text], now).careerStart?.toISOString().slice(0, 7)).toBe("2019-08");
+  });
+
+  it("reads Jake's real layouts: a company tenure line, and the internship under another title", () => {
+    // Shapes from the vault's resumes on 2026-10-24, which first gave 8.1 years.
+    const current = `WORK EXPERIENCE
+
+Mastodon Design LLC, a CACI Company               Sept 2018 – Present
+Software Engineer II | Aug 2019 – Present    Rochester, NY
+Individually maintained mission-critical backend microservices for the company's flagship product line.
+
+Software Engineer Intern | Sept 2018 – Aug 2019
+Developed full-stack feature improvements on a large-scale enterprise application.`;
+    const old = `Mastodon Design LLC / Applications Developer
+SEPT 2018 - PRESENT,  ROCHESTER, NY
+Office Clerk / Thermo Fisher Scientific
+JUNE 2018 - AUG 2018,  PENFIELD, NY`;
+    const exp = careerExperience([current, old], now);
+    expect(exp.careerStart?.toISOString().slice(0, 7)).toBe("2019-08");
+    expect(exp.internshipStart?.toISOString().slice(0, 7)).toBe("2018-09");
+    expect(exp.years).toBe(7.2);
   });
 
   it("returns null when no role date can be found", () => {

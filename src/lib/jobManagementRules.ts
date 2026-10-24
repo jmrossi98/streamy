@@ -51,10 +51,11 @@ const YEARS_RE = new RegExp(
 
 /** Managing managers, said several ways. */
 const MANAGER_OF_MANAGERS =
-  /\b(manag(?:ing|ement of)\s+(?:other\s+|engineering\s+|first-line\s+|front-line\s+)?managers|managers of managers|manager of managers|leading\s+(?:other\s+|engineering\s+)?managers|leaders of leaders|leading leaders|multi-level|multiple levels of management|managing multiple teams through managers)\b/i;
+  /\b((?:manag|lead)\w*\s+(?:[\w-]+\s+){0,3}managers|managers of managers|manager of managers|leaders of leaders|leading leaders|other leaders|multi-level|multiple levels of management|managing multiple teams through managers)\b/i;
 
 /** People management: not overall experience, but a floor under it when that is all a listing says. */
-const PEOPLE_MANAGEMENT = /\b(people manag|managing (?:engineering )?teams|managing engineers|managing software|engineering management|management experience|leading (?:engineering )?teams|leadership experience|direct reports)/i;
+const PEOPLE_MANAGEMENT =
+  /\b(people manag|managing (?:engineering )?teams|managing engineers|managing software|engineering management|management experience|leading (?:and scaling )?(?:engineering )?(?:teams|organizations|orgs)|scaling engineering|leadership experience|direct reports)/i;
 
 /** Overall experience: the words that follow a real requirement. */
 const EXPERIENCE = /\b(experience|industry|professional|software|engineering|technical|development|building|working)\b/i;
@@ -75,21 +76,27 @@ export function extractExecRequirement(text: string): ExecRequirement {
   const general: number[] = [];
   const people: number[] = [];
   const managers: number[] = [];
-  for (const m of text.matchAll(YEARS_RE)) {
+  const matches = [...text.matchAll(YEARS_RE)];
+  matches.forEach((m, i) => {
     const raw = m[1].toLowerCase();
     const n = /^\d+$/.test(raw) ? Number(raw) : WORD_NUMBERS[raw];
-    if (!n || n > 30) continue;
+    if (!n || n > 30) return;
     const at = m.index ?? 0;
-    const before = text.slice(Math.max(0, at - 60), at);
-    const after = text.slice(at + m[0].length, at + m[0].length + 110);
-    // Only the clause the number sits in: the next sentence is someone else's requirement.
-    const clause = after.split(/[.;\n•]/)[0];
+    const end = at + m[0].length;
+    // The words that belong to this number: up to the next "N years" or the
+    // end of the sentence. "10+ years of software engineering experience,
+    // including 5+ years managing managers" is 10 overall and 5 managing
+    // managers (Chime, 2026-10-24) -- not 10 managing managers.
+    const next = matches[i + 1]?.index ?? text.length;
+    const prevEnd = i > 0 ? (matches[i - 1].index ?? 0) + matches[i - 1][0].length : 0;
+    const clause = text.slice(end, Math.min(next, end + 160)).split(/[.;\n•]/)[0];
+    const before = text.slice(Math.max(prevEnd, at - 60), at);
     const near = `${before.split(/[.;\n•]/).pop() ?? ""} ${clause}`;
-    if (NOT_A_REQUIREMENT.test(clause.slice(0, 25))) continue;
+    if (NOT_A_REQUIREMENT.test(clause.slice(0, 25))) return;
     if (MANAGER_OF_MANAGERS.test(near)) managers.push(n);
     else if (PEOPLE_MANAGEMENT.test(clause)) people.push(n);
     else if (EXPERIENCE.test(clause) || /\b(minimum|at least)\b/i.test(before.slice(-25))) general.push(n);
-  }
+  });
   const min = (xs: number[]) => (xs.length > 0 ? Math.min(...xs) : null);
   return { years: min(general) ?? min(people), managerYears: min(managers) };
 }
@@ -158,8 +165,8 @@ function isHeadingLine(line: string | undefined): line is string {
  * nothing identifies is ignored rather than guessed at.
  */
 export function careerExperience(texts: string[], now: Date): CareerExperience {
-  let career: number | null = null;
-  let intern: number | null = null;
+  const roles: number[] = [];
+  const interns: number[] = [];
   for (const text of texts) {
     const lines = text.split(/\r?\n/);
     lines.forEach((line, i) => {
@@ -171,13 +178,26 @@ export function careerExperience(texts: string[], now: Date): CareerExperience {
         // A PDF can arrive as one long line, so only the words near the range.
         const at = m.index ?? 0;
         const own = line.slice(Math.max(0, at - 60), at + m[0].length + 40);
-        const neighbours = [lines[i - 1], lines[i + 1], lines[i - 2]].filter(isHeadingLine);
+        // A neighbour with its own dates is a different entry: in Jake's
+        // resumes "Mastodon Design LLC   Sept 2018 – Present" (the whole
+        // tenure, internship included) sits above "Software Engineer II |
+        // Aug 2019 – Present", and must not borrow that line's role.
+        const neighbours = [lines[i - 1], lines[i + 1], lines[i - 2]]
+          .filter(isHeadingLine)
+          .filter((l) => !new RegExp(RANGE_RE.source, "i").test(l));
         const kind = kindOf(own) ?? neighbours.map(kindOf).find((k) => k !== null) ?? null;
-        if (kind === "intern") intern = intern === null ? start : Math.min(intern, start);
-        else if (kind === "role") career = career === null ? start : Math.min(career, start);
+        if (kind === "intern") interns.push(start);
+        else if (kind === "role") roles.push(start);
       }
     });
   }
+  // A "role" that starts the month an internship does is that internship
+  // under another title: an old resume lists the Sept 2018 internship as
+  // "Applications Developer, Sept 2018 – Present" (2026-10-24).
+  const internMonths = new Set(interns);
+  const fullTime = roles.filter((t) => !internMonths.has(t));
+  const career = fullTime.length > 0 ? Math.min(...fullTime) : null;
+  const intern = interns.length > 0 ? Math.min(...interns) : null;
   const years = career === null ? null : (now.getTime() - career) / (365.25 * 86_400_000);
   return {
     careerStart: career === null ? null : new Date(career),
