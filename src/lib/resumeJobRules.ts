@@ -40,7 +40,38 @@ export const HARD_STOP_GRACE_MS = 45_000;
 /** A finished job stays on its listing's button this long after a reload. */
 export const RECENT_FINISHED_MS = 24 * 3600_000;
 
-export const INTERRUPTED_ERROR = "Interrupted by a server restart — tap Tailor again";
+/**
+ * 2026-10-24: deploys from other work landed every 5-10 minutes that evening
+ * and a tailoring takes 7-8, so "tap Tailor again" lost every time (one Roblox
+ * posting was killed four runs in a row). When the server boots it re-queues
+ * the jobs the previous process was running, from the start, up to this many
+ * runs in all, so cost stays bounded.
+ */
+export const MAX_ATTEMPTS = 3;
+/** Only jobs started this recently are re-queued; older ones were long abandoned. */
+export const RECOVER_WITHIN_MS = 30 * 60_000;
+/**
+ * A job is only taken over once its heartbeat is this old, so an old
+ * container still finishing during a deploy is never doubled up on.
+ */
+export const TAKEOVER_AFTER_MS = HEARTBEAT_MS + 15_000;
+export const GAVE_UP_ERROR = "Interrupted by server restarts three times — tap Tailor again";
+
+export type BootDecision = "requeue" | "fail" | "wait" | "leave";
+
+/** What a booting server does with one job row the last process may have owned. */
+export function bootDecision(
+  job: { status: string; attempts: number; startedAt: Date; heartbeatAt: Date },
+  now: number
+): BootDecision {
+  if (!isActive(job.status)) return "leave";
+  if (now - job.startedAt.getTime() > RECOVER_WITHIN_MS) return "fail";
+  if (job.attempts >= MAX_ATTEMPTS) return "fail";
+  if (now - job.heartbeatAt.getTime() < TAKEOVER_AFTER_MS) return "wait";
+  return "requeue";
+}
+
+export const INTERRUPTED_ERROR ="Interrupted by a server restart — tap Tailor again";
 export const OVERRUN_ERROR = "Took longer than 10 minutes and was stopped — tap Tailor again";
 export const LISTING_UNREAD_NOTE = "Couldn't read the listing page; tailored from web research";
 

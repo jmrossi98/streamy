@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  bootDecision,
+  MAX_ATTEMPTS,
+  RECOVER_WITHIN_MS,
+  TAKEOVER_AFTER_MS,
   budgetFor,
   canAdvance,
   effectiveStatus,
@@ -162,5 +166,33 @@ describe("resumeLog", () => {
     expect(resumeLog("Reviewing", 1234.6, { posting: "scraped:Meta:1", error: "timed out" })).toBe(
       '[resume] step=Reviewing ms=1235 posting=scraped:Meta:1 error="timed out"'
     );
+  });
+});
+
+describe("bootDecision", () => {
+  const now = T0 + 10 * 60_000;
+  const job = (over: Partial<{ status: string; attempts: number; startedAt: Date; heartbeatAt: Date }> = {}) => ({
+    status: "running",
+    attempts: 1,
+    startedAt: new Date(now - 5 * 60_000),
+    heartbeatAt: new Date(now - 60_000),
+    ...over,
+  });
+
+  it("re-queues a job the last process was running", () => {
+    expect(bootDecision(job(), now)).toBe("requeue");
+    expect(bootDecision(job({ status: "queued" }), now)).toBe("requeue");
+  });
+  it("waits while the heartbeat is too fresh to be sure the owner is gone", () => {
+    expect(bootDecision(job({ heartbeatAt: new Date(now - 5_000) }), now)).toBe("wait");
+    expect(bootDecision(job({ heartbeatAt: new Date(now - TAKEOVER_AFTER_MS - 1) }), now)).toBe("requeue");
+  });
+  it("fails jobs out of attempts or long abandoned", () => {
+    expect(bootDecision(job({ attempts: MAX_ATTEMPTS }), now)).toBe("fail");
+    expect(bootDecision(job({ startedAt: new Date(now - RECOVER_WITHIN_MS - 1) }), now)).toBe("fail");
+  });
+  it("leaves finished jobs alone", () => {
+    expect(bootDecision(job({ status: "succeeded" }), now)).toBe("leave");
+    expect(bootDecision(job({ status: "failed" }), now)).toBe("leave");
   });
 });

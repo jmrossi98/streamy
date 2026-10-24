@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { INTERRUPTED_ERROR, STALE_AFTER_MS } from "../resumeJobRules";
+import { GAVE_UP_ERROR, INTERRUPTED_ERROR, STALE_AFTER_MS } from "../resumeJobRules";
 
 type Row = {
   id: string;
@@ -10,6 +10,7 @@ type Row = {
   note: string | null;
   versionId: string | null;
   requestedBy: string;
+  attempts: number;
   startedAt: Date;
   updatedAt: Date;
   heartbeatAt: Date;
@@ -17,7 +18,8 @@ type Row = {
 
 const rows: Row[] = [];
 let n = 0;
-const matches = (r: Row, where: { id?: string; postingId?: string; status?: { in: string[] } }) =>
+const matches = (r: Row, where: { id?: string; postingId?: string; status?: { in: string[] }; heartbeatAt?: Date }) =>
+  (!where.heartbeatAt || +r.heartbeatAt === +where.heartbeatAt) &&
   (!where.id || r.id === where.id) &&
   (!where.postingId || r.postingId === where.postingId) &&
   (!where.status || where.status.in.includes(r.status));
@@ -29,11 +31,12 @@ vi.mock("../db", () => ({
       findFirst: async ({ where }: { where: Parameters<typeof matches>[1] }) =>
         rows.filter((r) => matches(r, where)).sort((a, b) => +b.startedAt - +a.startedAt)[0] ?? null,
       findUnique: async ({ where }: { where: { id: string } }) => rows.find((r) => r.id === where.id) ?? null,
+      findMany: async ({ where }: { where: Parameters<typeof matches>[1] }) => rows.filter((r) => matches(r, where)),
       create: async ({ data }: { data: Partial<Row> }) => {
         const now = new Date();
         const row: Row = {
           id: `job${++n}`, postingId: "", status: "queued", step: "", error: null, note: null, versionId: null,
-          requestedBy: "", startedAt: now, updatedAt: now, heartbeatAt: now, ...data,
+          requestedBy: "", attempts: 1, startedAt: now, updatedAt: now, heartbeatAt: now, ...data,
         };
         rows.push(row);
         return row;
@@ -59,7 +62,7 @@ vi.mock("../resume", () => ({
   ),
 }));
 
-const { startResumeJob, getResumeJob } = await import("../resumeJobs");
+const { startResumeJob, getResumeJob, recoverInterruptedJobs } = await import("../resumeJobs");
 const { generateTailoredResume } = await import("../resume");
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -98,7 +101,7 @@ describe("startResumeJob", () => {
     const old = new Date(Date.now() - STALE_AFTER_MS - 5_000);
     rows.push({
       id: "dead", postingId: "p3", status: "running", step: "Reviewing", error: null, note: null, versionId: null,
-      requestedBy: "jaker", startedAt: old, updatedAt: old, heartbeatAt: old,
+      requestedBy: "jaker", attempts: 1, startedAt: old, updatedAt: old, heartbeatAt: old,
     });
     expect((await getResumeJob("dead"))?.status).toBe("failed");
     const r = await startResumeJob("p3", "jaker");
@@ -109,5 +112,41 @@ describe("startResumeJob", () => {
 
   it("refuses a listing that no longer exists", async () => {
     expect(await startResumeJob("gone", "jaker")).toEqual({ ok: false, status: 404, error: "That listing no longer exists." });
+  });
+});
+
+describe("recoverInterruptedJobs (server boot)", () => {
+  const dead = (id: string, over: Partial<Row> = {}): Row => {
+    const t = new Date(Date.now() - 60_000);
+    return {
+      id, postingId: `post-${id}`, status: "running", step: "Reviewing", error: null, note: null, versionId: null,
+      requestedBy: "jaker", attempts: 1, startedAt: new Date(Date.now() - 5 * 60_000), updatedAt: t, heartbeatAt: t, ...over,
+    };
+  };
+
+  it("re-runs a job the restart killed, under the same id, and counts the attempt", async () => {
+    rows.push(dead("a"));
+    await recoverInterruptedJobs(false);
+    await tick();
+    expect(generateTailoredResume).toHaveBeenCalledTimes(1);
+    expect(rows[0]).toMatchObject({ id: "a", status: "running", attempts: 2, error: null });
+    finish({ ok: true, id: "ver-a", note: null });
+    await tick();
+    expect(await getResumeJob("a")).toMatchObject({ status: "succeeded", versionId: "ver-a" });
+  });
+
+  it("gives up after three runs, and on jobs abandoned long ago", async () => {
+    rows.push(dead("b", { attempts: 3 }), dead("c", { startedAt: new Date(Date.now() - 3600_000) }));
+    await recoverInterruptedJobs(false);
+    expect(generateTailoredResume).not.toHaveBeenCalled();
+    expect(rows.find((r) => r.id === "b")).toMatchObject({ status: "failed", error: GAVE_UP_ERROR });
+    expect(rows.find((r) => r.id === "c")).toMatchObject({ status: "failed", error: INTERRUPTED_ERROR });
+  });
+
+  it("leaves a job whose heartbeat is still fresh (an old container may still own it)", async () => {
+    rows.push(dead("d", { heartbeatAt: new Date() }));
+    await recoverInterruptedJobs(false);
+    expect(generateTailoredResume).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({ status: "running", attempts: 1 });
   });
 });
