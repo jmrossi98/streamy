@@ -986,6 +986,9 @@ model ResumeJob {
   /// The ResumeVersion it made.
   versionId   String?
   requestedBy String   @default("")
+  /// Runs of this job so far: a server restart re-queues it (up to
+  /// MAX_ATTEMPTS) rather than leaving it dead. 2026-10-24.
+  attempts    Int      @default(1)
   startedAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   heartbeatAt DateTime @default(now())

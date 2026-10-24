@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "ResumeJob" ADD COLUMN "attempts" INTEGER NOT NULL DEFAULT 1;

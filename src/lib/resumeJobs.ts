@@ -10,6 +10,11 @@ import { logAudit } from "./auditLog";
 import { prisma } from "./db";
 import { generateTailoredResume } from "./resume";
 import {
+  bootDecision,
+  GAVE_UP_ERROR,
+  INTERRUPTED_ERROR,
+  MAX_ATTEMPTS,
+  TAKEOVER_AFTER_MS,
   canAdvance,
   effectiveStatus,
   HARD_STOP_GRACE_MS,
@@ -117,6 +122,46 @@ async function run(id: string, postingId: string, startedAt: number, requestedBy
   } finally {
     clearInterval(beat);
     clearTimeout(cap);
+  }
+}
+
+/**
+ * Called once when the server boots (src/instrumentation.ts). Any job still
+ * marked queued/running belonged to the previous process, which a deploy or
+ * crash just ended: run it again from the start (bootDecision, MAX_ATTEMPTS),
+ * keeping its id so a page polling it carries on. The claim is conditional on
+ * the heartbeat it read, so if an old container is somehow still beating,
+ * this process leaves the job alone.
+ */
+export async function recoverInterruptedJobs(retry = true): Promise<void> {
+  const now = Date.now();
+  const rows = await prisma.resumeJob.findMany({ where: { status: ACTIVE } });
+  let waiting = false;
+  for (const job of rows) {
+    const decision = bootDecision(job, now);
+    if (decision === "wait") {
+      waiting = true;
+      continue;
+    }
+    if (decision === "fail") {
+      await markFailed(job.id, job.attempts >= MAX_ATTEMPTS ? GAVE_UP_ERROR : INTERRUPTED_ERROR);
+      console.log(resumeLog("recover", 0, { job: job.id, decision, attempts: job.attempts }));
+      continue;
+    }
+    if (decision !== "requeue") continue;
+    const startedAt = new Date();
+    const claimed = await prisma.resumeJob.updateMany({
+      where: { id: job.id, status: ACTIVE, heartbeatAt: job.heartbeatAt },
+      data: { status: "queued", step: "", attempts: job.attempts + 1, startedAt, heartbeatAt: startedAt, error: null },
+    });
+    if (claimed.count !== 1) continue;
+    console.log(resumeLog("recover", 0, { job: job.id, decision, attempt: job.attempts + 1, posting: job.postingId }));
+    void logAudit(job.requestedBy || "resume", "resume.generate.resume", job.postingId, `job ${job.id} attempt ${job.attempts + 1}`);
+    void run(job.id, job.postingId, startedAt.getTime(), job.requestedBy);
+  }
+  // A job whose heartbeat was too fresh to take over: look again once it can't be.
+  if (waiting && retry) {
+    setTimeout(() => void recoverInterruptedJobs(false).catch(() => undefined), TAKEOVER_AFTER_MS + 5_000).unref?.();
   }
 }
 
