@@ -101,6 +101,18 @@ describe("checkResumeFormat", () => {
     expect(out.some((m) => m.startsWith("Project"))).toBe(true);
   });
 
+  it("doesn't ask for more bullets than the per-role caps allow", () => {
+    // Three roles, no projects: 6 + 5 + 1 = 12 is the most there can be.
+    const full = checkResumeFormat(resume({ current: 6, previous: 5, intern: 1 }), "leadership");
+    expect(full.some((i) => /bullets in total/.test(i.message))).toBe(false);
+    const short = checkResumeFormat(resume({ current: 5, previous: 4, intern: 1 }), "product");
+    expect(short.some((i) => /^10 bullets in total; aim for 14-16/.test(i.message))).toBe(true);
+  });
+
+  it("does not count REST as a technology", () => {
+    expect(technologiesIn("Reduced latency 40% on a REST API (Python/Django, PostgreSQL)").sort()).toEqual(["Django", "PostgreSQL", "Python"]);
+  });
+
   it("names each bullet over 25 words, with its words", () => {
     const md = resume().replace(`- ${words(18)}`, `- ${words(31, "Reduced")}`);
     const out = trims(md);

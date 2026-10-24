@@ -55,7 +55,7 @@ RESEARCH
 
 STANDARDS (what recruiters, hiring managers and engineering-resume communities agree on)
 - One page, always. Budget about 550-650 words for the whole resume. When it doesn't fit, cut the oldest and least relevant bullets first, never the recent impact.
-- Experience first, jobs in reverse chronological order. BULLET BUDGET (the candidate's approved rule, 2026-10-24): 14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-5, internship 1 or none. Projects get one line each, and are dropped for leadership-track roles unless directly relevant.
+- Experience first, jobs in reverse chronological order. BULLET BUDGET (the candidate's approved rule, 2026-10-24): 14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-5, internship 1 or none. Projects get one line each, and are dropped for leadership-track roles unless directly relevant. When the per-role caps cannot reach 14 (few roles, no projects), the caps win: never pad.
 - Within a job, order bullets by relevance to this listing, not chronology. For senior and leadership targets, the current role's first bullet makes scope visible (systems owned, users served, teams worked across).
 - Every bullet is 15-25 words, with the result in the first few words. A second sentence only when it lands a key result or carries a metric.
 - Every bullet follows the XYZ pattern: accomplished [X], measured by [Y], by doing [Z]. Open with a strong, varied verb; name the scope (what system, how many users or services, who depended on it) and the outcome, not the task. Use a number only when the bank gives one. Each bullet shows a different kind of impact: shipped, owned a rollout, found a root cause, designed, reviewed, mentored.

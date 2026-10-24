@@ -259,6 +259,7 @@ export type TailorOptions = {
  */
 const DRAFT_MAX_MS = 420_000;
 const REVIEW_MAX_MS = 300_000;
+const REVIEW_MAX_TOKENS = 40_000;
 
 export async function generateTailoredResume(postingId: string, opts: TailorOptions = {}): Promise<ResumeResult> {
   const startedAt = opts.startedAt ?? Date.now();
@@ -338,10 +339,16 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
         // Counted here, not by the model: the review is told exactly which
         // bullets are over a limit (resumeFormatRules.checkResumeFormat).
         const formatCheck = formatIssuesBlock(checkResumeFormat(resume, guidance.roleType));
+        // 2026-10-24: the first review with the rules, style guide and
+        // specificity rubric spent all 28k output tokens reasoning (Meta
+        // "Software Engineer (Technical Leadership)") and wrote nothing, so the
+        // draft went out unreviewed. More room, and medium effort: the review
+        // is a checklist against a finished draft, and it has only what is
+        // left of the 10 minutes after a ~6-minute researched draft.
         const review = await complete(route, buildReviewMessages(input, bank, { resume, notes }, guidance, formatCheck), {
-          maxTokens: 24_000,
+          maxTokens: REVIEW_MAX_TOKENS,
           timeoutMs: reviewBudget,
-          effort: "high",
+          effort: "medium",
         });
         const revised = splitResumeOutput(review.text);
         // No H1 required: the header is the profile's, added below.
