@@ -4,6 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatSessionList, type ClaudeCodeSessionItem } from "@/components/ChatSessionList";
 import { Button, TextArea } from "@/components/ui";
+import { ResizeHandle, usePersistedSize } from "@/components/ui/ResizeHandle";
+import {
+  CHAT_SIDEBAR_MAX,
+  CHAT_SIDEBAR_MIN,
+  CHAT_SIDEBAR_WIDTH_KEY,
+  CHAT_TRANSCRIPT_MIN,
+  clampSize,
+} from "@/lib/paneSizeRules";
 import {
   CHAT_BACKENDS,
   DEFAULT_BACKEND,
@@ -99,6 +107,8 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** How often the open chat is checked for turns added elsewhere (a linked Claude Code session). */
 const REFRESH_MS = 15_000;
+/** Within this many px of the bottom still counts as "at the bottom" (a one-line rounding slop). */
+const FOLLOW_SLACK_PX = 40;
 
 function summaryOf(s: ChatSessionFull): ChatSessionSummary {
   return {
@@ -313,14 +323,26 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
     return () => clearInterval(timer);
   }, [currentId, editing]);
 
-  const loadClaudeSessions = useCallback(async () => {
+  const loadClaudeSessions = useCallback(async (): Promise<boolean> => {
     try {
       const { sessions: list } = await api<{ sessions: ClaudeCodeSessionItem[] }>("/api/admin/chat-sessions/claude-code");
       setClaudeSessions(list);
+      return true;
     } catch {
       // The vault being unreachable only hides this list.
+      return false;
     }
   }, []);
+
+  // The sidebar's width on wider screens (null = the default w-52).
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
+  const [sidebarWidth, setSidebarWidth] = usePersistedSize(CHAT_SIDEBAR_WIDTH_KEY, CHAT_SIDEBAR_MIN, CHAT_SIDEBAR_MAX);
+  /** The widest the sidebar may go and still leave the transcript room. */
+  function sidebarMax() {
+    const total = layoutRef.current?.getBoundingClientRect().width ?? 0;
+    return clampSize(total - CHAT_TRANSCRIPT_MIN, CHAT_SIDEBAR_MIN, CHAT_SIDEBAR_MAX);
+  }
 
   useEffect(() => {
     void loadClaudeSessions();
@@ -330,11 +352,26 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
 
   const modelId = useMemo(() => slots[backend].model, [backend, slots]);
 
-  // Follow the output as it generates, which is the whole point of streaming.
+  // Follow the output as it generates -- but only while the view is at the
+  // bottom. Scrolling up to read the start of a reply while it is still
+  // arriving lets go of the bottom; a new turn (you asked something) takes
+  // hold again. 2026-10-24, Jake: "if I scroll up I don't want to be snapped
+  // to the rolling response text", as in Claude Code.
+  const [following, setFollowing] = useState(true);
+  const turnCountRef = useRef(0);
+  function onTranscriptScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK_PX;
+    setFollowing((f) => (f === atBottom ? f : atBottom));
+  }
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && !editing) el.scrollTop = el.scrollHeight;
-  }, [turns, editing]);
+    const newTurn = turns.length !== turnCountRef.current;
+    turnCountRef.current = turns.length;
+    if (newTurn && !following) setFollowing(true);
+    if (el && !editing && (following || newTurn)) el.scrollTop = el.scrollHeight;
+  }, [turns, editing, following]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -648,8 +685,10 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   const linkedToClaude = !!currentSummary?.claudeSessionId && !isClaudeAppImport(currentSummary.claudeSessionId);
   const fromClaudeApp = !!currentSummary?.claudeSessionId && isClaudeAppImport(currentSummary.claudeSessionId);
 
-  const list = (
+  const list = (resizable: boolean) => (
     <ChatSessionList
+      resizable={resizable}
+      onRefreshClaude={loadClaudeSessions}
       sessions={sessions}
       loaded={sessionsLoaded}
       currentId={currentId}
@@ -664,13 +703,29 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   );
 
   return (
-    <div className={`relative flex gap-3 ${fullHeight ? "h-full min-h-0" : ""}`}>
-      {/* The saved chats: a column beside the transcript on wider screens, a
-          sheet over it on a phone. */}
-      <aside className="hidden w-52 shrink-0 border-r border-white/10 pr-3 md:block">{list}</aside>
+    <div ref={layoutRef} className={`relative flex gap-3 ${fullHeight ? "h-full min-h-0" : ""}`}>
+      {/* The saved chats: a column beside the transcript on wider screens,
+          with a draggable edge; a sheet over it on a phone. */}
+      <aside
+        ref={asideRef}
+        className={`hidden shrink-0 md:block ${sidebarWidth == null ? "w-52" : ""}`}
+        style={sidebarWidth != null ? { width: sidebarWidth, maxWidth: `calc(100% - ${CHAT_TRANSCRIPT_MIN}px)` } : undefined}
+      >
+        {list(true)}
+      </aside>
+      <ResizeHandle
+        orientation="vertical"
+        label="Resize chat list"
+        getSize={() => asideRef.current?.getBoundingClientRect().width ?? CHAT_SIDEBAR_MIN}
+        min={CHAT_SIDEBAR_MIN}
+        max={sidebarMax}
+        onResize={setSidebarWidth}
+        onReset={() => setSidebarWidth(null)}
+        className="-mx-2 hidden md:block"
+      />
       {listOpen && (
         <div className="absolute inset-y-0 left-0 z-20 w-64 max-w-[85%] rounded-lg border border-white/15 bg-netflix-dark p-3 shadow-2xl shadow-black/60 md:hidden">
-          {list}
+          {list(false)}
         </div>
       )}
 
@@ -782,7 +837,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
 
         <div
           ref={scrollRef}
-          className={`overflow-y-auto px-1 sm:px-3 ${
+          onScroll={onTranscriptScroll}
+          className={`relative overflow-y-auto px-1 sm:px-3 ${
             // Fixed, not max-h: a max-height collapses to nothing on an empty
             // transcript, so the panel jumped in size as soon as you asked
             // anything. Shorter on a phone, where 34rem is most of the screen.
@@ -954,6 +1010,23 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
               </div>
             );
           })}
+          {/* Let go of the bottom while a reply streams: one tap takes hold again. */}
+          {!following && streaming && (
+            <div className="sticky bottom-2 flex justify-center">
+              <Button
+                variant="secondary"
+                size="xs"
+                className="bg-netflix-dark/90 shadow-lg shadow-black/40"
+                onClick={() => {
+                  setFollowing(true);
+                  const el = scrollRef.current;
+                  if (el) el.scrollTop = el.scrollHeight;
+                }}
+              >
+                ↓ Jump to latest
+              </Button>
+            </div>
+          )}
           </div>
         </div>
 
