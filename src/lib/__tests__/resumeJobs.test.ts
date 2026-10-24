@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GAVE_UP_ERROR, INTERRUPTED_ERROR, STALE_AFTER_MS } from "../resumeJobRules";
+import { GAVE_UP_ERROR, HEARTBEAT_MS, INTERRUPTED_ERROR, STALE_AFTER_MS } from "../resumeJobRules";
+import { HELD_STEP } from "../deployDrainRules";
 
 type Row = {
   id: string;
@@ -18,11 +19,15 @@ type Row = {
 
 const rows: Row[] = [];
 let n = 0;
-const matches = (r: Row, where: { id?: string; postingId?: string; status?: { in: string[] }; heartbeatAt?: Date }) =>
+const matches = (
+  r: Row,
+  where: { id?: string; postingId?: string; status?: string | { in: string[] }; step?: string; heartbeatAt?: Date }
+) =>
   (!where.heartbeatAt || +r.heartbeatAt === +where.heartbeatAt) &&
+  (where.step === undefined || r.step === where.step) &&
   (!where.id || r.id === where.id) &&
   (!where.postingId || r.postingId === where.postingId) &&
-  (!where.status || where.status.in.includes(r.status));
+  (!where.status || (typeof where.status === "string" ? r.status === where.status : where.status.in.includes(r.status)));
 
 vi.mock("../db", () => ({
   prisma: {
@@ -50,6 +55,8 @@ vi.mock("../db", () => ({
   },
 }));
 vi.mock("../auditLog", () => ({ logAudit: async () => undefined }));
+let draining = false;
+vi.mock("../deployDrain", () => ({ isDraining: async () => draining }));
 
 let finish: (r: { ok: true; id: string; note: string | null } | { ok: false; error: string }) => void = () => {};
 vi.mock("../resume", () => ({
@@ -68,6 +75,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   rows.length = 0;
+  draining = false;
   vi.mocked(generateTailoredResume).mockClear();
 });
 
@@ -148,5 +156,48 @@ describe("recoverInterruptedJobs (server boot)", () => {
     await recoverInterruptedJobs(false);
     expect(generateTailoredResume).not.toHaveBeenCalled();
     expect(rows[0]).toMatchObject({ status: "running", attempts: 1 });
+  });
+});
+
+describe("while a deploy is draining", () => {
+  it("holds a new job instead of starting it, then starts it once the drain ends", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+    try {
+      draining = true;
+      const r = await startResumeJob("h1", "jaker");
+      expect(r.ok && r.job.status).toBe("queued");
+      expect(rows[0]).toMatchObject({ status: "queued", step: HELD_STEP, attempts: 1 });
+      expect(generateTailoredResume).not.toHaveBeenCalled();
+
+      // Still draining: kept alive, not started.
+      rows[0].heartbeatAt = new Date(Date.now() - 60_000);
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(generateTailoredResume).not.toHaveBeenCalled();
+      expect(Date.now() - +rows[0].heartbeatAt).toBeLessThan(5_000);
+
+      // The deploy gave up or the TTL ran out without a restart.
+      draining = false;
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+      expect(generateTailoredResume).toHaveBeenCalledTimes(1);
+      expect(rows[0]).toMatchObject({ status: "running", attempts: 1 });
+      finish({ ok: true, id: "ver-h1", note: null });
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a held job picked up after the restart is a first attempt, not a retry", async () => {
+    const t = new Date(Date.now() - 60_000);
+    rows.push({
+      id: "held", postingId: "h2", status: "queued", step: HELD_STEP, error: null, note: null, versionId: null,
+      requestedBy: "jaker", attempts: 1, startedAt: new Date(Date.now() - 5 * 60_000), updatedAt: t, heartbeatAt: t,
+    });
+    draining = true; // the deploy hasn't cleared the flag yet; the restart already happened
+    await recoverInterruptedJobs(false);
+    await tick();
+    expect(generateTailoredResume).toHaveBeenCalledTimes(1);
+    expect(rows[0]).toMatchObject({ id: "held", status: "running", attempts: 1 });
+    finish({ ok: false, error: "x" });
   });
 });
