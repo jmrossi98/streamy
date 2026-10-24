@@ -142,7 +142,7 @@ export type TailorOptions = {
   startedAt?: number;
 };
 
-/** Each model call's own ceiling; the job's 8-minute cap usually binds first. */
+/** Each model call's own ceiling; the job's 10-minute cap usually binds first. */
 const MODEL_CALL_MAX_MS = 300_000;
 
 export async function generateTailoredResume(postingId: string, opts: TailorOptions = {}): Promise<ResumeResult> {
@@ -192,7 +192,7 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     // A failed review keeps the draft rather than failing the whole thing.
     await step("Researching and drafting");
     const draftBudget = budgetFor(startedAt, Date.now(), MODEL_CALL_MAX_MS);
-    if (draftBudget < 30_000) return { ok: false, error: "Ran out of time before drafting (8-minute limit) — tap Tailor again." };
+    if (draftBudget < 30_000) return { ok: false, error: "Ran out of time before drafting (10-minute limit) — tap Tailor again." };
     const draft = await complete(route, buildResumeMessages(input, bank), {
       maxTokens: 24_000,
       webSearch: true,
@@ -201,11 +201,11 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     });
     let { resume, notes } = splitResumeOutput(draft.text);
     let model = draft.model;
-    // Whatever is left of the 8 minutes; too little and the draft is kept
+    // Whatever is left of the 10 minutes; too little and the draft is kept
     // unreviewed rather than thrown away.
     const reviewBudget = budgetFor(startedAt, Date.now(), MODEL_CALL_MAX_MS);
     if (resume.trim() && reviewBudget < 30_000) {
-      notes += "\n\n**Review**\n- Skipped: the draft used up the 8-minute limit; this is the unreviewed draft.";
+      notes += "\n\n**Review**\n- Skipped: the draft used up the 10-minute limit; this is the unreviewed draft.";
     } else if (resume.trim()) {
       await step("Reviewing");
       try {

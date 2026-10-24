@@ -22,13 +22,26 @@ export const HEARTBEAT_MS = 20_000;
  * database write is not mistaken for a death.
  */
 export const STALE_AFTER_MS = 2 * 60_000;
-/** The whole job, start to saved. Each model call gets what is left of it. */
-export const JOB_CAP_MS = 8 * 60_000;
+/**
+ * The whole job, start to saved. Each model call gets what is left of it.
+ *
+ * 2026-10-24: first set at 8 minutes, but the self-test runs that evening
+ * (Microsoft, Reddit, two Meta postings, Opus at high effort) took a 157-240 s
+ * draft plus a 232-243 s review, plus ~8 s reading the vault and up to 14 s
+ * rendering the listing: ~6.5-8.5 minutes, and one Meta run hit 8. Ten
+ * leaves room for a slow day; past it the review is skipped and the draft kept.
+ */
+export const JOB_CAP_MS = 10 * 60_000;
+/**
+ * The hard stop fires this long after the cap: the review's own deadline ends
+ * 15 s before the cap, and the draft it falls back to still has to be saved.
+ */
+export const HARD_STOP_GRACE_MS = 45_000;
 /** A finished job stays on its listing's button this long after a reload. */
 export const RECENT_FINISHED_MS = 24 * 3600_000;
 
 export const INTERRUPTED_ERROR = "Interrupted by a server restart — tap Tailor again";
-export const OVERRUN_ERROR = "Took longer than 8 minutes and was stopped — tap Tailor again";
+export const OVERRUN_ERROR = "Took longer than 10 minutes and was stopped — tap Tailor again";
 export const LISTING_UNREAD_NOTE = "Couldn't read the listing page; tailored from web research";
 
 export type ResumeJobRow = {

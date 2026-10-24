@@ -91,8 +91,8 @@ describe("budgetFor", () => {
   it("is the per-call max while there is plenty of time", () => {
     expect(budgetFor(T0, T0 + 10_000, 300_000)).toBe(300_000);
   });
-  it("shrinks to what is left of the 8 minutes, less a reserve for saving", () => {
-    expect(budgetFor(T0, T0 + 6 * 60_000, 300_000)).toBe(2 * 60_000 - 15_000);
+  it("shrinks to what is left of the cap, less a reserve for saving", () => {
+    expect(budgetFor(T0, T0 + JOB_CAP_MS - 3 * 60_000, 300_000)).toBe(3 * 60_000 - 15_000);
     expect(budgetFor(T0, T0 + JOB_CAP_MS, 300_000)).toBe(0);
   });
 });
