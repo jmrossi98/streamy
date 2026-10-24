@@ -8,7 +8,16 @@ import { htmlToText } from "./pageWatchRules";
 import { renderListing } from "./listingRender";
 import { budgetFor, LISTING_UNREAD_NOTE, needsRender, pickListingText, resumeLog, type ResumeJobStep } from "./resumeJobRules";
 import { assembleBank, isBankFile, RESUME_VAULT_DIRS, orderBankFiles, pickBankFiles, type BankFile, type BankItem } from "./resumeBankRules";
-import { buildResumeMessages, buildReviewMessages, MAX_BANK_CHARS, splitResumeOutput, type NoteSource, type PostingInput } from "./resumeRules";
+import {
+  buildResumeMessages,
+  buildReviewMessages,
+  MAX_BANK_CHARS,
+  profileLocation,
+  splitResumeOutput,
+  withProfileHeader,
+  type NoteSource,
+  type PostingInput,
+} from "./resumeRules";
 import { isVaultConfigured, listVaultFiles, readVaultFile } from "./vault";
 
 export { RESUME_VAULT_DIRS } from "./resumeBankRules";
@@ -142,8 +151,17 @@ export type TailorOptions = {
   startedAt?: number;
 };
 
-/** Each model call's own ceiling; the job's 10-minute cap usually binds first. */
-const MODEL_CALL_MAX_MS = 300_000;
+/**
+ * Each model call's own ceiling; the job's 10-minute cap binds as well.
+ *
+ * 2026-10-24: one ceiling of 300 s for both, until #528 made it a real
+ * deadline (the SDK used to retry past it). The Meta "Software Engineer,
+ * Systems" draft then timed out at 300 s: researched drafts measured 157-300+
+ * s. The draft gets 7 minutes; the review whatever is left (and is skipped,
+ * keeping the draft, when that is too little).
+ */
+const DRAFT_MAX_MS = 420_000;
+const REVIEW_MAX_MS = 300_000;
 
 export async function generateTailoredResume(postingId: string, opts: TailorOptions = {}): Promise<ResumeResult> {
   const startedAt = opts.startedAt ?? Date.now();
@@ -175,6 +193,10 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     };
   }
 
+  // The header's name, location and contact details (resumeRules.profileHeader).
+  // Imported here: applyPacket imports this module.
+  const profile = await (await import("./applyPacket")).getApplicantProfile();
+
   await step("Reading the listing");
   const listing = await readListing(posting.url);
   const note = listing.source === "none" ? LISTING_UNREAD_NOTE : null;
@@ -184,6 +206,7 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     location: posting.location,
     url: posting.url,
     postingText: listing.text,
+    candidateLocation: profileLocation(profile),
   };
   try {
     // Two passes. The draft researches the company and writes; the review
@@ -191,7 +214,7 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     // would, checks every claim against the bank, and tightens it to a page.
     // A failed review keeps the draft rather than failing the whole thing.
     await step("Researching and drafting");
-    const draftBudget = budgetFor(startedAt, Date.now(), MODEL_CALL_MAX_MS);
+    const draftBudget = budgetFor(startedAt, Date.now(), DRAFT_MAX_MS);
     if (draftBudget < 30_000) return { ok: false, error: "Ran out of time before drafting (10-minute limit) — tap Tailor again." };
     const draft = await complete(route, buildResumeMessages(input, bank), {
       maxTokens: 24_000,
@@ -203,7 +226,7 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     let model = draft.model;
     // Whatever is left of the 10 minutes; too little and the draft is kept
     // unreviewed rather than thrown away.
-    const reviewBudget = budgetFor(startedAt, Date.now(), MODEL_CALL_MAX_MS);
+    const reviewBudget = budgetFor(startedAt, Date.now(), REVIEW_MAX_MS);
     if (resume.trim() && reviewBudget < 30_000) {
       notes += "\n\n**Review**\n- Skipped: the draft used up the 10-minute limit; this is the unreviewed draft.";
     } else if (resume.trim()) {
@@ -215,7 +238,8 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
           effort: "high",
         });
         const revised = splitResumeOutput(review.text);
-        if (/^#\s+\S/m.test(revised.resume) && /##\s+Experience/i.test(revised.resume)) {
+        // No H1 required: the header is the profile's, added below.
+        if (/##\s+Experience/i.test(revised.resume)) {
           resume = revised.resume;
           notes = revised.notes || notes;
           model = review.model === draft.model ? draft.model : `${draft.model} + ${review.model}`;
@@ -226,6 +250,8 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     }
     await step("Saving");
     if (note) notes = `**Listing**\n- ${note}.\n\n${notes}`;
+    // Whatever header either pass wrote, the saved profile's replaces it.
+    resume = withProfileHeader(resume, profile);
     const row = await prisma.resumeVersion.create({
       data: {
         postingId,
