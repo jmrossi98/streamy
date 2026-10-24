@@ -386,7 +386,10 @@ model PendingEpisodeSearch {
 /// any exist.
 model JobBoardSource {
   id       String  @id @default(cuid())
-  /// "greenhouse" | "ashby" | "workday".
+  /// A JobProvider from lib/jobBoards.ts, or "scraped" for a career site
+  /// mediabox renders (scripts/job-scrape.py in mediabox-infra). A scraped row
+  /// is registered automatically from the scrape report; its slug is the
+  /// company name the scraper uses.
   provider String
   /// The company's slug on that provider. Workday needs "tenant/wdN/Site".
   slug     String
@@ -398,6 +401,27 @@ model JobBoardSource {
   /// Whether a new posting here is worth an email. A company can be worth
   /// listing without being worth interrupting someone for.
   notify   Boolean @default(true)
+  /// Email a new posting here as soon as a poll finds it, instead of waiting
+  /// for the digest (added 2026-10-24). Stamped notified when sent, so the
+  /// digest never repeats it.
+  notifyImmediately Boolean @default(false)
+
+  /// When this board's first successful poll happened. Null means the next
+  /// successful poll seeds silently: everything it finds is stamped notified
+  /// instead of being emailed. A new or repointed board otherwise announces
+  /// its whole backlog as "new" (2026-10-24: repointing six boards would have
+  /// sent several hundred).
+  seededAt DateTime?
+
+  /// Rate-limit back-off. After an HTTP 429 the board is skipped until
+  /// backoffUntil, and each consecutive 429 doubles the wait (1h, 2h, 4h ...
+  /// capped at 12h; see jobBoardRules.ts). Microsoft started answering 429 on
+  /// 2026-10-24.
+  backoffUntil  DateTime?
+  backoffStreak Int       @default(0)
+
+  /// A short explanation shown on the row, e.g. why a board is switched off.
+  note String?
 
   /// Optional grouping, e.g. "startup". A company can be worth watching for a
   /// different reason than the rest -- a six-person startup and Nvidia are not

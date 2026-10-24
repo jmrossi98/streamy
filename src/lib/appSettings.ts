@@ -75,3 +75,49 @@ export async function setJobAlertLevels(levels: string[]): Promise<string[]> {
   });
   return clean;
 }
+
+/** Key for how often queued new-role emails go out (lib/jobDigestRules.ts). */
+export const JOB_DIGEST_CADENCE_KEY = "job_digest_cadence";
+/** When the digest last ran: the start of the current cadence window. */
+export const JOB_DIGEST_LAST_AT_KEY = "job_digest_last_at";
+
+/**
+ * The digest cadence. Kept as a raw string here so this file stays
+ * import-free; parseDigestCadence in jobDigestRules.ts validates it.
+ */
+export async function getJobDigestCadenceRaw(): Promise<string | null> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: JOB_DIGEST_CADENCE_KEY }, select: { value: true } });
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setJobDigestCadenceRaw(value: string): Promise<void> {
+  await prisma.setting.upsert({
+    where: { key: JOB_DIGEST_CADENCE_KEY },
+    create: { key: JOB_DIGEST_CADENCE_KEY, value },
+    update: { value },
+  });
+}
+
+export async function getJobDigestLastAt(): Promise<Date | null> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: JOB_DIGEST_LAST_AT_KEY }, select: { value: true } });
+    if (!row) return null;
+    const at = new Date(row.value);
+    return Number.isNaN(at.getTime()) ? null : at;
+  } catch {
+    return null;
+  }
+}
+
+export async function setJobDigestLastAt(at: Date): Promise<void> {
+  const value = at.toISOString();
+  await prisma.setting.upsert({
+    where: { key: JOB_DIGEST_LAST_AT_KEY },
+    create: { key: JOB_DIGEST_LAST_AT_KEY, value },
+    update: { value },
+  });
+}

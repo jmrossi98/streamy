@@ -1,34 +1,42 @@
 "use client";
 
-import { Badge, Chip, type BadgeTone, scrollListClass } from "@/components/ui";
+import { Badge, Button, Checkbox, Chip, Select, TextInput, type BadgeTone, scrollListClass } from "@/components/ui";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LEVEL_LABELS, LEVEL_ORDER } from "@/lib/jobFilters";
-import { HEALTH_RANK, type SourceHealth, type SourceHealthStatus } from "@/lib/jobSourceHealthRules";
+import { type SourceHealth, type SourceHealthStatus } from "@/lib/jobSourceHealthRules";
+import { DIGEST_CADENCES, DIGEST_CADENCE_LABELS, type DigestCadence } from "@/lib/jobDigestRules";
 
 export type JobSourceRow = {
   id: string;
   provider: string;
   slug: string;
   company: string;
+  /** A career site mediabox scrapes, rather than an API board. */
+  custom: boolean;
   enabled: boolean;
   notify: boolean;
+  notifyImmediately: boolean;
   tag: string | null;
+  /** Why the board is the way it is, e.g. switched off with no readable board. */
+  note: string | null;
   /** How many open roles this board is currently contributing. */
   openRoles: number;
   health: SourceHealth;
 };
 
-export type ScrapedSiteRow = { company: string; count: number | null; health: SourceHealth };
-
 const HEALTH_BADGE: Record<SourceHealthStatus, { label: string; tone: BadgeTone } | null> = {
   failing: { label: "Can't read", tone: "danger" },
   stale: { label: "Stale", tone: "warning" },
   empty: { label: "No roles", tone: "warning" },
+  limited: { label: "Rate limited", tone: "info" },
   unchecked: { label: "Not polled yet", tone: "neutral" },
   ok: null,
   off: null,
 };
+
+/** Statuses whose detail is worth a line of its own under the row. */
+const SHOW_DETAIL: SourceHealthStatus[] = ["failing", "stale", "empty", "limited"];
 
 function HealthBadge({ health }: { health: SourceHealth }) {
   const badge = HEALTH_BADGE[health.status];
@@ -40,35 +48,50 @@ function HealthBadge({ health }: { health: SourceHealth }) {
   );
 }
 
+function formatNext(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString("en-US", {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/New_York",
+  });
+}
+
+type ToggleField = "enabled" | "notify" | "notifyImmediately";
+
 /**
  * The boards being polled, and which of them are worth an email.
  *
- * Two switches rather than one, because they answer different questions.
- * "Polling" is whether to look at all -- turned off for a board that has
- * started failing, without losing how it was configured. "Notify" is whether a
- * new posting there should interrupt someone, which is a much lower bar to
- * clear: a company can be worth watching in a list without being worth an
- * email at two in the morning.
+ * Three switches, because they answer different questions. "Poll" is whether
+ * to look at all -- turned off for a board that has started failing, without
+ * losing how it was configured. "Email" is whether its new postings go in the
+ * digest, which goes out on the cadence above. "Email immediately" is for the
+ * few companies worth hearing about the moment a role appears.
+ *
+ * Since 2026-10-24 the career sites mediabox scrapes are rows here too
+ * (badged Custom), and their Poll switch stops the scraper.
  */
 export function JobSourcesPanel({
   sources,
-  scrapedSites,
   alertLevels: initialAlertLevels,
+  digestCadence: initialCadence,
+  nextDigestAt,
 }: {
+  /** Already sorted, problems first. */
   sources: JobSourceRow[];
-  /** Career sites mediabox scrapes; configured in the scraper, so read-only here. */
-  scrapedSites: ScrapedSiteRow[];
   /** Job levels included in alert emails, across every board. */
   alertLevels: string[];
+  digestCadence: DigestCadence;
+  nextDigestAt: string | null;
 }) {
   const router = useRouter();
-  const [rows, setRows] = useState(() =>
-    [...sources].sort((a, b) => HEALTH_RANK[a.health.status] - HEALTH_RANK[b.health.status])
-  );
-  const problems =
-    rows.filter((r) => HEALTH_BADGE[r.health.status] && r.health.status !== "unchecked").length +
-    scrapedSites.filter((s) => HEALTH_BADGE[s.health.status] && s.health.status !== "unchecked").length;
+  const [rows, setRows] = useState(sources);
+  const problems = rows.filter(
+    (r) => HEALTH_BADGE[r.health.status] && r.health.status !== "unchecked" && r.health.status !== "limited"
+  ).length;
   const [alertLevels, setAlertLevels] = useState<Set<string>>(new Set(initialAlertLevels));
+  const [cadence, setCadence] = useState<DigestCadence>(initialCadence);
   const [provider, setProvider] = useState("greenhouse");
   const [slug, setSlug] = useState("");
   const [company, setCompany] = useState("");
@@ -140,7 +163,14 @@ export function JobSourcesPanel({
     if (!(await send({ action: "alertLevels", levels: [...next] }))) setAlertLevels(prev);
   }
 
-  async function toggle(row: JobSourceRow, field: "enabled" | "notify") {
+  async function changeCadence(next: DigestCadence) {
+    const prev = cadence;
+    setCadence(next);
+    if (await send({ action: "digestCadence", cadence: next })) router.refresh();
+    else setCadence(prev);
+  }
+
+  async function toggle(row: JobSourceRow, field: ToggleField) {
     const value = !row[field];
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [field]: value } : r)));
     if (!(await send({ action: "toggle", id: row.id, field, value }))) {
@@ -149,8 +179,32 @@ export function JobSourcesPanel({
     }
   }
 
+  const next = formatNext(nextDigestAt);
+
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span className="text-white/40">Email digest</span>
+        <Select
+          fieldSize="sm"
+          className="w-auto"
+          value={cadence}
+          aria-label="Email digest cadence"
+          onChange={(e) => void changeCadence(e.target.value as DigestCadence)}
+        >
+          {DIGEST_CADENCES.map((c) => (
+            <option key={c} value={c}>
+              {DIGEST_CADENCE_LABELS[c]}
+            </option>
+          ))}
+        </Select>
+        <span className="text-white/35">
+          {cadence === "off"
+            ? "No digest. Boards set to Email immediately still email."
+            : `New roles from boards with Email on are collected and sent together${next ? `; next around ${next}` : ""}. Boards are still polled every 30 minutes.`}
+        </span>
+      </div>
+
       {/* Which levels are emailed about, for every board with Email on. The
           panel above still lists every level; this only decides what arrives
           in the inbox. */}
@@ -167,53 +221,38 @@ export function JobSourcesPanel({
       <form onSubmit={add} className="flex flex-wrap items-end gap-2 text-xs">
         <label className="flex flex-col gap-1">
           <span className="text-white/40">Provider</span>
-          <select
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-            className="streamy-select rounded border border-white/15 bg-black/40 py-1.5 pl-3 text-xs text-white focus:border-white/40 focus:outline-none"
-          >
+          <Select fieldSize="sm" value={provider} onChange={(e) => setProvider(e.target.value)}>
             <option value="greenhouse">Greenhouse</option>
             <option value="ashby">Ashby</option>
             <option value="workday">Workday</option>
-          </select>
+          </Select>
         </label>
         <label className="flex flex-1 flex-col gap-1" style={{ minWidth: "14rem" }}>
           <span className="text-white/40">
             {provider === "workday" ? "tenant/wd5/SiteName" : "Company slug on that board"}
           </span>
-          <input
+          <TextInput
+            fieldSize="sm"
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
             placeholder={provider === "workday" ? "nvidia/wd5/NVIDIAExternalCareerSite" : "stripe"}
-            className="rounded border border-white/15 bg-black/40 px-2 py-1.5 text-white outline-none focus:border-white/40"
           />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-white/40">Display name (optional)</span>
-          <input
-            value={company}
-            onChange={(e) => setCompany(e.target.value)}
-            placeholder="Stripe"
-            className="rounded border border-white/15 bg-black/40 px-2 py-1.5 text-white outline-none focus:border-white/40"
-          />
+          <TextInput fieldSize="sm" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Stripe" />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-white/40">Group (optional)</span>
-          <input
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
-            placeholder="startup"
-            className="w-24 rounded border border-white/15 bg-black/40 px-2 py-1.5 text-white outline-none focus:border-white/40"
-          />
+          <TextInput fieldSize="sm" className="w-24" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="startup" />
         </label>
-        <button
-          type="submit"
-          disabled={busy || !slug.trim()}
-          className="rounded bg-netflix-red px-3 py-1.5 font-medium text-white transition-colors hover:bg-netflix-red/90 disabled:opacity-40"
-        >
+        <Button type="submit" variant="primary" size="sm" disabled={busy || !slug.trim()}>
           {busy ? "Checking…" : "Add board"}
-        </button>
+        </Button>
       </form>
+      <p className="text-[11px] text-white/35">
+        A new board&apos;s first poll is taken quietly: the roles already open there are listed but not emailed.
+      </p>
 
       {error && <p className="text-xs text-red-300">{error}</p>}
 
@@ -233,70 +272,51 @@ export function JobSourcesPanel({
             <span className={`font-medium ${row.enabled ? "text-white/85" : "text-white/35"}`}>
               {row.company}
             </span>
-            <span className="text-white/30">
-              {row.provider}:{row.slug}
-            </span>
-            <span className="text-white/35">{row.openRoles} open</span>
-            {(row.health.status === "failing" || row.health.status === "stale" || row.health.status === "empty") && (
-              <span className="basis-full text-[11px] text-white/40">{row.health.detail}</span>
-            )}
-            {row.tag && (
-              <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/50">
-                {row.tag}
+            {row.custom ? (
+              <Badge tone="info" title="Scraped from the company's career site by mediabox (job-scrape.py)">
+                Custom
+              </Badge>
+            ) : (
+              <span className="text-white/30">
+                {row.provider}:{row.slug}
               </span>
             )}
-            <label className="ml-auto flex items-center gap-1 text-white/50">
-              <input
-                type="checkbox"
+            <span className="text-white/35">{row.openRoles} open</span>
+            {row.tag && <Badge>{row.tag}</Badge>}
+            {SHOW_DETAIL.includes(row.health.status) && (
+              <span className="basis-full text-[11px] text-white/40">{row.health.detail}</span>
+            )}
+            {row.note && <span className="basis-full text-[11px] text-amber-200/70">{row.note}</span>}
+            <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Checkbox
+                label="Poll"
+                title={row.custom ? "Scrape this site. Off stops the scraper on mediabox." : "Poll this board."}
                 checked={row.enabled}
                 onChange={() => void toggle(row, "enabled")}
               />
-              Poll
-            </label>
-            <label className="flex items-center gap-1 text-white/50">
-              <input
-                type="checkbox"
+              <Checkbox
+                label="Email"
+                title="Include this board's new roles in the email digest. Off still polls and lists them."
                 checked={row.notify}
                 onChange={() => void toggle(row, "notify")}
               />
-              <span title="Include this board's new roles in alert emails. Off still polls and lists them.">
-                Email
-              </span>
-            </label>
-            <button
-              type="button"
-              onClick={() => void remove(row)}
-              className="rounded border border-white/15 px-2 py-0.5 text-white/60 transition-colors hover:bg-white/10"
-            >
-              Remove
-            </button>
+              <Checkbox
+                label="Email immediately"
+                title="Email this board's new roles as soon as a poll finds them, instead of waiting for the digest."
+                checked={row.notifyImmediately}
+                onChange={() => void toggle(row, "notifyImmediately")}
+              />
+              {!row.custom && (
+                <Button size="xs" onClick={() => void remove(row)} disabled={busy}>
+                  Remove
+                </Button>
+              )}
+            </div>
           </li>
         ))}
       </ul>
       {rows.length === 0 && (
         <p className="text-sm text-white/50">No boards yet. Add one above.</p>
-      )}
-
-      {scrapedSites.length > 0 && (
-        <div className="space-y-1">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-white/40">Scraped career sites</h3>
-          <ul className="space-y-1">
-            {scrapedSites.map((site) => (
-              <li
-                key={site.company}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-white/10 bg-black/20 px-3 py-2 text-xs"
-              >
-                <HealthBadge health={site.health} />
-                <span className="font-medium text-white/85">{site.company}</span>
-                <span className="text-white/30">scraped</span>
-                <span className="text-white/35">{site.count ?? 0} found</span>
-                {site.health.status !== "ok" && (
-                  <span className="text-white/40">{site.health.detail}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
     </div>
   );
