@@ -492,7 +492,9 @@ export function managementKind(title: string): ManagementKind | null {
   // "Software Engineer, Fleet Management" and "Identity & Access
   // Management". So "manager" (not "management") is required, and the
   // person noun "engineer"/"developer" rules it out.
-  if (/\b(engineer|developer)s?\b/.test(hay)) return null;
+  // Except where "manager" follows the noun directly: Google titles its EMs
+  // "Software Engineer Manager II" (scraped 2026-10-24).
+  if (/\b(engineer|developer)s?\b/.test(hay) && !/\b(engineer|developer|development) manager\b/.test(hay)) return null;
   if (/\bmanager\b/.test(hay) || /\bteam lead(er)?\b/.test(hay)) return "em";
   return null;
 }

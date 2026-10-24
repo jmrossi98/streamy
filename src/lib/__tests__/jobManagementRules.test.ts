@@ -76,6 +76,9 @@ describe("managementKind", () => {
     }
     expect(classifyLevel("Software Engineer, Ads Manager")).toBe("midsenior");
     expect(managementKind("Member of Technical Staff, Engineering Manager")).toBe("em");
+    // Google's EM title.
+    expect(managementKind("Software Engineer Manager II, Managed Lustre Dataplane, Google Cloud Storage")).toBe("em");
+    expect(managementKind("Software Development Engineer Manager")).toBe("em");
   });
 
   it("keeps tech leads under Lead / staff+, as Jake asked", () => {
