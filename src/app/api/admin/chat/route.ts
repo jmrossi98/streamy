@@ -49,6 +49,8 @@ import {
 import { getSnapshot } from "@/lib/chatStatus";
 import { investigateThenAnswer } from "@/lib/diagInvestigation";
 import { isWebSearchConfigured, searchWeb } from "@/lib/webSearch";
+import { skillsForPrompt } from "@/lib/skillRunner";
+import { skillsPrompt } from "@/lib/skillRunnerRules";
 
 /**
  * Admin chat proxy. Three slots, chosen per request by the panel: the
@@ -198,6 +200,18 @@ export async function POST(request: Request) {
       // told in its prompt to say so when no status block is present.
       console.error("[chat] stack status snapshot failed:", err);
     }
+  }
+
+  // The Claude Code skills mediabox can run, so the model can propose one as
+  // a card the admin taps (skillRunnerRules.ts). Every turn, not gated like
+  // the status block: "redeploy infra" or a run's result arriving are not
+  // stack questions by shouldIncludeStatus's measure. The list is cached for
+  // five minutes, and an unreachable runner just means no skills this turn.
+  try {
+    const skills = await skillsForPrompt();
+    if (skills) messages = withContext(messages, { role: "system", content: skillsPrompt(skills) });
+  } catch (err) {
+    console.error("[chat] skill list failed:", err);
   }
 
   // The admin's own documentation, retrieved for this specific question.
