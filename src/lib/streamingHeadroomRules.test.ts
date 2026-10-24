@@ -93,7 +93,24 @@ describe("describeJellyfinSession", () => {
       NowPlayingItem: { Name: "CBS 8", Type: "TvChannel", MediaSources: [{ Bitrate: 6_500_000 }] },
       PlayState: { PlayMethod: "DirectPlay" },
     });
-    expect(d).toMatchObject({ title: "Live: CBS 8", where: "lan", method: "direct", mbps: 6.5 });
+    expect(d).toMatchObject({ title: "Live: CBS 8", channel: "CBS 8", where: "lan", method: "direct", mbps: 6.5, fps: null, hwAccel: null, checkInAgeS: null });
+  });
+
+  it("reads the transcoder's rate, the hardware behind it and when the player last checked in", () => {
+    const now = Date.parse("2026-10-24T23:45:30Z");
+    const d = describeJellyfinSession(
+      {
+        UserName: "jaker",
+        Client: "Jellyfin Roku",
+        RemoteEndPoint: "192.168.0.233",
+        LastPlaybackCheckIn: "2026-10-24T23:45:10.581326Z",
+        NowPlayingItem: { Name: "NHL BUFFALO SABRES", Type: "TvChannel" },
+        PlayState: { PlayMethod: "Transcode", IsPaused: false },
+        TranscodingInfo: { Bitrate: 10_256_000, IsVideoDirect: false, VideoCodec: "h264", Width: 1920, Height: 1080, Framerate: 33, HardwareAccelerationType: "nvenc", TranscodeReasons: ["DirectPlayError"] },
+      },
+      now
+    );
+    expect(d).toMatchObject({ channel: "NHL BUFFALO SABRES", method: "transcode", output: "1920x1080 h264", fps: 33, hwAccel: "nvenc", checkInAgeS: 19 });
   });
 
   it("calls a copied video stream a remux", () => {
@@ -108,7 +125,21 @@ describe("describeJellyfinSession", () => {
 
 describe("remoteJellyfinMbps", () => {
   it("counts only unpaused sessions from outside the house", () => {
-    const base = { id: "", user: "", client: "", device: "", title: "", ip: null, method: "direct" as const, reasons: [], output: null };
+    const base = {
+      id: "",
+      user: "",
+      client: "",
+      device: "",
+      title: "",
+      channel: null,
+      ip: null,
+      method: "direct" as const,
+      reasons: [],
+      output: null,
+      fps: null,
+      hwAccel: null,
+      checkInAgeS: null,
+    };
     expect(
       remoteJellyfinMbps([
         { ...base, where: "remote", mbps: 10, paused: false },

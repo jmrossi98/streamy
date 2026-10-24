@@ -78,15 +78,19 @@ export type JellyfinSessionLike = {
   Client?: string;
   DeviceName?: string;
   RemoteEndPoint?: string;
+  /** When the player last reported progress, ISO. */
+  LastPlaybackCheckIn?: string;
   NowPlayingItem?: {
     Name?: string;
     SeriesName?: string;
     Type?: string;
     MediaSources?: { Bitrate?: number }[];
   } | null;
-  PlayState?: { PlayMethod?: string; IsPaused?: boolean } | null;
+  PlayState?: { PlayMethod?: string; IsPaused?: boolean; PositionTicks?: number } | null;
   TranscodingInfo?: {
     Bitrate?: number;
+    Framerate?: number;
+    HardwareAccelerationType?: string;
     IsVideoDirect?: boolean;
     IsAudioDirect?: boolean;
     VideoCodec?: string;
@@ -102,6 +106,8 @@ export type DescribedSession = {
   client: string;
   device: string;
   title: string;
+  /** A Live TV channel, by the name Dispatcharr publishes it under; null for a film or episode. */
+  channel: string | null;
   where: AddressPlace;
   ip: string | null;
   /** direct | remux (video copied, container or audio changed) | transcode */
@@ -112,10 +118,16 @@ export type DescribedSession = {
   reasons: string[];
   /** "1920x1080 hevc" for a transcode. */
   output: string | null;
+  /** The transcoder's output frame rate, when transcoding and Jellyfin says. */
+  fps: number | null;
+  /** "nvenc", "vaapi"... for a transcode. */
+  hwAccel: string | null;
+  /** Seconds since the player last reported progress to Jellyfin, when known. */
+  checkInAgeS: number | null;
 };
 
 /** One Jellyfin session as a row for the admin, or null when it isn't playing anything. */
-export function describeJellyfinSession(s: JellyfinSessionLike): DescribedSession | null {
+export function describeJellyfinSession(s: JellyfinSessionLike, now = Date.now()): DescribedSession | null {
   const item = s.NowPlayingItem;
   if (!item) return null;
   const t = s.TranscodingInfo;
@@ -127,13 +139,16 @@ export function describeJellyfinSession(s: JellyfinSessionLike): DescribedSessio
       : "direct";
   const bps = t?.Bitrate ?? item.MediaSources?.[0]?.Bitrate ?? null;
   const name = item.Name ?? "Unknown";
-  const title = item.Type === "TvChannel" ? `Live: ${name}` : item.SeriesName ? `${item.SeriesName} · ${name}` : name;
+  const live = item.Type === "TvChannel";
+  const title = live ? `Live: ${name}` : item.SeriesName ? `${item.SeriesName} · ${name}` : name;
+  const checkIn = s.LastPlaybackCheckIn ? Date.parse(s.LastPlaybackCheckIn) : NaN;
   return {
     id: s.Id ?? `${s.UserName}-${s.DeviceName}`,
     user: s.UserName ?? "unknown",
     client: s.Client ?? "",
     device: s.DeviceName ?? "",
     title,
+    channel: live ? name : null,
     where: addressPlace(s.RemoteEndPoint),
     ip: s.RemoteEndPoint ?? null,
     method,
@@ -141,6 +156,10 @@ export function describeJellyfinSession(s: JellyfinSessionLike): DescribedSessio
     paused: Boolean(s.PlayState?.IsPaused),
     reasons: t?.TranscodeReasons ?? [],
     output: t && t.Width && t.Height ? `${t.Width}x${t.Height}${t.VideoCodec ? ` ${t.VideoCodec}` : ""}` : null,
+    fps: t && typeof t.Framerate === "number" && t.Framerate > 0 ? Math.round(t.Framerate) : null,
+    hwAccel: t?.HardwareAccelerationType || null,
+    // Jellyfin's clock, not the player's; a check-in "in the future" is clock skew, i.e. just now.
+    checkInAgeS: Number.isFinite(checkIn) ? Math.max(0, Math.round((now - checkIn) / 1000)) : null,
   };
 }
 

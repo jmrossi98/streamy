@@ -16,7 +16,8 @@ export async function getJellyfinPlayingSessions(): Promise<DescribedSession[] |
   return cached("jellyfin:sessions:playing", CACHE_MS, async () => {
     try {
       const sessions = await jellyfinGet<JellyfinSessionLike[]>("/Sessions?activeWithinSeconds=60");
-      return (sessions ?? []).map(describeJellyfinSession).filter((s): s is DescribedSession => s !== null);
+      const now = Date.now();
+      return (sessions ?? []).map((s) => describeJellyfinSession(s, now)).filter((s): s is DescribedSession => s !== null);
     } catch {
       return null;
     }

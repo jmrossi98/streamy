@@ -67,7 +67,7 @@ export async function getStreamingNow(now = Date.now()): Promise<StreamingNow> {
  * names; this is the join. Null marks an ambiguous match (two tabs, two
  * episodes) rather than guessing one.
  */
-async function playingTitles(now: number): Promise<Map<string, string | null>> {
+export async function playingTitles(now: number): Promise<Map<string, string | null>> {
   const rows = await prisma.viewerSession.findMany({
     where: { lastSeenAt: { gte: new Date(now - 90_000) }, playing: { not: null } },
     select: { userName: true, playing: true },

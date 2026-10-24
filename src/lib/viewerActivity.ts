@@ -2,6 +2,10 @@ import { prisma } from "./db";
 import { locateMany } from "./geoip";
 import { isDispatcharrConfigured, listIptvAccounts, liveConnections, type LiveConnection } from "./dispatcharr";
 import { maybeSampleStreamLoad } from "./streamLoadHistory";
+import { getJellyfinPlayingSessions } from "./jellyfinSessions";
+import { buildOnNow, onNowAlerts, type OnNowEntry } from "./onNowRules";
+import { streamMeter } from "./streamMeter";
+import { playingTitles } from "./streamingNow";
 import { cached } from "./ttlCache";
 import {
   deviceLabel,
@@ -95,6 +99,10 @@ export type ProviderLine = { id: number; provider: string; line: string; maxStre
 export type ViewerActivity = {
   generatedAt: number;
   sessions: ViewerSessionView[];
+  /** Every stream right now -- Streamy tabs, Jellyfin apps and devices -- worst health first. */
+  onNow: OnNowEntry[];
+  /** One line per failing stream. */
+  alerts: string[];
   connections: LiveConnection[] | null;
   lines: ProviderLine[] | null;
 };
@@ -102,7 +110,7 @@ export type ViewerActivity = {
 /** Everything the admin Viewers panel shows: the last day's sessions, and the provider lines now. */
 export async function getViewerActivity(now = Date.now()): Promise<ViewerActivity> {
   const since = new Date(now - WINDOW_MS);
-  const [rows, events, connections, accounts] = await Promise.all([
+  const [rows, events, connections, accounts, jellyfin, titles] = await Promise.all([
     prisma.viewerSession.findMany({ where: { lastSeenAt: { gte: since } }, orderBy: { lastSeenAt: "desc" }, take: 200 }),
     // Newest first, so on a day with more than the cap it is the oldest
     // events that fall off rather than what is happening now.
@@ -111,6 +119,9 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
     // be asked more often than that.
     isDispatcharrConfigured() ? cached("dispatcharr:connections", 5_000, liveConnections).catch(() => null) : Promise.resolve(null),
     isDispatcharrConfigured() ? cached("dispatcharr:accounts", 10_000, listIptvAccounts).catch(() => null) : Promise.resolve(null),
+    // The Roku and the Jellyfin apps never send a heartbeat; Jellyfin is the only one who sees them.
+    getJellyfinPlayingSessions().catch(() => null),
+    playingTitles(now).catch(() => new Map<string, string | null>()),
   ]);
   events.reverse();
   const geo = await locateMany(rows.map((r) => r.ip)).catch(() => new Map());
@@ -158,5 +169,7 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
       )
     : null;
 
-  return { generatedAt: now, sessions, connections, lines };
+  const streams = streamMeter.snapshot().streams.map((s) => ({ ...s, title: titles.get(`${s.user}\u0000${s.kind}`) ?? null }));
+  const onNow = buildOnNow({ sessions, jellyfin, streams, connections, now });
+  return { generatedAt: now, sessions, onNow, alerts: onNowAlerts(onNow), connections, lines };
 }
