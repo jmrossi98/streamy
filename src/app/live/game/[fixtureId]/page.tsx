@@ -23,6 +23,7 @@ import {
   channelMarketTeam,
 } from "@/lib/liveTimeline";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
+import { sameSport } from "@/lib/sportMatchRules";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { namesGameDate, namesOtherDate } from "@/lib/liveGuideGrid";
 import { GameStreamFinder } from "@/components/GameStreamFinder";
@@ -177,7 +178,7 @@ export default async function GamePage({
   const gameFeeds = channels
     .filter(
       (c) =>
-        (addedForGame.has(normaliseName(c.name)) || namesBothTeams(c.name, fixture)) &&
+        (addedForGame.has(normaliseName(c.name)) || (namesBothTeams(c.name, fixture) && sameSport(c.name, fixture))) &&
         !isStale(c.name) &&
         !namesOtherDate(c.name, startMs)
     )

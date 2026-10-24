@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gameStreamQueries, gameStreamScore, rankGameStreams } from "../gameStreamRules";
+import { gameStreamQueries, gameStreamScore, rankGameStreams, TALK_SHOW_SCORE } from "../gameStreamRules";
 
 const sharks = {
   league: "NHL",
@@ -79,5 +79,50 @@ describe("feedLanguageRank", () => {
     expect(feedLanguageRank("Next | Leeds x Man. United | Premier League | 2026-10-18 | 13:00 (GMT) | 8K EXCLUSIVE | PT: DAZN PPV 42")).toBe(2);
     expect(feedLanguageRank("NEXT | PREMIER LEAGUE LEEDS - MAN UNITED | Sun 18 Oct 14:00 CEST (DK) | 8K EXCLUSIVE | DK: VIAPLAY P")).toBe(2);
     expect(feedLanguageRank("NHL | 12 - 9pm Bruins at Kings")).toBe(1);
+  });
+});
+
+describe("Grizzlies at Warriors, 2026-10-23: an NHL Sharks picture on an NBA game", () => {
+  const fixture = {
+    league: "NBA",
+    awayTeam: "Memphis Grizzlies",
+    homeTeam: "Golden State Warriors",
+    broadcasts: ["NBA League Pass"],
+    startUtc: "2026-10-24T02:00:00Z",
+  };
+  const now = Date.parse("2026-10-24T03:04:18Z");
+  const streams = [
+    { id: 95502, name: "End | Tigers OT Win vs ECU, Grizzlies/Warriors, Tyran Stokes, CFB & NFL Weekend | Chris Vernon Show | NBA | 2026-10-23 | 17:00 (GMT) | 8K EXCLUSIVE | US: DAZN PPV 16" },
+    { id: 95466, name: "End | Grizzlies Vs. Warriors Preview, Ja Morant Update | Jessica Benson Show | NBA | 2026-10-23 | 13:00 (GMT) | 8K EXCLUSIVE | US: DAZN PPV 4" },
+    { id: 84823, name: "NEXT | GSW - WARRIORS VS MEM - GRIZZLIES | Fri 23 Oct 21:00 EDT (US) | 8K EXCLUSIVE | US: NBA PASS PPV 10" },
+    { id: 84942, name: "Golden State Warriors vs Memphis Grizzlies @ Oct 23 10:00 PM :NBA  10" },
+    { id: 93120, name: "LIVE | GSW - WARRIORS VS MEM - GRIZZLIES | Fri 23 Oct 21:00 EDT (US) | 8K EXCLUSIVE | US: NBA PASS PPV 10" },
+    { id: 1, name: "NHL | 10 - 10pm Sharks at Warriors" },
+    { id: 2, name: "NHL SAN JOSE SHARKS" },
+    { id: 3, name: "US: NBC SPORTS CALIFORNIA | Sharks vs Senators" },
+  ];
+
+  it("offers the LIVE feed first, never a finished show, the NEXT slot or another sport", () => {
+    expect(rankGameStreams(streams, fixture, { now }).map((s) => s.id)).toEqual([93120, 84942]);
+  });
+
+  it("scores the shows and other sports out", () => {
+    expect(gameStreamScore(streams[0].name, fixture)).toBeNull();
+    expect(gameStreamScore(streams[1].name, fixture)).toBeNull();
+    expect(gameStreamScore("NHL | 10 - 10pm Sharks at Warriors", fixture)).toBeNull();
+    expect(gameStreamScore("San Jose Sharks Hockey", fixture)).toBeNull();
+    expect(gameStreamScore(streams[4].name, fixture)).toBe(0);
+  });
+
+  it("keeps the NEXT slot when there is no LIVE entry", () => {
+    const ids = rankGameStreams(streams.filter((s) => s.id !== 93120), fixture, { now }).map((s) => s.id);
+    expect(ids).toContain(84823);
+  });
+
+  it("offers a show about the game last, and only when nothing else names it", () => {
+    const show = { id: 7, name: "Grizzlies vs Warriors Postgame Show" };
+    expect(gameStreamScore(show.name, fixture)).toBe(TALK_SHOW_SCORE);
+    expect(rankGameStreams([show, streams[3]], fixture, { now }).map((s) => s.id)).toEqual([84942]);
+    expect(rankGameStreams([show], fixture, { now }).map((s) => s.id)).toEqual([7]);
   });
 });
