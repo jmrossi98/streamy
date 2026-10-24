@@ -532,7 +532,8 @@ jobs:
                   signal: AbortSignal.timeout(20000),
                 }).then(async (r) => {
                   const t = await r.text();
-                  if (!r.ok) { console.log("HTTP " + r.status + " " + t.slice(0, 200)); process.exit(1); }
+                  // A 404 from an image without the endpoint is a whole HTML page; only JSON errors are worth logging.
+                  if (!r.ok) { console.log("HTTP " + r.status + (t.trim().startsWith("{") ? " " + t.slice(0, 200) : "")); process.exit(1); }
                   const b = JSON.parse(t);
                   const jobs = (b.jobs || []).map((j) => j.kind + ":" + j.id + " started " + j.startedAt + (j.eta ? " eta " + j.eta : "")).join("; ");
                   console.log((b.busy ? "BUSY " : "IDLE ") + jobs + (b.draining ? " [draining until " + b.until + "]" : ""));
