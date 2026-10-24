@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ApplyReviewDialog } from "@/components/ApplyReviewDialog";
 import { Badge, Button, ButtonLink, Chip, scrollListClass } from "@/components/ui";
-import { elapsed, isJob, useResumeJobs, type TailorState } from "@/components/useResumeJobs";
+import { isJob, useResumeJobs, type TailorState } from "@/components/useResumeJobs";
 import type { ResumeJobView } from "@/lib/resumeJobRules";
 import {
   CATEGORY_LABELS,
@@ -190,7 +190,7 @@ export function JobListingsPanel({
    * server, polled here, rather than one ten-minute request whose result was
    * lost on any reload, phone sleep or deploy.
    */
-  const { jobs: tailoring, now: clock, start: tailorResume } = useResumeJobs(resumeJobs);
+  const { jobs: tailoring, start: tailorResume } = useResumeJobs(resumeJobs);
 
   /** Auto-apply per listing: preparing, the packet to review, or why it failed. */
   const [applying, setApplying] = useState<Record<string, "busy" | { id: string; status: string } | { error: string }>>({});
@@ -515,7 +515,6 @@ export function JobListingsPanel({
                 >
                   <TailorControl
                     state={tailoring[listing.id]}
-                    now={clock}
                     onTailor={() => void tailorResume(listing.id)}
                   />
                   {canAutoApply(listing.id) &&
@@ -613,13 +612,17 @@ export function JobListingsPanel({
   );
 }
 
-/** The Tailor button's place on a listing: start, progress, the resume, or Retry. */
-function TailorControl({ state, now, onTailor }: { state: TailorState | undefined; now: number; onTailor: () => void }) {
+/**
+ * The Tailor button's place on a listing: start, progress, the resume, or Retry.
+ * 2026-10-24: progress is the current step only -- Jake asked for no
+ * elapsed-time counter on the chip.
+ */
+function TailorControl({ state, onTailor }: { state: TailorState | undefined; onTailor: () => void }) {
   if (state && "starting" in state) return <Badge tone="info">starting…</Badge>;
   if (isJob(state) && (state.status === "queued" || state.status === "running")) {
     return (
       <Badge tone="info" title="Tailoring runs on the server; you can leave this page and come back.">
-        {state.step || "Starting"}… {elapsed(state.startedAt, now)}
+        {state.step || "Starting"}…
       </Badge>
     );
   }
