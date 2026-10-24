@@ -13,10 +13,17 @@
  * so `firstSeen` is the only honest basis for "tell me about this one". A
  * posting is announced exactly once: `notifiedAt` is stamped in the same pass,
  * so a re-poll, a retry or a restart cannot announce it twice.
+ *
+ * ## When it is announced (2026-10-24)
+ *
+ * Queued postings go out in a digest on the admin's cadence (hourly to weekly,
+ * or off); boards marked "Email immediately" go out on the poll that finds
+ * them. A board's first successful poll seeds silently. The decisions are in
+ * jobDigestRules.ts and jobBoardRules.ts.
  */
 import { prisma } from "./db";
 import { notify } from "./notify";
-import { getJobAlertLevels } from "./appSettings";
+import { getJobAlertLevels, getJobDigestCadenceRaw, getJobDigestLastAt, setJobDigestLastAt } from "./appSettings";
 import {
   boardUrl,
   customPageUrl,
@@ -24,8 +31,25 @@ import {
   parseBoard,
   parseJobSources,
   type JobPosting,
+  type JobProvider,
   type JobSource,
 } from "./jobBoards";
+import {
+  filterScrapedByPoll,
+  isBackedOff,
+  isScrapedProvider,
+  nextBackoff,
+  scrapedRowSeededAt,
+  seedsSilently,
+  SCRAPED_PROVIDER,
+} from "./jobBoardRules";
+import {
+  announcementMessage,
+  isDigestDue,
+  parseDigestCadence,
+  planAnnouncements,
+  type BoardEmailFlags,
+} from "./jobDigestRules";
 import {
   classifyLevel,
   classifyRole,
@@ -45,7 +69,7 @@ const FETCH_TIMEOUT_MS = 20_000;
  * Generous enough to ride out a provider returning a short or empty payload for
  * a poll or two.
  */
-const STALE_AFTER_HOURS = 72;
+export const STALE_AFTER_HOURS = 72;
 
 /**
  * Postings first seen longer ago than this are archived: hidden from the panel
@@ -58,9 +82,6 @@ const STALE_AFTER_HOURS = 72;
  */
 const ARCHIVE_AFTER_DAYS = 30;
 
-
-/** Announce at most this many in one message; the rest are in the panel. */
-const MAX_ANNOUNCED = 12;
 
 export type RefreshOutcome = {
   sources: number;
@@ -78,10 +99,17 @@ export function seedJobSources(): JobSource[] {
   return parseJobSources(process.env.JOB_BOARD_SOURCES);
 }
 
-export type ManagedSource = JobSource & {
+export type ManagedSource = Omit<JobSource, "provider"> & {
+  /** A JobProvider, or "scraped" for a career site mediabox scrapes. */
+  provider: JobProvider | typeof SCRAPED_PROVIDER;
   id: string;
   enabled: boolean;
   notify: boolean;
+  notifyImmediately: boolean;
+  seededAt: Date | null;
+  backoffUntil: Date | null;
+  backoffStreak: number;
+  note: string | null;
   /** Optional grouping, e.g. "startup". */
   tag: string | null;
   lastCheckedAt: Date | null;
@@ -105,11 +133,16 @@ export async function jobSources(): Promise<ManagedSource[]> {
       await prisma.jobBoardSource.findMany({ orderBy: { company: "asc" } })
     ).map((r) => ({
       id: r.id,
-      provider: r.provider as JobSource["provider"],
+      provider: r.provider as ManagedSource["provider"],
       slug: r.slug,
       company: r.company,
       enabled: r.enabled,
       notify: r.notify,
+      notifyImmediately: r.notifyImmediately,
+      seededAt: r.seededAt,
+      backoffUntil: r.backoffUntil,
+      backoffStreak: r.backoffStreak,
+      note: r.note,
       tag: r.tag,
       lastCheckedAt: r.lastCheckedAt,
       lastSuccessAt: r.lastSuccessAt,
@@ -126,6 +159,11 @@ export async function jobSources(): Promise<ManagedSource[]> {
     id: `${src.provider}:${src.slug}`,
     enabled: true,
     notify: true,
+    notifyImmediately: false,
+    seededAt: null,
+    backoffUntil: null,
+    backoffStreak: 0,
+    note: null,
     tag: null,
     lastCheckedAt: null,
     lastSuccessAt: null,
@@ -316,38 +354,60 @@ function keep(
   return { metros, remote, category, level: classifyLevel(posting.title) };
 }
 
+type ScrapedSite = { company: string; count: number | null; error: string | null };
+
+type ScrapeReport = {
+  generatedAt: Date | null;
+  sites: ScrapedSite[];
+  postings: JobPosting[];
+  error: string | null;
+};
+
 /**
  * Roles scraped from career sites that publish no readable API.
  *
  * mediabox renders those pages and publishes the result; this reads the file
- * rather than doing any scraping itself. Kept separate from the configured
- * boards because these are not boards -- there is no slug to add or remove,
- * and turning one off means editing the scraper.
+ * rather than doing any scraping itself. Each company in it is a "Custom" row
+ * in Boards watched (provider "scraped"), registered from the report the first
+ * time it appears. Its Poll switch is read back by the scraper through
+ * /api/cron/job-scrape-config, and also filtered here (2026-10-24).
  *
- * Returns an empty list on any failure. A scrape that is stale or broken
- * shows up in the health probe on that file, not as an exception here that
- * would take the whole poll down with it.
+ * Returns an empty report on any failure. A scrape that is stale or broken
+ * shows up in the health probe on that file and on the rows, not as an
+ * exception here that would take the whole poll down with it.
  */
-async function fetchScrapedPostings(): Promise<{ postings: JobPosting[]; error: string | null }> {
+async function fetchScrapeReport(): Promise<ScrapeReport> {
+  const empty: ScrapeReport = { generatedAt: null, sites: [], postings: [], error: null };
   const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
-  if (!base) return { postings: [], error: null };
+  if (!base) return empty;
   try {
     const res = await fetch(`${base}/status/scraped-jobs.json`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       cache: "no-store",
     });
-    if (!res.ok) return { postings: [], error: `scraped jobs: HTTP ${res.status}` };
+    if (!res.ok) return { ...empty, error: `scraped jobs: HTTP ${res.status}` };
     const body = (await res.json()) as {
+      generatedAt?: string;
+      sites?: { company?: string; count?: number; error?: string | null }[];
       postings?: { id?: string; company?: string; title?: string; location?: string; url?: string }[];
     };
+    const generatedAt = body.generatedAt ? new Date(body.generatedAt) : null;
     const rows = Array.isArray(body?.postings) ? body.postings : [];
     return {
+      generatedAt: generatedAt && !Number.isNaN(generatedAt.getTime()) ? generatedAt : null,
+      sites: (Array.isArray(body.sites) ? body.sites : [])
+        .filter((site) => site.company)
+        .map((site) => ({
+          company: String(site.company),
+          count: typeof site.count === "number" ? site.count : null,
+          error: site.error ? String(site.error) : null,
+        })),
       postings: rows
         .filter((r) => r.id && r.title && r.company)
         .map((r) => ({
           // Namespaced like the API providers, so a scraped role and an API
           // role can never collide on id.
-          id: `scraped:${r.company}:${r.id}`,
+          id: `${SCRAPED_PROVIDER}:${r.company}:${r.id}`,
           company: String(r.company),
           title: String(r.title),
           location: r.location || "Unspecified",
@@ -359,72 +419,140 @@ async function fetchScrapedPostings(): Promise<{ postings: JobPosting[]; error: 
       error: null,
     };
   } catch (err) {
-    return { postings: [], error: `scraped jobs: ${err instanceof Error ? err.message : "unreadable"}` };
+    return { ...empty, error: `scraped jobs: ${err instanceof Error ? err.message : "unreadable"}` };
   }
+}
+
+/**
+ * Adds a row for every scraped company the report names that has none yet,
+ * and returns the full list. A row is what gives a scraped company its Poll
+ * and Email switches.
+ */
+async function registerScrapedSites(
+  all: ManagedSource[],
+  report: ScrapeReport,
+  now: Date
+): Promise<ManagedSource[]> {
+  const have = new Set(all.filter((s) => isScrapedProvider(s.provider)).map((s) => s.slug));
+  const added: ManagedSource[] = [];
+  for (const site of report.sites) {
+    if (have.has(site.company)) continue;
+    have.add(site.company);
+    const stored = await prisma.jobPosting
+      .count({ where: { id: { startsWith: `${SCRAPED_PROVIDER}:${site.company}:` } } })
+      .catch(() => 0);
+    const row = await prisma.jobBoardSource
+      .create({
+        data: {
+          provider: SCRAPED_PROVIDER,
+          slug: site.company,
+          company: site.company,
+          seededAt: scrapedRowSeededAt(stored > 0, now),
+        },
+      })
+      .catch(() => null);
+    if (!row) continue;
+    added.push({
+      id: row.id,
+      provider: SCRAPED_PROVIDER,
+      slug: row.slug,
+      company: row.company,
+      enabled: row.enabled,
+      notify: row.notify,
+      notifyImmediately: row.notifyImmediately,
+      seededAt: row.seededAt,
+      backoffUntil: null,
+      backoffStreak: 0,
+      note: null,
+      tag: null,
+      lastCheckedAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      lastCount: null,
+    });
+  }
+  return [...all, ...added];
 }
 
 /**
  * Writes each board's poll result, so the panel can flag one that has stopped
  * being readable. Never fails the poll: health is a report, not the job.
+ *
+ * Also where the back-off is advanced or cleared, and where a board's first
+ * successful poll marks it seeded.
  */
 async function recordSourceHealth(
-  results: { source: JobSource; postings: JobPosting[]; error?: string }[],
+  results: { source: ManagedSource; postings: JobPosting[]; error?: string }[],
   now: Date
 ): Promise<void> {
   await Promise.all(
     results.map((r) =>
       prisma.jobBoardSource
         .update({
-          where: { provider_slug: { provider: r.source.provider, slug: r.source.slug } },
-          data: r.error
-            ? { lastCheckedAt: now, lastError: r.error.slice(0, 300) }
-            : { lastCheckedAt: now, lastSuccessAt: now, lastError: null, lastCount: r.postings.length },
+          where: { id: r.source.id },
+          data: {
+            ...nextBackoff(r, r.source.backoffStreak, now),
+            ...(r.error
+              ? { lastCheckedAt: now, lastError: r.error.slice(0, 300) }
+              : {
+                  lastCheckedAt: now,
+                  lastSuccessAt: now,
+                  lastError: null,
+                  lastCount: r.postings.length,
+                  ...(r.source.seededAt ? {} : { seededAt: now }),
+                }),
+          },
         })
         .catch(() => undefined)
     )
   );
 }
 
-export type ScrapedSiteReport = {
-  generatedAt: Date | null;
-  sites: { company: string; count: number | null; error: string | null }[];
-};
-
-/** The per-site part of mediabox's scrape report, for the health badges. */
-export async function scrapedSiteReport(): Promise<ScrapedSiteReport> {
-  const base = process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "");
-  if (!base) return { generatedAt: null, sites: [] };
-  try {
-    const res = await fetch(`${base}/status/scraped-jobs.json`, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cache: "no-store",
-    });
-    if (!res.ok) return { generatedAt: null, sites: [] };
-    const body = (await res.json()) as {
-      generatedAt?: string;
-      sites?: { company?: string; count?: number; error?: string | null }[];
-    };
-    const generatedAt = body.generatedAt ? new Date(body.generatedAt) : null;
-    return {
-      generatedAt: generatedAt && !Number.isNaN(generatedAt.getTime()) ? generatedAt : null,
-      sites: (Array.isArray(body.sites) ? body.sites : [])
-        .filter((site) => site.company)
-        .map((site) => ({
-          company: String(site.company),
-          count: typeof site.count === "number" ? site.count : null,
-          error: site.error ? String(site.error) : null,
-        })),
-    };
-  } catch {
-    return { generatedAt: null, sites: [] };
-  }
+/** The scraped companies' health, as of the scraper's own run. */
+async function recordScrapedHealth(
+  rows: ManagedSource[],
+  report: ScrapeReport,
+  now: Date
+): Promise<void> {
+  if (!report.generatedAt) return;
+  const at = report.generatedAt;
+  const byCompany = new Map(report.sites.map((s) => [s.company, s]));
+  await Promise.all(
+    rows
+      .filter((row) => isScrapedProvider(row.provider) && row.enabled && byCompany.has(row.slug))
+      .map((row) => {
+        const site = byCompany.get(row.slug)!;
+        return prisma.jobBoardSource
+          .update({
+            where: { id: row.id },
+            data: site.error
+              ? { lastCheckedAt: at, lastError: site.error.slice(0, 300) }
+              : {
+                  lastCheckedAt: at,
+                  lastSuccessAt: at,
+                  lastError: null,
+                  lastCount: site.count,
+                  ...(row.seededAt ? {} : { seededAt: now }),
+                },
+          })
+          .catch(() => undefined);
+      })
+  );
 }
 
 export async function refreshJobPostings(): Promise<RefreshOutcome> {
   await seedJobSourcesIfEmpty();
-  const all = await jobSources();
-  // Disabled rows stay configured but are not polled.
-  const sources = all.filter((src) => src.enabled);
+  const now = new Date();
+  const configured = await jobSources();
+  const report = await fetchScrapeReport();
+  const all = await registerScrapedSites(configured, report, now);
+
+  // Disabled rows stay configured but are not polled; a board backing off
+  // after a 429 is skipped until its back-off ends. Scraped companies are
+  // read from the report below, never fetched.
+  const sources = all.filter(
+    (src) => src.enabled && !isScrapedProvider(src.provider) && !isBackedOff(src, now)
+  );
   const outcome: RefreshOutcome = {
     sources: sources.length,
     fetched: 0,
@@ -435,21 +563,21 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     notified: false,
     errors: [],
   };
-  if (sources.length === 0) {
-    outcome.errors.push(
-      all.length === 0 ? "no job boards configured" : "every configured board is disabled"
-    );
+  if (all.length === 0) {
+    outcome.errors.push("no job boards configured");
     return outcome;
   }
-
-  const now = new Date();
+  if (sources.length === 0 && !all.some((src) => src.enabled)) {
+    outcome.errors.push("every configured board is disabled");
+    return outcome;
+  }
 
   // Per source, so one company's board being down costs that company's roles
   // rather than the whole poll -- and is reported rather than swallowed.
   const results = await Promise.all(
     sources.map(async (source) => {
       try {
-        return { source, postings: await fetchBoard(source) };
+        return { source, postings: await fetchBoard(source as JobSource) };
       } catch (err) {
         return {
           source,
@@ -460,35 +588,44 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     })
   );
 
-  // Merged in alongside the boards, so everything downstream -- classifying,
-  // metro matching, notifying -- treats them identically.
   await recordSourceHealth(results, now);
+  await recordScrapedHealth(all, report, now);
+  if (report.error) outcome.errors.push(report.error);
 
-  const scraped = await fetchScrapedPostings();
-  if (scraped.error) outcome.errors.push(scraped.error);
-
+  // Merged in alongside the boards, so everything downstream -- classifying,
+  // metro matching, notifying -- treats them identically. `silent` is the
+  // board's first successful poll: what it finds is seeded, not announced.
   const fresh: {
     posting: JobPosting;
+    silent: boolean;
     metros: string[];
     remote: boolean;
     category: JobCategory;
     level: JobLevel;
   }[] = [];
-  outcome.fetched += scraped.postings.length;
-  for (const posting of scraped.postings) {
+  const scrapedRows = new Map(
+    all.filter((src) => isScrapedProvider(src.provider)).map((src) => [src.slug, src])
+  );
+  const scraped = filterScrapedByPoll(report.postings, all);
+  outcome.fetched += scraped.length;
+  for (const posting of scraped) {
     const verdict = keep(posting);
-    if (verdict) fresh.push({ posting, ...verdict });
+    const row = scrapedRows.get(posting.company);
+    if (verdict) fresh.push({ posting, silent: row ? seedsSilently(row) : false, ...verdict });
   }
 
+  let boardErrors = 0;
   for (const result of results) {
     if ("error" in result && result.error) {
       outcome.errors.push(`${result.source.company}: ${result.error}`);
+      boardErrors += 1;
       continue;
     }
     outcome.fetched += result.postings.length;
+    const silent = seedsSilently(result.source);
     for (const posting of result.postings) {
       const verdict = keep(posting);
-      if (verdict) fresh.push({ posting, ...verdict });
+      if (verdict) fresh.push({ posting, silent, ...verdict });
     }
   }
   outcome.matched = fresh.length;
@@ -504,7 +641,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     ).map((r) => r.id)
   );
 
-  for (const { posting, metros, remote, category, level } of fresh) {
+  for (const { posting, silent, metros, remote, category, level } of fresh) {
     const data = {
       company: posting.company,
       title: posting.title,
@@ -520,8 +657,9 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     await prisma.jobPosting.upsert({
       where: { id: posting.id },
       // firstSeen is left to its default on create and never written on update,
-      // so it keeps meaning the first time we saw this posting.
-      create: { id: posting.id, ...data },
+      // so it keeps meaning the first time we saw this posting. A silent seed
+      // is stamped notified on create, so no email ever picks it up.
+      create: { id: posting.id, ...data, ...(silent ? { notifiedAt: now } : {}) },
       update: data,
     });
     if (!known.has(posting.id)) outcome.created += 1;
@@ -529,7 +667,7 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
 
   // Only prune when the poll actually worked. Every source failing would
   // otherwise age out the entire list on a network blip.
-  if (outcome.errors.length < sources.length) {
+  if (sources.length > 0 && boardErrors < sources.length) {
     const cutoff = new Date(now.getTime() - STALE_AFTER_HOURS * 3600_000);
     const { count } = await prisma.jobPosting.deleteMany({
       where: { lastSeen: { lt: cutoff } },
@@ -545,65 +683,79 @@ export async function refreshJobPostings(): Promise<RefreshOutcome> {
     data: { archivedAt: now },
   });
 
-  const quiet = new Set(all.filter((src) => !src.notify).map((src) => src.company));
-  const announced = await announceNew(quiet);
+  const announced = await announceNew(all, now);
   outcome.announced = announced.count;
   outcome.notified = announced.notified;
   return outcome;
 }
 
-/** Sends one message for everything not yet announced, and stamps them. */
-async function announceNew(quiet: Set<string>): Promise<{ count: number; notified: boolean }> {
-  const all = await prisma.jobPosting.findMany({
-    where: { notifiedAt: null, archivedAt: null },
-    orderBy: [{ company: "asc" }, { title: "asc" }],
-  });
-  if (all.length === 0) return { count: 0, notified: false };
-
-  // A company can be worth watching without being worth an email. Its postings
-  // are still stamped below, so turning notifications back on does not then
-  // announce everything it has ever had.
-  // Which levels are emailed about is the admin's choice (Boards watched ->
-  // "Email alerts for"). Levels outside it are stamped with the rest, for the
-  // same reason: widening the choice later must not announce the backlog.
-  const levels = new Set(await getJobAlertLevels());
-  const pending = all.filter((p) => !quiet.has(p.company) && levels.has(p.level));
-  if (pending.length === 0) {
-    await prisma.jobPosting.updateMany({
-      where: { id: { in: all.map((p) => p.id) } },
-      data: { notifiedAt: new Date() },
-    });
-    return { count: 0, notified: false };
-  }
-
-  const lines = pending
-    .slice(0, MAX_ANNOUNCED)
-    .map((p) => `${p.company} - ${p.title}\n  ${p.location}\n  ${p.url}`);
-  if (pending.length > MAX_ANNOUNCED) {
-    lines.push(`…and ${pending.length - MAX_ANNOUNCED} more in the admin panel.`);
-  }
-
-  const subject =
-    pending.length === 1
-      ? `New role: ${pending[0].company} - ${pending[0].title}`
-      : `${pending.length} new roles`;
-
-  let notified = false;
+async function send(subject: string, body: string): Promise<boolean> {
   try {
-    notified = await notify(subject, lines.join("\n\n"));
+    return await notify(subject, body);
   } catch {
-    notified = false;
+    return false;
+  }
+}
+
+/**
+ * Emails what is due -- "Email immediately" boards now, the rest when the
+ * digest is due -- and stamps everything it decided about.
+ *
+ * Stamped whether or not the send worked. A failed send is worth one missed
+ * notification, not a message that repeats every poll forever -- and the
+ * postings are in the panel regardless.
+ */
+async function announceNew(
+  sources: ManagedSource[],
+  now: Date
+): Promise<{ count: number; notified: boolean }> {
+  const [pending, levels, cadenceRaw, lastDigestAt] = await Promise.all([
+    prisma.jobPosting.findMany({
+      where: { notifiedAt: null, archivedAt: null },
+      orderBy: [{ company: "asc" }, { title: "asc" }],
+    }),
+    getJobAlertLevels(),
+    getJobDigestCadenceRaw(),
+    getJobDigestLastAt(),
+  ]);
+  const cadence = parseDigestCadence(cadenceRaw);
+  const digestDue = isDigestDue(cadence, lastDigestAt, now);
+
+  // By company name, which is what a posting carries. Two rows for one
+  // company (an API board and a scraped site) count as on if either is.
+  const flags = new Map<string, BoardEmailFlags>();
+  for (const src of sources) {
+    const prev = flags.get(src.company);
+    flags.set(src.company, {
+      notify: src.notify || (prev?.notify ?? false),
+      notifyImmediately: src.notifyImmediately || (prev?.notifyImmediately ?? false),
+    });
   }
 
-  // Stamped whether or not the send worked. A failed send is worth one missed
-  // notification, not a message that repeats every poll forever -- and the
-  // postings are in the panel regardless.
-  await prisma.jobPosting.updateMany({
-    where: { id: { in: all.map((p) => p.id) } },
-    data: { notifiedAt: new Date() },
-  });
+  const plan = planAnnouncements(pending, { flags, levels: new Set(levels), cadence, digestDue });
+  let notified = false;
 
-  return { count: pending.length, notified };
+  if (plan.immediate.length > 0) {
+    const msg = announcementMessage(plan.immediate, "immediate");
+    notified = (await send(msg.subject, msg.body)) || notified;
+  }
+  if (plan.digest.length > 0) {
+    const msg = announcementMessage(plan.digest, "digest");
+    notified = (await send(msg.subject, msg.body)) || notified;
+  }
+  // The window restarts whenever the digest is due, sent or not: a fixed
+  // rhythm (see isDigestDue).
+  if (digestDue) await setJobDigestLastAt(now).catch(() => undefined);
+
+  const stamp = [...plan.immediate, ...plan.digest, ...plan.silent].map((p) => p.id);
+  if (stamp.length > 0) {
+    await prisma.jobPosting.updateMany({
+      where: { id: { in: stamp } },
+      data: { notifiedAt: now },
+    });
+  }
+
+  return { count: plan.immediate.length + plan.digest.length, notified };
 }
 
 export type JobPostingRow = {

@@ -1,9 +1,11 @@
 import { AdminSection } from "@/components/ui";
 import { JobListingsPanel } from "@/components/JobListingsPanel";
 import { JobSourcesPanel } from "@/components/JobSourcesPanel";
-import { getJobPostings, isJobBoardConfigured, jobSources, scrapedSiteReport } from "@/lib/jobPostings";
-import { HEALTH_RANK, scrapedSiteHealth, sourceHealth } from "@/lib/jobSourceHealthRules";
-import { getJobAlertLevels } from "@/lib/appSettings";
+import { getJobPostings, isJobBoardConfigured, jobSources } from "@/lib/jobPostings";
+import { SCRAPED_STALE_AFTER_MS, sourceHealth } from "@/lib/jobSourceHealthRules";
+import { isScrapedProvider, sortSourceRows } from "@/lib/jobBoardRules";
+import { nextDigestAt, parseDigestCadence } from "@/lib/jobDigestRules";
+import { getJobAlertLevels, getJobDigestCadenceRaw, getJobDigestLastAt } from "@/lib/appSettings";
 import { listResumeVersions } from "@/lib/resume";
 import { recentResumeJobs } from "@/lib/resumeJobs";
 import { ResumeVersionsPanel } from "@/components/ResumeVersionsPanel";
@@ -17,13 +19,14 @@ export default async function AdminJobsPage() {
   // browser, so anything the cap drops is invisible to the metro, company and
   // category filters and they quietly lie about what is open. Fifty-seven
   // boards matched over 1,500 roles on 2026-09-26.
-  const [jobListings, sources, configured, alertLevels, resumes, scrapeReport, profile, applications, resumeJobs] = await Promise.all([
+  const [jobListings, sources, configured, alertLevels, resumes, cadenceRaw, lastDigestAt, profile, applications, resumeJobs] = await Promise.all([
     getJobPostings(3000),
     jobSources(),
     isJobBoardConfigured(),
     getJobAlertLevels(),
     listResumeVersions().catch(() => []),
-    scrapedSiteReport(),
+    getJobDigestCadenceRaw(),
+    getJobDigestLastAt(),
     getApplicantProfile(),
     prisma.jobApplication
       .findMany({ orderBy: { createdAt: "asc" }, select: { id: true, postingId: true, status: true } })
@@ -34,13 +37,8 @@ export default async function AdminJobsPage() {
   // Newest wins: ordered oldest first, so later rows overwrite.
   const applicationByPosting = new Map(applications.map((a) => [a.postingId, { id: a.id, status: a.status }]));
   const checkedAt = new Date();
-  const scrapedSites = scrapeReport.sites
-    .map((site) => ({
-      company: site.company,
-      count: site.count,
-      health: scrapedSiteHealth(site, scrapeReport.generatedAt, checkedAt),
-    }))
-    .sort((a, b) => HEALTH_RANK[a.health.status] - HEALTH_RANK[b.health.status]);
+  const cadence = parseDigestCadence(cadenceRaw);
+  const nextDigest = nextDigestAt(cadence, lastDigestAt, checkedAt);
 
   // Counted from the postings rather than stored on the board, so the number
   // is always what the list actually holds -- a board can be configured and
@@ -103,18 +101,30 @@ export default async function AdminJobsPage() {
       <AdminSection title="Boards watched">
         <JobSourcesPanel
           alertLevels={alertLevels}
-          scrapedSites={scrapedSites}
-          sources={sources.map((src) => ({
-            id: src.id,
-            provider: src.provider,
-            slug: src.slug,
-            company: src.company,
-            enabled: src.enabled,
-            notify: src.notify,
-            tag: src.tag,
-            openRoles: openByCompany.get(src.company) ?? 0,
-            health: sourceHealth(src, checkedAt),
-          }))}
+          digestCadence={cadence}
+          nextDigestAt={nextDigest?.toISOString() ?? null}
+          // API boards and the career sites mediabox scrapes, in one list
+          // since 2026-10-24: the scraped ones are rows like any other, with
+          // a Custom badge, so each has the same switches.
+          sources={sortSourceRows(
+            sources.map((src) => {
+              const custom = isScrapedProvider(src.provider);
+              return {
+                id: src.id,
+                provider: src.provider,
+                slug: src.slug,
+                company: src.company,
+                custom,
+                enabled: src.enabled,
+                notify: src.notify,
+                notifyImmediately: src.notifyImmediately,
+                tag: src.tag,
+                note: src.note,
+                openRoles: openByCompany.get(src.company) ?? 0,
+                health: sourceHealth(src, checkedAt, custom ? { staleAfterMs: SCRAPED_STALE_AFTER_MS } : {}),
+              };
+            })
+          )}
         />
       </AdminSection>
       </div>

@@ -10,6 +10,7 @@
  *   - Select: always the `.streamy-select` class (globals.css), which draws the
  *     arrow and sets `color-scheme: dark` so the option popup isn't light.
  *   - Badge: status, not action. Clickable things are Buttons.
+ *   - Checkbox: an on/off setting with its label (a row's switches).
  *   - PosterIconButton: the round controls laid over poster artwork.
  *   - TabBar / TabLink: one page split into sections, each with its own URL
  *     (the admin area, Live TV). A Chip row is for filters within one view.
@@ -112,6 +113,25 @@ export function Field({ label, hint, children, className }: { label: ReactNode; 
       <span className="mb-1 block text-xs text-white/50">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-[11px] text-white/35">{hint}</span>}
+    </label>
+  );
+}
+
+/**
+ * A labelled checkbox: an on/off setting on a row, e.g. a board's Poll and
+ * Email switches. Added 2026-10-24 so rows stop hand-rolling their own.
+ * `title` explains the setting on hover.
+ */
+export function Checkbox({
+  label,
+  title,
+  className,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { label: ReactNode }) {
+  return (
+    <label title={title} className={cx("flex cursor-pointer items-center gap-1 text-white/50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-40", className)}>
+      <input type="checkbox" className="accent-netflix-red" {...rest} />
+      <span>{label}</span>
     </label>
   );
 }

@@ -3,7 +3,10 @@ import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logAudit } from "@/lib/auditLog";
 import { boardUrl, parseJobSources } from "@/lib/jobBoards";
-import { setJobAlertLevels } from "@/lib/appSettings";
+import { setJobAlertLevels, setJobDigestCadenceRaw } from "@/lib/appSettings";
+import { DIGEST_CADENCES, DIGEST_CADENCE_LABELS, type DigestCadence } from "@/lib/jobDigestRules";
+import { isScrapedProvider, reseedOnEnable } from "@/lib/jobBoardRules";
+import { STALE_AFTER_HOURS } from "@/lib/jobPostings";
 
 /**
  * Add, remove or adjust a company board.
@@ -88,12 +91,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, levels: saved });
   }
 
+  // How often queued new-role emails go out (2026-10-24).
+  if (action === "digestCadence") {
+    const cadence = String(body?.cadence ?? "");
+    if (!(DIGEST_CADENCES as readonly string[]).includes(cadence)) {
+      return NextResponse.json({ error: "Unknown cadence" }, { status: 400 });
+    }
+    await setJobDigestCadenceRaw(cadence);
+    logAudit(admin.name, "jobSource.digestCadence", DIGEST_CADENCE_LABELS[cadence as DigestCadence]);
+    return NextResponse.json({ ok: true, cadence });
+  }
+
   const id = typeof body?.id === "string" ? body.id : "";
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
   if (action === "remove") {
     const row = await prisma.jobBoardSource.findUnique({ where: { id } });
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // A scraped company's row is re-registered from the next scrape report,
+    // so removing it would only appear to work. Its Poll switch is what stops
+    // the scraper; dropping the site for good is an edit to job-scrape.py.
+    if (isScrapedProvider(row.provider)) {
+      return NextResponse.json(
+        { error: "Custom sites come from the scraper. Turn Poll off to stop scraping it." },
+        { status: 400 }
+      );
+    }
     await prisma.jobBoardSource.delete({ where: { id } });
     // Postings are left alone: they age out on their own once the board stops
     // being polled, and deleting them would also wipe the firstSeen history
@@ -111,10 +134,24 @@ export async function POST(request: Request) {
   }
 
   if (action === "toggle") {
-    const field = body?.field === "notify" ? "notify" : "enabled";
+    const field =
+      body?.field === "notify" ? "notify" : body?.field === "notifyImmediately" ? "notifyImmediately" : "enabled";
     const value = Boolean(body?.value);
+    const before = await prisma.jobBoardSource.findUnique({ where: { id } });
+    if (!before) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Turning Poll back on after its postings could have aged out would make
+    // the next poll find them all again as "new"; that poll seeds silently
+    // instead. Clearing the back-off lets a rate-limited board be retried now.
+    const extra =
+      field === "enabled" && value && !before.enabled
+        ? {
+            backoffUntil: null,
+            backoffStreak: 0,
+            ...(reseedOnEnable(before, new Date(), STALE_AFTER_HOURS) ? { seededAt: null } : {}),
+          }
+        : {};
     const row = await prisma.jobBoardSource
-      .update({ where: { id }, data: { [field]: value } })
+      .update({ where: { id }, data: { [field]: value, ...extra } })
       .catch(() => null);
     if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
     logAudit(admin.name, `jobSource.${field}`, `${row.company} ${value ? "on" : "off"}`);
