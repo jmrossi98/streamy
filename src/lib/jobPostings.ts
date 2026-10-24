@@ -23,6 +23,7 @@
  */
 import { prisma } from "./db";
 import { notify } from "./notify";
+import { htmlToText } from "./pageWatchRules";
 import { getJobAlertLevels, getJobDigestCadenceRaw, getJobDigestLastAt, setJobDigestLastAt } from "./appSettings";
 import {
   boardUrl,
@@ -64,6 +65,8 @@ import {
   EXEC_CHECKS_PER_POLL,
   execHiddenReason,
   extractExecRequirement,
+  listingApiHtml,
+  listingApiUrl,
   needsExecCheck,
   type ExecCheck,
 } from "./jobManagementRules";
@@ -233,38 +236,57 @@ const WORKDAY_MAX_PAGES = 5;
  * isSoftwareRole still has the final say -- this only avoids transferring
  * thousands of postings to throw nearly all of them away.
  */
-const WORKDAY_SEARCH_TEXT = "software engineer";
+/**
+ * 2026-10-24: plus one page of "engineering manager", now that engineering
+ * managers are kept (the Management level). Workday's search is free text,
+ * so "software engineer" alone ranks managers below hundreds of engineers.
+ */
+const WORKDAY_SEARCHES: { text: string; pages: number }[] = [
+  { text: "software engineer", pages: WORKDAY_MAX_PAGES },
+  { text: "engineering manager", pages: 1 },
+];
 
 async function fetchWorkday(source: JobSource): Promise<JobPosting[]> {
   const url = boardUrl(source);
   if (!url) throw new Error("malformed workday slug");
 
   const all: JobPosting[] = [];
-  for (let page = 0; page < WORKDAY_MAX_PAGES; page += 1) {
-    const res = await fetch(url, {
-      method: "POST",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cache: "no-store",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "User-Agent": UA,
-      },
-      body: JSON.stringify({
-        appliedFacets: {},
-        limit: WORKDAY_PAGE_SIZE,
-        offset: page * WORKDAY_PAGE_SIZE,
-        searchText: WORKDAY_SEARCH_TEXT,
-      }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const batch = parseBoard(source, await res.json());
-    all.push(...batch);
-    // A short page is the last page; asking for the next one would just be a
-    // wasted round trip against someone else's server.
-    if (batch.length < WORKDAY_PAGE_SIZE) break;
+  const seen = new Set<string>();
+  for (const search of WORKDAY_SEARCHES) {
+    for (let page = 0; page < search.pages; page += 1) {
+      const batch = await fetchWorkdayPage(url, source, search.text, page);
+      for (const posting of batch) {
+        if (seen.has(posting.id)) continue;
+        seen.add(posting.id);
+        all.push(posting);
+      }
+      // A short page is the last page; asking for the next one would just be a
+      // wasted round trip against someone else's server.
+      if (batch.length < WORKDAY_PAGE_SIZE) break;
+    }
   }
   return all;
+}
+
+async function fetchWorkdayPage(url: string, source: JobSource, searchText: string, page: number): Promise<JobPosting[]> {
+  const res = await fetch(url, {
+    method: "POST",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "User-Agent": UA,
+    },
+    body: JSON.stringify({
+      appliedFacets: {},
+      limit: WORKDAY_PAGE_SIZE,
+      offset: page * WORKDAY_PAGE_SIZE,
+      searchText,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return parseBoard(source, await res.json());
 }
 
 /**
@@ -753,6 +775,29 @@ async function experienceYears(now: Date): Promise<number | null> {
  * poll; the same listing path the resume builder uses, render fallback and
  * all) and decides which are shown. See jobManagementRules.ts.
  */
+/**
+ * A director/VP listing as text: the board's own JSON when it has one
+ * (listingApiUrl), else the resume builder's fetch-then-render read.
+ */
+async function readExecListing(id: string, url: string): Promise<{ text: string; source: string }> {
+  const api = listingApiUrl(id, url);
+  if (api) {
+    try {
+      const res = await fetch(api, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        cache: "no-store",
+        headers: { "User-Agent": UA, Accept: "application/json" },
+      });
+      const text = res.ok ? htmlToText(listingApiHtml(await res.json())).trim() : "";
+      if (text) return { text, source: "api" };
+    } catch {
+      // Fall through to the page.
+    }
+  }
+  const { readListing } = await import("./resume");
+  return readListing(url).catch(() => ({ text: "", source: "none" as const }));
+}
+
 async function assessExecPostings(now: Date): Promise<void> {
   const rows = (
     await prisma.jobPosting.findMany({
@@ -768,7 +813,9 @@ async function assessExecPostings(now: Date): Promise<void> {
         hiddenReason: true,
       },
     })
-  ).filter((r) => managementKind(r.title) === "exec");
+    // A title the rules no longer keep (a veto added since it was stored)
+    // is only waiting to age out; reading its listing would be wasted.
+  ).filter((r) => managementKind(r.title) === "exec" && classifyRole(r.title) !== null);
   if (rows.length === 0) return;
 
   const toCheck = (r: (typeof rows)[number]): ExecCheck => ({
@@ -786,8 +833,7 @@ async function assessExecPostings(now: Date): Promise<void> {
   for (const row of rows) {
     if (reads >= EXEC_CHECKS_PER_POLL || Date.now() > readUntil || !needsExecCheck(toCheck(row), now)) continue;
     reads += 1;
-    const { readListing } = await import("./resume");
-    const listing = await readListing(row.url).catch(() => ({ text: "", source: "none" as const }));
+    const listing = await readExecListing(row.id, row.url);
     const req = listing.source === "none" ? { years: null, managerYears: null } : extractExecRequirement(listing.text);
     Object.assign(row, {
       reqYears: req.years,

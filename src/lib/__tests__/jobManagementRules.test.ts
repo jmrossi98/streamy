@@ -4,6 +4,8 @@ import {
   EXEC_RETRY_MS,
   execHiddenReason,
   extractExecRequirement,
+  listingApiHtml,
+  listingApiUrl,
   needsExecCheck,
   type ExecCheck,
 } from "../jobManagementRules";
@@ -247,6 +249,36 @@ describe("execHiddenReason", () => {
     expect(execHiddenReason({ ...read(null), status: "unread" }, 7.2)).toMatch(/Couldn't read/);
     expect(execHiddenReason(read(null), 7.2)).toMatch(/states no minimum/);
     expect(execHiddenReason(read(5), null)).toMatch(/experience couldn't be read/);
+  });
+});
+
+describe("listingApiUrl / listingApiHtml", () => {
+  it("reads Greenhouse by id, whatever career domain the link uses", () => {
+    expect(listingApiUrl("greenhouse:nuro:7577458", "https://nuro.ai/careersitem?gh_jid=7577458")).toBe(
+      "https://boards-api.greenhouse.io/v1/boards/nuro/jobs/7577458"
+    );
+    expect(listingApiHtml({ content: "&lt;p&gt;10+ years &amp; more&lt;/p&gt;" })).toBe("<p>10+ years & more</p>");
+  });
+
+  it("reads Workday through its cxs endpoint", () => {
+    expect(
+      listingApiUrl(
+        "workday:adobe:R170847",
+        "https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced/job/San-Jose/Director-of-Engineering---Machine-Learning---AI-Products_R170847"
+      )
+    ).toBe(
+      "https://adobe.wd5.myworkdayjobs.com/wday/cxs/adobe/external_experienced/job/San-Jose/Director-of-Engineering---Machine-Learning---AI-Products_R170847"
+    );
+    expect(listingApiHtml({ jobPostingInfo: { jobDescription: "<p>Over 15 years</p>" } })).toBe("<p>Over 15 years</p>");
+  });
+
+  it("has nothing for other boards", () => {
+    expect(listingApiUrl("ashby:cursor:f7ec", "https://jobs.ashbyhq.com/cursor/f7ec")).toBeNull();
+    expect(listingApiHtml(null)).toBe("");
+  });
+
+  it("vetoes a people-partner director", () => {
+    expect(managementKind("Director, People Partners - Product, Design & Engineering")).toBeNull();
   });
 });
 

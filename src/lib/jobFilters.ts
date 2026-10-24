@@ -467,6 +467,7 @@ const MANAGEMENT_VETOES = [
   "procurement",
   "sourcing",
   "product management",
+  "people partner",
   "content",
 ];
 
