@@ -1,18 +1,22 @@
 /**
  * Claude Code sessions, offered in the admin chat so one can be picked up
- * here. They come from the vault (the sync script pushes them every 30
- * minutes, and after each Claude Code turn at most every 5), and opening one
- * makes an ordinary saved chat linked to that session: from then on the chat
- * bridge carries turns both ways (chatBridge.ts).
+ * here. They come from the vault (the sync script pushes them after every
+ * Claude Code response), and opening one makes an ordinary saved chat linked
+ * to that session: from then on the chat bridge carries turns both ways
+ * (chatBridge.ts). Chats imported from the Claude app sit beside them and
+ * open the same way, except that nothing flows back (their stored id carries
+ * an "app-" prefix, which the bridge leaves alone).
  */
 import { prisma } from "@/lib/db";
 import { scheduleChatExport } from "@/lib/chatExport";
 import { getChatSession } from "@/lib/chatSessions";
 import { normalizeTurns, type ChatSessionFull } from "@/lib/chatSessionRules";
 import {
+  CLAUDE_APP_CHATS_DIR,
   CLAUDE_CODE_CHATS_DIR,
   listClaudeCodeSessions,
   parseClaudeCodeNote,
+  storedSessionId,
   type ClaudeCodeSessionRef,
 } from "@/lib/claudeCodeNoteRules";
 import { isVaultConfigured, listVaultFiles, readVaultNote } from "@/lib/vault";
@@ -31,7 +35,11 @@ export type ClaudeCodeChatListing = {
 
 async function sessionRefs(): Promise<ClaudeCodeSessionRef[]> {
   if (!isVaultConfigured()) return [];
-  return listClaudeCodeSessions(await listVaultFiles(CLAUDE_CODE_CHATS_DIR, isReadableNote, 2000));
+  const [code, app] = await Promise.all([
+    listVaultFiles(CLAUDE_CODE_CHATS_DIR, isReadableNote, 2000),
+    listVaultFiles(CLAUDE_APP_CHATS_DIR, isReadableNote, 2000),
+  ]);
+  return listClaudeCodeSessions([...code, ...app]);
 }
 
 export async function listClaudeCodeChats(userId: string): Promise<ClaudeCodeChatListing[]> {
@@ -45,7 +53,7 @@ export async function listClaudeCodeChats(userId: string): Promise<ClaudeCodeCha
     machine: r.machine,
     title: r.title,
     modified: r.modified ? new Date(r.modified).toISOString() : null,
-    chatId: linked.find((l) => l.claudeSessionId?.startsWith(r.sid8))?.id ?? null,
+    chatId: linked.find((l) => l.claudeSessionId?.startsWith(storedSessionId(r.machine, r.sid8)))?.id ?? null,
   }));
 }
 
@@ -62,7 +70,8 @@ export async function openClaudeCodeChat(userId: string, key: string): Promise<C
   const sessionId = notes[0]?.sessionId;
   if (!sessionId) return null;
 
-  const existing = await prisma.chatSession.findFirst({ where: { userId, claudeSessionId: sessionId }, select: { id: true } });
+  const stored = storedSessionId(ref.machine, sessionId);
+  const existing = await prisma.chatSession.findFirst({ where: { userId, claudeSessionId: stored }, select: { id: true } });
   if (existing) return getChatSession(userId, existing.id);
 
   const turns = normalizeTurns(notes.flatMap((n) => n.turns));
@@ -75,7 +84,7 @@ export async function openClaudeCodeChat(userId: string, key: string): Promise<C
       backend: "claude",
       turns: JSON.stringify(turns),
       turnCount: turns.length,
-      claudeSessionId: sessionId,
+      claudeSessionId: stored,
       // Claude Code was there for all of these; only what is added here is news to it.
       claudeSeenTurns: turns.length,
     },
