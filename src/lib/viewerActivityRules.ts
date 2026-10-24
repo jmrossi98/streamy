@@ -138,6 +138,12 @@ export function isActivelyPlaying(lastSeenAt: number, now = Date.now()): boolean
 /** The shortest stall that counts against a session. */
 export const NOTICEABLE_STALL_MS = 1_000;
 
+/**
+ * A start that never reached a picture but was followed this soon by one that
+ * did (same media) was recovered by the player's own retry, not a failure.
+ */
+export const RECOVERED_START_MS = 60_000;
+
 /** How far back a session's verdict looks: now, not an hour ago. */
 export const VERDICT_WINDOW_MS = 30 * 60_000;
 
@@ -159,8 +165,16 @@ export type SessionHealth = {
  *
  * Failing: an error, or a start that never reached a picture. Rough: more
  * than two stalls, or more than ten seconds stalled. Otherwise smooth.
+ *
+ * A start that never played but was followed within RECOVERED_START_MS by
+ * one of the same media that did is a recovered retry, not a failure:
+ * 2026-10-23 an NFL Network tune hit a Dispatcharr 503, the player re-tuned
+ * and played 3s later, and the panel still said "playback: errors" for half
+ * an hour over a stream that was fine.
  */
-export function sessionHealth(events: { kind: string; ms: number | null; detail: string | null; at: number }[]): SessionHealth {
+export function sessionHealth(
+  events: { kind: string; ms: number | null; detail: string | null; at: number; media?: string | null }[]
+): SessionHealth {
   const sorted = [...events].sort((a, b) => a.at - b.at);
   let starts = 0;
   let stalls = 0;
@@ -169,16 +183,26 @@ export function sessionHealth(events: { kind: string; ms: number | null; detail:
   let retries = 0;
   let lastError: string | null = null;
   const startTimes: number[] = [];
-  let open = false; // a start not yet followed by a picture
+  let open: { at: number; media: string | null } | null = null; // a start not yet followed by a picture
   let neverPlayed = 0;
+  // Starts that never played, still waiting to see whether a retry recovers them.
+  let unrecovered: { at: number; media: string | null }[] = [];
+  const failOpen = () => {
+    if (open) unrecovered.push(open);
+    open = null;
+  };
   for (const e of sorted) {
     if (e.kind === "start") {
-      if (open) neverPlayed += 1;
+      failOpen();
       starts += 1;
-      open = true;
+      open = { at: e.at, media: e.media ?? null };
     } else if (e.kind === "playing") {
       if (open && e.ms != null) startTimes.push(e.ms);
-      open = false;
+      const media = e.media ?? open?.media ?? null;
+      unrecovered = unrecovered.filter(
+        (f) => !(e.at - f.at <= RECOVERED_START_MS && (f.media === null || media === null || f.media === media))
+      );
+      open = null;
     } else if (e.kind === "stall") {
       // Under a second isn't something a viewer sees: a seek settling, a
       // segment boundary. Counting those called a smooth episode "buffering"
@@ -192,10 +216,11 @@ export function sessionHealth(events: { kind: string; ms: number | null; detail:
     } else if (e.kind === "retry") {
       retries += 1;
     } else if (e.kind === "stop") {
-      if (open) neverPlayed += 1;
-      open = false;
+      failOpen();
     }
   }
+  failOpen();
+  neverPlayed = unrecovered.length;
   startTimes.sort((a, b) => a - b);
   const medianStartMs = startTimes.length ? startTimes[Math.floor((startTimes.length - 1) / 2)] : null;
   const verdict =

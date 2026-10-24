@@ -76,6 +76,24 @@ describe("sessionHealth", () => {
     expect(h.retries).toBe(2);
   });
 
+  it("smooth: a failed tune the player's retry recovered seconds later", () => {
+    const m = (kind: string, at: number, ms: number | null = null, detail: string | null = null) => ({ ...ev(kind, at, ms, detail), media: "Live: NFL" });
+    const h = sessionHealth([m("start", 0), m("retry", 9_000, null, "Playback failed."), m("stop", 12_000), m("start", 12_001), m("playing", 17_000, 4748)]);
+    expect(h.verdict).toBe("smooth");
+    expect(h.errors).toBe(0);
+    expect(h.retries).toBe(1);
+  });
+
+  it("still failing when the recovery was a different channel", () => {
+    const h = sessionHealth([
+      { ...ev("start", 0), media: "Live: A" },
+      { ...ev("stop", 5_000), media: "Live: A" },
+      { ...ev("start", 6_000), media: "Live: B" },
+      { ...ev("playing", 9_000, 3000), media: "Live: B" },
+    ]);
+    expect(h.verdict).toBe("failing");
+  });
+
   it("failing on an error, and remembers it", () => {
     const h = sessionHealth([ev("start", 1), ev("error", 2, null, "This channel didn’t start.")]);
     expect(h.verdict).toBe("failing");
