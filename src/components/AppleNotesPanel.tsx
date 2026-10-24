@@ -151,7 +151,9 @@ export function AppleNotesPanel() {
             Open <b>Shortcuts</b>, tap <b>+</b>, and name it <b>Sync notes to Streamy</b>.
           </li>
           <li>
-            Search actions for <b>Find Notes</b> and add it. Leave it as <i>Find All Notes</i>.
+            Search actions for <b>Find Notes</b> and add it. To keep a note private, put it in a folder such as{" "}
+            <i>Private</i> and tap <b>Add Filter</b>: <b>Folder</b> · <b>is not</b> · <i>Private</i>. It is then never
+            sent.
           </li>
           <li>
             Add <b>Repeat with Each</b>. It picks up <i>Notes</i> by itself.
@@ -183,7 +185,9 @@ export function AppleNotesPanel() {
             <i>Below</i> End Repeat, add <b>Text</b>, and insert the variable <b>Repeat Results</b> into it.
           </li>
           <li>
-            Add <b>Get Contents of URL</b>. Paste the <b>URL</b>. Tap the <b>›</b> arrow to show more and set:
+            Add <b>Get Contents of URL</b>. Shortcuts may fill its URL with the <i>Text</i> variable: delete that
+            bubble and paste the <b>URL</b> instead (an error like <i>&quot;mailto:… is missing a hostname&quot;</i>
+            means the notes ended up in the URL field). Tap the <b>›</b> arrow to show more and set:
             <ul className="mt-1 list-disc pl-5">
               <li>
                 Method: <b>POST</b>
@@ -192,13 +196,21 @@ export function AppleNotesPanel() {
                 Headers → Add new header: key <code>x-notes-key</code>, value: paste the <b>Key</b>
               </li>
               <li>
-                Request Body: <b>File</b>, then pick the variable <b>Text</b>
+                Request Body: <b>File</b>, then pick the variable <b>Text</b> (the Text action holding Repeat
+                Results)
               </li>
             </ul>
           </li>
           <li>
-            Tap <b>▶</b> to run it. Allow access to Notes when asked. Then tap <b>Refresh</b> above: it should show
-            your note count.
+            iOS blocks a Shortcut from sending many notes to a website until you allow it: in the <b>Settings</b> app
+            open <b>Apps → Shortcuts → Advanced</b> (older iOS: <b>Shortcuts → Advanced</b>) and turn on{" "}
+            <b>Allow Sharing Large Amounts of Data</b>. Without it the run fails with{" "}
+            <i>&quot;trying to share N Notes items, which is not allowed&quot;</i>.
+          </li>
+          <li>
+            Tap <b>▶</b> to run it. Allow access to Notes, and when asked whether it may send notes to this site choose{" "}
+            <b>Always Allow</b> (otherwise the automation stops to ask every time). Then tap <b>Refresh</b> above: it
+            should show your note count.
           </li>
         </ol>
       </section>
