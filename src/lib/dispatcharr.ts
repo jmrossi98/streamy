@@ -230,14 +230,38 @@ function toStream(s: RawStream, accountNameById?: Map<number, string>): Dispatch
 const MEMO_TTL_MS = 30_000;
 const memos = new Map<string, { at: number; value: unknown }>();
 
+/**
+ * Past the TTL, a remembered answer is still served (and refreshed behind the
+ * caller) for up to this long. Live TV tab switches each paid a fresh 1.5-2.5 s
+ * Dispatcharr round trip once the 30 s TTL lapsed (2026-10-24); a channel's
+ * provider or the line count being a few seconds old is fine, a page that
+ * waits for it is not.
+ */
+const MEMO_MAX_STALE_MS = 10 * 60_000;
+const memoInflight = new Map<string, Promise<unknown>>();
+
 async function memoized<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const hit = memos.get(key);
-  if (hit && Date.now() - hit.at < MEMO_TTL_MS) return hit.value as T;
-  const value = await fn();
-  // Failures aren't cached: a null here means Dispatcharr was unreachable,
-  // and holding onto that for 30s would extend a blip into an outage.
-  if (value != null) memos.set(key, { at: Date.now(), value });
-  return value;
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < MEMO_TTL_MS) return hit.value as T;
+
+  let run = memoInflight.get(key) as Promise<T> | undefined;
+  if (!run) {
+    run = fn()
+      .then((value) => {
+        // Failures aren't cached: a null here means Dispatcharr was
+        // unreachable, and holding onto that would extend a blip into an outage.
+        if (value != null) memos.set(key, { at: Date.now(), value });
+        return value;
+      })
+      .finally(() => memoInflight.delete(key));
+    memoInflight.set(key, run);
+  }
+  if (hit && age < MEMO_MAX_STALE_MS) {
+    run.catch(() => {});
+    return hit.value as T;
+  }
+  return run;
 }
 
 /** Every configured M3U provider's own name, keyed by its Dispatcharr id. */
@@ -970,6 +994,16 @@ function toLine(p: RawProfile): IptvLine {
     expiresUtc: p.exp_date ?? null,
     status: p.custom_properties?.user_info?.status ?? null,
   };
+}
+
+/**
+ * listIptvAccounts through the same short, stale-while-refreshing memo as the
+ * channel info, for the Live TV page's line-availability badges. The
+ * credentials and line-editing paths keep calling listIptvAccounts directly,
+ * so they always see a change they just made.
+ */
+export function listIptvAccountsCached(): Promise<IptvAccount[] | null> {
+  return memoized("iptvAccounts", listIptvAccounts);
 }
 
 /** The Xtream Codes provider accounts (the IPTV logins). Null when Dispatcharr is unreachable. */

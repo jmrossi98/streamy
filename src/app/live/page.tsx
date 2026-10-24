@@ -12,7 +12,7 @@ import {
   isJellyfinReachable,
   MAX_CHANNELS,
 } from "@/lib/liveTv";
-import { getChannelInfo, getMappedChannelPrograms, listIptvAccounts, type ChannelInfo } from "@/lib/dispatcharr";
+import { getChannelInfo, getMappedChannelPrograms, listIptvAccountsCached, type ChannelInfo } from "@/lib/dispatcharr";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
 import { channelProviderState, providerAvailability } from "@/lib/providerAvailability";
@@ -80,7 +80,7 @@ export default async function LivePage({
   // all in use (or the provider is offline), so the grid can say so instead of
   // opening into a spinner.
   const providerPromise: Promise<Record<string, "ok" | "full" | "down">> = Promise.all([
-    timed("listIptvAccounts", listIptvAccounts()),
+    timed("listIptvAccounts", listIptvAccountsCached()),
     timed("renewals", getAutomaticRenewals().catch(() => [])),
     infoPromise,
   ])
