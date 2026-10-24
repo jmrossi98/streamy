@@ -9,6 +9,8 @@
  * else -- selection, order, wording, keywords -- is fair game.
  */
 
+import { ROLE_TYPE_GUIDANCE, rulesBlock, type ResumeRule, type RoleType } from "./resumeFormatRules";
+
 export type NoteSource = { path: string; text: string };
 
 export type PostingInput = {
@@ -52,14 +54,29 @@ RESEARCH
 - Use web search to learn what this company and team build, their stack, their interview and hiring culture, and what they value, so the resume speaks to it. Do not name-drop the research in the resume itself.
 
 STANDARDS (what recruiters, hiring managers and engineering-resume communities agree on)
-- One page. The candidate has under ten years of experience, so a second page costs more than it adds. Budget about 550-650 words for the whole resume.
-- Experience first, jobs in reverse chronological order; the most recent role gets the most detail (4-6 bullets), earlier roles 2-4, an internship 1-2. Within a job, order bullets by relevance to this listing.
+- One page, always. Budget about 550-650 words for the whole resume. When it doesn't fit, cut the oldest and least relevant bullets first, never the recent impact.
+- Experience first, jobs in reverse chronological order. BULLET BUDGET (the candidate's approved rule, 2026-10-24): 14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-5, internship 1 or none. Projects get one line each, and are dropped for leadership-track roles unless directly relevant.
+- Within a job, order bullets by relevance to this listing, not chronology. For senior and leadership targets, the current role's first bullet makes scope visible (systems owned, users served, teams worked across).
+- Every bullet is 15-25 words, with the result in the first few words. A second sentence only when it lands a key result or carries a metric.
 - Every bullet follows the XYZ pattern: accomplished [X], measured by [Y], by doing [Z]. Open with a strong, varied verb; name the scope (what system, how many users or services, who depended on it) and the outcome, not the task. Use a number only when the bank gives one. Each bullet shows a different kind of impact: shipped, owned a rollout, found a root cause, designed, reviewed, mentored.
 - Past tense for past roles; the current role may use past tense too, consistently. No pronouns, no "responsible for", no "helped", no "various", no soft-skill claims without evidence.
 - Lead with seniority signals for a senior or levelled role: ownership of a system, staged production rollouts, design documents, cross-team work, code review, on-call, mentoring.
-- Skills: grouped by category (Languages; Frameworks; Cloud & Infrastructure; Data; Observability; AI/ML), each group ordered by relevance to this listing, the first item being what the candidate would be interviewed in. Only skills the candidate could discuss for several minutes; nothing from the listing that the bank does not support. No proficiency ratings.
-- Summary: omit it, unless the candidate is pivoting (a listing whose field differs from the work history) and one or two specific sentences of positioning help the reader. Never a generic objective.
-- Projects only when they add evidence the experience lacks for this listing (a language or domain the listing needs), one line each. Education last; certifications only if relevant to the listing.
+- Mirror the listing's most-repeated skill terms in its exact wording, only where the bank supports them, and in a bullet that proves them, not just in Skills.
+- Skills: 8-12 items in total, grouped by category (Languages; Frameworks; Cloud & Infrastructure; Data; Observability; AI/ML), ordered by this listing's priorities, the first item being what the candidate would be interviewed in. Drop skills unrelated to this listing. Only skills the candidate could discuss for several minutes; nothing from the listing that the bank does not support. No proficiency ratings.
+- Summary (auto): include one only when the ROLE TYPE is leadership (tech lead, EM, director) or the listing is a clear domain change from the work history: two lines, containing exactly one concrete figure from the bank. No summary for straight SWE roles. Never a generic objective.
+- Projects only when they add evidence the experience lacks for this listing (a language or domain the listing needs), one line each; none for leadership-track roles unless directly relevant. Education last; certifications only if relevant to the listing.
+
+DETAIL AND SPECIFICITY
+- Every specific detail in a bullet must pass at least one test, or it is cut: (1) POSTING MATCH -- the listing names it; (2) SIZES THE IMPACT -- users, money, %, latency, volume, team size; (3) SHOWS OWNERSHIP OR SENIORITY -- led, owned, designed, authored the design doc; (4) RECOGNIZABLE OUTSIDE THE COMPANY -- public technologies and standards.
+- Always cut: internal names, codenames, team or template jargon, ticket or epic counts; process step lists (keep the outcome and at most one artifact, e.g. "from design doc to production alerting"); debugging mechanics (say what broke, who it affected, that you fixed it -- a mechanism of 6 words or fewer may stay only for a systems role); detail no hiring manager could act on.
+- At most 3 technologies in one bullet and at most one tech list per bullet; never repeat the same stack across bullets. Skills carries the rest.
+- Calibrate depth to the ROLE TYPE given with the listing.
+
+VOICE
+- Match the register of the VOICE EXEMPLARS (the candidate's own hand-written bullets): plain, confident, outcome-first, no internal process. They show voice only: never copy their content, numbers or claims; every fact comes from the EXPERIENCE BANK.
+
+RULES
+- The RESUME RULES are the candidate's own corrections and are HARD CONSTRAINTS: they override the style guide and every standard above. Check every bullet against every rule.
 - Standard section names, no photo, no icons, no tables or columns, no colour, no graphics.
 - Do NOT write the name or contact line: the header (name, email, phone, location, links) is added from the candidate's saved profile. Never put the candidate's home city or contact details anywhere else either; older resumes in the bank carry outdated ones.
 - Spell every product, language and framework the way its maker does (TypeScript, PostgreSQL, Node.js, React, AWS Lambda).
@@ -77,7 +94,7 @@ Exactly two parts, in this order, separated by the marker lines shown:
 === RESUME ===
 (the resume, Markdown)
 === NOTES ===
-(for the candidate only: what you emphasised and why; the title chosen and its alternatives; which requirements the bank does NOT cover, so they can be addressed honestly; 3-5 bullet facts about the company from your research, each with its source URL)`;
+(for the candidate only: what you emphasised and why -- why these bullets and this order were chosen for this listing; the title chosen and its alternatives; whether a summary was included and why; a "Rules applied" list naming each rule id that shaped a bullet and how; which requirements the bank does NOT cover, so they can be addressed honestly; 3-5 bullet facts about the company from your research, each with its source URL)`;
 
 /**
  * The second pass. A fresh reading of the draft against the listing, the bank
@@ -88,8 +105,16 @@ Exactly two parts, in this order, separated by the marker lines shown:
 export const REVIEW_SYSTEM_PROMPT = `You are the final reviewer of a tailored software-engineer resume before it is sent. Read it three ways, in order, and fix what each reader would object to:
 
 1. THE PARSER. The applicant tracking system reads top to bottom. Standard section names, no tables, no columns, the exact Markdown shape below. Every required skill in the listing that the bank genuinely supports appears in the resume in the listing's own words (in a bullet that proves it, and in Skills).
-2. THE RECRUITER. Seven seconds. Name, current title, current employer and the three strongest bullets must land in the top third. Title must match the listing's level. One page: 550-650 words in total, nothing wrapping to a third line at 10pt on a letter page. Cut the weakest bullets first, never the strongest.
+2. THE RECRUITER. Seven seconds. Name, current title, current employer and the three strongest bullets must land in the top third. Title must match the listing's level. One page, always: 550-650 words in total, nothing wrapping to a third line at 10pt on a letter page. When it doesn't fit, cut the oldest and least relevant bullets first, never the recent impact.
 3. THE HIRING MANAGER. Reads every bullet. Each one must state scope, action and outcome (XYZ), start with a varied strong verb, avoid "responsible for" and "helped", and carry a number only where the EXPERIENCE BANK has one. Bullets that restate each other merge. Claims the manager would probe in an interview and the candidate could not defend for five minutes come out.
+
+4. THE SPECIFICITY RUBRIC. For every specific detail in every bullet, apply the four tests: POSTING MATCH (the listing names it), SIZES THE IMPACT (users, money, %, latency, volume, team size), SHOWS OWNERSHIP OR SENIORITY (led, owned, designed, wrote the design doc), RECOGNIZABLE OUTSIDE THE COMPANY (public technologies and standards). A detail passing none is cut. Always cut internal names, codenames, jargon and ticket/epic counts; process step lists (keep the outcome and at most one artifact); debugging mechanics (at most ~6 words of mechanism, and only for a systems ROLE TYPE); more than 3 technologies in a bullet; a stack already named in another bullet. Depth follows the ROLE TYPE: systems roles may keep protocol- and language-level depth; leadership roles name artifacts and scope, never mechanics.
+
+BUDGET (the candidate's approved rule, 2026-10-24): 14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-5, internship 1 or none; projects one line each, dropped for leadership-track roles unless relevant. 15-25 words per bullet, the result in the first few words; a second sentence only to land a key result or metric. Bullets within a role ordered by relevance to the listing. Skills 8-12 items in the listing's priority order. Summary only for a leadership ROLE TYPE or a domain change: two lines with one concrete figure; none for straight SWE roles. When a FORMAT CHECK block is given, its counts are exact (computed in code): fix every MUST item, exactly as named.
+
+RULES CHECK: the RESUME RULES are the candidate's own corrections and HARD CONSTRAINTS. Check every bullet against every rule and fix every violation; they override the style guide and the standards.
+
+VOICE: keep the register of the VOICE EXEMPLARS (plain, confident, outcome-first); never take content from them.
 
 TRUTH CHECK, before anything else: compare every employer, title, date, technology, number and claim in the draft against the EXPERIENCE BANK. Anything the bank does not support is removed or reworded until it is. Numbers are never rounded upward. Titles follow the TITLES rules below exactly.
 
@@ -99,7 +124,7 @@ TITLES
 
 FORMAT (the exact Markdown shape the PDF renderer expects)
 - No "# Name" heading and no contact line: the header comes from the candidate's saved profile and is added afterwards. Begin with the first "##" section; never change or add a name, address, city, email, phone or link.
-- "## Experience", "## Projects", "## Skills", "## Education" ("## Summary" only for a pivot, two sentences at most).
+- "## Experience", "## Projects", "## Skills", "## Education" ("## Summary" only for a leadership ROLE TYPE or a pivot: two lines, one concrete figure).
 - Jobs as "### Company | Title | Mon YYYY – Mon YYYY" then "- " bullets; projects as "### Name | technologies | Year"; education as "### School | Degree | Mon YYYY".
 - Skills as "- **Category:** item, item" lines. Bold only category labels.
 
@@ -108,9 +133,41 @@ Exactly two parts, separated by the marker lines shown:
 === RESUME ===
 (the revised resume, complete, Markdown)
 === NOTES ===
-(the draft's notes, kept, followed by a "Review" heading listing what you changed and why, and any claim you removed as unsupported)`;
+(the draft's notes, kept -- including why these bullets were chosen -- followed by a "**Review**" heading listing what you changed and why, and any claim you removed as unsupported; a "**Rules applied**" heading listing each rule id that changed or constrained a bullet and how; and a "**Detail cuts**" heading listing each specific detail you trimmed, quoted briefly, with the test it failed or the cut rule it hit -- "(none)" when nothing was cut)`;
 
-export function buildResumeMessages(posting: PostingInput, bank: NoteSource[]): { role: "system" | "user"; content: string }[] {
+/**
+ * The vault guidance both passes carry (2026-10-24): the rules note as hard
+ * constraints, the style guide, the voice exemplars and the role type.
+ */
+export type TailoringGuidance = {
+  rules: ResumeRule[];
+  styleGuide: string;
+  exemplars: string[];
+  roleType: RoleType;
+};
+
+/** Longest style guide sent; it is a page or two of Markdown. */
+export const MAX_STYLE_GUIDE_CHARS = 16_000;
+
+function guidanceBlocks(g: TailoringGuidance | undefined): string[] {
+  if (!g) return [];
+  const out: string[] = ["", `ROLE TYPE: ${ROLE_TYPE_GUIDANCE[g.roleType]}`];
+  const rules = rulesBlock(g.rules);
+  if (rules) out.push("", rules);
+  if (g.exemplars.length > 0) {
+    out.push("", "VOICE EXEMPLARS (the candidate's own hand-written bullets: match the register only, never copy content):", ...g.exemplars.map((e) => `- ${e}`));
+  }
+  if (g.styleGuide.trim()) {
+    out.push("", "STYLE GUIDE (the candidate's researched guidance; the RESUME RULES override it):", g.styleGuide.trim().slice(0, MAX_STYLE_GUIDE_CHARS));
+  }
+  return out;
+}
+
+export function buildResumeMessages(
+  posting: PostingInput,
+  bank: NoteSource[],
+  guidance?: TailoringGuidance
+): { role: "system" | "user"; content: string }[] {
   const postingText = posting.postingText.trim().slice(0, MAX_POSTING_CHARS);
   const user = [
     `JOB LISTING`,
@@ -119,6 +176,7 @@ export function buildResumeMessages(posting: PostingInput, bank: NoteSource[]): 
     `Location: ${posting.location}`,
     `URL: ${posting.url}`,
     ...candidateBlock(posting),
+    ...guidanceBlocks(guidance),
     "",
     postingText
       ? `Listing text:\n${postingText}`
@@ -149,7 +207,10 @@ function bankBlock(bank: NoteSource[]): string {
 export function buildReviewMessages(
   posting: PostingInput,
   bank: NoteSource[],
-  draft: { resume: string; notes: string }
+  draft: { resume: string; notes: string },
+  guidance?: TailoringGuidance,
+  /** formatIssuesBlock() of the draft: the exact bullets over a limit. */
+  formatCheck = ""
 ): { role: "system" | "user"; content: string }[] {
   const postingText = posting.postingText.trim().slice(0, MAX_POSTING_CHARS);
   const user = [
@@ -159,6 +220,7 @@ export function buildReviewMessages(
     `Location: ${posting.location}`,
     `URL: ${posting.url}`,
     ...candidateBlock(posting),
+    ...guidanceBlocks(guidance),
     "",
     postingText ? `Listing text:\n${postingText}` : "The listing page could not be read; judge from the title, company and URL.",
     "",
@@ -170,6 +232,7 @@ export function buildReviewMessages(
     "",
     "DRAFT NOTES",
     draft.notes.trim() || "(none)",
+    ...(formatCheck ? ["", formatCheck] : []),
   ].join("\n");
   return [
     { role: "system", content: REVIEW_SYSTEM_PROMPT },

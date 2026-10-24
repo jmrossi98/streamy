@@ -32,8 +32,41 @@ export function bankKind(path: string): BankKind | null {
   return m ? (m[1].toLowerCase() as BankKind) : null;
 }
 
+/**
+ * Notes in the resume folders that are instructions, not experience
+ * (2026-10-24): the correction rules and the style guide. Loaded on every
+ * tailoring as guidance (resume.ts loadGuidance) and never put in the bank,
+ * where "never call it a four-epic program" would read as a fact to use.
+ */
+export const RESUME_RULES_FILE = "resume-rules.md";
+export const RESUME_STYLE_GUIDE_FILE = "resume-style-guide.md";
+
+export function isGuidanceFile(path: string): boolean {
+  const name = (path.split("/").pop() ?? "").toLowerCase();
+  return name === RESUME_RULES_FILE || name === RESUME_STYLE_GUIDE_FILE;
+}
+
+/** Where the rules note may live, preferred first: main/ is what the phone and laptop sync. */
+export function guidancePaths(file: string): string[] {
+  return [...RESUME_VAULT_DIRS].reverse().map((dir) => `${dir}/${file}`);
+}
+
+/**
+ * Jake's own hand-written resumes, the voice exemplars' source (2026-10-24):
+ * the current one, and the 2025 one that landed Capital One. Matched by path
+ * suffix under the resume folders, so a move between resume/ and
+ * main/resume/ doesn't lose them.
+ */
+export const VOICE_SOURCE_SUFFIXES = ["resume/jakob_rossi_resume.docx", "mastodon-results/jakob_rossi_resume_02_17_2025.docx"];
+
+export function voiceSourcePaths(paths: string[]): string[] {
+  return VOICE_SOURCE_SUFFIXES.map((suffix) =>
+    paths.find((p) => p.toLowerCase() === suffix || p.toLowerCase().endsWith(`/${suffix}`))
+  ).filter((p): p is string => !!p);
+}
+
 export function isBankFile(path: string): boolean {
-  return isSafeVaultPath(path) && bankKind(path) !== null;
+  return isSafeVaultPath(path) && bankKind(path) !== null && !isGuidanceFile(path);
 }
 
 export type BankFile = { path: string; kind: BankKind; modified: string | null };

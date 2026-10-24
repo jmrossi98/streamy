@@ -36,7 +36,27 @@ describe("buildResumeMessages", () => {
     expect(system.content).toMatch(/One page/);
     expect(system.content).toMatch(/XYZ pattern/);
     expect(system.content).toMatch(/"### Company \| Title \| Mon YYYY – Mon YYYY"/);
-    expect(system.content).toMatch(/Summary: omit it, unless/);
+    // Jake's approved format rules, 2026-10-24.
+    expect(system.content).toMatch(/Summary \(auto\): include one only when the ROLE TYPE is leadership/);
+    expect(system.content).toMatch(/14-16 bullets in total, weighted to recent work -- current role 5-6, previous role 4-5, internship 1 or none/);
+    expect(system.content).toMatch(/Every bullet is 15-25 words, with the result in the first few words/);
+    expect(system.content).toMatch(/At most 3 technologies in one bullet/);
+  });
+
+  it("carries the rules as hard constraints, the role type, the voice and the style guide", () => {
+    const [, user] = buildResumeMessages(posting, [], {
+      rules: [{ id: "R1", section: "Clarifications", text: 'Call it an "account identification bug".' }],
+      styleGuide: "# Resume style guide\n- Impact over duties.",
+      exemplars: ["Owned backend microservices. Reduced API response times by 40%."],
+      roleType: "systems",
+    });
+    expect(user).toBeDefined();
+    expect(user.content).toMatch(/ROLE TYPE: SYSTEMS/);
+    expect(user.content).toMatch(/RESUME RULES .*HARD CONSTRAINTS/);
+    expect(user.content).toContain('R1 [Clarifications] Call it an "account identification bug".');
+    expect(user.content).toMatch(/VOICE EXEMPLARS .*never copy content/);
+    expect(user.content).toContain("- Owned backend microservices.");
+    expect(user.content).toContain("STYLE GUIDE");
   });
 });
 
@@ -52,6 +72,22 @@ describe("buildReviewMessages", () => {
     expect(user.content).toContain("--- resume/notes.md ---");
     expect(user.content).toContain("DRAFT RESUME\n# Jakob Rossi");
     expect(user.content).toContain("DRAFT NOTES\nChose title A.");
+  });
+
+  it("asks for the specificity rubric, the rules check and the Detail cuts list, and passes the format check", () => {
+    const [system, user] = buildReviewMessages(
+      posting,
+      [],
+      { resume: "## Experience", notes: "" },
+      { rules: [], styleGuide: "", exemplars: [], roleType: "leadership" },
+      "FORMAT CHECK (counted in code; ...)\n- MUST: Current role has 7 bullets"
+    );
+    expect(system.content).toMatch(/SPECIFICITY RUBRIC/);
+    expect(system.content).toMatch(/RULES CHECK/);
+    expect(system.content).toMatch(/\*\*Detail cuts\*\*/);
+    expect(system.content).toMatch(/\*\*Rules applied\*\*/);
+    expect(user.content).toMatch(/ROLE TYPE: TECH LEAD/);
+    expect(user.content).toMatch(/- MUST: Current role has 7 bullets$/);
   });
 
   it("says so when the listing could not be read", () => {

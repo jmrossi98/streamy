@@ -7,7 +7,28 @@ import { complete, getRoute } from "./llm";
 import { htmlToText } from "./pageWatchRules";
 import { renderListing } from "./listingRender";
 import { budgetFor, LISTING_UNREAD_NOTE, needsRender, pickListingText, resumeLog, type ResumeJobStep } from "./resumeJobRules";
-import { assembleBank, isBankFile, RESUME_VAULT_DIRS, orderBankFiles, pickBankFiles, type BankFile, type BankItem } from "./resumeBankRules";
+import {
+  assembleBank,
+  bankKind,
+  guidancePaths,
+  isBankFile,
+  RESUME_RULES_FILE,
+  RESUME_STYLE_GUIDE_FILE,
+  RESUME_VAULT_DIRS,
+  orderBankFiles,
+  pickBankFiles,
+  voiceSourcePaths,
+  type BankFile,
+  type BankItem,
+} from "./resumeBankRules";
+import {
+  checkResumeFormat,
+  classifyRoleType,
+  formatIssuesBlock,
+  formatIssuesNote,
+  parseResumeRules,
+  pickVoiceExemplars,
+} from "./resumeFormatRules";
 import {
   buildResumeMessages,
   buildReviewMessages,
@@ -17,8 +38,10 @@ import {
   withProfileHeader,
   type NoteSource,
   type PostingInput,
+  type TailoringGuidance,
 } from "./resumeRules";
-import { isVaultConfigured, listVaultFiles, readVaultFile } from "./vault";
+import { isVaultConfigured, listVaultFiles, readVaultFile, readVaultNoteVersioned } from "./vault";
+import type { VaultEntry } from "./vaultRules";
 
 export { RESUME_VAULT_DIRS } from "./resumeBankRules";
 
@@ -115,7 +138,14 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) =>
   return out;
 }
 
-export type KnowledgeBase = { sources: NoteSource[]; report: BankItem[]; totalChars: number; maxChars: number };
+export type KnowledgeBase = {
+  sources: NoteSource[];
+  report: BankItem[];
+  totalChars: number;
+  maxChars: number;
+  /** Every bank file listed, for finding the voice resumes without listing again. */
+  entries: VaultEntry[];
+};
 
 /**
  * The knowledge base the tailoring prompt is built from: every note, Word file
@@ -139,7 +169,74 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
     report: [...report, ...superseded],
     totalChars: sources.reduce((n, s) => n + s.text.length, 0),
     maxChars: MAX_BANK_CHARS,
+    entries,
   };
+}
+
+/** The first of a guidance note's places that exists, with its path. */
+async function readGuidanceNote(file: string): Promise<{ path: string; text: string } | null> {
+  for (const path of guidancePaths(file)) {
+    try {
+      const note = await readVaultNoteVersioned(path);
+      if (note) return { path, text: note.text };
+    } catch {
+      // Unreadable here; try the other folder.
+    }
+  }
+  return null;
+}
+
+export type LoadedGuidance = {
+  guidance: TailoringGuidance;
+  rulesPath: string | null;
+  styleGuidePath: string | null;
+  voicePaths: string[];
+};
+
+/**
+ * The vault guidance for one tailoring (2026-10-24): the rules note (hard
+ * constraints), the style guide, 3-4 of Jake's own bullets as the voice, and
+ * the posting's role type. Read fresh each time, so an edit in Obsidian or
+ * on the Jobs tab applies to the next resume. A missing piece is left out
+ * rather than failing the run.
+ */
+export async function loadGuidance(entries: VaultEntry[], title: string): Promise<LoadedGuidance> {
+  const voicePaths = voiceSourcePaths(entries.map((e) => e.path));
+  const [rules, guide, voiceTexts] = await Promise.all([
+    readGuidanceNote(RESUME_RULES_FILE),
+    readGuidanceNote(RESUME_STYLE_GUIDE_FILE),
+    Promise.all(
+      voicePaths.map((path) => {
+        const kind = bankKind(path);
+        const modified = entries.find((e) => e.path === path)?.modified ?? null;
+        return kind ? extractText({ path, kind, modified }).catch(() => "") : Promise.resolve("");
+      })
+    ),
+  ]);
+  return {
+    guidance: {
+      rules: rules ? parseResumeRules(rules.text) : [],
+      styleGuide: guide?.text ?? "",
+      exemplars: pickVoiceExemplars(voiceTexts.filter(Boolean), 4),
+      roleType: classifyRoleType(title),
+    },
+    rulesPath: rules?.path ?? null,
+    styleGuidePath: guide?.path ?? null,
+    voicePaths,
+  };
+}
+
+/** What the run was guided by, for the notes. */
+function guidanceNote(g: LoadedGuidance): string {
+  return [
+    "**Guidance**",
+    `- Role type: ${g.guidance.roleType}.`,
+    g.rulesPath ? `- Rules: ${g.guidance.rules.length} from ${g.rulesPath}.` : "- Rules: no resume-rules.md found in the vault.",
+    g.styleGuidePath ? `- Style guide: ${g.styleGuidePath}.` : "- Style guide: no resume-style-guide.md found in the vault.",
+    g.guidance.exemplars.length > 0
+      ? `- Voice: ${g.guidance.exemplars.length} of your own bullets from ${g.voicePaths.join(", ")}.`
+      : "- Voice: your hand-written resumes weren't found, so no exemplars.",
+  ].join("\n");
 }
 
 export type ResumeResult = { ok: true; id: string; note: string | null } | { ok: false; error: string };
@@ -181,8 +278,11 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
   if (!posting) return { ok: false, error: "That listing no longer exists." };
 
   let bank: NoteSource[];
+  let entries: VaultEntry[];
   try {
-    bank = (await loadKnowledgeBase()).sources;
+    const kb = await loadKnowledgeBase();
+    bank = kb.sources;
+    entries = kb.entries;
   } catch (err) {
     return { ok: false, error: `Could not read the vault: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -196,6 +296,9 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
   // The header's name, location and contact details (resumeRules.profileHeader).
   // Imported here: applyPacket imports this module.
   const profile = await (await import("./applyPacket")).getApplicantProfile();
+
+  const loaded = await loadGuidance(entries, posting.title);
+  const guidance = loaded.guidance;
 
   await step("Reading the listing");
   const listing = await readListing(posting.url);
@@ -216,7 +319,7 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     await step("Researching and drafting");
     const draftBudget = budgetFor(startedAt, Date.now(), DRAFT_MAX_MS);
     if (draftBudget < 30_000) return { ok: false, error: "Ran out of time before drafting (10-minute limit) — tap Tailor again." };
-    const draft = await complete(route, buildResumeMessages(input, bank), {
+    const draft = await complete(route, buildResumeMessages(input, bank, guidance), {
       maxTokens: 24_000,
       webSearch: true,
       timeoutMs: draftBudget,
@@ -232,7 +335,10 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
     } else if (resume.trim()) {
       await step("Reviewing");
       try {
-        const review = await complete(route, buildReviewMessages(input, bank, { resume, notes }), {
+        // Counted here, not by the model: the review is told exactly which
+        // bullets are over a limit (resumeFormatRules.checkResumeFormat).
+        const formatCheck = formatIssuesBlock(checkResumeFormat(resume, guidance.roleType));
+        const review = await complete(route, buildReviewMessages(input, bank, { resume, notes }, guidance, formatCheck), {
           maxTokens: 24_000,
           timeoutMs: reviewBudget,
           effort: "high",
@@ -249,6 +355,7 @@ export async function generateTailoredResume(postingId: string, opts: TailorOpti
       }
     }
     await step("Saving");
+    notes += `\n\n${formatIssuesNote(checkResumeFormat(resume, guidance.roleType))}\n\n${guidanceNote(loaded)}`;
     if (note) notes = `**Listing**\n- ${note}.\n\n${notes}`;
     // Whatever header either pass wrote, the saved profile's replaces it.
     resume = withProfileHeader(resume, profile);
