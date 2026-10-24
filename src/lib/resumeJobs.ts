@@ -12,6 +12,7 @@ import { generateTailoredResume } from "./resume";
 import {
   canAdvance,
   effectiveStatus,
+  HARD_STOP_GRACE_MS,
   HEARTBEAT_MS,
   isActive,
   JOB_CAP_MS,
@@ -79,8 +80,8 @@ async function run(id: string, postingId: string, startedAt: number, requestedBy
   const cap = setTimeout(() => {
     capped = true;
     console.log(resumeLog("cap", Date.now() - startedAt, { job: id, at: step.step }));
-    void markFailed(id, `Took longer than 8 minutes (stuck at "${step.step}") — tap Tailor again`);
-  }, JOB_CAP_MS);
+    void markFailed(id, `Took longer than 10 minutes (stuck at "${step.step}") — tap Tailor again`);
+  }, JOB_CAP_MS + HARD_STOP_GRACE_MS);
   cap.unref?.();
 
   const onStep = async (next: ResumeJobStep) => {

@@ -196,7 +196,15 @@ export async function completeAnthropic(
 ): Promise<{ text: string; model: string }> {
   const api = anthropic();
   let lastErr: unknown = new Error("no model to try");
+  // 2026-10-24: timeoutMs is a deadline for the whole call. It used to be the
+  // SDK's per-attempt timeout, which the client retries twice, each
+  // pause_turn continuation got afresh, and a timeout counted as "try the
+  // next model" -- so a resume review given 211 s ran past the job
+  // cap and the finished draft was lost. One signal now bounds all of it.
+  const budgetMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const deadline = AbortSignal.timeout(budgetMs);
   for (const model of opts.models) {
+    if (deadline.aborted) break;
     try {
       const params = baseParams(model, messages, opts);
       let text = "";
@@ -205,7 +213,7 @@ export async function completeAnthropic(
       // answer is written; the turn continues from the content so far. Each
       // continuation is its own billed call, so the number is bounded.
       for (let turn = 0; ; turn++) {
-        res = await api.messages.create(params, { timeout: opts.timeoutMs ?? REQUEST_TIMEOUT_MS });
+        res = await api.messages.create(params, { timeout: budgetMs, signal: deadline });
         void recordAnthropicSpend(res.model, res.usage);
         if (res.stop_reason === "refusal") throw new Error("Claude declined to answer this request.");
         text += textFromContent(res.content);
@@ -215,6 +223,7 @@ export async function completeAnthropic(
       if (!text.trim()) throw new Error(emptyAnswerMessage(res.stop_reason, res.usage.output_tokens, params.max_tokens));
       return { text, model: res.model };
     } catch (err) {
+      if (deadline.aborted) throw new Error(`timed out after ${Math.round(budgetMs / 1000)} s`);
       lastErr = err;
       if (worthTryingNext(err)) {
         console.warn(`[anthropic] ${model} unavailable, trying next:`, describe(err));
@@ -223,6 +232,7 @@ export async function completeAnthropic(
       throw new Error(describe(err));
     }
   }
+  if (deadline.aborted) throw new Error(`timed out after ${Math.round(budgetMs / 1000)} s`);
   throw new Error(describe(lastErr));
 }
 
