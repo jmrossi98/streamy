@@ -143,7 +143,7 @@ export function WatchPlayer({
       // `relative` was never actually needed here.
       className="bg-black fixed inset-0 z-30"
       onMouseMove={() => showVideo && chrome.revealControls()}
-      onTouchStart={() => showVideo && chrome.revealControls()}
+      onTouchStart={() => showVideo && chrome.surfaceTouchStart()}
     >
       <video
         ref={videoRef}
@@ -157,9 +157,8 @@ export function WatchPlayer({
         onClick={() => {
           if (!showVideo) return;
           // Tap on the picture: reveal the controls if hidden, otherwise
-          // play/pause -- the usual click-to-toggle once they're already up.
-          if (chrome.controlsVisible) chrome.togglePlay();
-          else chrome.revealControls();
+          // play/pause (see surfaceClick for the touch case).
+          chrome.surfaceClick();
         }}
         className={`absolute inset-0 w-full h-full object-contain ${showOverlay ? "invisible" : ""}`}
         aria-label={movieTitle}
