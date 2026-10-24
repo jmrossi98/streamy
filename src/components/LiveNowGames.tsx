@@ -27,10 +27,19 @@ type ScheduleChannel = { id: string; name: string };
  * Renders nothing at all when the schedule is unavailable or empty: a third
  * party being down is not worth a notice above the channel rows.
  */
-export function LiveNowGames({ channels }: { channels: ScheduleChannel[] }) {
-  const [fixtures, setFixtures] = useState<Fixture[] | null>(null);
+export function LiveNowGames({
+  channels,
+  initialFixtures = null,
+}: {
+  channels: ScheduleChannel[];
+  /** Fetched during the server render (lib/liveSchedule.ts) so the row is in the first paint. */
+  initialFixtures?: Fixture[] | null;
+}) {
+  const [fixtures, setFixtures] = useState<Fixture[] | null>(initialFixtures);
 
   useEffect(() => {
+    // Already rendered with the page; only fetch when the server didn't have it in time.
+    if (initialFixtures) return;
     let cancelled = false;
     fetch("/api/live/schedule")
       .then((r) => (r.ok ? r.json() : Promise.reject()))
@@ -43,7 +52,7 @@ export function LiveNowGames({ channels }: { channels: ScheduleChannel[] }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialFixtures]);
 
   // Games the lineup already carries sort first -- the same check the Sports
   // tab makes, used here to order rather than to filter (see pickLiveNow).
