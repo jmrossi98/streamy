@@ -465,6 +465,8 @@ const MANAGEMENT_VETOES = [
   "data center",
   "supply",
   "procurement",
+  "sourcing",
+  "product management",
   "content",
 ];
 
@@ -484,7 +486,13 @@ export function managementKind(title: string): ManagementKind | null {
     if (/\bengineer\b/.test(hay)) return null;
     return "exec";
   }
-  if (/\b(manager|management)\b/.test(hay) || /\bteam lead(er)?\b/.test(hay)) return "em";
+  // An engineer title naming what it works on is an IC role, not a manager:
+  // live postings on 2026-10-24 included "Software Engineer, Ads Manager",
+  // "Software Engineer, Fleet Management" and "Identity & Access
+  // Management". So "manager" (not "management") is required, and the
+  // person noun "engineer"/"developer" rules it out.
+  if (/\b(engineer|developer)s?\b/.test(hay)) return null;
+  if (/\bmanager\b/.test(hay) || /\bteam lead(er)?\b/.test(hay)) return "em";
   return null;
 }
 
