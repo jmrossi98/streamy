@@ -186,21 +186,25 @@ export function VideoChrome({
   }, [show]);
   const interactive = interactable ? "pointer-events-auto" : "pointer-events-none";
 
-  // Never fully transparent, and always its own compositor layer.
+  // Hidden means hidden: opacity 0, nothing left to see.
   //
-  // In fullscreen, Chrome hands an unobscured video to a hardware overlay
-  // plane and takes it back the moment something translucent is drawn over
-  // it. The bars fading in on a mouse move were exactly that, so every
-  // reveal (and every hide, 3 s later) switched the picture between the two
-  // paths, and on some GPUs the switch is a visible hitch: "hover the mouse
-  // in fullscreen and the video stalls for a moment" (2026-10-19). At 2%
-  // the bars are invisible but still drawn, so the video stays on one path
-  // the whole time. will-change keeps the layer from being rebuilt (a
-  // full-screen raster) at the start of every fade.
+  // It used to fade to 2% instead, for Chrome's fullscreen overlay plane: an
+  // unobscured video is handed to a hardware plane and taken back the moment
+  // anything translucent is drawn over it, and on some GPUs that switch is a
+  // visible hitch ("hover the mouse in fullscreen and the video stalls",
+  // 2026-10-19). But 2% of white text and gradient edges still showed on dark
+  // scenes -- a faint ghost of the title and controls over live TV
+  // (2026-10-24). So the bars now go fully transparent, and the overlay-plane
+  // job is done by the separate layer below: a uniform 1% black wash over the
+  // whole picture, which keeps the video on one compositing path without any
+  // edge or glyph to see. will-change keeps both layers from being rebuilt at
+  // the start of every fade.
   return (
+    <>
+    <div aria-hidden className="pointer-events-none absolute inset-0 z-20 bg-black opacity-[0.01] will-change-[opacity]" />
     <div
       className={`absolute inset-0 z-20 transition-opacity duration-300 pointer-events-none will-change-[opacity] ${
-        show ? "opacity-100" : "opacity-[0.02]"
+        show ? "opacity-100" : "opacity-0"
       }`}
     >
       {/* Top bar: title (+ subtitle) left, quality + close right. */}
@@ -437,6 +441,7 @@ export function VideoChrome({
         </div>
       </div>
     </div>
+    </>
   );
 }
 
