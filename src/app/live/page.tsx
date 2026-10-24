@@ -52,113 +52,115 @@ export default async function LivePage({
   // separate "is a tuner configured" probe: the one that existed asked a
   // POST-only endpoint with GET and reported "no tuner" for a server that had
   // two. Channels are what the page needs, so they are what it asks for.
+  const elapsed = startStopwatch();
   const envSet = isJellyfinConfiguredForLiveTv();
-  const reachable = envSet ? await isJellyfinReachable() : false;
-  const channels = reachable ? await attachNextPrograms(await getLiveChannels()) : [];
+  const reachable = envSet ? await timed("isJellyfinReachable", isJellyfinReachable()) : false;
+  const channels = reachable
+    ? await timed("attachNextPrograms", attachNextPrograms(await timed("getLiveChannels", getLiveChannels())))
+    : [];
 
-  // Best effort, same reasoning as everywhere else this gets joined against
-  // Jellyfin's own channel list: a Dispatcharr hiccup must not take the grid
-  // down, only cost it the provider and dead-stream labels. Plain object,
-  // not the Map getChannelInfo returns -- this crosses the server/client
-  // boundary as a prop, which a Map does not survive.
-  let infoByChannel: Record<string, ChannelInfo> = {};
-  try {
-    const info = await getChannelInfo();
-    if (info) infoByChannel = Object.fromEntries(info);
-  } catch (err) {
-    console.error("[live] getChannelInfo failed:", err);
-  }
+  // Everything below depends only on the channel list (logos also on the
+  // Dispatcharr info), so it runs side by side. It used to run one step after
+  // another, and a tab switch -- a full server render -- took 8-11 s with
+  // nothing on screen changing (2026-10-24: "selecting the other tabs doesn't
+  // respond"). Each step stays best effort: a failure costs its labels, never
+  // the grid. `timed` logs any step over 300 ms, so the slow one is visible.
+  const names = channels.map((c) => c.name);
+
+  // Plain object, not the Map getChannelInfo returns -- this crosses the
+  // server/client boundary as a prop, which a Map does not survive.
+  const infoPromise: Promise<Record<string, ChannelInfo>> = timed("getChannelInfo", getChannelInfo())
+    .then((info) => (info ? Object.fromEntries(info) : {}))
+    .catch((err) => {
+      console.error("[live] getChannelInfo failed:", err);
+      return {};
+    });
 
   // Which channels can't be tuned right now because their provider's lines are
   // all in use (or the provider is offline), so the grid can say so instead of
-  // opening into a spinner. Best effort: without it every channel reads as
-  // available, which is how it behaved before.
-  let providerStateByChannel: Record<string, "ok" | "full" | "down"> = {};
-  try {
-    const [accounts, renewals] = await Promise.all([
-      listIptvAccounts(),
-      getAutomaticRenewals().catch(() => []),
-    ]);
-    const expired = new Set(
-      renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
-    );
-    const availability = providerAvailability(accounts, expired);
-    for (const c of channels) {
-      const state = channelProviderState(infoByChannel[c.name]?.provider, availability);
-      if (state) providerStateByChannel[c.name] = state;
-    }
-  } catch (err) {
-    console.error("[live] provider availability failed:", err);
-  }
+  // opening into a spinner.
+  const providerPromise: Promise<Record<string, "ok" | "full" | "down">> = Promise.all([
+    timed("listIptvAccounts", listIptvAccounts()),
+    timed("renewals", getAutomaticRenewals().catch(() => [])),
+    infoPromise,
+  ])
+    .then(([accounts, renewals, info]) => {
+      const expired = new Set(
+        renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
+      );
+      const availability = providerAvailability(accounts, expired);
+      const out: Record<string, "ok" | "full" | "down"> = {};
+      for (const c of channels) {
+        const state = channelProviderState(info[c.name]?.provider, availability);
+        if (state) out[c.name] = state;
+      }
+      return out;
+    })
+    .catch((err) => {
+      console.error("[live] provider availability failed:", err);
+      return {};
+    });
 
-  // Logos for the channels Jellyfin has no image for. Best effort: a picon
-  // host that is down costs a tile its artwork, never the grid.
-  let logoFallbacks: Record<string, string> = {};
-  try {
-    logoFallbacks = await resolveLogoFallbacks(channels, infoByChannel);
-  } catch (err) {
-    console.error("[live] resolveLogoFallbacks failed:", err);
-  }
+  // Logos for the channels Jellyfin has no image for.
+  const logoPromise: Promise<Record<string, string>> = infoPromise
+    .then((info) => timed("resolveLogoFallbacks", resolveLogoFallbacks(channels, info)))
+    .catch((err) => {
+      console.error("[live] resolveLogoFallbacks failed:", err);
+      return {};
+    });
 
-  // Best effort for the same reason as the Dispatcharr join above: a dead
-  // sampler or an unreachable scoreboard costs the badges, not the grid.
   // channelStatuses resolves the schedule once for the whole set rather than
   // per tile.
-  let statusByChannel: Record<string, ChannelVerdict> = {};
-  try {
-    const statuses = await channelStatuses(channels.map((c) => c.name));
-    statusByChannel = Object.fromEntries(statuses);
-  } catch (err) {
-    console.error("[live] channelStatuses failed:", err);
-  }
+  const statusPromise: Promise<Record<string, ChannelVerdict>> = timed("channelStatuses", channelStatuses(names))
+    .then((statuses) => Object.fromEntries(statuses))
+    .catch((err) => {
+      console.error("[live] channelStatuses failed:", err);
+      return {};
+    });
 
   // The Guide tab's time grid. Only fetched for that tab: it is three
-  // Dispatcharr lists (one ~10k rows) that no other tab draws from, and a tab
-  // switch is a fresh server render anyway, so the Now tab never pays for it.
-  // Best effort like the rest: no EPG means every row reads "No guide info"
-  // (or Jellyfin's own now/next where it has one), never a broken page.
-  let guidePrograms: Record<string, GuideProgram[]> = {};
-  if (tab === "guide" && channels.length > 0) {
-    try {
-      const programs = await getMappedChannelPrograms();
-      if (programs) guidePrograms = trimGuidePrograms(programs);
-    } catch (err) {
-      console.error("[live] getMappedChannelPrograms failed:", err);
-    }
-    // Game feeds have no guide anywhere; today's schedule fills them in.
-    try {
-      const fixtures = await getTodaysFixtures();
-      guidePrograms = {
-        ...guidePrograms,
-        ...fixtureGuidePrograms(
-          channels.map((c) => c.name),
-          fixtures,
-          guidePrograms
-        ),
-      };
-    } catch (err) {
-      console.error("[live] schedule for the guide failed:", err);
-    }
-  }
+  // Dispatcharr lists (one ~10k rows) that no other tab draws from. Game feeds
+  // have no guide anywhere; today's schedule fills them in.
+  const guidePromise: Promise<Record<string, GuideProgram[]>> =
+    tab === "guide" && channels.length > 0
+      ? Promise.all([
+          timed("getMappedChannelPrograms", getMappedChannelPrograms()).catch((err) => {
+            console.error("[live] getMappedChannelPrograms failed:", err);
+            return null;
+          }),
+          timed("guideFixtures", getTodaysFixtures()).catch((err) => {
+            console.error("[live] schedule for the guide failed:", err);
+            return null;
+          }),
+        ]).then(([programs, fixtures]) => {
+          const trimmed = programs ? trimGuidePrograms(programs) : {};
+          return fixtures ? { ...trimmed, ...fixtureGuidePrograms(names, fixtures, trimmed) } : trimmed;
+        })
+      : Promise.resolve({});
 
   // Only decides whether the Guide tab shows a "Manage channels" link to
   // /admin/live-tv, which has its own gate. Re-checked against the database
   // rather than read from the session token, like every other admin surface.
-  const isAdmin = !!(await requireAdmin(session));
+  const adminPromise = requireAdmin(session).then((a) => !!a);
 
-  const userId = await getValidSessionUserId(session);
-  const [myListIds, hidden] = userId
-    ? await Promise.all([
-        prisma.watchlistChannelItem
-          .findMany({ where: { userId }, select: { channelId: true } })
-          .then((rows) => rows.map((r) => r.channelId)),
-        prisma.hiddenChannelItem.findMany({
-          where: { userId },
-          select: { channelId: true, name: true },
-          orderBy: { name: "asc" },
-        }),
-      ])
-    : [[], []];
+  const listsPromise = getValidSessionUserId(session).then((userId) =>
+    userId
+      ? Promise.all([
+          prisma.watchlistChannelItem
+            .findMany({ where: { userId }, select: { channelId: true } })
+            .then((rows) => rows.map((r) => r.channelId)),
+          prisma.hiddenChannelItem.findMany({
+            where: { userId },
+            select: { channelId: true, name: true },
+            orderBy: { name: "asc" },
+          }),
+        ])
+      : ([[], []] as [string[], { channelId: string; name: string }[]])
+  );
+
+  const [infoByChannel, providerStateByChannel, logoFallbacks, statusByChannel, guidePrograms, isAdmin, [myListIds, hidden]] =
+    await Promise.all([infoPromise, providerPromise, logoPromise, statusPromise, guidePromise, adminPromise, listsPromise]);
+  console.log(`[live] render tab=${tab} ms=${elapsed()}`);
 
   const initialFixtures = await schedulePromise;
 
@@ -181,4 +183,21 @@ export default async function LivePage({
       />
     </div>
   );
+}
+
+/** A render's elapsed time in ms, kept out of the component body. */
+function startStopwatch(): () => number {
+  const t = Date.now();
+  return () => Date.now() - t;
+}
+
+/** Awaits `p`, logging how long it took when that's long enough to matter. */
+async function timed<T>(label: string, p: Promise<T>): Promise<T> {
+  const t = Date.now();
+  try {
+    return await p;
+  } finally {
+    const ms = Date.now() - t;
+    if (ms > 300) console.log(`[live] step=${label} ms=${ms}`);
+  }
 }

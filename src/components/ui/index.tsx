@@ -17,6 +17,7 @@
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import Link from "next/link";
 import { PanelBoundary } from "@/components/PanelBoundary";
+import { TabPending } from "./TabPending";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -167,11 +168,12 @@ export function TabLink({ href, active, children }: { href: string; active: bool
         href={href}
         aria-current={active ? "page" : undefined}
         className={cx(
-          "block whitespace-nowrap rounded-t px-3 py-2 text-sm font-medium transition-colors",
+          "relative block whitespace-nowrap rounded-t px-3 py-2 text-sm font-medium transition-colors",
           active ? "border-b-2 border-netflix-red text-white" : "border-b-2 border-transparent text-white/50 hover:text-white/80"
         )}
       >
         {children}
+        <TabPending />
       </Link>
     </li>
   );
@@ -191,7 +193,7 @@ const BADGE_TONE: Record<BadgeTone, string> = {
 
 export function Badge({ tone = "neutral", className, children, title }: { tone?: BadgeTone; className?: string; children: ReactNode; title?: string }) {
   return (
-    <span title={title} className={cx("inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium", BADGE_TONE[tone], className)}>
+    <span title={title} className={cx("inline-flex items-center whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium", BADGE_TONE[tone], className)}>
       {children}
     </span>
   );
