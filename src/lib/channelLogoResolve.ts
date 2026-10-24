@@ -42,7 +42,7 @@ export async function resolveLogoFallbacks(
     missing.map(async (c) => {
       const upstream = infoByChannel[c.name]?.logoUrl;
       if (!upstream) return [c.name, null] as const;
-      const key = await cacheLogo(upstream);
+      const key = await withinDeadline(cacheLogo(upstream), RENDER_WAIT_MS);
       return [c.name, key ? cachedLogoUrl(key) : null] as const;
     })
   );
@@ -69,4 +69,21 @@ export async function resolveLogoFallbacks(
   }
 
   return out;
+}
+
+/**
+ * How long a page render waits for a logo download. Already-cached logos
+ * answer at once; a slow or new one keeps downloading in the background and
+ * shows from the next load on, rather than holding the whole Live TV page.
+ */
+const RENDER_WAIT_MS = 500;
+
+/** `p`'s value if it settles within `ms`, otherwise null (p keeps running). */
+function withinDeadline<T>(p: Promise<T | null>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  p.catch(() => {});
+  return Promise.race([p, deadline]).finally(() => clearTimeout(timer));
 }
