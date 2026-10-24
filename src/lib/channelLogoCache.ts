@@ -97,7 +97,23 @@ export async function cacheLogo(url: string): Promise<string | null> {
 
   const key = logoKey(trimmed);
   if (await isCached(key)) return key;
+  // A host that just failed is not asked again for a while: dead picon hosts
+  // were re-fetched on every Live TV load, each waiting out the full timeout
+  // (2026-10-24: logo lookups held the page for 8 s every time).
+  const failedAt = recentFailures.get(trimmed);
+  if (failedAt !== undefined && Date.now() - failedAt < FAILURE_MEMORY_MS) return null;
 
+  const key2 = await fetchAndStore(trimmed, key);
+  if (!key2) recentFailures.set(trimmed, Date.now());
+  else recentFailures.delete(trimmed);
+  return key2;
+}
+
+/** How long a logo URL that failed is left alone before trying it again. */
+const FAILURE_MEMORY_MS = 6 * 60 * 60_000;
+const recentFailures = new Map<string, number>();
+
+async function fetchAndStore(trimmed: string, key: string): Promise<string | null> {
   try {
     const res = await fetch(trimmed, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
