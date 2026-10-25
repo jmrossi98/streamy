@@ -44,13 +44,10 @@ export function nudgeSize(
   return null;
 }
 
-/** localStorage keys for the assistant chat's dividers. */
+/** localStorage keys for the assistant chat's divider. */
 export const CHAT_SIDEBAR_WIDTH_KEY = "streamy.chat.sidebarWidth";
-export const CHAT_SAVED_LIST_HEIGHT_KEY = "streamy.chat.savedListHeight";
 
 export const CHAT_SIDEBAR_MIN = 180;
 export const CHAT_SIDEBAR_MAX = 520;
 /** The transcript always keeps at least this much width beside the sidebar. */
 export const CHAT_TRANSCRIPT_MIN = 360;
-/** Each half of the sidebar (saved chats / vault sessions) keeps at least this. */
-export const CHAT_SECTION_MIN = 80;
