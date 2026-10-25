@@ -1,6 +1,8 @@
 import { LlmRoutingPanel } from "@/components/LlmRoutingPanel";
+import { SkillEnginePanel } from "@/components/SkillEnginePanel";
 import { routingSnapshot } from "@/lib/llm";
 import { usesIn } from "@/lib/llmRoutingRules";
+import { getSkillEngine } from "@/lib/skillEngine";
 
 /**
  * The model routing, folded shut under a one-line disclosure, with room on
@@ -12,7 +14,7 @@ import { usesIn } from "@/lib/llmRoutingRules";
  * transcript to a strip a few lines tall.
  */
 export async function LlmRoutingDisclosure({ aside, className }: { aside?: React.ReactNode; className?: string }) {
-  const initial = await routingSnapshot();
+  const [initial, engine] = await Promise.all([routingSnapshot(), getSkillEngine()]);
   return (
     <div className={`relative items-start justify-between gap-3 text-xs ${className ?? "flex"}`}>
       <details className="group min-w-0 flex-1">
@@ -24,6 +26,9 @@ export async function LlmRoutingDisclosure({ aside, className }: { aside?: React
           {/* The chat slots only: the resume and apply-packet models are
               edited on the Jobs tab since 2026-10-24. */}
           <LlmRoutingPanel initial={initial} uses={usesIn("assistant")} />
+          <div className="mt-4 border-t border-white/10 pt-4">
+            <SkillEnginePanel initial={engine} />
+          </div>
         </div>
       </details>
       {aside}

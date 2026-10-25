@@ -293,3 +293,40 @@ describe("kinds and errors", () => {
     expect(describeRunnerError(500, null)).toBe("The skill runner returned HTTP 500.");
   });
 });
+
+describe("engines and permission questions (2026-10-25)", () => {
+  it("normalizeRun keeps the engine, model, cost and a pending question", () => {
+    const waiting = { id: "per_1", permission: "bash", detail: "cat /tmp/x", since: "2026-10-25T02:00:00Z", patterns: ["cat *"] };
+    const r = normalizeRun({ ...run({ status: "running" }), engine: "opencode", model: "anthropic/claude-sonnet-5-5", waiting, cost: 0.0123 });
+    expect(r?.engine).toBe("opencode");
+    expect(r?.model).toBe("anthropic/claude-sonnet-5-5");
+    expect(r?.cost).toBe(0.0123);
+    expect(r?.waiting).toEqual(waiting);
+    // a finished run is never "waiting", whatever the record says
+    expect(normalizeRun({ ...run(), waiting })?.waiting).toBeNull();
+    // an older runner sends none of this
+    const old = normalizeRun(run());
+    expect(old?.engine).toBeNull();
+    expect(old?.model).toBeNull();
+    expect(old?.waiting).toBeNull();
+    expect(normalizeRun({ ...run(), engine: "codex", model: "bad", waiting: { id: "../x" } })).toMatchObject({ engine: null, model: null });
+  });
+
+  it("the run turn carries the engine through a reload", () => {
+    const t = parseRunTurn(runTurnContent(run({ engine: "opencode", model: "openrouter/deepseek/deepseek-v3.2" })));
+    expect(t?.engine).toBe("opencode");
+    expect(t?.model).toBe("openrouter/deepseek/deepseek-v3.2");
+    expect(t?.summary).toBe("ESPN's provider is unreachable from the US exit.");
+    const c = parseRunTurn(runTurnContent(run({ engine: "claude" })));
+    expect(c?.engine).toBe("claude");
+    expect(c?.model).toBeNull();
+    expect(parseRunTurn(runTurnContent(run()))?.engine).toBeNull();
+  });
+
+  it("the started email names the engine when given", () => {
+    expect(startedEmail("health-sweep", "read", "jaker", {}, "r9", "OpenCode · anthropic/claude-sonnet-5-5").body).toContain(
+      "Engine: OpenCode · anthropic/claude-sonnet-5-5"
+    );
+    expect(startedEmail("health-sweep", "read", "jaker", {}, "r9").body).not.toContain("Engine:");
+  });
+});

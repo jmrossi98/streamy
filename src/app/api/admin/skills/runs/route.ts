@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
+import { getSkillEngine } from "@/lib/skillEngine";
 import { listSkills, startRun } from "@/lib/skillRunner";
 import { isSkillName, validateSkillArgs } from "@/lib/skillRunnerRules";
 
@@ -29,12 +30,24 @@ export async function POST(request: Request) {
   const checked = validateSkillArgs(skill, body.args);
   if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
 
-  const r = await startRun(skill, checked.args, admin.name || "admin");
+  // The saved admin choice decides the engine; the card has no say in it.
+  const choice = await getSkillEngine();
+  const r = await startRun(skill, checked.args, admin.name || "admin", choice);
   if (!r.ok) {
     return NextResponse.json(
       { error: r.error, ...(r.busyRunId ? { busy: true, running: r.busyRunId } : {}) },
       { status: r.status }
     );
   }
-  return NextResponse.json({ id: r.data.id, skill: skill.name, args: checked.args, kind: skill.kind }, { status: 202 });
+  return NextResponse.json(
+    {
+      id: r.data.id,
+      skill: skill.name,
+      args: checked.args,
+      kind: skill.kind,
+      engine: choice.engine,
+      model: choice.engine === "opencode" ? choice.model : null,
+    },
+    { status: 202 }
+  );
 }

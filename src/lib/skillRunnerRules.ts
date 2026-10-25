@@ -23,6 +23,8 @@
  * skill name is refused by the runner, and renders no card here.
  */
 
+import { isOpenCodeModel, isSkillEngine, type SkillEngine } from "./skillEngineRules";
+
 export type SkillKind = "read" | "action" | "code";
 
 export type SkillArg = { name: string; description: string; required: boolean };
@@ -30,6 +32,30 @@ export type SkillArg = { name: string; description: string; required: boolean };
 export type SkillInfo = { name: string; description: string; kind: SkillKind; args: SkillArg[] };
 
 export type SkillRunStatus = "running" | "succeeded" | "failed" | "timeout" | "cancelled";
+
+/**
+ * A question an OpenCode run is parked on (2026-10-25): a command or edit
+ * the permission profile doesn't name. The run waits until the admin
+ * answers from the card, or the runner's own wait runs out and rejects it.
+ */
+export type PermissionAsk = {
+  id: string;
+  /** The permission kind: bash, edit, external_directory, doom_loop... */
+  permission: string;
+  /** What exactly: the command, the path. */
+  detail: string;
+  since: string;
+  /** The patterns "allow for this run" would remember. */
+  patterns: string[];
+};
+
+export type PermissionResponse = "once" | "always" | "reject";
+
+export const PERMISSION_RESPONSES: readonly PermissionResponse[] = ["once", "always", "reject"];
+
+export function isPermissionResponse(v: unknown): v is PermissionResponse {
+  return typeof v === "string" && (PERMISSION_RESPONSES as readonly string[]).includes(v);
+}
 
 export type SkillRun = {
   id: string;
@@ -42,6 +68,13 @@ export type SkillRun = {
   output: string;
   summary: string | null;
   links: string[];
+  /** Which agent ran it (runners before 2026-10-25 send none: Claude Code). */
+  engine?: SkillEngine | null;
+  /** OpenCode's provider/model id; null for Claude Code. */
+  model?: string | null;
+  waiting?: PermissionAsk | null;
+  /** OpenCode's cost estimate in dollars, when the provider reports one. */
+  cost?: number | null;
 };
 
 const KINDS: readonly SkillKind[] = ["read", "action", "code"];
@@ -133,7 +166,40 @@ export function normalizeRun(raw: unknown): SkillRun | null {
     output: str(r.output),
     summary: typeof r.summary === "string" && r.summary.trim() ? r.summary : null,
     links: Array.isArray(r.links) ? r.links.filter((l): l is string => typeof l === "string" && /^https?:\/\//.test(l)) : [],
+    engine: isSkillEngine(r.engine) ? r.engine : null,
+    model: isOpenCodeModel(r.model) ? r.model : null,
+    waiting: status === "running" ? normalizeAsk(r.waiting) : null,
+    cost: typeof r.cost === "number" && Number.isFinite(r.cost) ? r.cost : null,
   };
+}
+
+function normalizeAsk(raw: unknown): PermissionAsk | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  if (typeof a.id !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(a.id)) return null;
+  return {
+    id: a.id,
+    permission: str(a.permission, "?").slice(0, 40),
+    detail: str(a.detail).slice(0, 400),
+    since: str(a.since),
+    patterns: Array.isArray(a.patterns) ? a.patterns.filter((p): p is string => typeof p === "string").slice(0, 10) : [],
+  };
+}
+
+/** What the admin is being asked, as a sentence for the card. */
+export function describeAsk(ask: PermissionAsk): string {
+  switch (ask.permission) {
+    case "bash":
+      return `Run this command?`;
+    case "edit":
+      return `Edit this file?`;
+    case "external_directory":
+      return `Touch a path outside the repo?`;
+    case "doom_loop":
+      return `The model is repeating the same call. Let it go on?`;
+    default:
+      return `Allow ${ask.permission}?`;
+  }
 }
 
 export type ArgCheck = { ok: true; args: Record<string, string> } | { ok: false; error: string };
@@ -278,6 +344,8 @@ export type RunTurn = {
   skill: string;
   status: SkillRunStatus;
   args: string;
+  engine: SkillEngine | null;
+  model: string | null;
   summary: string | null;
   links: string[];
   output: string;
@@ -285,6 +353,7 @@ export type RunTurn = {
 
 export function runTurnContent(run: SkillRun): string {
   const head = [`MEDIABOX SKILL RUN ${run.id} ${run.skill} ${run.status}`, `Args: ${argsText(run.args)}`];
+  if (run.engine) head.push(`Engine: ${run.engine}${run.engine === "opencode" && run.model ? ` ${run.model}` : ""}`);
   if (!isFinished(run.status)) return head.join("\n");
   const parts = [
     ...head,
@@ -303,9 +372,12 @@ export function runTurnContent(run: SkillRun): string {
 }
 
 export function parseRunTurn(content: string): RunTurn | null {
-  const [first = "", second = ""] = content.split("\n", 2);
+  const [first = "", second = "", third = ""] = content.split("\n", 3);
   const m = RUN_HEADER.exec(first.trim());
   if (!m || !isRunId(m[1])) return null;
+  const engineLine = third.startsWith("Engine: ") ? third.slice(8).split(" ") : [];
+  const engine = isSkillEngine(engineLine[0]) ? engineLine[0] : null;
+  const model = isOpenCodeModel(engineLine[1]) ? engineLine[1] : null;
   const pick = (from: string, to: string | null) => {
     const a = content.indexOf(from);
     if (a < 0) return null;
@@ -320,6 +392,8 @@ export function parseRunTurn(content: string): RunTurn | null {
     skill: m[2],
     status: m[3] as SkillRunStatus,
     args: second.startsWith("Args: ") ? second.slice(6) : "",
+    engine,
+    model,
     summary: summary && summary !== "(no summary)" ? summary : null,
     links: links ? links.split("\n").filter((l) => /^https?:\/\//.test(l.trim())).map((l) => l.trim()) : [],
     output: pick(OUTPUT_MARK, null) ?? "",
@@ -423,13 +497,21 @@ export function shouldPoll(s: RunCardState, savedStatus: SkillRunStatus): boolea
 
 // ------------------------------------------------------------- email
 
-export function startedEmail(skill: string, kind: SkillKind | null, who: string, args: Record<string, string>, runId: string) {
+export function startedEmail(
+  skill: string,
+  kind: SkillKind | null,
+  who: string,
+  args: Record<string, string>,
+  runId: string,
+  engine?: string
+) {
   return {
     subject: `Skill ${skill} started from admin chat by ${who}`,
     body: [
       `Skill ${skill} started from admin chat by ${who}: ${argsText(args)}`,
       "",
       `Kind: ${kind ?? "unknown"}`,
+      ...(engine ? [`Engine: ${engine}`] : []),
       `Run: ${runId}`,
       "",
       "If this wasn't you, change the admin password and SKILL_RUNNER_TOKEN.",
