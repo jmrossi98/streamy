@@ -350,13 +350,16 @@ export async function POST(request: Request) {
   // diagnostics -- several rounds of picking commands is beyond a 4B model,
   // and each would take longer on the card than looking by hand.
   const diag = !!route && body.stackStatus !== false && realQuestion;
+  // NOTE: the model can read one vault note in full, read-only. Offered on any
+  // real question when the vault is configured.
+  const notes = isVaultConfigured() && realQuestion;
 
   try {
     // request.signal so navigating away actually stops generation -- on the
     // local card that frees the GPU, and on a metered backend it stops paying
     // for tokens nobody will read.
     let stream: ReadableStream<Uint8Array>;
-    if (diag || web) {
+    if (diag || web || notes) {
       const backendFns: LoopBackend = route
         ? {
             // Low effort and a short ceiling: a step writes a few tool lines,
@@ -375,6 +378,7 @@ export async function POST(request: Request) {
         backend: backendFns,
         diag,
         web,
+        notes,
         forceSearch,
         limits: route ? REMOTE_LIMITS : LOCAL_LIMITS,
         actorName: admin.name,

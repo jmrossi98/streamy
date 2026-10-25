@@ -1,6 +1,6 @@
 /**
  * The admin assistant's look-then-answer loop: read-only diagnostics on
- * mediabox, web search and page fetches, then the streamed answer. One line
+ * mediabox, web search, page fetches and single vault notes (read-only), then the streamed answer. One line
  * per lookup is streamed as it runs so a phone shows progress instead of a
  * spinner.
  *
@@ -17,10 +17,15 @@ import { LOCAL_HELP } from "./diagApiRules";
 import { isLocalCommand, runLocalCommand } from "./diagLocal";
 import { formatResults, investigationPrompt, MAX_COMMANDS_TOTAL, MAX_STEPS, progressLine, type CommandResult } from "./diagRules";
 import {
+  capNote,
+  cleanNotePath,
   citationInstruction,
   FetchAllowList,
   formatFetchResult,
+  formatNoteResult,
   formatSearchResult,
+  noteProgressLine,
+  notesToolPrompt,
   parseToolLines,
   remainingLine,
   sourcesFooter,
@@ -29,6 +34,7 @@ import {
   webProgressLine,
   webToolsPrompt,
   type FetchToolResult,
+  type NoteToolResult,
   type SearchToolResult,
   type ToolLimits,
 } from "./assistantToolRules";
@@ -36,6 +42,7 @@ import { withContext } from "./chatLimits";
 import { createReplyCollector } from "./chatTranscriptRules";
 import { fetchPage } from "./fetchPage";
 import type { ChatMessage } from "./ollama";
+import { readVaultNote } from "./vault";
 import { searchWeb } from "./webSearch";
 
 /** How the loop talks to whichever model is answering. */
@@ -53,6 +60,8 @@ export type LoopOptions = {
   diag: boolean;
   /** Offer SEARCH/FETCH. */
   web: boolean;
+  /** Offer NOTE: read one vault note, read-only. Only when the vault is configured. */
+  notes?: boolean;
   /** "Always search": this query is searched before the model is asked anything. */
   forceSearch: string | null;
   limits: ToolLimits;
@@ -87,6 +96,7 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
   let convo = opts.messages;
   if (opts.diag) convo = withContext(convo, { role: "system", content: investigationPrompt(await diagCatalogue()) });
   if (opts.web) convo = withContext(convo, { role: "system", content: webToolsPrompt(limits) });
+  if (opts.notes) convo = withContext(convo, { role: "system", content: notesToolPrompt(limits) });
 
   const allow = new FetchAllowList();
   for (const m of opts.messages) if (m.role === "user") allow.add(urlsIn(m.content));
@@ -98,6 +108,7 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
       let searches = 0;
       let fetches = 0;
       let commands = 0;
+      let notes = 0;
       let lookedUp = false;
 
       const doSearch = async (query: string) => {
@@ -132,6 +143,25 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
         return formatFetchResult(r);
       };
 
+      const doNote = async (raw: string) => {
+        notes++;
+        const path = cleanNotePath(raw);
+        let r: NoteToolResult;
+        if (!path) {
+          r = { path: raw.slice(0, 200), ok: false, error: "not a readable vault path -- it must be a relative .md path inside the vault, such as main/apple-notes/notes/Name.md" };
+        } else {
+          try {
+            const { text, truncated } = capNote(await readVaultNote(path), limits.noteChars);
+            r = { path, ok: true, text, truncated };
+          } catch (err) {
+            r = { path, ok: false, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+        controller.enqueue(line(noteProgressLine(r.path, r.ok)));
+        void logAudit(actorName, "assistant.note", r.path.slice(0, 200), r.ok ? "ok" : r.error.slice(0, 120));
+        return formatNoteResult(r);
+      };
+
       // Lookups that fail -- a model timing out on a step, mediabox dropping
       // off -- cost the lookups, never the answer: it is written from
       // whatever was gathered, and says the lookup stopped.
@@ -142,7 +172,7 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
           convo = [
             ...convo,
             { role: "assistant", content: `SEARCH: ${opts.forceSearch}` },
-            { role: "user", content: `${UNTRUSTED_HEADER}\n\n${block}\n\n${remainingLine({ rounds: limits.rounds, searches: limits.searches - searches, fetches: limits.fetches - fetches, diag: opts.diag })}` },
+            { role: "user", content: `${UNTRUSTED_HEADER}\n\n${block}\n\n${remainingLine({ rounds: limits.rounds, searches: limits.searches - searches, fetches: limits.fetches - fetches, diag: opts.diag, notes: opts.notes ? limits.notes - notes : undefined })}` },
           ];
         }
 
@@ -150,7 +180,7 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
         for (let round = 0; round < rounds; round++) {
           if (signal.aborted) break;
           const reply = await backend.step(convo, signal);
-          const requests = parseToolLines(reply, { diag: opts.diag && commands < MAX_COMMANDS_TOTAL, web: opts.web });
+          const requests = parseToolLines(reply, { diag: opts.diag && commands < MAX_COMMANDS_TOTAL, web: opts.web, notes: opts.notes });
           if (requests.length === 0) break;
 
           const blocks: string[] = [];
@@ -169,6 +199,9 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
             } else if (req.tool === "search") {
               asked.push(`SEARCH: ${req.arg}`);
               blocks.push(searches < limits.searches ? await doSearch(req.arg) : `SEARCH: ${req.arg}\n(search limit for this turn reached)`);
+            } else if (req.tool === "note") {
+              asked.push(`NOTE: ${req.arg}`);
+              blocks.push(notes < limits.notes ? await doNote(req.arg) : `NOTE: ${req.arg}\n(note limit for this turn reached)`);
             } else {
               asked.push(`FETCH: ${req.arg}`);
               blocks.push(fetches < limits.fetches ? await doFetch(req.arg) : `FETCH: ${req.arg}\n(fetch limit for this turn reached)`);
@@ -180,7 +213,7 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
           const parts = [UNTRUSTED_HEADER];
           if (ran.length > 0) parts.push(formatResults(ran, stepsLeft, MAX_COMMANDS_TOTAL - commands));
           parts.push(...blocks);
-          parts.push(remainingLine({ rounds: stepsLeft, searches: limits.searches - searches, fetches: limits.fetches - fetches, diag: opts.diag && commands < MAX_COMMANDS_TOTAL }));
+          parts.push(remainingLine({ rounds: stepsLeft, searches: limits.searches - searches, fetches: limits.fetches - fetches, diag: opts.diag && commands < MAX_COMMANDS_TOTAL, notes: opts.notes ? limits.notes - notes : undefined }));
           convo = [...convo, { role: "assistant", content: asked.join("\n") }, { role: "user", content: parts.join("\n\n") }];
         }
       } catch (err) {
@@ -197,7 +230,7 @@ export async function runAssistantTurn(opts: LoopOptions): Promise<ReadableStrea
         if (lookedUp) controller.enqueue(line("\n"));
         const usedWeb = fetched.length + searched.length > 0;
         const finalNote =
-          "Answer the admin now, in prose. Do not write RUN, SEARCH or FETCH lines." + (usedWeb ? ` ${citationInstruction()}` : "");
+          "Answer the admin now, in prose. Do not write RUN, SEARCH, FETCH or NOTE lines." + (usedWeb ? ` ${citationInstruction()}` : "");
         const answer = await backend.answer([...convo, { role: "system", content: finalNote }], signal);
         const collector = createReplyCollector();
         const reader = answer.getReader();
