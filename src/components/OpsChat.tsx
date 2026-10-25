@@ -35,12 +35,12 @@ import {
 import { LLM_ROUTING_EVENT, cloudSlots, type ChatSlots, type ResolvedRoutes } from "@/lib/chatSlots";
 import { ActionProposal } from "./ActionProposal";
 import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
+import { buildRunTurnRequest, buildSaveRequest, createSaveQueue } from "@/lib/chatSaver";
 import {
   findRunTurn,
   isFinished,
   parseSkillProposal,
   proposalWasRun,
-  runTurnContent,
   stripSkillProposal,
   type SkillRun,
 } from "@/lib/skillRunnerRules";
@@ -323,44 +323,95 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     };
   }, [applySession]);
 
+  // Every write to a chat goes through this queue, one at a time, so a switch
+  // to another chat can wait for the ones still in flight (flushSaves).
+  const [saveQueue] = useState(createSaveQueue);
+  const flushSaves = useCallback(() => saveQueue.flush(), [saveQueue]);
+
+  /** Whether `chatId` is the chat on screen right now (null: the unsaved new chat). */
+  const isOpen = useCallback((chatId: string | null) => chatId === currentIdRef.current, []);
+
+  /** Takes the server's copy of the open chat into the panel. */
+  const adoptOpenChat = useCallback((session: ChatSessionFull) => {
+    turnsRef.current = session.turns;
+    setTurns(session.turns);
+    syncedCountRef.current = session.turns.length;
+    syncedAtRef.current = session.updatedAt;
+  }, []);
+
   /**
-   * Saves the transcript to the open chat, creating the chat on its first
-   * message. A failure is reported but never interrupts the conversation.
+   * Saves the transcript to chat `chatId` -- the chat the caller started with,
+   * never the one open when the request goes out -- creating the chat when it
+   * is null. `replace` is for edits and deletes of history; a plain save may
+   * only add turns. A failure is reported but never interrupts the conversation.
    */
   const persist = useCallback(
-    async (next: Turn[], slot: ChatBackendId): Promise<Turn[] | null> => {
-      const id = currentIdRef.current;
-      try {
-        // baseTurnCount: turns a linked Claude Code session appended since the
-        // last sync are kept by the server, and this save goes after them.
-        const body = JSON.stringify({ turns: next, backend: slot, ...(id ? { baseTurnCount: syncedCountRef.current } : {}) });
-        const { session } = id
-          ? await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${id}`, { method: "PATCH", body })
-          : await api<{ session: ChatSessionFull }>("/api/admin/chat-sessions", { method: "POST", body });
-        if (!currentIdRef.current) selectSession(session.id);
-        syncedCountRef.current = session.turns.length;
-        syncedAtRef.current = session.updatedAt;
-        upsertSummary(summaryOf(session));
-        setSaveError(null);
-        return session.turns;
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 409 && id) {
-          // History was edited here while Claude Code added to it: take the
-          // server's copy rather than overwrite what was added.
-          try {
-            const { session } = await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${id}`);
-            applySession(session);
-            setSaveError("This chat changed in Claude Code meanwhile, so it was reloaded. Make the edit again.");
-            return null;
-          } catch {
-            // Fall through to the generic message.
+    (
+      next: Turn[],
+      slot: ChatBackendId,
+      chatId: string | null,
+      replace = false
+    ): Promise<{ id: string; turns: Turn[] } | null> =>
+      saveQueue.enqueue(async () => {
+        try {
+          // base: turns a linked Claude Code session appended since the last
+          // sync are kept by the server, and this save goes after them. Only
+          // the open chat has a sync point.
+          const req = buildSaveRequest(chatId, next, slot, {
+            base: chatId !== null && isOpen(chatId) ? syncedCountRef.current : null,
+            replace,
+          });
+          const { session } = await api<{ session: ChatSessionFull }>(req.url, { method: req.method, body: req.body });
+          if (isOpen(chatId)) {
+            if (!chatId) selectSession(session.id);
+            syncedCountRef.current = session.turns.length;
+            syncedAtRef.current = session.updatedAt;
           }
+          upsertSummary(summaryOf(session));
+          setSaveError(null);
+          return { id: session.id, turns: session.turns };
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 409 && chatId && isOpen(chatId)) {
+            // The server's copy and this one disagree (Claude Code added to
+            // the chat, or the save was not an extension of it): take the
+            // server's copy rather than overwrite it.
+            try {
+              const { session } = await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${encodeURIComponent(chatId)}`);
+              applySession(session);
+              setSaveError("This chat changed elsewhere meanwhile, so it was reloaded. Make the edit again.");
+              return null;
+            } catch {
+              // Fall through to the generic message.
+            }
+          }
+          setSaveError("Couldn't save this chat. It still works, but won't be kept.");
+          return null;
         }
-        setSaveError("Couldn't save this chat. It still works, but won't be kept.");
-        return null;
-      }
-    },
-    [applySession, selectSession, upsertSummary]
+      }),
+    [applySession, isOpen, saveQueue, selectSession, upsertSummary]
+  );
+
+  /**
+   * Has the server put run `runId`'s turn into chat `chatId`: added, or
+   * rewritten with the report. Only that turn changes, in that chat, whichever
+   * chat is open; the panel takes the result only when it is still the open one.
+   */
+  const putRunTurn = useCallback(
+    (chatId: string, runId: string): Promise<ChatSessionFull | null> =>
+      saveQueue.enqueue(async () => {
+        try {
+          const req = buildRunTurnRequest(chatId, runId);
+          const { session } = await api<{ session: ChatSessionFull }>(req.url, { method: req.method, body: req.body });
+          if (isOpen(chatId)) adoptOpenChat(session);
+          upsertSummary(summaryOf(session));
+          setSaveError(null);
+          return session;
+        } catch {
+          setSaveError("Couldn't add that run to the chat.");
+          return null;
+        }
+      }),
+    [adoptOpenChat, isOpen, saveQueue, upsertSummary]
   );
 
   // Turns added elsewhere -- a linked Claude Code session -- show up here
@@ -555,8 +606,11 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   }
 
   /** Has the model answer the last question in `history`, then saves the chat. */
-  async function runTurn(history: Turn[]) {
+  async function runTurn(history: Turn[], replace = false) {
     streamingRef.current = true;
+    // The chat this exchange belongs to, fixed now: every save below goes
+    // there, whatever is open by the time it runs.
+    const chatId = currentIdRef.current;
     setError(null);
     setNotice(null);
     setEditing(null);
@@ -568,7 +622,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     // The question is saved before it is answered: a reply that dies halfway
     // still leaves the chat holding what was asked (and creates the chat).
     const slot = backend;
-    const saving = persist(history, slot);
+    const saving = persist(history, slot, chatId, replace);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -578,7 +632,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       const res = await fetch("/api/admin/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, webSearch, backend: slot, stackStatus, sessionId: currentIdRef.current }),
+        body: JSON.stringify({ messages: history, webSearch, backend: slot, stackStatus, sessionId: chatId }),
         signal: controller.signal,
       });
 
@@ -648,24 +702,33 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       // After the question's own save, so the chat exists to save into. That
       // save may have folded in turns a linked Claude Code session added; the
       // answer goes after them.
-      const saved = (await saving) ?? history;
+      const savedChat = await saving;
+      const saved = savedChat?.turns ?? history;
+      const targetId = savedChat?.id ?? chatId;
+      const open = isOpen(targetId);
       if (answer) {
         const final = [...saved, { role: "assistant" as const, content: answer }];
-        setTurns(final);
-        await persist(final, slot);
-      } else if (saved.length !== history.length) {
+        if (open) setTurns(final);
+        await persist(final, slot, targetId, replace && !savedChat);
+      } else if (open && saved.length !== history.length) {
         setTurns(saved);
       }
     }
   }
 
-  /** Adds a run's turn to the open chat and saves it. */
-  function appendRunTurn(run: SkillRun) {
-    if (findRunTurn(turnsRef.current, run.id) >= 0) return;
-    const next: Turn[] = [...turnsRef.current, { role: "user", via: "skill-run", content: runTurnContent(run) }];
-    turnsRef.current = next;
-    setTurns(next);
-    void persist(next, backend);
+  /**
+   * Puts a run's turn into chat `chatId` -- the chat the tap happened in. A
+   * chat not saved yet is created first, from what is on screen. The server
+   * writes the turn; the panel never sends the whole transcript for it.
+   */
+  async function addRunTurn(chatId: string | null, runId: string): Promise<void> {
+    let target = chatId;
+    if (!target) {
+      const created = await persist(turnsRef.current, backend, null);
+      if (!created) return;
+      target = created.id;
+    }
+    await putRunTurn(target, runId);
   }
 
   /**
@@ -674,6 +737,9 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
    * picks the polling back up from the saved chat.
    */
   async function startSkill(skill: string, args: Record<string, string>): Promise<StartOutcome> {
+    // The run belongs to the chat it was started from, even if another is
+    // open by the time the runner answers (a queued run can take a while).
+    const chatId = currentIdRef.current;
     try {
       const res = await fetch("/api/admin/skills/runs", {
         method: "POST",
@@ -692,25 +758,10 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       if (!res.ok || !body.id) {
         return { ok: false, error: body.error ?? `Couldn't start ${skill} (HTTP ${res.status}).`, busyRunId: body.running ?? null };
       }
-      // A queued run is saved as queued, so the card shows its place in line
-      // until the first poll says it began.
+      // A queued run is saved as queued (the server reads its state from the
+      // runner), so the card shows its place in line until a poll says it began.
       const queued = body.status === "queued";
-      appendRunTurn({
-        id: body.id,
-        skill,
-        args: body.args ?? args,
-        requestedBy: "",
-        status: queued ? "queued" : "running",
-        startedAt: queued ? null : new Date().toISOString(),
-        finishedAt: null,
-        output: "",
-        summary: null,
-        links: [],
-        engine: body.engine ?? null,
-        model: body.model ?? null,
-        waiting: null,
-        cost: null,
-      });
+      await addRunTurn(chatId, body.id);
       return { ok: true, runId: body.id, queued };
     } catch {
       return { ok: false, error: "Lost connection to Streamy.", busyRunId: null };
@@ -720,6 +771,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   /** "Follow that run": the run already going on mediabox, added to this chat. */
   async function followRun(id: string) {
     if (findRunTurn(turnsRef.current, id) >= 0) return;
+    const chatId = currentIdRef.current;
     try {
       const res = await fetch(`/api/admin/skills/runs/${encodeURIComponent(id)}`, { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as { run?: SkillRun; error?: string };
@@ -730,31 +782,28 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       // Already finished means its result goes straight in; the card won't
       // poll it and so won't hand it over again.
       if (isFinished(body.run.status)) finishedRunsRef.current.add(id);
-      appendRunTurn(body.run);
+      await addRunTurn(chatId, id);
     } catch {
       setError("Lost connection to Streamy.");
     }
   }
 
   /**
-   * A run ended: its turn is rewritten with the result, and when nothing has
-   * been said since, the model is asked to read it and carry on -- a triage
-   * is usually followed by "so here's the fix", which is the point of
-   * running it from the chat.
+   * A run ended: the server rewrites its turn in chat `chatId` (the chat whose
+   * card reported it) with the result, and when nothing has been said since,
+   * the model is asked to read it and carry on -- a triage is usually followed
+   * by "so here's the fix", which is the point of running it from the chat.
    */
-  function finishRun(run: SkillRun) {
+  function finishRun(run: SkillRun, chatId: string | null) {
     if (finishedRunsRef.current.has(run.id) || streamingRef.current) return;
-    const index = findRunTurn(turnsRef.current, run.id);
-    if (index < 0) return;
+    if (!chatId || !isOpen(chatId) || findRunTurn(turnsRef.current, run.id) < 0) return;
     finishedRunsRef.current.add(run.id);
-    const next = editTurn(turnsRef.current, index, runTurnContent(run));
-    turnsRef.current = next;
-    if (index === next.length - 1 && available(backend)) {
-      void runTurn(next);
-    } else {
-      setTurns(next);
-      void persist(next, backend);
-    }
+    void (async () => {
+      const session = await putRunTurn(chatId, run.id);
+      if (!session || !isOpen(chatId) || streamingRef.current) return;
+      const last = findRunTurn(session.turns, run.id) === session.turns.length - 1;
+      if (last && available(backend)) void runTurn(session.turns);
+    })();
   }
 
   /** Changes a turn's text and saves it, without asking anything again. */
@@ -762,25 +811,28 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     const next = editTurn(turns, index, text);
     setTurns(next);
     setEditing(null);
-    void persist(next, backend);
+    void persist(next, backend, currentIdRef.current, true);
   }
 
   /** Replaces a question and asks it again, dropping the answers that followed it. */
   function resendEdit(index: number, text: string) {
     const history = resendFrom(turns, index, text);
-    if (history) void runTurn(history);
+    if (history) void runTurn(history, true);
   }
 
   function removeTurn(index: number) {
     const next = deleteTurn(turns, index);
     setTurns(next);
     setConfirmDeleteTurn(null);
-    void persist(next, backend);
+    void persist(next, backend, currentIdRef.current, true);
   }
 
   async function openSession(id: string) {
     setListOpen(false);
     if (streaming || id === currentId) return;
+    // Saves still in flight finish for the chat they were started for first.
+    await flushSaves();
+    if (streamingRef.current) return;
     try {
       const { session } = await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${id}`);
       applySession(session);
@@ -789,8 +841,10 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     }
   }
 
-  function newSession() {
+  async function newSession() {
     if (streaming) return;
+    await flushSaves();
+    if (streamingRef.current) return;
     selectSession(null);
     setTurns([]);
     syncedCountRef.current = 0;
@@ -805,6 +859,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   async function openClaudeSession(key: string) {
     setListOpen(false);
     if (streaming) return;
+    await flushSaves();
+    if (streamingRef.current) return;
     try {
       const { session } = await api<{ session: ChatSessionFull }>("/api/admin/chat-sessions/claude-code", {
         method: "POST",
@@ -834,7 +890,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     try {
       await api(`/api/admin/chat-sessions/${id}`, { method: "DELETE" });
       setSessions((prev) => prev.filter((s) => s.id !== id));
-      if (id === currentIdRef.current) newSession();
+      if (id === currentIdRef.current) void newSession();
     } catch {
       setSaveError("Couldn't delete that chat.");
     }
@@ -1158,7 +1214,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             if (t.via === "skill-run") {
               return (
                 <div key={i} className="group">
-                  <SkillRunCard content={t.content} locked={streaming} onFinished={finishRun} />
+                  <SkillRunCard content={t.content} locked={streaming} onFinished={(r) => finishRun(r, currentId)} />
                   {!streaming && (
                     <div
                       className={`mt-0.5 flex gap-1 text-[11px] ${
