@@ -37,6 +37,13 @@ import { useEffect, useState, type CSSProperties } from "react";
  *    measurements are only ever consulted while something is focused. The
  *    poll after a change runs on a timer, not requestAnimationFrame, which
  *    iOS pauses through its own animations.
+ *  - While a field is focused the viewport readings wobble for a while
+ *    (the keyboard animating, the predictive bar, Safari nudging the caret
+ *    into view), and a box that re-laid itself out to every reading shook
+ *    for seconds. A measured geometry is applied only once two polls in a
+ *    row agree on it; the pre-shrink and the full screen are exact and go
+ *    straight in. The document scroll is only put back on blur -- undoing
+ *    it under Safari while it is still placing the caret is a tug of war.
  *
  * Returns the style for the page box and whether the keyboard is up: with it
  * up, the bottom safe-area inset (the home indicator) is under the keyboard,
@@ -56,29 +63,44 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
     // Magic Keyboard) focuses fields without taking any room.
     let preShrink = false;
     let sawKeyboard = false;
+    // The last measured geometry, applied only when the next poll repeats it.
+    let pending: Box | null = null;
+
+    const apply = (next: Box) => {
+      setBox((b) => (sameBox(b, next) ? b : next));
+    };
 
     const measure = () => {
       const kb = Math.round(window.innerHeight - vv.height);
       // Keyboards are hundreds of px; browser toolbars showing and hiding
       // are a few tens, and those still get the full height.
       const keyboardOpen = kb > KEYBOARD_MIN_PX;
-      let next: Box;
       if (!editing) {
         // Nothing focused, so no keyboard, whatever the viewport reports
         // mid-animation.
-        next = FULL;
-      } else if (keyboardOpen) {
-        sawKeyboard = true;
-        rememberKeyboard(kb);
-        next = { height: Math.round(vv.height), top: Math.max(0, Math.round(vv.offsetTop)), keyboardOpen: true };
-      } else if (preShrink && rememberedKeyboard() != null) {
-        // Focused, keyboard still on its way up: take its room away now.
-        next = { height: window.innerHeight - (rememberedKeyboard() as number), top: 0, keyboardOpen: true };
-      } else {
-        next = FULL;
+        pending = null;
+        apply(FULL);
+        if (window.scrollY !== 0) window.scrollTo(0, 0);
+        return;
       }
-      setBox((b) => (b.height === next.height && b.top === next.top && b.keyboardOpen === next.keyboardOpen ? b : next));
-      if (window.scrollY !== 0) window.scrollTo(0, 0);
+      if (keyboardOpen) {
+        sawKeyboard = true;
+        const measured: Box = { height: Math.round(vv.height), top: Math.max(0, Math.round(vv.offsetTop)), keyboardOpen: true };
+        if (pending && sameBox(pending, measured)) {
+          rememberKeyboard(kb);
+          apply(measured);
+        } else {
+          pending = measured;
+        }
+        return;
+      }
+      pending = null;
+      if (preShrink && rememberedKeyboard() != null) {
+        // Focused, keyboard still on its way up: take its room away now.
+        apply({ height: window.innerHeight - (rememberedKeyboard() as number), top: 0, keyboardOpen: true });
+      } else {
+        apply(FULL);
+      }
     };
 
     // Re-measure on a timer until the keyboard animation is surely over:
@@ -141,6 +163,10 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
 }
 
 type Box = { height: number | null; top: number; keyboardOpen: boolean };
+
+function sameBox(a: Box, b: Box): boolean {
+  return a.height === b.height && a.top === b.top && a.keyboardOpen === b.keyboardOpen;
+}
 
 const FULL: Box = { height: null, top: 0, keyboardOpen: false };
 const KEYBOARD_MIN_PX = 120;
