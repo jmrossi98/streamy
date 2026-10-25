@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { refreshGuide, waitForLineupChannel } from "@/lib/liveTv";
+import { refreshGuide, waitForLineupChannel, warmLiveChannel } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { namesGameDate } from "@/lib/liveGuideGrid";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
@@ -151,6 +151,12 @@ export async function POST(request: Request) {
   // away instead of waiting a fixed time and hoping (see waitForLineupChannel).
   const jellyfinId = refreshing ? await waitForLineupChannel(name) : null;
   const ready = jellyfinId != null;
+  // Tune it once from here before anyone does (warmLiveChannel): Jellyfin
+  // probes a channel for ~13 s the first time it is opened, and only then.
+  // Paid now, while the game page is still holding, rather than inside the
+  // first viewer's tune -- where on 2026-10-25 the probe's own disconnect
+  // knocked Dispatcharr's channel over for a minute.
+  const warmed = ready ? await warmLiveChannel(jellyfinId) : false;
 
   return NextResponse.json({
     id: created.id,
@@ -159,6 +165,8 @@ export async function POST(request: Request) {
     ready,
     // So the game page can play it straight away, without reloading.
     jellyfinId,
+    // Probed and started once already, so that first play starts in seconds.
+    warmed,
     note: refreshing
       ? "Added. Jellyfin is refreshing its guide now - it appears in Live TV in a moment."
       : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",

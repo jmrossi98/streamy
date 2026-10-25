@@ -16,6 +16,7 @@
  */
 
 import { cleanText } from "./text";
+import { jellyfinHlsMasterUrl } from "./jellyfin";
 
 const JELLYFIN_URL = process.env.JELLYFIN_URL?.replace(/\/$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
@@ -684,4 +685,48 @@ export function keepLiveSessionAlive(playSessionId: string | null | undefined): 
     headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
     signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
   }).catch(() => {});
+}
+
+/** The longest a warm-up waits for Jellyfin's first live playlist: the probe (3 s wait + ~10 s) plus three segments. */
+const WARM_TIMEOUT_MS = 40_000;
+
+/**
+ * Tunes a channel once, from here, and lets go.
+ *
+ * Jellyfin probes a live channel the first time it is opened -- a fixed 3 s
+ * wait and a ~10 s ffprobe pull -- and only then: every later open reads a
+ * cache in a millisecond (log of 2026-10-25: 14 opens, 2 probes, both of
+ * just-added channels). So the one viewer who pays the probe is the first
+ * to tune a channel the game page just added, inside their own tune. On
+ * 2026-10-25 that probe's disconnect also knocked Dispatcharr's channel
+ * over for a minute ("Channel is stopping"), and the page fell back to a
+ * guess. Paying it here, while the page is still holding, leaves the viewer
+ * a tune that starts in a couple of seconds. Mirrors a real tune (master,
+ * then the live playlist) so what gets cached is what a tune needs; the
+ * encode is closed straight after. Never throws.
+ */
+export async function warmLiveChannel(channelId: string): Promise<boolean> {
+  if (!isJellyfinConfiguredForLiveTv()) return false;
+  const handle = await openLiveStream(channelId);
+  if (!handle) return false;
+  const headers = { "X-Emby-Token": JELLYFIN_API_KEY! };
+  let ok = false;
+  try {
+    const masterUrl = jellyfinHlsMasterUrl(channelId, handle.playSessionId, handle.mediaSourceId);
+    const master = await fetch(masterUrl, { cache: "no-store", headers, signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS) });
+    if (!master.ok) return false;
+    const variant = (await master.text())
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith("#"));
+    if (!variant) return false;
+    const live = await fetch(new URL(variant, masterUrl), { cache: "no-store", headers, signal: AbortSignal.timeout(WARM_TIMEOUT_MS) });
+    await live.text().catch(() => "");
+    ok = live.ok;
+  } catch (err) {
+    console.error(`[live-tv] warm-up of channel ${channelId} failed:`, err);
+  } finally {
+    await closeLiveStream(handle.playSessionId, handle.mediaSourceId);
+  }
+  return ok;
 }
