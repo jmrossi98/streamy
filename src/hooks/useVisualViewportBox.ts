@@ -28,11 +28,15 @@ import { useEffect, useState, type CSSProperties } from "react";
  *    once; `top` follows offsetTop for that case.
  *  - A pan is not a document scroll: with the document locked, scrollTo(0,0)
  *    does nothing to it. Only `top` can answer it.
- *  - The keyboard closing does not reliably deliver a final event with the
- *    settled values, so the box kept its keyboard-open geometry: short, and
- *    pushed down, with black above it. The settle loop below re-measures
- *    every frame for a moment after any change, and with no keyboard the
- *    box is simply the full screen at top 0, whatever the last numbers said.
+ *  - The keyboard closing does not reliably deliver settled values: not in a
+ *    final event, and not to a frame loop either -- the box kept a keyboard
+ *    height and a leftover pan offset after the keyboard had gone (Jake's
+ *    third set of screenshots). So the close side does not measure at all.
+ *    A soft keyboard exists only for a focused field: the moment nothing
+ *    editable has focus, the box is the full screen at top 0, and the
+ *    measurements are only ever consulted while something is focused. The
+ *    poll after a change runs on a timer, not requestAnimationFrame, which
+ *    iOS pauses through its own animations.
  *
  * Returns the style for the page box and whether the keyboard is up: with it
  * up, the bottom safe-area inset (the home indicator) is under the keyboard,
@@ -44,7 +48,7 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
-    let frame = 0;
+    let timer: ReturnType<typeof setInterval> | null = null;
     let settleUntil = 0;
     let editing = isEditable(document.activeElement);
     // Shrink ahead of the keyboard only until the settle loop has run its
@@ -59,11 +63,15 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
       // are a few tens, and those still get the full height.
       const keyboardOpen = kb > KEYBOARD_MIN_PX;
       let next: Box;
-      if (keyboardOpen) {
+      if (!editing) {
+        // Nothing focused, so no keyboard, whatever the viewport reports
+        // mid-animation.
+        next = FULL;
+      } else if (keyboardOpen) {
         sawKeyboard = true;
         rememberKeyboard(kb);
         next = { height: Math.round(vv.height), top: Math.max(0, Math.round(vv.offsetTop)), keyboardOpen: true };
-      } else if (editing && preShrink && rememberedKeyboard() != null) {
+      } else if (preShrink && rememberedKeyboard() != null) {
         // Focused, keyboard still on its way up: take its room away now.
         next = { height: window.innerHeight - (rememberedKeyboard() as number), top: 0, keyboardOpen: true };
       } else {
@@ -73,15 +81,13 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
       if (window.scrollY !== 0) window.scrollTo(0, 0);
     };
 
-    // Re-measure every frame until the keyboard animation is surely over:
+    // Re-measure on a timer until the keyboard animation is surely over:
     // the events come at its start, the numbers settle at its end.
     const tick = () => {
       measure();
-      if (performance.now() < settleUntil) {
-        frame = requestAnimationFrame(tick);
-        return;
-      }
-      frame = 0;
+      if (performance.now() < settleUntil) return;
+      if (timer) clearInterval(timer);
+      timer = null;
       if (preShrink && !sawKeyboard) {
         preShrink = false;
         measure();
@@ -89,7 +95,8 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
     };
     const settle = () => {
       settleUntil = performance.now() + SETTLE_MS;
-      if (!frame) frame = requestAnimationFrame(tick);
+      measure();
+      if (!timer) timer = setInterval(tick, POLL_MS);
     };
 
     const onFocusIn = (e: FocusEvent) => {
@@ -115,7 +122,7 @@ export function useVisualViewportBox(): { style: CSSProperties; keyboardOpen: bo
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
     return () => {
-      cancelAnimationFrame(frame);
+      if (timer) clearInterval(timer);
       vv.removeEventListener("resize", settle);
       vv.removeEventListener("scroll", settle);
       window.removeEventListener("orientationchange", settle);
@@ -139,6 +146,7 @@ const FULL: Box = { height: null, top: 0, keyboardOpen: false };
 const KEYBOARD_MIN_PX = 120;
 /** Longer than iOS's keyboard animation (~250 ms) with room for a slow frame. */
 const SETTLE_MS = 700;
+const POLL_MS = 50;
 /** The keyboard's height last time it opened, per viewport width (portrait vs landscape). */
 const KEYBOARD_KEY = "streamy.keyboard.height.v1";
 
