@@ -152,16 +152,18 @@ export function SecurityPanel({
         ) : (
           <ul className={scrollListClass({}, "space-y-1.5")}>
             {auditLog.map((e) => (
-              <li key={e.id} className="flex items-baseline gap-2 text-sm">
+              // On a phone the target drops to its own line under who did
+              // what and when; on one line it was clipped at the right edge.
+              <li key={e.id} className="flex flex-wrap items-baseline gap-x-2 text-sm sm:flex-nowrap">
                 <span className="shrink-0 text-white/70">{e.actorName}</span>
                 <span className="shrink-0 text-white/40">
                   {ACTION_LABELS[e.action] ?? e.action}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-white/90">{e.target}</span>
+                <span className="order-last min-w-0 flex-1 basis-full truncate text-white/90 sm:order-none sm:basis-0">{e.target}</span>
                 {e.detail && (
                   <span className="shrink-0 text-xs text-white/30">{e.detail}</span>
                 )}
-                <span className="shrink-0 text-xs tabular-nums text-white/30">
+                <span className="ml-auto shrink-0 text-xs tabular-nums text-white/30 sm:ml-0">
                   {new Date(e.createdAt).toLocaleString(undefined, {
                     month: "numeric",
                     day: "numeric",

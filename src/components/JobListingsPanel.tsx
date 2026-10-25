@@ -508,7 +508,10 @@ export function JobListingsPanel({
                   : "border-white/10 bg-black/20"
               }`}
             >
-              <div className="flex items-start justify-between gap-3">
+              {/* On a phone the title gets the whole first line and the
+                  actions wrap underneath; side by side they left it a few
+                  characters ("Staff Ma..."). */}
+              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                 <div className="min-w-0">
                   <a
                     href={listing.url}
@@ -531,7 +534,7 @@ export function JobListingsPanel({
                   </p>
                 </div>
                 <span
-                  className="flex shrink-0 items-center gap-1.5 text-[10px] text-white/35"
+                  className="flex flex-wrap items-center gap-1.5 text-[10px] text-white/35 sm:shrink-0"
                   title={
                     listing.postedAt
                       ? `Posted ${new Date(listing.postedAt).toLocaleDateString()}`

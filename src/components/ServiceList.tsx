@@ -122,8 +122,12 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
             : null;
           return (
             <li key={item.key} className={"px-4 py-3 " + (cancelled ? "opacity-40" : "")}>
-              <div className="flex flex-wrap items-start gap-3">
-                <div className="min-w-0 flex-1">
+              {/* One line on a desktop. On a phone the name column takes the
+                  first line, price and date the second, the buttons the third:
+                  three fixed-width columns on one line left the name a few
+                  pixels, and it drew over the price. */}
+              <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                <div className="min-w-0 flex-1 basis-52 sm:basis-0">
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span className="text-sm font-medium text-white">{name}</span>
                     {(s?.category || r?.source) && <Badge>{s?.category || r?.source}</Badge>}
@@ -157,7 +161,8 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                     </a>
                   )}
                 </div>
-                <div className="shrink-0 text-right">
+                <div className="ml-auto flex shrink-0 items-start gap-3">
+                <div className="text-right">
                   {s && <p className="text-sm tabular-nums text-white/80">{describeCost(s.cost, s.cadence)}</p>}
                   {s?.cadence === "metered" && (
                     <p className="text-xs tabular-nums text-white/40">{typeof s.actual === "number" ? formatUsd(s.actual) + " MTD" : "no data"}</p>
@@ -166,7 +171,7 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                 {/* Every row's date the same way, whichever source it came
                     from: an entered date wins over a detected one, and either
                     is changed through Edit. */}
-                <div className="w-28 shrink-0 text-right">
+                <div className="w-28 text-right">
                   {!cancelled && daysLeft !== null ? (
                     <>
                       <p className={`text-sm tabular-nums ${dueUrgencyClass(daysLeft)}`}>{describeDue(daysLeft, r?.problem)}</p>
@@ -176,7 +181,8 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                     !cancelled && <p className="text-xs text-white/30">no date</p>
                   )}
                 </div>
-                <div className="flex shrink-0 gap-1">
+                </div>
+                <div className="flex shrink-0 basis-full gap-1 sm:basis-auto">
                   <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "info" })} disabled={busy}>
                     Edit
                   </Button>
