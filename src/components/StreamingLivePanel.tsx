@@ -13,9 +13,10 @@ const VIEWER_MBPS = 8;
 /**
  * Is there room for one more viewer, and if playback is rough, whose fault is it.
  *
- * Four cards: the upload line (the one budget every remote viewer shares),
- * the streams on it, mediabox (CPU, GPU, what stream-priority has throttled)
- * and the Lightsail proxy. Polls while open and visible.
+ * Three cards: the upload line (the one budget every remote viewer shares),
+ * mediabox (CPU, GPU, what stream-priority has throttled) and the Lightsail
+ * proxy. Polls while open and visible. Who is streaming, and whether it is
+ * working, is the Viewers panel's "On now" below (moved there 2026-10-24).
  */
 export function StreamingLivePanel() {
   const [data, setData] = useState<StreamingNow | null>(null);
@@ -51,7 +52,6 @@ export function StreamingLivePanel() {
         {failed && " · last refresh failed"}
       </p>
       <HeadroomCard data={data} />
-      <StreamsCard data={data} />
       <div className="grid gap-4 lg:grid-cols-2">
         <BoxCard data={data} />
         <ProxyCard data={data} />
@@ -103,57 +103,6 @@ function HeadroomCard({ data }: { data: StreamingNow }) {
       <p className="mt-2 text-xs text-white/35">
         Every Streamy stream leaves the house over this line, even from the couch. Measured 2026-10-18: a 1080p transcode is ~8, a 4K direct play 40–60.
       </p>
-    </Card>
-  );
-}
-
-const KIND_LABEL = { live: "Live", movie: "Movie", episode: "Episode", recording: "Recording" } as const;
-const WHERE_LABEL = { lan: "at home", tailnet: "via Streamy", remote: "away", unknown: "?" } as const;
-const WHERE_TONE: Record<string, BadgeTone> = { lan: "neutral", tailnet: "info", remote: "warning", unknown: "neutral" };
-
-function StreamsCard({ data }: { data: StreamingNow }) {
-  // Streamy's own viewers already appear as metered streams; Jellyfin's view
-  // of the same people would list them twice.
-  const apps = (data.jellyfinSessions ?? []).filter((s) => s.where !== "tailnet");
-  if (data.streams.length === 0 && apps.length === 0) {
-    return (
-      <Card title="Streams">
-        <p className="text-sm text-white/40">Nothing is streaming right now.</p>
-      </Card>
-    );
-  }
-  return (
-    <Card title={`Streams (${data.streams.length + apps.length})`}>
-      <ul className="divide-y divide-white/5">
-        {data.streams.map((s) => (
-          <li key={`${s.user}|${s.kind}|${s.ref}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
-            <span className="font-medium text-white">{s.user}</span>
-            <Badge tone="info">{KIND_LABEL[s.kind]}</Badge>
-            <span className="truncate text-white/80">{s.title ?? <span className="text-white/40">{s.ref.slice(0, 8)}…</span>}</span>
-            <span className="ml-auto tabular-nums text-white/85">{s.mbps.toFixed(1)} Mbit/s</span>
-            <span className="tabular-nums text-xs text-white/40">
-              {mins(data.generatedAt - s.since)} min · {(s.bytes / 1e9).toFixed(2)} GB
-            </span>
-          </li>
-        ))}
-        {apps.map((s) => (
-          <li key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
-            <span className="font-medium text-white">{s.user}</span>
-            <Badge tone={WHERE_TONE[s.where]}>{WHERE_LABEL[s.where]}</Badge>
-            <span className="text-white/50">{[s.client, s.device].filter(Boolean).join(" · ")}</span>
-            <span className="truncate text-white/80">{s.title}</span>
-            <Badge tone={s.method === "transcode" ? "warning" : "neutral"} title={s.reasons.join(", ") || undefined}>
-              {s.method}
-              {s.output ? ` ${s.output}` : ""}
-            </Badge>
-            {s.paused && <Badge>paused</Badge>}
-            <span className="ml-auto tabular-nums text-white/85">{s.mbps != null ? `${s.mbps.toFixed(1)} Mbit/s` : "—"}</span>
-          </li>
-        ))}
-      </ul>
-      {apps.some((s) => s.where === "lan") && (
-        <p className="mt-2 text-xs text-white/35">Viewers at home play straight off mediabox and don’t use the upload line.</p>
-      )}
     </Card>
   );
 }
@@ -302,6 +251,5 @@ function Stat({ label, value, hint, warn }: { label: string; value: string; hint
   );
 }
 
-const mins = (ms: number) => Math.max(0, Math.round(ms / 60_000));
 const ago = (s: number) => (s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`);
 const days = (s: number) => (s < 3600 ? `${Math.round(s / 60)} min` : s < 172_800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86_400)} d`);
