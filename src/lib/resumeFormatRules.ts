@@ -143,7 +143,7 @@ export const ROLE_TYPE_GUIDANCE: Record<RoleType, string> = {
   senior:
     "SENIOR IC role: architecture choices, ownership, cross-team scope, reliability at scale. Mechanics only where they size the impact. Scope must be visible in the first bullet of the current role.",
   leadership:
-    "TECH LEAD / EM / DIRECTOR role: scope (teams, people, systems), decisions, standards set, influence through others. Name leadership artifacts (design docs, reviews led, PRs reviewed across repos), never the mechanics of the work. Scope must be visible in the first bullet of the current role. Projects are dropped unless directly relevant.",
+    "TECH LEAD / EM / DIRECTOR role: scope (teams, people, systems), decisions, standards set, influence through others. Name leadership artifacts (design docs, reviews led, PRs reviewed across repos), never the mechanics of the work. Scope must be visible in the first bullet of the current role. No Projects section, ever; the current role may carry 7 bullets so the resume still reaches 14.",
 };
 
 const LEADERSHIP_TITLE =
@@ -166,6 +166,8 @@ export function classifyRoleType(title: string): RoleType {
 export const FORMAT_LIMITS = {
   totalBullets: [14, 16],
   currentRole: [5, 6],
+  /** Leadership resumes drop projects, so the current role gets a 7th bullet to reach 14. */
+  currentRoleLeadership: [5, 7],
   previousRole: [4, 6],
   internshipMax: 1,
   projectBulletsMax: 1,
@@ -192,10 +194,15 @@ function preview(bullet: string): string {
   return words.length > 9 ? `${words.slice(0, 9).join(" ")}…` : bullet;
 }
 
+/** The current role's bullet budget for this kind of posting. */
+export function currentRoleLimit(roleType: RoleType): readonly [number, number] {
+  return roleType === "leadership" ? FORMAT_LIMITS.currentRoleLeadership : FORMAT_LIMITS.currentRole;
+}
+
 /** The most bullets the per-role caps allow; older roles get the previous role's cap. */
-export function perRoleCeiling(jobs: number, interns: number, projects: number): number {
+export function perRoleCeiling(jobs: number, interns: number, projects: number, roleType: RoleType = "product"): number {
   const L = FORMAT_LIMITS;
-  const roles = (jobs > 0 ? L.currentRole[1] : 0) + Math.max(0, jobs - 1) * L.previousRole[1];
+  const roles = (jobs > 0 ? currentRoleLimit(roleType)[1] : 0) + Math.max(0, jobs - 1) * L.previousRole[1];
   return roles + interns * L.internshipMax + projects * L.projectBulletsMax;
 }
 
@@ -214,10 +221,10 @@ export function checkResumeFormat(markdown: string, roleType: RoleType): FormatI
   const total = allBullets.length;
   if (total > L.totalBullets[1]) {
     issues.push({ severity: "trim", message: `${total} bullets in total; the limit is ${L.totalBullets[1]}. Cut ${total - L.totalBullets[1]}, oldest and least relevant first, never the current role's impact.` });
-  } else if (total < L.totalBullets[0] && total < perRoleCeiling(jobs.length, interns.length, r.projects.length)) {
+  } else if (total < L.totalBullets[0] && total < perRoleCeiling(jobs.length, interns.length, r.projects.length, roleType)) {
     // Only when the roles have room: three roles and no projects cap out at
-    // 6 + 6 + 1 = 13, and the per-role caps win (the 2026-10-24 Meta
-    // Technical Leadership draft hit exactly this and rightly didn't pad).
+    // 6 + 6 + 1 = 13 (7 + 6 + 1 = 14 for leadership), and the per-role caps
+    // win rather than padding.
     issues.push({ severity: "note", message: `${total} bullets in total; aim for ${L.totalBullets[0]}-${L.totalBullets[1]} if the bank supports more.` });
   }
 
@@ -227,7 +234,7 @@ export function checkResumeFormat(markdown: string, roleType: RoleType): FormatI
     if (n > max) issues.push({ severity: "trim", message: `${which} (${label(entry)}) has ${n} bullets; the limit is ${max}. Cut the least relevant ${n - max}.` });
     else if (n < min) issues.push({ severity: "note", message: `${which} (${label(entry)}) has ${n} bullets; aim for ${min}-${max}.` });
   };
-  budget(jobs[0], L.currentRole, "Current role");
+  budget(jobs[0], currentRoleLimit(roleType), "Current role");
   budget(jobs[1], L.previousRole, "Previous role");
   for (const intern of interns) {
     if (intern.bullets.length > L.internshipMax) {
@@ -240,7 +247,7 @@ export function checkResumeFormat(markdown: string, roleType: RoleType): FormatI
     }
   }
   if (roleType === "leadership" && r.projects.length > 0) {
-    issues.push({ severity: "note", message: "Projects on a leadership-track resume: keep them only if directly relevant to this posting, else drop the section." });
+    issues.push({ severity: "trim", message: "Projects on a leadership-track resume: remove the Projects section (never included for leadership roles)." });
   }
 
   const extra = r.skills;
