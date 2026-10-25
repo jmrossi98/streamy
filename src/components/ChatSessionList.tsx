@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Button, TextInput, cx } from "@/components/ui";
-import { relativeAge, type ChatSessionSummary } from "@/lib/chatSessionRules";
-import { CLAUDE_APP_MACHINE } from "@/lib/claudeCodeNoteRules";
+import {
+  CHAT_SOURCE_LABELS,
+  mergeChatList,
+  relativeAge,
+  type ChatListSource,
+  type ChatSessionSummary,
+} from "@/lib/chatSessionRules";
 
 /** A Claude Code session from the vault, offered to continue here. */
 export type ClaudeCodeSessionItem = {
@@ -32,14 +37,30 @@ type Props = {
   onDelete: (id: string) => void;
 };
 
+/** Source badge colours: Streamy's own chats stay neutral. */
+const SOURCE_BADGE: Record<ChatListSource, string> = {
+  streamy: "bg-white/10 text-white/60",
+  "claude-code": "bg-emerald-500/15 text-emerald-200",
+  "claude-app": "bg-violet-500/15 text-violet-200",
+};
+
+function SourceBadge({ source }: { source: ChatListSource }) {
+  return (
+    <span className={cx("shrink-0 rounded px-1 py-px text-[9px] font-medium leading-tight", SOURCE_BADGE[source])}>
+      {CHAT_SOURCE_LABELS[source]}
+    </span>
+  );
+}
+
 /**
- * The saved chats, newest first: open one, start a new one, rename or delete.
+ * Every chat in one list, most recent activity first: the saved Streamy chats,
+ * Claude Code sessions from the vault and chats imported from the Claude app,
+ * interleaved, each with a small badge saying which it is. Open a saved chat,
+ * start a new one, rename or delete. Opening a Claude Code session continues
+ * it here as a chat shared with that session; a Claude app chat opens the same
+ * way but continues here only.
  * Delete asks inline (a second click) rather than through a browser dialog.
- * Everything sits in one column with one scrollbar (the saved chats and the
- * vault sessions used to scroll separately, with a draggable divider).
- * Below the chats, Claude Code sessions from the vault: opening one continues it
- * here as a chat shared with that session. Below those, chats imported from
- * the Claude app, which open the same way but continue here only.
+ * One column, one scrollbar.
  */
 export function ChatSessionList({
   sessions,
@@ -54,10 +75,7 @@ export function ChatSessionList({
   onRename,
   onDelete,
 }: Props) {
-  const [showClaude, setShowClaude] = useState(true);
-  const [showApp, setShowApp] = useState(true);
-  const codeSessions = claudeSessions.filter((c) => c.machine !== CLAUDE_APP_MACHINE);
-  const appChats = claudeSessions.filter((c) => c.machine === CLAUDE_APP_MACHINE);
+  const entries = mergeChatList(sessions, claudeSessions);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
 
@@ -86,66 +104,35 @@ export function ChatSessionList({
     </button>
   );
 
-  /** One foldable section of vault sessions: Claude Code's, or the Claude app's. */
-  function vaultSection(
-    label: string,
-    items: ClaudeCodeSessionItem[],
-    open: boolean,
-    toggle: () => void,
-    showMachine: boolean,
-    opts: { action?: ReactNode } = {}
-  ) {
-    // Claude Code's section stays when empty, so its refresh button does too.
-    if (items.length === 0 && !opts.action) return null;
+  function vaultRow(c: ClaudeCodeSessionItem, source: "claude-code" | "claude-app") {
+    const active = !!c.chatId && c.chatId === currentId;
     return (
-      <div className="mt-3 border-t border-white/10 pt-2">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={toggle}
-            aria-expanded={open}
-            className="flex min-w-0 flex-1 items-center justify-between px-2 py-1 text-[11px] uppercase tracking-wide text-white/40 hover:text-white/70"
-          >
-            <span>{label}</span>
-            <span aria-hidden>{open ? "−" : "+"}</span>
-          </button>
-          {opts.action}
-        </div>
-        {open && items.length === 0 && <p className="px-2 py-1 text-[11px] text-white/30">None in the vault yet.</p>}
-        {open && items.length > 0 && (
-          <ul className="space-y-0.5" aria-label={label}>
-            {items.map((c) => {
-              const active = !!c.chatId && c.chatId === currentId;
-              return (
-                <li key={c.key}>
-                  <button
-                    type="button"
-                    disabled={locked}
-                    onClick={() => (c.chatId ? onOpen(c.chatId) : onOpenClaude(c.key))}
-                    aria-current={active ? "true" : undefined}
-                    title={c.chatId ? `${c.title} (continued here)` : `Continue “${c.title}” here`}
-                    className={cx(
-                      "flex w-full flex-col rounded px-2 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-                      active ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/5 hover:text-white/90"
-                    )}
-                  >
-                    <span className="flex w-full items-baseline gap-2">
-                      <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                      {c.chatId && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-label="Continued here" />}
-                    </span>
-                    <span className="text-[10px] text-white/30">
-                      {showMachine ? c.machine : "claude.ai"}
-                      {c.modified ? ` · ${relativeAge(c.modified)}` : ""}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+      <li key={c.key}>
+        <button
+          type="button"
+          disabled={locked}
+          onClick={() => (c.chatId ? onOpen(c.chatId) : onOpenClaude(c.key))}
+          aria-current={active ? "true" : undefined}
+          title={c.chatId ? `${c.title} (continued here)` : `Continue “${c.title}” here`}
+          className={cx(
+            "flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+            active ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/5 hover:text-white/90"
+          )}
+        >
+          <span className="flex w-full items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate">{c.title}</span>
+            {c.chatId && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-label="Continued here" />}
+          </span>
+          <span className="flex items-center gap-1.5 text-[10px] text-white/30">
+            <SourceBadge source={source} />
+            {source === "claude-code" && <span className="min-w-0 truncate">{c.machine}</span>}
+            {c.modified && <span className="shrink-0">{relativeAge(c.modified)}</span>}
+          </span>
+        </button>
+      </li>
     );
   }
+
   const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -158,14 +145,19 @@ export function ChatSessionList({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <Button variant="secondary" size="sm" onClick={onNew} disabled={locked} className="w-full">
-        + New chat
-      </Button>
+      <div className="flex items-center gap-1">
+        <Button variant="secondary" size="sm" onClick={onNew} disabled={locked} className="min-w-0 flex-1">
+          + New chat
+        </Button>
+        {refreshButton}
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-      <ul className="space-y-0.5" aria-label="Saved chats">
-        {loaded && sessions.length === 0 && <li className="px-2 py-3 text-xs text-white/35">No saved chats yet.</li>}
+      <ul className="space-y-0.5" aria-label="Chats">
+        {loaded && entries.length === 0 && <li className="px-2 py-3 text-xs text-white/35">No saved chats yet.</li>}
         {!loaded && <li className="px-2 py-3 text-xs text-white/35">Loading…</li>}
-        {sessions.map((s) => {
+        {entries.map((entry) => {
+          if (entry.source !== "streamy") return vaultRow(entry.vault, entry.source);
+          const s = entry.session;
           const active = s.id === currentId;
           if (renaming?.id === s.id) {
             return (
@@ -215,13 +207,16 @@ export function ChatSessionList({
                 disabled={locked && !active}
                 aria-current={active ? "true" : undefined}
                 className={cx(
-                  "flex w-full items-baseline gap-2 rounded px-2 py-1.5 pr-14 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                  "flex w-full flex-col gap-0.5 rounded px-2 py-1.5 pr-14 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
                   active ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/5 hover:text-white/90"
                 )}
                 title={s.title}
               >
-                <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                <span className="shrink-0 text-[10px] text-white/30">{relativeAge(s.updatedAt)}</span>
+                <span className="w-full truncate">{s.title}</span>
+                <span className="flex items-center gap-1.5 text-[10px] text-white/30">
+                  <SourceBadge source="streamy" />
+                  <span className="shrink-0">{relativeAge(s.updatedAt)}</span>
+                </span>
               </button>
               {/* Always shown on touch screens, where there is no hover. */}
               <div className="absolute inset-y-0 right-1 flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
@@ -249,10 +244,6 @@ export function ChatSessionList({
           );
         })}
       </ul>
-      {vaultSection("Claude Code sessions", codeSessions, showClaude, () => setShowClaude((v) => !v), true, {
-        action: refreshButton,
-      })}
-      {vaultSection("Claude app chats", appChats, showApp, () => setShowApp((v) => !v), false)}
       </div>
     </div>
   );

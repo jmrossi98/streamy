@@ -125,10 +125,7 @@ export function isRemoteBackend(id: ChatBackendId): boolean {
   return backendById(id).provider === "cloud";
 }
 
-/** The Model routing disclosure's element id: the chat's model label opens it. */
-export const MODEL_ROUTING_ID = "model-routing";
-
-/** Fired on window after the Model routing panel saves the chat's model choice; detail is the ChatBackendId. */
+/** Fired on window after the model panel saves the chat's model choice; detail is the ChatBackendId. */
 export const CHAT_BACKEND_EVENT = "streamy:chat-backend";
 
 /** A submitted choice, strictly: unlike normalizeBackend, junk is not coerced. */
