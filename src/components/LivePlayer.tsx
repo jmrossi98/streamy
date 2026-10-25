@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { supportsNativeHls } from "@/lib/hlsSupport";
 import { liveSeekTarget } from "@/lib/liveTimeline";
-import { EdgeArrivalTracker, behindThreshold, cushionForGap } from "@/lib/liveCushion";
+import { EdgeArrivalTracker, behindThreshold, cushionForGap, cushionShortfall } from "@/lib/liveCushion";
 import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
 import { Button } from "@/components/ui";
@@ -122,13 +122,25 @@ const EDGE_STALL_RECOVERY_MS = 6_000;
  * player -- and Jellyfin's client doesn't self-heal from that either. This
  * player can, by re-tuning itself the same way a manual re-select would.
  *
- * Linear rather than exponential backoff, and capped at three: a genuinely
- * dead channel (provider offline, not a transient hiccup) must still end in
- * the real error rather than retry forever, and each attempt already costs
- * up to TUNE_TIMEOUT_MS if the failure is a hang rather than a fast error.
+ * Capped at three: a genuinely dead channel (provider offline, not a
+ * transient hiccup) must still end in the real error rather than retry
+ * forever, and each attempt already costs up to TUNE_TIMEOUT_MS if the
+ * failure is a hang rather than a fast error.
+ *
+ * The waits add up to just over a minute on purpose. When Jellyfin's
+ * pre-tune probe of a channel disconnects from Dispatcharr the instant the
+ * provider's feed starts flowing -- a slow-starting feed, 2026-10-25, the
+ * first tune of a just-added "UK: EPL LEEDS" -- Dispatcharr treats the
+ * broken pipe as a stream failure, tears the channel down and refuses every
+ * new client for 60 s ("Channel is stopping, retry shortly", its stopping
+ * marker's lifetime). Retries 3, 6 and 9 s apart all landed inside that
+ * window, the player gave up, and the game page fell back to a guess; the
+ * same channel tuned first time 65 s later. So the last retry waits the
+ * marker out.
  */
 const MAX_RETRIES = 3;
-const RETRY_BACKOFF_MS = 3_000;
+/** The wait before retry n (1-based), in ms. */
+const RETRY_BACKOFF_MS = [5_000, 20_000, 40_000];
 
 /** How long hls.js waits on a live playlist -- see the Hls config below. */
 const LIVE_PLAYLIST_LOAD_POLICY = {
@@ -372,6 +384,9 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     */
     let lastCatchUpAt = 0;
     const CATCH_UP_COOLDOWN_MS = 4_000;
+    /** A rewind to apply a grown cushion is not repeated inside this; growth comes a gap at a time. */
+    const REWIND_COOLDOWN_MS = 20_000;
+    let lastRewindAt = 0;
 
     const arrivals = new EdgeArrivalTracker();
     const startCushion = learnedCushion.get(channelId) ?? LIVE_SYNC_SECONDS;
@@ -448,9 +463,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       }
       retryCountRef.current += 1;
       reportRetryRef.current(finalError);
-      setTimeout(() => {
-        setRetryToken((t) => t + 1);
-      }, RETRY_BACKOFF_MS * retryCountRef.current);
+      setTimeout(
+        () => {
+          setRetryToken((t) => t + 1);
+        },
+        RETRY_BACKOFF_MS[Math.min(retryCountRef.current, RETRY_BACKOFF_MS.length) - 1]
+      );
     };
 
     // Nothing here fires if the channel is dead, which is the whole problem:
@@ -671,6 +689,15 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
           behindLimitRef.current = limit;
           setBehindLimit(limit);
           if (next > LIVE_SYNC_SECONDS) learnedCushion.set(channelId, next);
+        }
+        // A cushion that grew is only a number until the playhead sits that
+        // far from the edge: stall recovery never rewinds, so apply it here,
+        // once per growth, by moving back the few seconds it lacks
+        // (cushionShortfall). Not for a viewer who scrubbed back on purpose.
+        const short = cushionShortfall(behindNow, next);
+        if (short > 0 && !stayBehindRef.current && !video.paused && now - lastRewindAt > REWIND_COOLDOWN_MS) {
+          lastRewindAt = now;
+          seekToLiveEdge(video, {}, next);
         }
       }
 
