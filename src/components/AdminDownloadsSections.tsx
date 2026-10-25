@@ -216,6 +216,7 @@ export async function AdminDownloadsSections() {
       externalId: d.seriesId,
       episodeId: d.episodeId,
       title: d.title,
+      seriesTitle: d.seriesTitle,
       progress: null,
       mediaType: "show" as const,
       protocol: d.protocol,

@@ -290,7 +290,13 @@ export type CompletedEpisode = {
   /** Sonarr's episode id -- what a per-episode delete targets. */
   episodeId: number;
   seriesId: number;
+  /** The file's own name -- what the episode row shows. */
   title: string;
+  /** The show's name, from the same series list the files came from, so the
+   *  panel can head the show's group with it even when the per-series read
+   *  behind getSonarrSeriesPlaces times out under search load. Without this a
+   *  finished show was headed by its first episode's release name. */
+  seriesTitle: string;
   protocol?: DownloadProtocol;
   sizeBytes: number | null;
   /** When the file landed in the library, for "recently added" ordering. */
@@ -438,6 +444,7 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
             return {
               episodeId: e.id,
               seriesId: s.id,
+              seriesTitle: s.title,
               title: relativePath
                 ? fileBaseName(relativePath)
                 : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
@@ -2589,6 +2596,13 @@ export async function getSonarrSeriesPlaces(seriesIds: number[]): Promise<Map<nu
         if (episodes.length > 0) seriesPlaces.set(id, { at: Date.now(), places });
         out.set(id, places);
       } catch (err) {
+        // A search-loaded Sonarr times out on these reads for minutes at a
+        // time; the show's name and episode places do not change in that
+        // time, so an expired answer beats none.
+        if (cached) {
+          out.set(id, cached.places);
+          return;
+        }
         console.error(`[sonarr] could not read series ${id} for the downloads panel:`, err);
       }
     })
