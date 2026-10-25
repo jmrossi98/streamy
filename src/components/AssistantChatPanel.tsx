@@ -3,6 +3,7 @@ import { getOllamaStatus, isOllamaConfigured, ollamaModel } from "@/lib/ollama";
 import { getResolvedRoutes } from "@/lib/llm";
 import { cloudSlots, type ChatSlots } from "@/lib/chatSlots";
 import { isWebSearchConfigured } from "@/lib/webSearch";
+import { getChatBackend } from "@/lib/chatBackend";
 
 /**
  * The assistant, as both the Admin tab and the expanded page render it. The
@@ -10,9 +11,10 @@ import { isWebSearchConfigured } from "@/lib/webSearch";
  * and a card from md up, like the tab is at every size.
  */
 export async function AssistantChatPanel({ layout = "tab" }: { layout?: "page" | "tab" }) {
-  const [status, routes] = await Promise.all([
+  const [status, routes, chatBackend] = await Promise.all([
     isOllamaConfigured() ? getOllamaStatus() : null,
     getResolvedRoutes(),
+    getChatBackend(),
   ]);
   // What each picker button will actually send to, so the panel can show the
   // model and vendor beside the slot name -- and grey a slot out when nothing
@@ -37,6 +39,7 @@ export async function AssistantChatPanel({ layout = "tab" }: { layout?: "page" |
     >
       <OpsChat
         slots={slots}
+        chatBackend={chatBackend}
         statusError={status && !status.ok ? status.error : null}
         searchAvailable={isWebSearchConfigured()}
         fullHeight

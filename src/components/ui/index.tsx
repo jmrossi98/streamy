@@ -161,6 +161,63 @@ export function Chip({
   );
 }
 
+// -------------------------------------------------------- SegmentedControl
+
+export type Segment<T extends string> = {
+  value: T;
+  label: ReactNode;
+  disabled?: boolean;
+  /** Hover text: what the option means, or why it is greyed out. */
+  title?: string;
+};
+
+/**
+ * One choice out of a few, all visible: the chat's Local / Open / Claude and
+ * the skill engine (2026-10-25, when both moved into Model routing). Use a
+ * Select once the options stop fitting on a phone row.
+ */
+export function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+  className,
+}: {
+  label: string;
+  value: T;
+  options: readonly Segment<T>[];
+  onChange: (value: T) => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={cx("flex items-center gap-1 rounded-lg bg-white/5 p-1", className)}>
+      {options.map((o) => {
+        const selected = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={selected}
+            title={o.title}
+            disabled={disabled || o.disabled}
+            onClick={() => {
+              if (!selected) onChange(o.value);
+            }}
+            className={cx(
+              "min-h-9 flex-1 rounded px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-30",
+              selected ? "bg-netflix-red text-white disabled:opacity-60" : "text-white/60 hover:bg-white/10 hover:text-white/90"
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // -------------------------------------------------------------------- Tabs
 
 /**

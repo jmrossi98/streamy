@@ -14,11 +14,14 @@ import {
 } from "@/lib/paneSizeRules";
 import {
   CHAT_BACKENDS,
-  DEFAULT_BACKEND,
+  CHAT_BACKEND_EVENT,
+  MODEL_ROUTING_ID,
   backendById,
   isRemoteBackend,
+  pickBackend,
   type ChatBackendId,
 } from "@/lib/chatModels";
+import { ModelsPanel } from "./ModelsPanel";
 import { parseProposal, stripProposal } from "@/lib/remediation";
 import { isClaudeAppImport } from "@/lib/claudeCodeNoteRules";
 import {
@@ -59,6 +62,8 @@ function ProposalFor({ content }: { content: string }) {
 
 type Props = {
   slots: ChatSlots;
+  /** The slot chosen in Model routing (chatBackend.ts). */
+  chatBackend: ChatBackendId;
   statusError?: string | null;
   searchAvailable: boolean;
   /** Fill the available height instead of capping the transcript at 24rem. */
@@ -156,7 +161,7 @@ function summaryOf(s: ChatSessionFull): ChatSessionSummary {
   };
 }
 
-export function OpsChat({ slots: initialSlots, statusError, searchAvailable, fullHeight = false, layout = "tab" }: Props) {
+export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchAvailable, fullHeight = false, layout = "tab" }: Props) {
   // Off by default, deliberately: search costs latency and a large share of an
   // 8k context, and it pulls untrusted web text into the prompt. Turning it on
   // is an explicit choice.
@@ -168,13 +173,13 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   // The cloud slots follow the routing panel: it announces every save, so a
   // model picked there is what the next message goes to, with no reload.
   const [slots, setSlots] = useState<ChatSlots>(initialSlots);
-  // The open-weight slot when something serves it, else the first slot that
-  // can answer -- opening on a backend the server would reject is worse than
-  // opening on a different one.
-  const [backend, setBackend] = useState<ChatBackendId>(
-    initialSlots[DEFAULT_BACKEND].available
-      ? DEFAULT_BACKEND
-      : (CHAT_BACKENDS.find((b) => initialSlots[b.id].available)?.id ?? "local")
+  // What answers is chosen in Model routing (one saved setting since
+  // 2026-10-25, no longer a per-chat button row). The chosen slot when it can
+  // answer, else the first that can -- opening on a backend the server would
+  // reject is worse than opening on a different one.
+  const chosenRef = useRef<ChatBackendId>(chatBackend);
+  const [backend, setBackend] = useState<ChatBackendId>(() =>
+    pickBackend(chatBackend, (id) => initialSlots[id].available)
   );
   const [turns, setTurns] = useState<Turn[]>([]);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -224,11 +229,21 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
       if (!routes) return;
       const next = { ...slotsRef.current, ...cloudSlots(routes) };
       setSlots(next);
-      // The slot in use stopped being answerable: move to one that is.
-      setBackend((b) => (next[b].available ? b : (CHAT_BACKENDS.find((x) => next[x.id].available)?.id ?? b)));
+      // Back on the chosen slot if it answers again, or off it if it stopped.
+      setBackend(pickBackend(chosenRef.current, (id) => next[id].available));
+    }
+    function onChoice(e: Event) {
+      const id = (e as CustomEvent<ChatBackendId>).detail;
+      if (!id) return;
+      chosenRef.current = id;
+      setBackend(pickBackend(id, (x) => slotsRef.current[x].available));
     }
     window.addEventListener(LLM_ROUTING_EVENT, onRouting);
-    return () => window.removeEventListener(LLM_ROUTING_EVENT, onRouting);
+    window.addEventListener(CHAT_BACKEND_EVENT, onChoice);
+    return () => {
+      window.removeEventListener(LLM_ROUTING_EVENT, onRouting);
+      window.removeEventListener(CHAT_BACKEND_EVENT, onChoice);
+    };
   }, []);
 
   const selectSession = useCallback((id: string | null) => {
@@ -251,8 +266,6 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
       setEditing(null);
       setConfirmDeleteTurn(null);
       setError(null);
-      // Reopen on the slot it was last answered by, if that still answers.
-      if (s.backend && slotsRef.current[s.backend]?.available) setBackend(s.backend);
     },
     [selectSession]
   );
@@ -775,36 +788,31 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   // their own gutter; the admin tab's card already pads.
   const gutter = layout === "page" ? "px-3" : "px-1 sm:px-3";
 
-  const modelPicker = (size: "xs" | "md") => (
-    <div className={cx("flex items-center gap-1", size === "md" && "rounded-lg bg-white/5 p-1")} role="group" aria-label="Model">
-      {CHAT_BACKENDS.map((b) => {
-        const enabled = available(b.id);
-        const selected = backend === b.id;
-        return (
-          <button
-            key={b.id}
-            type="button"
-            onClick={() => setBackend(b.id)}
-            // Switching mid-stream would attribute the running reply to
-            // the wrong model, so the picker locks while one is in flight.
-            disabled={!enabled || streaming}
-            aria-pressed={selected}
-            title={enabled ? b.hint : `Unavailable - ${slots[b.id].unavailableHint}`}
-            className={cx(
-              "rounded transition-colors disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-white/5",
-              size === "md" ? "min-h-10 flex-1 px-3 text-sm font-medium" : "px-2 py-1",
-              selected
-                ? "bg-netflix-red text-white"
-                : size === "md"
-                  ? "text-white/60"
-                  : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
-            )}
-          >
-            {b.label}
-          </button>
-        );
-      })}
-    </div>
+  /**
+   * The model in use, as a label rather than a switch: the choice lives in
+   * Model routing. On a wide screen it opens that disclosure; the phone's
+   * header opens the options sheet, which carries the same panel.
+   */
+  function openModelRouting() {
+    const el = document.getElementById(MODEL_ROUTING_ID);
+    if (el instanceof HTMLDetailsElement) {
+      el.open = true;
+      el.scrollIntoView({ block: "nearest" });
+    } else {
+      setOptionsOpen(true);
+    }
+  }
+  const modelLabel = (
+    <button
+      type="button"
+      onClick={openModelRouting}
+      title="Change the model in Model routing"
+      className="flex min-w-0 items-center gap-1.5 rounded-lg bg-white/5 px-2 py-1 text-white/70 hover:bg-white/10 hover:text-white"
+    >
+      <span className="font-semibold text-white">{backendById(backend).label}</span>
+      <span className="truncate text-white/50">{modelId}</span>
+      <span aria-hidden className="text-white/40">▾</span>
+    </button>
   );
 
   const stackStatusToggle = (className: string) => (
@@ -924,9 +932,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
           <button type="button" aria-label="Close options" className="absolute inset-0 bg-black/60" onClick={() => setOptionsOpen(false)} />
           <div className="absolute inset-x-0 bottom-0 space-y-4 rounded-t-2xl border-t border-white/10 bg-netflix-dark px-4 pb-[calc(1rem+var(--safe-bottom,env(safe-area-inset-bottom,0px)))] pt-2 shadow-2xl shadow-black/60">
             <div aria-hidden className="mx-auto h-1 w-10 rounded-full bg-white/20" />
-            <div className="space-y-2">
-              <div className="text-[11px] uppercase tracking-wide text-white/40">Model</div>
-              {modelPicker("md")}
+            <div className="max-h-[55dvh] space-y-2 overflow-y-auto">
+              <ModelsPanel />
               <p className="text-xs text-white/40">{modelHint}</p>
             </div>
             <div className="space-y-1 text-sm">
@@ -935,11 +942,6 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
               <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} placement="above" />
-              {layout === "page" && (
-                <a href="/admin/chat" className="text-white/50 underline-offset-2 hover:text-white hover:underline">
-                  Model routing
-                </a>
-              )}
             </div>
           </div>
         </div>
@@ -977,7 +979,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         </div>
 
         <div className="hidden flex-wrap items-center justify-between gap-2 text-xs md:flex">
-          {modelPicker("xs")}
+          {modelLabel}
           <div className="flex items-center gap-3">
             <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} />
             {stackStatusToggle("gap-1.5 hover:text-white/80")}

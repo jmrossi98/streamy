@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Field, Select, TextInput } from "@/components/ui";
+import { Field, SegmentedControl, TextInput } from "@/components/ui";
 import {
   ENGINE_LABELS,
   OPENCODE_MODEL_SUGGESTIONS,
@@ -104,8 +104,9 @@ export function SkillEnginePanel({ initial }: { initial: SkillEngineChoice }) {
       <div>
         <h4 className="font-semibold text-white">Mediabox skills</h4>
         <p className="text-xs text-white/40">
-          Which agent runs a skill the admin starts from this chat. Claude Code uses the Claude subscription; OpenCode
-          bills the model&apos;s own provider and asks here before running a command the profile doesn&apos;t list.
+          {choice.engine === "claude"
+            ? "Skills you start from the chat run with Claude Code, on the Claude subscription."
+            : "Skills you start from the chat run with OpenCode, billed to the model's provider. It asks on the run card before a command the profile doesn't list."}
         </p>
       </div>
       <datalist id="skill-engine-models">
@@ -113,19 +114,25 @@ export function SkillEnginePanel({ initial }: { initial: SkillEngineChoice }) {
           <option key={id} value={id} />
         ))}
       </datalist>
-      <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
-        <Field label="Engine">
-          <Select fieldSize="sm" value={choice.engine} disabled={busy} onChange={(e) => changeEngine(e.target.value as SkillEngine)}>
-            {SKILL_ENGINES.map((e) => (
-              <option key={e} value={e}>
-                {ENGINE_LABELS[e]}
-                {engines && e === "claude" && !engines.claude.ready ? " (not logged in)" : ""}
-                {engines && e === "opencode" && !engines.opencode.ready ? " (not installed)" : ""}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="OpenCode model" hint={choice.engine === "claude" ? "Used once the engine is switched to OpenCode." : undefined}>
+      <SegmentedControl
+        label="Skill engine"
+        value={choice.engine}
+        disabled={busy}
+        onChange={changeEngine}
+        options={SKILL_ENGINES.map((e) => ({
+          value: e,
+          label: ENGINE_LABELS[e],
+          title:
+            engines && e === "claude" && !engines.claude.ready
+              ? "Claude Code isn't logged in on mediabox."
+              : engines && e === "opencode" && !engines.opencode.ready
+                ? "OpenCode isn't installed on mediabox."
+                : undefined,
+        }))}
+      />
+      {/* The model only matters to OpenCode; Claude Code runs on the subscription's model. */}
+      {choice.engine === "opencode" && (
+        <Field label="Model">
           <TextInput
             fieldSize="sm"
             list="skill-engine-models"
@@ -145,11 +152,10 @@ export function SkillEnginePanel({ initial }: { initial: SkillEngineChoice }) {
             }}
           />
         </Field>
-      </div>
+      )}
       {problem && <p className="text-xs text-amber-300/80">{problem}</p>}
       {snapshot.error && <p className="text-xs text-white/40">Couldn&apos;t ask mediabox what is ready: {snapshot.error}</p>}
       <div className="flex flex-wrap items-center gap-3 text-xs">
-        <span className="text-white/35">Changes save as you make them.</span>
         {busy && <span className="text-white/50">Saving…</span>}
         {!busy && notice && <span className="text-emerald-300/80">{notice}</span>}
         {error && <span className="text-red-300">{error}</span>}

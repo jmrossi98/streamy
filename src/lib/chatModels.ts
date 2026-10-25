@@ -124,3 +124,29 @@ export function backendById(id: ChatBackendId): ChatBackend {
 export function isRemoteBackend(id: ChatBackendId): boolean {
   return backendById(id).provider === "cloud";
 }
+
+/** The Model routing disclosure's element id: the chat's model label opens it. */
+export const MODEL_ROUTING_ID = "model-routing";
+
+/** Fired on window after the Model routing panel saves the chat's model choice; detail is the ChatBackendId. */
+export const CHAT_BACKEND_EVENT = "streamy:chat-backend";
+
+/** A submitted choice, strictly: unlike normalizeBackend, junk is not coerced. */
+export function isChatBackendId(value: unknown): value is ChatBackendId {
+  return CHAT_BACKENDS.some((b) => b.id === value);
+}
+
+/** The routing row (llmRoutingRules) a metered slot answers on; null for the local card. */
+export function routingUseFor(id: ChatBackendId): "chatClaude" | "chatOpen" | null {
+  return id === "claude" ? "chatClaude" : id === "open" ? "chatOpen" : null;
+}
+
+/**
+ * The slot the chat opens on: the saved choice while something can answer
+ * it, else the first that can, else the saved one anyway (the composer then
+ * says why nothing answers).
+ */
+export function pickBackend(saved: ChatBackendId, available: (id: ChatBackendId) => boolean): ChatBackendId {
+  if (available(saved)) return saved;
+  return CHAT_BACKENDS.find((b) => available(b.id))?.id ?? saved;
+}

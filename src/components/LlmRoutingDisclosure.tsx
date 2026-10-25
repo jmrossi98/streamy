@@ -1,7 +1,6 @@
-import { LlmRoutingPanel } from "@/components/LlmRoutingPanel";
-import { SkillEnginePanel } from "@/components/SkillEnginePanel";
-import { routingSnapshot } from "@/lib/llm";
-import { usesIn } from "@/lib/llmRoutingRules";
+import { ModelsPanel } from "@/components/ModelsPanel";
+import { modelsSnapshot } from "@/lib/chatBackend";
+import { MODEL_ROUTING_ID } from "@/lib/chatModels";
 import { getSkillEngine } from "@/lib/skillEngine";
 
 /**
@@ -14,21 +13,18 @@ import { getSkillEngine } from "@/lib/skillEngine";
  * transcript to a strip a few lines tall.
  */
 export async function LlmRoutingDisclosure({ aside, className }: { aside?: React.ReactNode; className?: string }) {
-  const [initial, engine] = await Promise.all([routingSnapshot(), getSkillEngine()]);
+  const [models, engine] = await Promise.all([modelsSnapshot(), getSkillEngine()]);
   return (
     <div className={`relative items-start justify-between gap-3 text-xs ${className ?? "flex"}`}>
-      <details className="group min-w-0 flex-1">
+      <details id={MODEL_ROUTING_ID} className="group min-w-0 flex-1">
         <summary className="inline-flex cursor-pointer list-none items-center text-white/50 hover:text-white/80">
           <span className="mr-1 inline-block transition-transform group-open:rotate-90">▸</span>
           Model routing
         </summary>
         <div className="absolute inset-x-0 top-full z-20 mt-2 max-h-[70vh] overflow-y-auto rounded-lg border border-white/15 bg-netflix-dark p-4 shadow-2xl shadow-black/60">
-          {/* The chat slots only: the resume and apply-packet models are
-              edited on the Jobs tab since 2026-10-24. */}
-          <LlmRoutingPanel initial={initial} uses={usesIn("assistant")} />
-          <div className="mt-4 border-t border-white/10 pt-4">
-            <SkillEnginePanel initial={engine} />
-          </div>
+          {/* Every model choice: the chat's and the skill runner's. The resume
+              and apply-packet models are edited on the Jobs tab. */}
+          <ModelsPanel initial={{ models, engine }} />
         </div>
       </details>
       {aside}
