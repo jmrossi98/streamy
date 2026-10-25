@@ -197,7 +197,10 @@ function BoxCard({ data }: { data: StreamingNow }) {
       {b.containers.top.length > 0 && (
         <p className="mt-3 text-xs text-white/50">
           <span className="text-white/35">CPU by container: </span>
-          {b.containers.top.map((c) => `${c.name} ${c.cpuPct.toFixed(0)}%`).join(" · ")}
+          {/* box-vitals reports each container as a share of ONE core (a
+              container can read 200% on this 4-thread box); shown here as a
+              share of the whole box so the figures add up to "CPU busy". */}
+          {b.containers.top.map((c) => `${c.name} ${(c.cpuPct / Math.max(1, b.containers.totalCores)).toFixed(0)}%`).join(" · ")}
         </p>
       )}
     </Card>
