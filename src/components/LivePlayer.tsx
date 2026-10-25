@@ -142,6 +142,19 @@ const MAX_RETRIES = 3;
 /** The wait before retry n (1-based), in ms. */
 const RETRY_BACKOFF_MS = [5_000, 20_000, 40_000];
 
+/**
+ * How long hls.js waits on one 1 s segment. A fetch that has not started
+ * answering in 5 s is stuck, not slow (the proxy streams the file through as
+ * Jellyfin writes it), so it is failed and retried rather than left to the
+ * 10 s / 120 s defaults, which hold the whole buffer hostage to one segment.
+ */
+const LIVE_FRAG_LOAD_POLICY = {
+  maxTimeToFirstByteMs: 5_000,
+  maxLoadTimeMs: 15_000,
+  timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+  errorRetry: { maxNumRetry: 3, retryDelayMs: 1_000, maxRetryDelayMs: 8_000 },
+};
+
 /** How long hls.js waits on a live playlist -- see the Hls config below. */
 const LIVE_PLAYLIST_LOAD_POLICY = {
   maxTimeToFirstByteMs: TUNE_TIMEOUT_MS,
@@ -689,6 +702,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
           behindLimitRef.current = limit;
           setBehindLimit(limit);
           if (next > LIVE_SYNC_SECONDS) learnedCushion.set(channelId, next);
+          // hls.js keeps its own idea of where "live" is (liveSyncPosition,
+          // from liveSyncDuration at tune time) and seeks there by itself
+          // when the playhead drops out of the playlist window. That must
+          // track the learned cushion, or such a seek lands 4 s from the
+          // edge -- straight into the next gap.
+          if (hls) hls.targetLatency = next;
         }
         // A cushion that grew is only a number until the playhead sits that
         // far from the edge: stall recovery never rewinds, so apply it here,
@@ -787,6 +806,16 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
         backBufferLength: BACK_BUFFER_SECONDS,
         enableWorker: true,
         lowLatencyMode: false,
+        /*
+          A hole in the buffer hls.js steps over instead of stalling on.
+          Default 0.1 s. Segment joins on these feeds and ffmpeg's dup-frame
+          fills (strong8k jumps 7.7 s every couple of minutes, 2026-10-25)
+          leave slightly bigger seams, and hls.js only skips a hole up to this
+          size -- anything larger is a stall until the recovery above moves
+          the playhead, six seconds later.
+        */
+        maxBufferHole: 0.5,
+        fragLoadPolicy: { default: LIVE_FRAG_LOAD_POLICY },
         /*
           Jellyfin holds the first live playlist until three segments exist --
           7.6s measured on 2026-10-17 -- and hls.js gives up at 10s by default.
