@@ -92,13 +92,15 @@ export function ServicesPanel({ services }: { services: ServiceStatus[] }) {
                     key={s.name}
                     className="flex items-center justify-between gap-3 rounded border border-white/10 bg-black/30 px-3 py-2"
                   >
-                    <div className="flex min-w-0 items-start gap-2">
+                    {/* The name keeps its line; the detail is what gives way
+                        on a narrow screen. */}
+                    <div className="flex min-w-0 max-w-[60%] shrink-0 items-start gap-2">
                       <span
                         className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${style.dot}`}
                         aria-hidden
                       />
                       <div className="flex min-w-0 flex-col">
-                        <span className="text-sm font-medium text-white">{s.name}</span>
+                        <span className="truncate text-sm font-medium text-white">{s.name}</span>
                         {s.address && <Address url={s.address} />}
                       </div>
                     </div>
