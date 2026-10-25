@@ -12,6 +12,7 @@
  */
 
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
+import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
 
 /**
  * One turn. `via` marks a turn that happened in a linked Claude Code session
@@ -151,4 +152,46 @@ export function relativeAge(iso: string, now: number = Date.now()): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Where a row of the chat list comes from; its badge reads "Streamy", "Claude Code" or "Claude app". */
+export type ChatListSource = "streamy" | "claude-code" | "claude-app";
+
+/** The label on a chat-list row's source badge. */
+export const CHAT_SOURCE_LABELS: Record<ChatListSource, string> = {
+  streamy: "Streamy",
+  "claude-code": "Claude Code",
+  "claude-app": "Claude app",
+};
+
+/** A vault session as the list gets it (ChatSessionList's ClaudeCodeSessionItem). */
+type VaultSessionLike = { machine: string; modified: string | null };
+
+export type ChatListEntry<V extends VaultSessionLike> =
+  | { source: "streamy"; key: string; at: number; session: ChatSessionSummary }
+  | { source: "claude-code" | "claude-app"; key: string; at: number; vault: V };
+
+/**
+ * Saved chats, Claude Code sessions and Claude app chats as one list, most
+ * recent activity first. A row with no usable time sorts last; ties keep their
+ * incoming order (Array.sort is stable), saved chats first.
+ */
+export function mergeChatList<V extends VaultSessionLike & { key: string }>(
+  sessions: ChatSessionSummary[],
+  vault: V[]
+): ChatListEntry<V>[] {
+  const time = (iso: string | null) => {
+    const t = iso ? Date.parse(iso) : NaN;
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const rows: ChatListEntry<V>[] = [
+    ...sessions.map((session): ChatListEntry<V> => ({ source: "streamy", key: `s:${session.id}`, at: time(session.updatedAt), session })),
+    ...vault.map((v): ChatListEntry<V> => ({
+      source: v.machine === CLAUDE_APP_MACHINE ? "claude-app" : "claude-code",
+      key: `v:${v.key}`,
+      at: time(v.modified),
+      vault: v,
+    })),
+  ];
+  return rows.sort((a, b) => b.at - a.at);
 }

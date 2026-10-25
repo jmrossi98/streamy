@@ -15,7 +15,6 @@ import {
 import {
   CHAT_BACKENDS,
   CHAT_BACKEND_EVENT,
-  MODEL_ROUTING_ID,
   backendById,
   isRemoteBackend,
   pickBackend,
@@ -807,17 +806,12 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const gutter = layout === "page" ? "px-3" : "px-1 sm:px-3";
 
   /**
-   * The model in use, with the picker behind it. On /assistant a wide screen
-   * opens the page's Model routing disclosure; the admin tab has none (the
-   * picker is the only way to change the model there), so it drops the same
-   * panel down from the label. The phone opens the options sheet.
+   * The model in use, with the picker behind it: a wide screen drops the model
+   * panel down from the label; the phone opens the options sheet. This is the
+   * only model control, on the admin tab and on /assistant alike.
    */
   function openModelRouting() {
-    const el = document.getElementById(MODEL_ROUTING_ID);
-    if (el instanceof HTMLDetailsElement) {
-      el.open = true;
-      el.scrollIntoView({ block: "nearest" });
-    } else if (window.matchMedia("(min-width: 768px)").matches) {
+    if (window.matchMedia("(min-width: 768px)").matches) {
       setModelMenuOpen((v) => !v);
     } else {
       setOptionsOpen(true);

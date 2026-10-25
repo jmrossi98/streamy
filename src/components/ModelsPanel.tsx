@@ -16,7 +16,7 @@ import type { SkillEngineChoice } from "@/lib/skillEngineRules";
 
 type Snapshot = LlmRoutingSnapshot & Required<Pick<LlmRoutingSnapshot, "chat">>;
 
-export type ModelsInitial = { models: Snapshot; engine: SkillEngineChoice };
+type ModelsInitial = { models: Snapshot; engine: SkillEngineChoice };
 
 /**
  * Every model choice the assistant makes, in one place (2026-10-25: "feels
@@ -28,15 +28,14 @@ export type ModelsInitial = { models: Snapshot; engine: SkillEngineChoice };
  *            (CHAT_BACKEND_EVENT) so the open chat switches without a reload.
  *   Skills   Claude Code / OpenCode -- what runs a mediabox skill.
  *
- * Rendered in the Model routing disclosure with server data, and in the
- * phone's options sheet, where it fetches its own.
+ * Rendered in the chat's model drop-down and in the phone's options sheet;
+ * it fetches its own data.
  */
-export function ModelsPanel({ initial }: { initial?: ModelsInitial }) {
-  const [data, setData] = useState<ModelsInitial | null>(initial ?? null);
+export function ModelsPanel() {
+  const [data, setData] = useState<ModelsInitial | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (initial) return;
     let live = true;
     Promise.all([
       fetch("/api/admin/llm-routing", { cache: "no-store" }).then((r) => (r.ok ? (r.json() as Promise<Snapshot>) : Promise.reject(r.status))),
@@ -49,7 +48,7 @@ export function ModelsPanel({ initial }: { initial?: ModelsInitial }) {
     return () => {
       live = false;
     };
-  }, [initial]);
+  }, []);
 
   if (!data) {
     return <p className="text-xs text-white/40">{loadError ?? "Loading models…"}</p>;
@@ -81,7 +80,7 @@ function ChatModelSection({ initial }: { initial: Snapshot }) {
     return () => window.removeEventListener(LLM_ROUTING_EVENT, onRouting);
   }, []);
 
-  // Another copy of this panel (the sheet vs. the disclosure) saved a choice.
+  // Another copy of this panel (the drop-down vs. the sheet) saved a choice.
   useEffect(() => {
     function onChoice(e: Event) {
       const id = (e as CustomEvent<ChatBackendId>).detail;
