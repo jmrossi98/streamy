@@ -5,7 +5,11 @@ import {
   emailsOnFinish,
   findRunTurn,
   finishedEmail,
+  formatElapsed,
+  hasStarted,
+  heartbeatText,
   initialRunCard,
+  isFinished,
   isRunId,
   kindInfo,
   MAX_ARG_CHARS,
@@ -14,8 +18,10 @@ import {
   normalizeSkills,
   parseRunTurn,
   parseSkillProposal,
+  parseStartedRun,
   proposalReducer,
   proposalWasRun,
+  queuedLabel,
   RUN_TURN_MAX_CHARS,
   runCardReducer,
   runTurnContent,
@@ -194,7 +200,12 @@ describe("proposal card", () => {
     expect(proposalReducer(s, { type: "run" })).toBe(s);
     expect(proposalReducer(s, { type: "dismiss" })).toBe(s);
     s = proposalReducer(s, { type: "started", runId: "r1" });
-    expect(s).toEqual({ phase: "started", runId: "r1" });
+    expect(s).toEqual({ phase: "started", runId: "r1", queued: false });
+  });
+
+  it("remembers that the run was queued rather than begun", () => {
+    const s = proposalReducer({ phase: "starting" }, { type: "started", runId: "r2", queued: true });
+    expect(s).toEqual({ phase: "started", runId: "r2", queued: true });
   });
 
   it("shows which run is in the way when busy, and can try again", () => {
@@ -206,7 +217,8 @@ describe("proposal card", () => {
 
   it("dismisses only before anything started", () => {
     expect(proposalReducer({ phase: "idle" }, { type: "dismiss" })).toEqual({ phase: "dismissed" });
-    expect(proposalReducer({ phase: "started", runId: "r1" }, { type: "dismiss" })).toEqual({ phase: "started", runId: "r1" });
+    const started = { phase: "started", runId: "r1", queued: false } as const;
+    expect(proposalReducer(started, { type: "dismiss" })).toEqual(started);
   });
 });
 
@@ -232,6 +244,107 @@ describe("run card", () => {
     let s = runCardReducer(initialRunCard, { type: "pollFailed", error: "x" });
     s = runCardReducer(s, { type: "polled", run: run({ status: "running" }) });
     expect(s).toMatchObject({ misses: 0, error: null });
+  });
+});
+
+describe("the runner's queue (2026-10-25)", () => {
+  it("reads the start answer: queued, begun at once, and the old {id} alone", () => {
+    expect(parseStartedRun({ id: "r5", run_id: "r5", status: "queued", position: 2 })).toEqual({ id: "r5", status: "queued", position: 2 });
+    expect(parseStartedRun({ id: "r5", run_id: "r5", status: "running", position: 0 })).toEqual({ id: "r5", status: "running", position: null });
+    expect(parseStartedRun({ id: "r5" })).toEqual({ id: "r5", status: "running", position: null });
+    // A queued answer without a usable place is still queued.
+    expect(parseStartedRun({ id: "r5", status: "queued" })).toEqual({ id: "r5", status: "queued", position: null });
+    expect(parseStartedRun({ id: "r5", status: "queued", position: "2" })?.position).toBeNull();
+  });
+
+  it("refuses a start answer it can't follow", () => {
+    expect(parseStartedRun(null)).toBeNull();
+    expect(parseStartedRun({})).toBeNull();
+    expect(parseStartedRun({ id: "../x" })).toBeNull();
+    expect(parseStartedRun({ id: "r5", status: "exploded" })).toBeNull();
+  });
+
+  it("reads a queued run: no start time yet, and its place in line", () => {
+    const r = normalizeRun({ id: "r6", skill: "health-sweep", status: "queued", startedAt: null, position: 3, args: {} });
+    expect(r).toMatchObject({ status: "queued", startedAt: null, position: 3, heartbeat: null, waiting: null });
+    expect(isFinished("queued")).toBe(false);
+  });
+
+  it("reads a running run with its heartbeat", () => {
+    const r = normalizeRun({
+      ...run({ status: "running", finishedAt: null }),
+      heartbeat: { elapsedSeconds: 185.7, lastStep: "  Run npx vitest  ", lastActivityAt: "2026-10-25T10:03:00Z" },
+    });
+    expect(r).toMatchObject({
+      status: "running",
+      startedAt: "2026-10-24T10:00:00Z",
+      position: null,
+      heartbeat: { elapsedSeconds: 185, lastStep: "Run npx vitest", lastActivityAt: "2026-10-25T10:03:00Z" },
+    });
+  });
+
+  it("drops a heartbeat or position that doesn't fit, or that the status can't have", () => {
+    expect(normalizeRun({ ...run({ status: "running" }), heartbeat: { elapsedSeconds: "soon" } })?.heartbeat).toBeNull();
+    expect(normalizeRun({ ...run({ status: "running" }), heartbeat: { elapsedSeconds: -1 } })?.heartbeat).toBeNull();
+    expect(normalizeRun({ ...run({ status: "running" }), heartbeat: { elapsedSeconds: 5 } })?.heartbeat).toEqual({
+      elapsedSeconds: 5,
+      lastStep: null,
+      lastActivityAt: null,
+    });
+    expect(normalizeRun({ ...run({ status: "succeeded" }), heartbeat: { elapsedSeconds: 5 }, position: 2 })).toMatchObject({
+      heartbeat: null,
+      position: null,
+    });
+    expect(normalizeRun({ ...run({ status: "queued" }), position: 0 })?.position).toBeNull();
+  });
+
+  it("still reads the old shape: no status beyond running, no heartbeat, no position", () => {
+    const r = normalizeRun({ id: "r7", skill: "health-sweep", status: "running", startedAt: "2026-10-24T10:00:00Z", args: {}, output: "x" });
+    expect(r).toMatchObject({ status: "running", startedAt: "2026-10-24T10:00:00Z", heartbeat: null, position: null });
+    expect(normalizeRun({ ...run() })).toMatchObject({ status: "succeeded", heartbeat: null, position: null });
+  });
+
+  it("words the queue and the heartbeat for the card", () => {
+    expect(queuedLabel(2)).toBe("Queued, #2");
+    expect(queuedLabel(null)).toBe("Queued");
+    expect(formatElapsed(45)).toBe("45s");
+    expect(formatElapsed(185)).toBe("3m 05s");
+    expect(formatElapsed(3720)).toBe("1h 02m");
+    expect(heartbeatText({ elapsedSeconds: 185, lastStep: "Run npx vitest", lastActivityAt: null })).toBe("3m 05s · last step: Run npx vitest");
+    expect(heartbeatText({ elapsedSeconds: 9, lastStep: null, lastActivityAt: null })).toBe("9s");
+  });
+
+  it("keeps a queued run's card polling until it starts, then follows it to the end", () => {
+    let s = runCardReducer(initialRunCard, { type: "polled", run: run({ status: "queued", startedAt: null, finishedAt: null, position: 2 }) });
+    expect(s.run?.status).toBe("queued");
+    expect(shouldPoll(s, "queued")).toBe(true);
+    s = runCardReducer(s, { type: "polled", run: run({ status: "queued", startedAt: null, finishedAt: null, position: 1 }) });
+    expect(s.run?.position).toBe(1);
+    expect(shouldPoll(s, "queued")).toBe(true);
+    s = runCardReducer(s, { type: "polled", run: run({ status: "running", finishedAt: null, position: null }) });
+    expect(s.run?.status).toBe("running");
+    expect(shouldPoll(s, "queued")).toBe(true);
+    s = runCardReducer(s, { type: "polled", run: run({ status: "succeeded" }) });
+    expect(shouldPoll(s, "queued")).toBe(false);
+  });
+
+  it("a saved queued turn survives a reload and keeps polling", () => {
+    const content = runTurnContent(run({ status: "queued", startedAt: null, finishedAt: null }));
+    expect(parseRunTurn(content)).toMatchObject({ id: "r1", status: "queued" });
+    expect(shouldPoll(initialRunCard, parseRunTurn(content)!.status)).toBe(true);
+  });
+
+  it("counts a run as started once it left the queue, but not one removed from it", () => {
+    expect(hasStarted({ status: "queued", startedAt: null })).toBe(false);
+    expect(hasStarted({ status: "running", startedAt: "2026-10-25T10:00:00Z" })).toBe(true);
+    // Ended between two polls: it did start.
+    expect(hasStarted({ status: "succeeded", startedAt: "2026-10-25T10:00:00Z" })).toBe(true);
+    expect(hasStarted({ status: "cancelled", startedAt: null })).toBe(false);
+    expect(hasStarted({ status: "cancelled", startedAt: "2026-10-25T10:00:00Z" })).toBe(true);
+  });
+
+  it("explains a full queue", () => {
+    expect(describeRunnerError(409, { error: "busy" })).toMatch(/queue on mediabox is full/);
   });
 });
 
@@ -288,7 +401,7 @@ describe("kinds and errors", () => {
       "Skill runner: Claude Code is not logged in on mediabox"
     );
     expect(describeRunnerError(401, { error: "nope" })).toMatch(/SKILL_RUNNER_TOKEN/);
-    expect(describeRunnerError(409, { error: "busy", running: "r0" })).toMatch(/already running/);
+    expect(describeRunnerError(409, { error: "busy", running: "r0" })).toMatch(/queue on mediabox is full/);
     expect(describeRunnerError(400, { error: "unknown arg foo" })).toBe("unknown arg foo");
     expect(describeRunnerError(500, null)).toBe("The skill runner returned HTTP 500.");
   });
