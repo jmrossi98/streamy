@@ -171,6 +171,59 @@ describe("mergeChatList", () => {
     expect(sessions.map((s) => s.id)).toEqual(["a", "b"]);
   });
 
+  describe("linked pairs", () => {
+    const link = (key: string, machine: string, modified: string | null, chatId: string | null) => ({ key, machine, modified, chatId });
+
+    it("folds a continued Claude Code session into its saved chat: one row, source badge, later time", () => {
+      const rows = mergeChatList(
+        [chat("c1", "2026-10-21T00:00:00Z")],
+        [link("code1", "laptop", "2026-10-24T00:00:00Z", "c1")]
+      );
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      expect(row.source).toBe("streamy");
+      if (row.source !== "streamy") return;
+      expect(row.key).toBe("s:c1");
+      expect(row.badge).toBe("claude-code");
+      expect(row.at).toBe(Date.parse("2026-10-24T00:00:00Z"));
+    });
+
+    it("badges a continued Claude app chat as Claude app and keeps the later saved-chat time", () => {
+      const rows = mergeChatList(
+        [chat("c2", "2026-10-25T00:00:00Z")],
+        [link("app1", CLAUDE_APP_MACHINE, "2026-10-22T00:00:00Z", "c2")]
+      );
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      if (row.source !== "streamy") throw new Error("expected the saved chat row");
+      expect(row.badge).toBe("claude-app");
+      expect(row.at).toBe(Date.parse("2026-10-25T00:00:00Z"));
+    });
+
+    it("leaves unlinked sessions and plain chats unchanged", () => {
+      const rows = mergeChatList(
+        [chat("plain", "2026-10-20T00:00:00Z"), chat("c1", "2026-10-21T00:00:00Z")],
+        [link("free", "laptop", "2026-10-22T00:00:00Z", null), link("gone", "laptop", "2026-10-19T00:00:00Z", "deleted-chat")]
+      );
+      expect(rows.map((r) => [r.source, r.key])).toEqual([
+        ["claude-code", "v:free"],
+        ["streamy", "s:c1"],
+        ["streamy", "s:plain"],
+        ["claude-code", "v:gone"],
+      ]);
+      const plain = rows.find((r) => r.key === "s:plain");
+      expect(plain && plain.source === "streamy" && plain.badge).toBe("streamy");
+    });
+
+    it("orders a folded row by the later time among the other rows", () => {
+      const rows = mergeChatList(
+        [chat("linked", "2026-10-01T00:00:00Z"), chat("mid", "2026-10-15T00:00:00Z")],
+        [link("code1", "laptop", "2026-10-20T00:00:00Z", "linked"), link("other", "box", "2026-10-10T00:00:00Z", null)]
+      );
+      expect(rows.map((r) => r.key)).toEqual(["s:linked", "s:mid", "v:other"]);
+    });
+  });
+
   it("labels each source for its badge", () => {
     expect(CHAT_SOURCE_LABELS).toEqual({ streamy: "Streamy", "claude-code": "Claude Code", "claude-app": "Claude app" });
   });
