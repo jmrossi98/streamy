@@ -161,7 +161,11 @@ export function SecurityPanel({
                 </span>
                 <span className="order-last min-w-0 flex-1 basis-full truncate text-white/90 sm:order-none sm:basis-0">{e.target}</span>
                 {e.detail && (
-                  <span className="shrink-0 text-xs text-white/30">{e.detail}</span>
+                  // Capped and truncated: a detail can be a whole JSON
+                  // payload, which used to push the row off the right edge.
+                  <span className="min-w-0 max-w-[45%] truncate text-xs text-white/30" title={e.detail}>
+                    {e.detail}
+                  </span>
                 )}
                 <span className="ml-auto shrink-0 text-xs tabular-nums text-white/30 sm:ml-0">
                   {new Date(e.createdAt).toLocaleString(undefined, {
