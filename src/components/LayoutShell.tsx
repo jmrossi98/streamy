@@ -49,7 +49,7 @@ function ChromeOnlyScreen({ children }: { children: React.ReactNode }) {
     return () => document.documentElement.classList.remove("one-screen");
   }, []);
   return (
-    <div className="fixed inset-x-0 top-0 flex flex-col overflow-hidden bg-netflix-black" style={style}>
+    <div className="fixed inset-x-0 flex flex-col overflow-hidden bg-netflix-black" style={style}>
       {children}
     </div>
   );
