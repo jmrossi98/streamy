@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import type { TVShow } from "@/lib/tmdb";
-import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
+import { Artwork } from "@/components/ui";
 import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
 import { rowOverflows, rowWindow } from "@/lib/browseShelfRules";
 import { showProgressLabel, showProgressPercent, type ShowProgress } from "@/lib/showProgressRules";
@@ -42,14 +42,7 @@ export function ShowCard({
     >
       <div className="relative aspect-video w-full">
         <Link href={showHref} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
-          <Image
-            src={show.poster}
-            alt={show.name}
-            fill
-            className="object-cover"
-            sizes="(max-width: 768px) 180px, 240px"
-            unoptimized
-          />
+          <Artwork src={show.poster} alt={show.name} kind="poster" sizes="(max-width: 768px) 180px, 240px" />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         <PosterActions showId={String(show.id)} />

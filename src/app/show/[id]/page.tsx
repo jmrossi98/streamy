@@ -27,9 +27,11 @@ export default async function ShowPage({ params, searchParams }: Props) {
   const requestedSeason = Number.isFinite(parsedSeason) ? parsedSeason : 1;
 
   const session = await getSession();
-  // Roku/Jellyfin progress into Streamy's rows before anything reads them.
-  await pullJellyfinProgressForPage(session);
-  const show = await getShowById(id);
+  // Roku/Jellyfin progress into Streamy's rows before anything reads them --
+  // alongside the TMDB read, which does not read them; the progress rows
+  // are read in the wave below, once both are done. In series these were
+  // the page's two slowest round trips, one after the other.
+  const [show] = await Promise.all([getShowById(id), pullJellyfinProgressForPage(session)]);
   if (!show) notFound();
 
   const maxSeason = Math.max(1, show.numberOfSeasons);
