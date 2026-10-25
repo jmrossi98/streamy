@@ -16,6 +16,8 @@
  * Sonarr as it lands (see importManualPackFiles in sonarr.ts).
  */
 
+import { transferParts } from "./torrentStatusRules";
+
 /** The qBittorrent category hand-added torrents go in; nothing else deletes from it. */
 export const MANUAL_PACK_CATEGORY = "manual-import";
 
@@ -61,20 +63,7 @@ export function packFileEpisode(path: string, seasonNumber: number): number | nu
 }
 
 /** "about 2 days", "3 h 10 min", "12 min", or null when qBittorrent has no estimate. */
-export function formatEta(seconds: number | null | undefined): string | null {
-  // qBittorrent reports 8640000 (100 days) for "no idea".
-  if (seconds == null || seconds <= 0 || seconds >= 8_640_000) return null;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${Math.max(1, minutes)} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 36) return `${hours} h ${minutes % 60} min`;
-  return `about ${Math.round(hours / 24)} days`;
-}
-
-function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond >= 1_000_000) return `${(bytesPerSecond / 1_000_000).toFixed(1)} MB/s`;
-  return `${Math.round(bytesPerSecond / 1000)} KB/s`;
-}
+export { formatEta } from "./torrentStatusRules";
 
 export type PackStatus = {
   /** 0..1, as qBittorrent reports it. */
@@ -95,16 +84,7 @@ export type PackStatus = {
 export function describePack(p: PackStatus): string {
   const landed = `${p.imported} of ${p.files} episodes in the library`;
   if (p.progress >= 1) return p.imported >= p.files ? `Finished · ${landed}` : `Finished · importing, ${landed}`;
-  if (p.state === "pausedDL" || p.state === "stoppedDL") return `Paused · ${landed}`;
-  const parts: string[] = [];
-  if (p.connectedSeeds > 0) {
-    parts.push(`${p.connectedSeeds} seeder${p.connectedSeeds === 1 ? "" : "s"}`);
-  } else {
-    parts.push(p.swarmSeeds > 0 ? `No seeder connected (${p.swarmSeeds} in the swarm)` : "No seeders right now");
-  }
-  if (p.dlSpeed > 0) parts.push(formatSpeed(p.dlSpeed));
-  const eta = formatEta(p.etaSeconds);
-  if (eta && p.dlSpeed > 0) parts.push(`${eta} left`);
+  const parts = transferParts(p) ?? [];
   parts.push(landed);
   return parts.join(" · ");
 }

@@ -65,6 +65,8 @@ export type DownloadRow = {
   /** One line explaining a rejected release: what was removed and what is
    *  happening next, or why nothing was found. */
   notice?: string | null;
+  /** A torrent in flight: seeders, speed and time left (torrentStatusRules.ts). */
+  transfer?: string | null;
   /** Waiting its turn in the ordered episode-search queue: asked for, not yet
    *  searched. Distinct from `searching`, which means a search is underway. */
   queued?: boolean;
@@ -529,6 +531,9 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
             <div className="h-full w-1/3 animate-pulse rounded-full bg-white/20" />
           )}
         </div>
+        {d.transfer && !d.completed && (
+          <p className="text-xs tabular-nums text-white/40">{d.transfer}</p>
+        )}
         {d.notice && !retrying && (
           <p
             className={`text-xs ${
