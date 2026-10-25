@@ -18,13 +18,18 @@ export const dynamic = "force-dynamic";
  * and the routing from the options sheet. The bottom padding is --safe-bottom
  * (LayoutShell): the home-indicator inset, or nothing while the keyboard is
  * up, so the composer sits on the keys.
+ *
+ * In the home-screen app the page runs under the status bar, and the header
+ * row sat 11px below the Dynamic Island's inset -- tight against it. The
+ * standalone-only half-rem puts the title where a native nav bar's would be.
+ * Safari is left exactly as it was: the rule never applies there.
  */
 export default async function AssistantPage() {
   const session = await getSession();
   if (!session) redirect("/login?callbackUrl=/assistant");
   if (!(await requireAdmin(session))) redirect("/");
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-2 pb-[var(--safe-bottom,env(safe-area-inset-bottom,0px))] pt-[env(safe-area-inset-top,0px)] md:px-4 md:pb-4 md:pt-[calc(0.5rem+env(safe-area-inset-top,0px))]">
+    <div className="flex h-full min-h-0 w-full flex-col gap-2 pb-[var(--safe-bottom,env(safe-area-inset-bottom,0px))] pt-[env(safe-area-inset-top,0px)] [@media(display-mode:standalone)]:pt-[calc(0.5rem+env(safe-area-inset-top,0px))] md:px-4 md:pb-4 md:pt-[calc(0.5rem+env(safe-area-inset-top,0px))]">
       <LlmRoutingDisclosure
         className="hidden md:flex"
         aside={

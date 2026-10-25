@@ -88,10 +88,24 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // The main starts below the status bar, not under it. In the home-screen
+  // app (Add to Home Screen) the page runs under the status bar and the fixed
+  // navbar grows by that inset, so a page that pads its heading past a 4rem
+  // navbar (admin's pt-24, the shelf titles) landed under the logo: "ADMIN"
+  // tucked against "STREAMY" with the tabs riding up behind it. Shifting the
+  // document by the same inset restores the Safari spacing. Safari itself
+  // reports 0 here in portrait, so nothing moves there. A fullscreen player
+  // has no navbar and places its own controls by the inset.
   return (
     <>
       {!fullscreen && <Navbar />}
-      <main className="w-full min-w-0 min-h-screen bg-netflix-black">{children}</main>
+      <main
+        className={`w-full min-w-0 min-h-screen bg-netflix-black ${
+          fullscreen ? "" : "pt-[env(safe-area-inset-top,0px)]"
+        }`}
+      >
+        {children}
+      </main>
       {!fullscreen && <Footer />}
     </>
   );
