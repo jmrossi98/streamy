@@ -14,6 +14,7 @@
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
 import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
 import { normalizeAttachmentRefs, type AttachmentRef } from "./chatAttachmentRules";
+import { findRunTurn } from "./skillRunnerRules";
 
 /**
  * One turn. `via` marks a turn that happened in a linked Claude Code session
@@ -124,6 +125,63 @@ export function mergeConcurrentTurns(stored: ChatTurn[], incoming: ChatTurn[], b
   if (base > stored.length || base > incoming.length) return null;
   for (let i = 0; i < base; i++) if (!sameTurn(stored[i], incoming[i])) return null;
   return [...stored, ...incoming.slice(base)].slice(-MAX_SESSION_TURNS);
+}
+
+/** Why a save was refused (logged server-side, never shown as a transcript). */
+export type SaveRefusal = "not-append" | "title-with-turns" | "stale-base";
+
+function startsWith(incoming: ChatTurn[], prefix: ChatTurn[]): boolean {
+  if (prefix.length > incoming.length) return false;
+  for (let i = 0; i < prefix.length; i++) if (!sameTurn(prefix[i], incoming[i])) return false;
+  return true;
+}
+
+/**
+ * The guard on a transcript save. A plain save may only add to what is stored:
+ * its first turns must be the stored ones, in order, so a transcript that
+ * belongs to another chat can never replace this one. (Turns carry no ids; role
+ * and text are what identify one.) A chat already at MAX_SESSION_TURNS drops its
+ * oldest turn per new one, so a shifted prefix still counts.
+ *
+ * `replace` is the panel's explicit "I edited or deleted history" flag, set only
+ * by those actions; it keeps the older rules (mergeConcurrentTurns).
+ */
+export function checkTranscriptSave(
+  stored: ChatTurn[],
+  incoming: ChatTurn[],
+  base: number | null,
+  replace: boolean
+): { ok: true; turns: ChatTurn[] } | { ok: false; reason: SaveRefusal } {
+  if (replace) {
+    const merged = mergeConcurrentTurns(stored, incoming, base);
+    return merged ? { ok: true, turns: merged } : { ok: false, reason: "stale-base" };
+  }
+  if (base !== null && base > stored.length) return { ok: false, reason: "stale-base" };
+  const known = base === null ? stored.length : base;
+  if (known === stored.length) {
+    // Stored turns may have shifted off the front when the chat was full.
+    const shifts = stored.length >= MAX_SESSION_TURNS ? stored.length : 0;
+    for (let s = 0; s <= shifts; s++) if (startsWith(incoming, stored.slice(s))) return { ok: true, turns: incoming };
+    return { ok: false, reason: "not-append" };
+  }
+  // Turns were added elsewhere since the panel synced: its copy of the older
+  // ones must still match, and its new turns go after the added ones.
+  if (!startsWith(incoming, stored.slice(0, known))) return { ok: false, reason: "not-append" };
+  return { ok: true, turns: [...stored, ...incoming.slice(known)].slice(-MAX_SESSION_TURNS) };
+}
+
+/**
+ * A skill run's turn put into a chat's transcript by the server: the existing
+ * turn for that run is rewritten in place, otherwise the turn is appended.
+ * Nothing else in the transcript moves.
+ */
+export function withRunTurn(turns: ChatTurn[], runId: string, content: string): ChatTurn[] {
+  const index = findRunTurn(turns, runId);
+  if (index < 0) {
+    const turn: ChatTurn = { role: "user", via: "skill-run", content };
+    return [...turns, turn].slice(-MAX_SESSION_TURNS);
+  }
+  return editTurn(turns, index, content);
 }
 
 /** The transcript with one turn's text replaced. Out of range is a no-op. */

@@ -1,0 +1,177 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+type Row = {
+  id: string;
+  userId: string;
+  title: string;
+  titleEdited: boolean;
+  backend: string;
+  turns: string;
+  turnCount: number;
+  claudeSessionId: string | null;
+  updatedAt: Date;
+};
+
+const rows = new Map<string, Row>();
+
+vi.mock("../db", () => ({
+  prisma: {
+    chatSession: {
+      findFirst: vi.fn(async ({ where }: { where: { id: string; userId: string } }) => {
+        const r = rows.get(where.id);
+        return r && r.userId === where.userId ? { ...r } : null;
+      }),
+      update: vi.fn(async ({ where, data }: { where: { id: string }; data: Partial<Row> }) => {
+        const r = rows.get(where.id)!;
+        const next = { ...r, ...data, updatedAt: new Date() };
+        rows.set(r.id, next);
+        return { ...next };
+      }),
+    },
+  },
+}));
+vi.mock("../auditLog", () => ({ logAudit: vi.fn(async () => undefined) }));
+vi.mock("../chatExport", () => ({ scheduleChatExport: vi.fn() }));
+vi.mock("../chatAttachments", () => ({ syncSessionAttachments: vi.fn(async () => undefined) }));
+
+import { logAudit } from "../auditLog";
+import { ChatConflictError, applyRunTurn, updateChatSession } from "../chatSessions";
+import { parseStoredTurns, titleFromTurns, type ChatTurn } from "../chatSessionRules";
+import { findRunTurn, parseRunTurn, type SkillRun } from "../skillRunnerRules";
+
+const u = (content: string): ChatTurn => ({ role: "user", content });
+const a = (content: string): ChatTurn => ({ role: "assistant", content });
+
+function seed(id: string, turns: ChatTurn[], over: Partial<Row> = {}) {
+  rows.set(id, {
+    id,
+    userId: "admin",
+    title: titleFromTurns(turns),
+    titleEdited: false,
+    backend: "local",
+    turns: JSON.stringify(turns),
+    turnCount: turns.length,
+    claudeSessionId: null,
+    updatedAt: new Date("2026-10-25T22:00:00Z"),
+    ...over,
+  });
+}
+
+const stored = (id: string) => parseStoredTurns(rows.get(id)!.turns);
+
+const run = (over: Partial<SkillRun>): SkillRun => ({
+  id: "run-1",
+  skill: "health-sweep",
+  args: {},
+  requestedBy: "jaker",
+  status: "running",
+  startedAt: "2026-10-25T22:30:00Z",
+  finishedAt: null,
+  output: "",
+  summary: null,
+  links: [],
+  ...over,
+});
+
+beforeEach(() => {
+  rows.clear();
+  vi.mocked(logAudit).mockClear();
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+});
+
+describe("skill-run delivery is scoped to the chat the run came from", () => {
+  it("lands a report only in chat A when chat B is the one open", async () => {
+    const aTurns = [u("check the stack"), a("sure"), u("MEDIABOX SKILL RUN run-1 health-sweep running\nArgs: (none)")];
+    aTurns[2] = { role: "user", via: "skill-run", content: aTurns[2].content };
+    const bTurns = [u("something else entirely"), a("ok"), u("and more")];
+    seed("A", aTurns);
+    seed("B", bTurns);
+    const bBefore = JSON.stringify(rows.get("B"));
+
+    const done = run({ status: "succeeded", finishedAt: "2026-10-25T22:35:00Z", summary: "all green", output: "ok" });
+    const session = await applyRunTurn("admin", "A", done);
+
+    expect(session?.id).toBe("A");
+    const a2 = stored("A");
+    expect(a2).toHaveLength(3);
+    expect(a2.slice(0, 2)).toEqual(aTurns.slice(0, 2));
+    expect(parseRunTurn(a2[2].content)).toMatchObject({ id: "run-1", status: "succeeded", summary: "all green" });
+    expect(rows.get("A")!.title).toBe("check the stack");
+    // B is not touched at all.
+    expect(JSON.stringify(rows.get("B"))).toBe(bBefore);
+  });
+
+  it("adds the turn for a queued run, then rewrites that same turn when it starts", async () => {
+    seed("A", [u("q"), a("a")]);
+    await applyRunTurn("admin", "A", run({ status: "queued", startedAt: null }));
+    expect(stored("A")).toHaveLength(3);
+    await applyRunTurn("admin", "A", run({ status: "running" }));
+    const turns = stored("A");
+    expect(turns).toHaveLength(3);
+    expect(findRunTurn(turns, "run-1")).toBe(2);
+    expect(parseRunTurn(turns[2].content)?.status).toBe("running");
+    expect(turns.slice(0, 2)).toEqual([u("q"), a("a")]);
+  });
+
+  it("does not deliver into a chat that is not the caller's", async () => {
+    seed("A", [u("q")], { userId: "someone-else" });
+    expect(await applyRunTurn("admin", "A", run({}))).toBeNull();
+    expect(stored("A")).toEqual([u("q")]);
+  });
+});
+
+describe("the save endpoint refuses a non-append overwrite", () => {
+  const aTurns = [u("question for A"), a("answer for A")];
+  const bTurns = [u("a different chat"), a("its answer"), u("and a follow-up")];
+
+  it("409s when another chat's transcript is sent to this one, and logs it", async () => {
+    seed("A", aTurns);
+    await expect(updateChatSession("admin", "A", { turns: bTurns, baseTurnCount: 2 })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(stored("A")).toEqual(aTurns);
+    expect(rows.get("A")!.title).toBe("question for A");
+    expect(console.warn).toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith("admin", "assistant.chat.save.refused", "A", expect.stringContaining("not-append"));
+  });
+
+  it("refuses it with no base too (an older panel)", async () => {
+    seed("A", aTurns);
+    await expect(updateChatSession("admin", "A", { turns: bTurns })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(stored("A")).toEqual(aTurns);
+  });
+
+  it("refuses a save that carries a title along with the transcript", async () => {
+    seed("A", aTurns);
+    await expect(updateChatSession("admin", "A", { turns: [...aTurns, u("more")], title: "Hijacked" })).rejects.toBeInstanceOf(
+      ChatConflictError
+    );
+    expect(rows.get("A")!.title).toBe("question for A");
+  });
+
+  it("accepts a plain append", async () => {
+    seed("A", aTurns);
+    const s = await updateChatSession("admin", "A", { turns: [...aTurns, u("next")], baseTurnCount: 2 });
+    expect(s?.turns).toHaveLength(3);
+    expect(s?.title).toBe("question for A");
+  });
+
+  it("keeps turns added elsewhere and appends the panel's after them", async () => {
+    seed("A", [...aTurns, { role: "user", via: "claude-code", content: "cc" }]);
+    const s = await updateChatSession("admin", "A", { turns: [...aTurns, u("mine")], baseTurnCount: 2 });
+    expect(s?.turns.map((t) => t.content)).toEqual(["question for A", "answer for A", "cc", "mine"]);
+  });
+
+  it("allows an edit of history only when the panel says replace", async () => {
+    seed("A", aTurns);
+    const edited = [u("question for A, reworded"), a("answer for A")];
+    await expect(updateChatSession("admin", "A", { turns: edited, baseTurnCount: 2 })).rejects.toBeInstanceOf(ChatConflictError);
+    const s = await updateChatSession("admin", "A", { turns: edited, baseTurnCount: 2, replace: true });
+    expect(s?.turns[0].content).toBe("question for A, reworded");
+  });
+
+  it("still renames on its own", async () => {
+    seed("A", aTurns);
+    const s = await updateChatSession("admin", "A", { title: "My name" });
+    expect(s?.title).toBe("My name");
+    expect(stored("A")).toEqual(aTurns);
+  });
+});

@@ -1,16 +1,20 @@
 import { prisma } from "@/lib/db";
 import { scheduleChatExport } from "@/lib/chatExport";
 import { syncSessionAttachments } from "@/lib/chatAttachments";
+import { logAudit } from "@/lib/auditLog";
 import {
-  mergeConcurrentTurns,
+  checkTranscriptSave,
   normalizeSessionBackend,
   normalizeTitle,
   normalizeTurns,
   parseStoredTurns,
   titleFromTurns,
+  withRunTurn,
   type ChatSessionFull,
   type ChatSessionSummary,
+  type SaveRefusal,
 } from "@/lib/chatSessionRules";
+import { runTurnContent, type SkillRun } from "@/lib/skillRunnerRules";
 
 /**
  * Saved assistant chats, per admin account. Every read and write is scoped to
@@ -65,11 +69,18 @@ export async function getChatSession(userId: string, id: string): Promise<ChatSe
  * (see mergeConcurrentTurns). Sent with every transcript save, so turns a
  * linked Claude Code session appended meanwhile are kept, not overwritten.
  */
-export type ChatSessionPatch = { title?: unknown; backend?: unknown; turns?: unknown; baseTurnCount?: unknown };
+export type ChatSessionPatch = {
+  title?: unknown;
+  backend?: unknown;
+  turns?: unknown;
+  baseTurnCount?: unknown;
+  /** The panel's explicit "I edited or deleted history" flag; without it a save may only append. */
+  replace?: unknown;
+};
 
 /** The transcript changed elsewhere in a way this save cannot be merged with. */
 export class ChatConflictError extends Error {
-  constructor() {
+  constructor(readonly reason: SaveRefusal | "changed-elsewhere" = "changed-elsewhere") {
     super("This chat changed elsewhere since it was loaded.");
   }
 }
@@ -106,11 +117,16 @@ export async function updateChatSession(
   if (!existing) return null;
 
   let turns = parseStoredTurns(existing.turns);
+  // A rename is its own request: a transcript save never changes the title.
+  if (patch.turns !== undefined && patch.title !== undefined) {
+    await refuse(userId, id, "title-with-turns", turns.length, 0);
+  }
   if (patch.turns !== undefined) {
     const base = typeof patch.baseTurnCount === "number" && Number.isInteger(patch.baseTurnCount) ? patch.baseTurnCount : null;
-    const merged = mergeConcurrentTurns(turns, normalizeTurns(patch.turns), base);
-    if (!merged) throw new ChatConflictError();
-    turns = merged;
+    const incoming = normalizeTurns(patch.turns);
+    const checked = checkTranscriptSave(turns, incoming, base, patch.replace === true);
+    if (!checked.ok) return refuse(userId, id, checked.reason, turns.length, incoming.length);
+    turns = checked.turns;
   }
   let title = existing.title;
   let titleEdited = existing.titleEdited;
@@ -132,6 +148,39 @@ export async function updateChatSession(
     },
   });
   if (patch.turns !== undefined) await syncSessionAttachments(userId, row.id, turns);
+  scheduleChatExport(row.id);
+  return { ...summary(row), turns };
+}
+
+/** Logs a refused save (the console and the audit log) and throws the 409. */
+async function refuse(userId: string, id: string, reason: SaveRefusal, stored: number, incoming: number): Promise<never> {
+  const detail = `refused save to chat ${id}: ${reason} (stored ${stored} turns, incoming ${incoming})`;
+  console.warn(`[chat-sessions] ${detail}`);
+  await logAudit(userId, "assistant.chat.save.refused", id, detail);
+  throw new ChatConflictError(reason);
+}
+
+/**
+ * A skill run's turn written into one chat, by id: the run's turn there is
+ * rewritten with its current state, or added when the chat has none yet. The
+ * content comes from the runner's own record of the run, never from the
+ * browser, and nothing else in the transcript is touched -- so the report
+ * lands in the chat the run was started from, whichever chat is open.
+ */
+export async function applyRunTurn(userId: string, id: string, run: SkillRun): Promise<ChatSessionFull | null> {
+  const existing = await prisma.chatSession.findFirst({ where: { id, userId } });
+  if (!existing) return null;
+  const stored = parseStoredTurns(existing.turns);
+  const turns = withRunTurn(stored, run.id, runTurnContent(run));
+  if (turns.length === stored.length && turns.every((t, i) => t === stored[i])) return { ...summary(existing), turns };
+  const row = await prisma.chatSession.update({
+    where: { id },
+    data: {
+      turns: JSON.stringify(turns),
+      turnCount: turns.length,
+      ...(existing.titleEdited ? {} : { title: titleFromTurns(turns) }),
+    },
+  });
   scheduleChatExport(row.id);
   return { ...summary(row), turns };
 }
