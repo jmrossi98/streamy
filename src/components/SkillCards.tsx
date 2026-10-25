@@ -3,8 +3,10 @@
 import { useEffect, useReducer, useState } from "react";
 import { Badge, Button, Field, Select, TextArea, TextInput } from "@/components/ui";
 import { ChatMessage } from "@/components/ChatMessage";
+import { engineText, type SkillEngineChoice } from "@/lib/skillEngineRules";
 import {
   argsText,
+  describeAsk,
   initialRunCard,
   isFinished,
   kindInfo,
@@ -14,6 +16,8 @@ import {
   runCardReducer,
   shouldPoll,
   validateSkillArgs,
+  type PermissionAsk,
+  type PermissionResponse,
   type SkillInfo,
   type SkillKind,
   type SkillProposal,
@@ -38,7 +42,7 @@ import {
 
 export type StartOutcome = { ok: true; runId: string } | { ok: false; error: string; busyRunId: string | null };
 
-type SkillsState = { configured: boolean; skills: SkillInfo[]; error: string | null };
+type SkillsState = { configured: boolean; skills: SkillInfo[]; error: string | null; engine: SkillEngineChoice | null };
 
 let skillsRequest: Promise<SkillsState> | null = null;
 
@@ -48,10 +52,11 @@ function loadSkills(fresh = false): Promise<SkillsState> {
     skillsRequest = fetch(`/api/admin/skills${fresh ? "?fresh=1" : ""}`)
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as Partial<SkillsState>;
-        if (!res.ok) return { configured: true, skills: [], error: body.error ?? `HTTP ${res.status}` };
-        return { configured: body.configured !== false, skills: body.skills ?? [], error: body.error ?? null };
+        const engine = body.engine ?? null;
+        if (!res.ok) return { configured: true, skills: [], error: body.error ?? `HTTP ${res.status}`, engine };
+        return { configured: body.configured !== false, skills: body.skills ?? [], error: body.error ?? null, engine };
       })
-      .catch(() => ({ configured: true, skills: [], error: "Couldn't load the skill list." }));
+      .catch(() => ({ configured: true, skills: [], error: "Couldn't load the skill list.", engine: null }));
     // A failed load is retried next time rather than cached for the page's life.
     void skillsRequest.then((s) => {
       if (s.error) skillsRequest = null;
@@ -84,6 +89,75 @@ function KindBadge({ kind }: { kind: SkillKind }) {
 function KindWarning({ kind }: { kind: SkillKind }) {
   const k = kindInfo(kind);
   return <p className={`text-[11px] ${kind === "code" ? "font-medium text-red-300" : "text-white/45"}`}>{k.warning}</p>;
+}
+
+/** "runs on mediabox with OpenCode · model": which engine a Run tap will start. */
+function RunsOn({ engine }: { engine: SkillEngineChoice | null }) {
+  const text = engine ? engineText(engine.engine, engine.engine === "opencode" ? engine.model : null) : "";
+  return <span className="text-white/35">runs on mediabox{text ? ` with ${text}` : ""}</span>;
+}
+
+/**
+ * An OpenCode run parked on a question (2026-10-25): the model wants to run
+ * a command or edit a file the permission profile doesn't name. Three
+ * answers, then the card goes back to polling; the next poll clears the
+ * question (or shows the next one).
+ */
+function PermissionAskCard({ runId, ask }: { runId: string; ask: PermissionAsk }) {
+  const [sending, setSending] = useState<PermissionResponse | null>(null);
+  const [answered, setAnswered] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function answer(response: PermissionResponse) {
+    setSending(response);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/skills/runs/${encodeURIComponent(runId)}/permission`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ permissionID: ask.id, response }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `HTTP ${res.status}`);
+      } else {
+        setAnswered(response === "once" ? "Allowed once." : response === "always" ? "Allowed for this run." : "Rejected.");
+      }
+    } catch {
+      setError("Lost connection to Streamy.");
+    } finally {
+      setSending(null);
+    }
+  }
+
+  const busy = sending !== null;
+  return (
+    <div className="space-y-2 rounded border border-amber-400/40 bg-amber-500/10 p-2.5" role="group" aria-label="Permission question">
+      <p className="font-medium text-amber-200">{describeAsk(ask)}</p>
+      <pre className="whitespace-pre-wrap break-words rounded bg-black/50 px-2 py-1.5 font-mono text-[11px] text-white/85 ring-1 ring-white/10">
+        {ask.detail || ask.permission}
+      </pre>
+      {ask.patterns.length > 0 && ask.permission === "bash" && (
+        <p className="text-[11px] text-white/45">&quot;Allow for this run&quot; also covers: {ask.patterns.join(", ")}</p>
+      )}
+      {answered ? (
+        <p className="text-[11px] text-white/55">{answered} Waiting for the run to carry on…</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" size="xs" disabled={busy} onClick={() => void answer("once")}>
+            {sending === "once" ? "Sending…" : "Allow once"}
+          </Button>
+          <Button variant="secondary" size="xs" disabled={busy} onClick={() => void answer("always")}>
+            {sending === "always" ? "Sending…" : "Allow for this run"}
+          </Button>
+          <Button variant="danger" size="xs" disabled={busy} onClick={() => void answer("reject")}>
+            {sending === "reject" ? "Sending…" : "Reject"}
+          </Button>
+        </div>
+      )}
+      {error && <p className="text-amber-300">{error}</p>}
+    </div>
+  );
 }
 
 function BusyNotice({ runId, onFollow }: { runId: string; onFollow: (id: string) => void }) {
@@ -148,7 +222,7 @@ export function SkillProposalCard({
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-white/90">{skill.name}</span>
         <KindBadge kind={skill.kind} />
-        <span className="text-white/35">runs on mediabox</span>
+        <RunsOn engine={skills.engine} />
       </div>
       <p className="text-white/60">{skill.description}</p>
       {proposal.reason && <p className="text-white/75">Why: {proposal.reason}</p>}
@@ -245,6 +319,9 @@ export function SkillRunCard({
   const summary = state.run ? state.run.summary : saved.summary;
   const links = state.run?.links ?? saved.links;
   const args = state.run ? argsText(state.run.args) : saved.args;
+  const engine = engineText(state.run?.engine ?? saved.engine, state.run?.model ?? saved.model);
+  const waiting = status === "running" ? (state.run?.waiting ?? null) : null;
+  const cost = state.run?.cost ?? null;
 
   async function cancel() {
     setCancelling(true);
@@ -268,9 +345,13 @@ export function SkillRunCard({
         <span className="text-[10px] uppercase tracking-wide text-sky-300/70">mediabox skill</span>
         <span className="font-mono text-white/90">{saved.skill}</span>
         {kind && <KindBadge kind={kind} />}
-        <Badge tone={statusTone(status)}>{status === "running" ? "running…" : status}</Badge>
+        <Badge tone={statusTone(status)}>{status === "running" ? (waiting ? "waiting for you" : "running…") : status}</Badge>
+        {engine && <span className="text-[11px] text-white/40">{engine}</span>}
+        {cost !== null && cost > 0 && <span className="text-[11px] text-white/40">${cost.toFixed(cost < 0.1 ? 3 : 2)}</span>}
       </div>
       <p className="break-words font-mono text-[11px] text-white/50">{args}</p>
+      {/* Keyed by the question: a new one gets a fresh card, not the last answer. */}
+      {waiting && <PermissionAskCard key={waiting.id} runId={id} ask={waiting} />}
 
       {/* The skill writes markdown (it is Claude Code); rendered the same way
           as a reply, never as HTML. */}
@@ -408,6 +489,7 @@ export function SkillRunMenu({
                     <KindBadge kind={skill.kind} />
                     <span className="text-white/60">{skill.description}</span>
                   </div>
+                  <RunsOn engine={skills.engine} />
                   {skill.args.map((a) => (
                     <Field key={a.name} label={`${a.name}${a.required ? "" : " (optional)"}`} hint={a.description}>
                       {a.name === "task" ? (

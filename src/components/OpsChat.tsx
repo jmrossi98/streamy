@@ -582,6 +582,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
       const body = (await res.json().catch(() => ({}))) as {
         id?: string;
         args?: Record<string, string>;
+        engine?: SkillRun["engine"];
+        model?: string | null;
         error?: string;
         running?: string;
       };
@@ -599,6 +601,10 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         output: "",
         summary: null,
         links: [],
+        engine: body.engine ?? null,
+        model: body.model ?? null,
+        waiting: null,
+        cost: null,
       });
       return { ok: true, runId: body.id };
     } catch {

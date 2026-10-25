@@ -13,6 +13,7 @@
  */
 import { logAudit } from "./auditLog";
 import { notify } from "./notify";
+import { engineText, normalizeEngines, type EnginesStatus, type SkillEngineChoice } from "./skillEngineRules";
 import {
   describeRunnerError,
   emailsOnFinish,
@@ -22,6 +23,7 @@ import {
   normalizeRun,
   normalizeSkills,
   startedEmail,
+  type PermissionResponse,
   type SkillInfo,
   type SkillKind,
   type SkillRun,
@@ -115,27 +117,53 @@ export async function cancelRun(id: string): Promise<RunnerResult<true>> {
   return call(`/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }, () => true);
 }
 
+/** What each engine on mediabox can do right now (keys present, binaries installed). */
+export async function listEngines(): Promise<RunnerResult<EnginesStatus>> {
+  return call("/engines", { method: "GET" }, normalizeEngines);
+}
+
+/** The admin's answer to an OpenCode run's permission question. */
+export async function replyPermission(
+  id: string,
+  permissionID: string,
+  response: PermissionResponse,
+  by: string
+): Promise<RunnerResult<true>> {
+  if (!isRunId(id)) return { ok: false, status: 400, error: "Not a run id." };
+  return call(
+    `/runs/${encodeURIComponent(id)}/permission`,
+    { method: "POST", body: JSON.stringify({ permissionID, response, by }) },
+    () => true
+  );
+}
+
 /**
  * Starts a run, then audit-logs and emails it. The caller has already checked
- * the skill and args against the list; the runner checks them again.
+ * the skill and args against the list; the runner checks them again. The
+ * engine is the saved admin choice (skillEngine.ts), never the card's.
  */
 export async function startRun(
   skill: SkillInfo,
   args: Record<string, string>,
-  requestedBy: string
+  requestedBy: string,
+  choice: SkillEngineChoice
 ): Promise<RunnerResult<{ id: string }>> {
-  const r = await call(
-    "/runs",
-    { method: "POST", body: JSON.stringify({ skill: skill.name, args, requestedBy }) },
-    (b) => {
-      const id = (b as { id?: unknown } | null)?.id;
-      return isRunId(id) ? { id } : null;
-    }
-  );
-  const detail = r.ok ? `run ${r.data.id}: ${JSON.stringify(args)}` : `refused: ${r.error}`;
+  const body = {
+    skill: skill.name,
+    args,
+    requestedBy,
+    engine: choice.engine,
+    ...(choice.engine === "opencode" ? { model: choice.model } : {}),
+  };
+  const r = await call("/runs", { method: "POST", body: JSON.stringify(body) }, (b) => {
+    const id = (b as { id?: unknown } | null)?.id;
+    return isRunId(id) ? { id } : null;
+  });
+  const engine = engineText(choice.engine, choice.model);
+  const detail = r.ok ? `run ${r.data.id} on ${engine}: ${JSON.stringify(args)}` : `refused: ${r.error}`;
   void logAudit(requestedBy, r.ok ? "assistant.skill.start" : "assistant.skill.start.failed", skill.name, detail.slice(0, 500));
   if (r.ok) {
-    const mail = startedEmail(skill.name, skill.kind, requestedBy, args, r.data.id);
+    const mail = startedEmail(skill.name, skill.kind, requestedBy, args, r.data.id, engine);
     void notify(mail.subject, mail.body);
     if (emailsOnFinish(skill.kind)) watchUntilFinished(r.data.id, skill.kind);
   }
