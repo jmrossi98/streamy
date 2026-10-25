@@ -40,6 +40,16 @@ body {
   background-color: var(--netflix-black);
   color: #fff;
   padding-bottom: var(--safe-area-inset-bottom);
+}
+
+/* A one-screen page (the expanded assistant): the document never scrolls,
+   and pads nothing -- the screen handles the safe areas itself. */
+html.one-screen,
+html.one-screen body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  padding-bottom: 0;
   max-width: 100%;
 }
 
@@ -303,6 +313,14 @@ select option {
   outline: 2px solid #fff;
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* The chat composer: its pill already shows focus (the border brightens on
+   focus-within), and a textarea counts as focus-visible on every tap, so the
+   ring above drew a second white box inside the pill on phones. Two classes
+   to outrank the :is() rule. */
+.chat-composer.chat-composer:focus-visible {
+  outline: none;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

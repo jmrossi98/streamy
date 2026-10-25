@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatSessionList, type ClaudeCodeSessionItem } from "@/components/ChatSessionList";
-import { Button, TextArea } from "@/components/ui";
+import { Button, Checkbox, TextArea, cx } from "@/components/ui";
 import { ResizeHandle, usePersistedSize } from "@/components/ui/ResizeHandle";
 import {
   CHAT_SIDEBAR_MAX,
@@ -63,7 +63,42 @@ type Props = {
   searchAvailable: boolean;
   /** Fill the available height instead of capping the transcript at 24rem. */
   fullHeight?: boolean;
+  /**
+   * Where the chat is: the whole screen (/assistant), or a tab inside the
+   * admin area. On a phone the page is full-bleed and its drawer offers the
+   * way back to the admin; the tab offers the expanded page instead.
+   */
+  layout?: "page" | "tab";
 };
+
+/** The hamburger, the pencil and the X, drawn inline so the header has no icon dependency. */
+function HeaderIcon({ kind }: { kind: "menu" | "compose" | "close" | "chevron" }) {
+  const d =
+    kind === "menu"
+      ? "M3 6h14M3 10h14M3 14h14"
+      : kind === "compose"
+        ? "M4 16h3l8-8-3-3-8 8v3zM11 6l3 3"
+        : kind === "close"
+          ? "M5 5l10 10M15 5 5 15"
+          : "M6 8l4 4 4-4";
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 20 20"
+      className={kind === "chevron" ? "h-3.5 w-3.5" : "h-5 w-5"}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
+const HEADER_BUTTON =
+  "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/10 active:bg-white/15 disabled:opacity-40";
 
 // Which saved chat was open last, so the admin tab, the expanded view and a
 // reload all come back to it. The chats themselves live on the server.
@@ -121,7 +156,7 @@ function summaryOf(s: ChatSessionFull): ChatSessionSummary {
   };
 }
 
-export function OpsChat({ slots: initialSlots, statusError, searchAvailable, fullHeight = false }: Props) {
+export function OpsChat({ slots: initialSlots, statusError, searchAvailable, fullHeight = false, layout = "tab" }: Props) {
   // Off by default, deliberately: search costs latency and a large share of an
   // 8k context, and it pulls untrusted web text into the prompt. Turning it on
   // is an explicit choice.
@@ -160,6 +195,9 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
+  // The phone's options sheet: model, toggles, mediabox runs. On a wide
+  // screen those sit in the header row and this is never open.
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [editing, setEditing] = useState<{ index: number; text: string } | null>(null);
   const [confirmDeleteTurn, setConfirmDeleteTurn] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -374,6 +412,31 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
   }, [turns, editing, following]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!listOpen && !optionsOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setListOpen(false);
+        setOptionsOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [listOpen, optionsOpen]);
+
+  // The keyboard opening (or the window shrinking) takes height from the
+  // transcript: keep the bottom in view when it was in view, so the last
+  // reply is still readable above the composer.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (following) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [following]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -702,10 +765,114 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
     />
   );
 
+  // The page is full-bleed on a phone, so its transcript and composer keep
+  // their own gutter; the admin tab's card already pads.
+  const gutter = layout === "page" ? "px-3" : "px-1 sm:px-3";
+
+  const modelPicker = (size: "xs" | "md") => (
+    <div className={cx("flex items-center gap-1", size === "md" && "rounded-lg bg-white/5 p-1")} role="group" aria-label="Model">
+      {CHAT_BACKENDS.map((b) => {
+        const enabled = available(b.id);
+        const selected = backend === b.id;
+        return (
+          <button
+            key={b.id}
+            type="button"
+            onClick={() => setBackend(b.id)}
+            // Switching mid-stream would attribute the running reply to
+            // the wrong model, so the picker locks while one is in flight.
+            disabled={!enabled || streaming}
+            aria-pressed={selected}
+            title={enabled ? b.hint : `Unavailable - ${slots[b.id].unavailableHint}`}
+            className={cx(
+              "rounded transition-colors disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-white/5",
+              size === "md" ? "min-h-10 flex-1 px-3 text-sm font-medium" : "px-2 py-1",
+              selected
+                ? "bg-netflix-red text-white"
+                : size === "md"
+                  ? "text-white/60"
+                  : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
+            )}
+          >
+            {b.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const stackStatusToggle = (className: string) => (
+    <Checkbox
+      label="Stack status"
+      title="Include a live probe of every service in the stack with your question."
+      checked={stackStatus}
+      onChange={(e) => setStackStatus(e.target.checked)}
+      className={className}
+    />
+  );
+  // Since 2026-10-24 the model searches and reads pages on its own when a
+  // question needs it; this forces a search up front.
+  const searchToggle = (className: string) =>
+    searchAvailable ? (
+      <Checkbox
+        label="Always search"
+        title="The assistant searches the web by itself when it needs to. Tick this to make it search every question."
+        checked={webSearch}
+        onChange={(e) => setWebSearch(e.target.checked)}
+        className={className}
+      />
+    ) : null;
+
+  const modelHint = showStatusError ? (
+    <span className="text-amber-400">Model unreachable: {statusError}</span>
+  ) : (
+    <>
+      <span className="text-white/50">{modelId}</span>
+      {slots[backend].provider && <span className="text-white/35"> via {slots[backend].provider}</span>}
+      {" - "}
+      {backendById(backend).hint}
+      {/* The local model never leaves the house; the cloud ones do. That
+          distinction matters when the thing being pasted in is a log. */}
+      {isRemoteBackend(backend) && " Prompts leave your network."}
+    </>
+  );
+
+  const sourceBadges = (
+    <>
+      {linkedToClaude && (
+        <span
+          className="mr-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-200"
+          title="Shared with a Claude Code session: turns flow both ways."
+        >
+          Shared with Claude Code
+        </span>
+      )}
+      {fromClaudeApp && (
+        <span
+          className="mr-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200"
+          title="Imported from a claude.ai data export; continues here only."
+        >
+          From the Claude app
+        </span>
+      )}
+    </>
+  );
+
+  const footerLink =
+    layout === "page" ? (
+      <a href="/admin/chat" className="flex items-center gap-1.5 text-white/60 hover:text-white">
+        <span aria-hidden>←</span> Back to admin
+      </a>
+    ) : (
+      <a href="/assistant" className="flex items-center gap-1.5 text-white/60 hover:text-white">
+        Open full screen <span aria-hidden>↗</span>
+      </a>
+    );
+
   return (
     <div ref={layoutRef} className={`relative flex gap-3 ${fullHeight ? "h-full min-h-0" : ""}`}>
       {/* The saved chats: a column beside the transcript on wider screens,
-          with a draggable edge; a sheet over it on a phone. */}
+          with a draggable edge; a drawer over everything on a phone. */}
       <aside
         ref={asideRef}
         className={`hidden shrink-0 md:block ${sidebarWidth == null ? "w-52" : ""}`}
@@ -723,122 +890,104 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         onReset={() => setSidebarWidth(null)}
         className="-mx-2 hidden md:block"
       />
+
+      {/* Phone drawer: the chat list slides in from the left over a dimmed
+          backdrop, as in the Claude and ChatGPT apps. Closes from its X, the
+          backdrop, Escape, or opening a chat. (Until 2026-10-24 the sheet
+          covered the button that opened it, so it could not be closed.)
+          z-60: above the site navbar (z-50) on the admin tab. */}
       {listOpen && (
-        <div className="absolute inset-y-0 left-0 z-20 w-64 max-w-[85%] rounded-lg border border-white/15 bg-netflix-dark p-3 shadow-2xl shadow-black/60 md:hidden">
-          {list(false)}
+        <div className="fixed inset-0 z-[60] md:hidden" role="dialog" aria-modal="true" aria-label="Chats">
+          <button type="button" aria-label="Close chats" className="absolute inset-0 bg-black/60" onClick={() => setListOpen(false)} />
+          <div className="absolute inset-y-0 left-0 flex w-[85%] max-w-xs flex-col bg-netflix-dark pb-[var(--safe-bottom,env(safe-area-inset-bottom,0px))] pt-[env(safe-area-inset-top,0px)] shadow-2xl shadow-black/60">
+            <div className="flex h-12 shrink-0 items-center justify-between pl-4 pr-1">
+              <span className="text-sm font-semibold text-white">Chats</span>
+              <button type="button" onClick={() => setListOpen(false)} className={HEADER_BUTTON} aria-label="Close chats">
+                <HeaderIcon kind="close" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 px-2">{list(false)}</div>
+            <div className="shrink-0 border-t border-white/10 px-4 py-3 text-xs">{footerLink}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Phone options sheet: everything the wide header row shows. */}
+      {optionsOpen && (
+        <div className="fixed inset-0 z-[60] md:hidden" role="dialog" aria-modal="true" aria-label="Chat options">
+          <button type="button" aria-label="Close options" className="absolute inset-0 bg-black/60" onClick={() => setOptionsOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 space-y-4 rounded-t-2xl border-t border-white/10 bg-netflix-dark px-4 pb-[calc(1rem+var(--safe-bottom,env(safe-area-inset-bottom,0px)))] pt-2 shadow-2xl shadow-black/60">
+            <div aria-hidden className="mx-auto h-1 w-10 rounded-full bg-white/20" />
+            <div className="space-y-2">
+              <div className="text-[11px] uppercase tracking-wide text-white/40">Model</div>
+              {modelPicker("md")}
+              <p className="text-xs text-white/40">{modelHint}</p>
+            </div>
+            <div className="space-y-1 text-sm">
+              {stackStatusToggle("min-h-10 gap-3 text-white/80")}
+              {searchToggle("min-h-10 gap-3 text-white/80")}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+              <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} placement="above" />
+              {layout === "page" && (
+                <a href="/admin/chat" className="text-white/50 underline-offset-2 hover:text-white hover:underline">
+                  Model routing
+                </a>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
       <div className={`min-w-0 flex-1 ${fullHeight ? "flex min-h-0 flex-col gap-3" : "space-y-3"}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex min-w-0 items-center gap-2">
-            <Button
-              variant="secondary"
-              size="xs"
-              className="md:hidden"
-              onClick={() => setListOpen((o) => !o)}
-              aria-expanded={listOpen}
-            >
-              Chats
-            </Button>
-            <div className="flex items-center gap-1" role="group" aria-label="Model">
-              {CHAT_BACKENDS.map((b) => {
-                const enabled = available(b.id);
-                const selected = backend === b.id;
-                return (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => setBackend(b.id)}
-                    // Switching mid-stream would attribute the running reply to
-                    // the wrong model, so the picker locks while one is in flight.
-                    disabled={!enabled || streaming}
-                    aria-pressed={selected}
-                    title={enabled ? b.hint : `Unavailable - ${slots[b.id].unavailableHint}`}
-                    className={`rounded px-2 py-1 transition-colors ${
-                      selected
-                        ? "bg-netflix-red text-white"
-                        : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
-                    } disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-white/5`}
-                  >
-                    {b.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        {/* Phone header: menu, the chat and its model (tap for options), new
+            chat. One row, so the screen is the conversation. */}
+        <div className="flex h-12 shrink-0 items-center gap-1 px-1 md:hidden">
+          <button type="button" onClick={() => setListOpen(true)} className={HEADER_BUTTON} aria-label="Chats" aria-expanded={listOpen}>
+            <HeaderIcon kind="menu" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setOptionsOpen(true)}
+            aria-expanded={optionsOpen}
+            aria-haspopup="dialog"
+            className="flex min-h-10 min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-2 leading-tight hover:bg-white/5"
+          >
+            <span className="flex min-w-0 max-w-full items-center gap-1 text-sm font-semibold text-white">
+              <span className="truncate">{currentTitle}</span>
+              <span className="shrink-0 text-white/50">
+                <HeaderIcon kind="chevron" />
+              </span>
+            </span>
+            <span className="max-w-full truncate text-[11px] text-white/45">
+              {backendById(backend).label} · {modelId}
+              {linkedToClaude && " · Claude Code"}
+              {fromClaudeApp && " · Claude app"}
+            </span>
+          </button>
+          <button type="button" onClick={newSession} disabled={streaming} className={HEADER_BUTTON} aria-label="New chat" title="New chat">
+            <HeaderIcon kind="compose" />
+          </button>
+        </div>
 
+        <div className="hidden flex-wrap items-center justify-between gap-2 text-xs md:flex">
+          {modelPicker("xs")}
           <div className="flex items-center gap-3">
             <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} />
-            <label
-              className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80"
-              title="Include a live probe of every service in the stack with your question."
-            >
-              <input
-                type="checkbox"
-                checked={stackStatus}
-                onChange={(e) => setStackStatus(e.target.checked)}
-                className="accent-netflix-red"
-              />
-              Stack status
-            </label>
-
-            {/* Since 2026-10-24 the model searches and reads pages on its own
-                when a question needs it; this forces a search up front. */}
-            {searchAvailable && (
-              <label
-                className="flex cursor-pointer items-center gap-1.5 text-white/50 hover:text-white/80"
-                title="The assistant searches the web by itself when it needs to. Tick this to make it search every question."
-              >
-                <input
-                  type="checkbox"
-                  checked={webSearch}
-                  onChange={(e) => setWebSearch(e.target.checked)}
-                  className="accent-netflix-red"
-                />
-                Always search
-              </label>
-            )}
+            {stackStatusToggle("gap-1.5 hover:text-white/80")}
+            {searchToggle("gap-1.5 hover:text-white/80")}
           </div>
         </div>
 
-        <p className="-mt-1 text-xs text-white/40">
-          <span className="text-white/60 md:hidden">{currentTitle} · </span>
-          {linkedToClaude && (
-            <span
-              className="mr-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-200"
-              title="Shared with a Claude Code session: turns flow both ways."
-            >
-              Shared with Claude Code
-            </span>
-          )}
-          {fromClaudeApp && (
-            <span
-              className="mr-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200"
-              title="Imported from a claude.ai data export; continues here only."
-            >
-              From the Claude app
-            </span>
-          )}
-          {showStatusError ? (
-            <span className="text-amber-400">Model unreachable: {statusError}</span>
-          ) : (
-            <>
-              <span className="text-white/50">{modelId}</span>
-              {slots[backend].provider && <span className="text-white/35"> via {slots[backend].provider}</span>}
-              {" - "}
-              {backendById(backend).hint}
-              {/* The local model never leaves the house; the cloud ones do. That
-                  distinction matters when the thing being pasted in is a log. */}
-              {isRemoteBackend(backend) && " Prompts leave your network."}
-            </>
-          )}
+        <p className="-mt-1 hidden text-xs text-white/40 md:block">
+          {sourceBadges}
+          {modelHint}
         </p>
 
         <div
           ref={scrollRef}
           onScroll={onTranscriptScroll}
-          className={`relative overflow-y-auto px-1 sm:px-3 ${
+          className={`relative overflow-y-auto ${gutter} ${
             // Fixed, not max-h: a max-height collapses to nothing on an empty
             // transcript, so the panel jumped in size as soon as you asked
             // anything. Shorter on a phone, where 34rem is most of the screen.
@@ -1040,7 +1189,9 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         {/* shrink-0 so the composer is never what gets compressed when the
             column runs short -- an input squeezed to nothing is the same bug as
             an input pushed off the screen. */}
-        <form onSubmit={send} className="mx-auto w-full max-w-3xl shrink-0 px-1 sm:px-3">
+        {/* pb-2 on a phone: a hair of room between the pill and the screen's
+            edge, or the keyboard's. */}
+        <form onSubmit={send} className={`mx-auto w-full max-w-3xl shrink-0 pb-2 md:pb-0 ${gutter}`}>
           <div className="flex items-end gap-2 rounded-2xl border border-white/15 bg-white/[0.06] py-2 pl-4 pr-2 transition-colors focus-within:border-white/35">
             <textarea
               ref={composerRef}
@@ -1062,7 +1213,7 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
               aria-label="Message"
               // text-base on mobile: iOS zooms the viewport when a focused input
               // is under 16px, and there is no way back out without pinching.
-              className="max-h-48 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 text-white placeholder-white/30 focus:outline-none sm:text-[15px]"
+              className="chat-composer max-h-48 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 text-white placeholder-white/30 focus:outline-none sm:text-[15px]"
               disabled={streaming}
             />
             {streaming ? (

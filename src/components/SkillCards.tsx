@@ -325,10 +325,13 @@ export function SkillRunMenu({
   locked,
   onStart,
   onFollow,
+  placement = "below",
 }: {
   locked: boolean;
   onStart: (skill: string, args: Record<string, string>) => Promise<StartOutcome>;
   onFollow: (runId: string) => void;
+  /** Where the picker opens: below the button (a header row) or above it (a sheet at the screen's foot). */
+  placement?: "below" | "above";
 }) {
   const [open, setOpen] = useState(false);
   const [skills, setSkills] = useState<SkillsState | null>(null);
@@ -368,7 +371,11 @@ export function SkillRunMenu({
         Run on mediabox
       </Button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 w-80 max-w-[90vw] space-y-2 rounded-lg border border-white/15 bg-netflix-dark p-3 text-xs shadow-2xl shadow-black/60">
+        <div
+          className={`absolute z-30 w-80 max-w-[90vw] space-y-2 rounded-lg border border-white/15 bg-netflix-dark p-3 text-xs shadow-2xl shadow-black/60 ${
+            placement === "above" ? "bottom-full left-0 mb-1" : "right-0 mt-1"
+          }`}
+        >
           {!skills ? (
             <p className="text-white/40">Loading skills…</p>
           ) : !skills.configured || skills.error ? (
