@@ -42,6 +42,8 @@ export async function POST(request: Request) {
   return NextResponse.json(
     {
       id: r.data.id,
+      status: r.data.status,
+      position: r.data.position,
       skill: skill.name,
       args: checked.args,
       kind: skill.kind,

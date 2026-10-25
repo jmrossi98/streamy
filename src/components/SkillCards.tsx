@@ -7,12 +7,14 @@ import { engineText, type SkillEngineChoice } from "@/lib/skillEngineRules";
 import {
   argsText,
   describeAsk,
+  heartbeatText,
   initialRunCard,
   isFinished,
   kindInfo,
   parseRunTurn,
   POLL_MS,
   proposalReducer,
+  queuedLabel,
   runCardReducer,
   shouldPoll,
   validateSkillArgs,
@@ -40,7 +42,7 @@ import {
  * these into the browser bundle.
  */
 
-export type StartOutcome = { ok: true; runId: string } | { ok: false; error: string; busyRunId: string | null };
+export type StartOutcome = { ok: true; runId: string; queued?: boolean } | { ok: false; error: string; busyRunId: string | null };
 
 type SkillsState = { configured: boolean; skills: SkillInfo[]; error: string | null; engine: SkillEngineChoice | null };
 
@@ -193,7 +195,12 @@ export function SkillProposalCard({
 
   if (state.phase === "dismissed") return <p className="mt-2 text-[11px] text-white/35">Dismissed: {proposal.skill}</p>;
   if (alreadyRun || state.phase === "started") {
-    return <p className="mt-2 text-[11px] text-white/40">Started {proposal.skill} - its progress is below.</p>;
+    const queued = state.phase === "started" && state.queued;
+    return (
+      <p className="mt-2 text-[11px] text-white/40">
+        {queued ? `Queued ${proposal.skill} - it starts when the run ahead finishes. Its card is below.` : `Started ${proposal.skill} - its progress is below.`}
+      </p>
+    );
   }
   if (!skills) return <p className="mt-2 text-[11px] text-white/35">Checking mediabox&apos;s skills…</p>;
   if (!skills.configured || skills.error) {
@@ -214,7 +221,7 @@ export function SkillProposalCard({
     if (!checked.ok) return;
     dispatch({ type: "run" });
     const r = await onStart(proposal.skill, checked.args);
-    dispatch(r.ok ? { type: "started", runId: r.runId } : { type: "startFailed", error: r.error, busyRunId: r.busyRunId });
+    dispatch(r.ok ? { type: "started", runId: r.runId, queued: r.queued } : { type: "startFailed", error: r.error, busyRunId: r.busyRunId });
   }
 
   return (
@@ -255,6 +262,7 @@ export function SkillProposalCard({
 
 function statusTone(status: SkillRunStatus): "info" | "success" | "danger" | "warning" | "neutral" {
   if (status === "running") return "info";
+  if (status === "queued") return "neutral";
   if (status === "succeeded") return "success";
   if (status === "cancelled") return "neutral";
   return status === "timeout" ? "warning" : "danger";
@@ -308,7 +316,7 @@ export function SkillRunCard({
   // again, so a re-render can't append the result twice.
   const finishedRun = state.run && isFinished(state.run.status) ? state.run : null;
   useEffect(() => {
-    if (finishedRun && !locked && savedStatus === "running") onFinished(finishedRun);
+    if (finishedRun && !locked && !isFinished(savedStatus)) onFinished(finishedRun);
   }, [finishedRun, locked, savedStatus, onFinished]);
 
   if (!saved) return <p className="text-xs text-white/40">(An unreadable skill run.)</p>;
@@ -322,6 +330,8 @@ export function SkillRunCard({
   const engine = engineText(state.run?.engine ?? saved.engine, state.run?.model ?? saved.model);
   const waiting = status === "running" ? (state.run?.waiting ?? null) : null;
   const cost = state.run?.cost ?? null;
+  const queued = status === "queued";
+  const heartbeat = status === "running" ? (state.run?.heartbeat ?? null) : null;
 
   async function cancel() {
     setCancelling(true);
@@ -345,11 +355,15 @@ export function SkillRunCard({
         <span className="text-[10px] uppercase tracking-wide text-sky-300/70">mediabox skill</span>
         <span className="font-mono text-white/90">{saved.skill}</span>
         {kind && <KindBadge kind={kind} />}
-        <Badge tone={statusTone(status)}>{status === "running" ? (waiting ? "waiting for you" : "running…") : status}</Badge>
+        <Badge tone={statusTone(status)}>
+          {queued ? queuedLabel(state.run?.position) : status === "running" ? (waiting ? "waiting for you" : "running…") : status}
+        </Badge>
         {engine && <span className="text-[11px] text-white/40">{engine}</span>}
         {cost !== null && cost > 0 && <span className="text-[11px] text-white/40">${cost.toFixed(cost < 0.1 ? 3 : 2)}</span>}
       </div>
       <p className="break-words font-mono text-[11px] text-white/50">{args}</p>
+      {queued && <p className="text-[11px] text-white/45">Waiting for the run ahead to finish. This one starts by itself.</p>}
+      {heartbeat && <p className="text-[11px] text-white/45">{heartbeatText(heartbeat)}</p>}
       {/* Keyed by the question: a new one gets a fresh card, not the last answer. */}
       {waiting && <PermissionAskCard key={waiting.id} runId={id} ask={waiting} />}
 
@@ -372,14 +386,16 @@ export function SkillRunCard({
         </ul>
       )}
 
-      <details open={status === "running"} className="group">
-        <summary className="cursor-pointer list-none text-white/45 hover:text-white/75">
-          Output{output ? ` (${output.length.toLocaleString()} chars)` : ""}
-        </summary>
-        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-black/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-white/80 ring-1 ring-white/10">
-          {output || (status === "running" ? "Waiting for output…" : "(no output)")}
-        </pre>
-      </details>
+      {!queued && (
+        <details open={status === "running"} className="group">
+          <summary className="cursor-pointer list-none text-white/45 hover:text-white/75">
+            Output{output ? ` (${output.length.toLocaleString()} chars)` : ""}
+          </summary>
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-black/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-white/80 ring-1 ring-white/10">
+            {output || (status === "running" ? "Waiting for output…" : "(no output)")}
+          </pre>
+        </details>
+      )}
 
       {state.error && polling && state.misses > 2 && <p className="text-amber-300/80">Can&apos;t check on the run: {state.error}</p>}
       {state.stalled && (
@@ -391,9 +407,9 @@ export function SkillRunCard({
         </p>
       )}
       {cancelError && <p className="text-amber-300">{cancelError}</p>}
-      {status === "running" && (
+      {(status === "running" || queued) && (
         <Button variant="danger" size="xs" disabled={cancelling} onClick={() => void cancel()}>
-          {cancelling ? "Cancelling…" : "Cancel run"}
+          {queued ? (cancelling ? "Removing…" : "Remove from queue") : cancelling ? "Cancelling…" : "Cancel run"}
         </Button>
       )}
     </div>

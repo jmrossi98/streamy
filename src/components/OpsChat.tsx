@@ -37,6 +37,7 @@ import { ActionProposal } from "./ActionProposal";
 import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
 import {
   findRunTurn,
+  isFinished,
   parseSkillProposal,
   proposalWasRun,
   runTurnContent,
@@ -681,6 +682,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       });
       const body = (await res.json().catch(() => ({}))) as {
         id?: string;
+        status?: string;
         args?: Record<string, string>;
         engine?: SkillRun["engine"];
         model?: string | null;
@@ -690,13 +692,16 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       if (!res.ok || !body.id) {
         return { ok: false, error: body.error ?? `Couldn't start ${skill} (HTTP ${res.status}).`, busyRunId: body.running ?? null };
       }
+      // A queued run is saved as queued, so the card shows its place in line
+      // until the first poll says it began.
+      const queued = body.status === "queued";
       appendRunTurn({
         id: body.id,
         skill,
         args: body.args ?? args,
         requestedBy: "",
-        status: "running",
-        startedAt: new Date().toISOString(),
+        status: queued ? "queued" : "running",
+        startedAt: queued ? null : new Date().toISOString(),
         finishedAt: null,
         output: "",
         summary: null,
@@ -706,7 +711,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         waiting: null,
         cost: null,
       });
-      return { ok: true, runId: body.id };
+      return { ok: true, runId: body.id, queued };
     } catch {
       return { ok: false, error: "Lost connection to Streamy.", busyRunId: null };
     }
@@ -724,7 +729,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       }
       // Already finished means its result goes straight in; the card won't
       // poll it and so won't hand it over again.
-      if (body.run.status !== "running") finishedRunsRef.current.add(id);
+      if (isFinished(body.run.status)) finishedRunsRef.current.add(id);
       appendRunTurn(body.run);
     } catch {
       setError("Lost connection to Streamy.");

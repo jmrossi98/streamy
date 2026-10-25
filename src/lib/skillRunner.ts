@@ -18,15 +18,18 @@ import {
   describeRunnerError,
   emailsOnFinish,
   finishedEmail,
+  hasStarted,
   isFinished,
   isRunId,
   normalizeRun,
   normalizeSkills,
+  parseStartedRun,
   startedEmail,
   type PermissionResponse,
   type SkillInfo,
   type SkillKind,
   type SkillRun,
+  type StartedRun,
 } from "./skillRunnerRules";
 
 const TIMEOUT_MS = 10_000;
@@ -147,7 +150,7 @@ export async function startRun(
   args: Record<string, string>,
   requestedBy: string,
   choice: SkillEngineChoice
-): Promise<RunnerResult<{ id: string }>> {
+): Promise<RunnerResult<StartedRun>> {
   const body = {
     skill: skill.name,
     args,
@@ -155,19 +158,53 @@ export async function startRun(
     engine: choice.engine,
     ...(choice.engine === "opencode" ? { model: choice.model } : {}),
   };
-  const r = await call("/runs", { method: "POST", body: JSON.stringify(body) }, (b) => {
-    const id = (b as { id?: unknown } | null)?.id;
-    return isRunId(id) ? { id } : null;
-  });
+  const r = await call("/runs", { method: "POST", body: JSON.stringify(body) }, parseStartedRun);
   const engine = engineText(choice.engine, choice.model);
-  const detail = r.ok ? `run ${r.data.id} on ${engine}: ${JSON.stringify(args)}` : `refused: ${r.error}`;
+  const queued = r.ok && r.data.status === "queued";
+  const detail = r.ok
+    ? `run ${r.data.id}${queued ? ` queued${r.data.position ? ` at #${r.data.position}` : ""}` : ""} on ${engine}: ${JSON.stringify(args)}`
+    : `refused: ${r.error}`;
   void logAudit(requestedBy, r.ok ? "assistant.skill.start" : "assistant.skill.start.failed", skill.name, detail.slice(0, 500));
   if (r.ok) {
-    const mail = startedEmail(skill.name, skill.kind, requestedBy, args, r.data.id, engine);
-    void notify(mail.subject, mail.body);
-    if (emailsOnFinish(skill.kind)) watchUntilFinished(r.data.id, skill.kind);
+    const info: PendingStart = { skill: skill.name, kind: skill.kind, who: requestedBy, args, engine };
+    if (queued) {
+      // The "started" email waits for the run to leave the queue.
+      pendingStarts.set(r.data.id, info);
+      if (pendingStarts.size > 100) pendingStarts.delete(pendingStarts.keys().next().value as string);
+    } else {
+      sendStartedEmail(r.data.id, info);
+    }
+    if (queued || emailsOnFinish(skill.kind)) watchRun(r.data.id, skill.kind);
   }
   return r;
+}
+
+// ------------------------------------------------------------- started emails
+
+type PendingStart = { skill: string; kind: SkillKind; who: string; args: Record<string, string>; engine: string };
+
+/**
+ * Runs the runner queued when they were asked for, until they leave the
+ * queue. In memory: a restart while a run waits loses its "started" email
+ * (the finish email, which is rebuilt from the poll, is unaffected).
+ */
+const pendingStarts = new Map<string, PendingStart>();
+
+function sendStartedEmail(id: string, p: PendingStart): void {
+  const mail = startedEmail(p.skill, p.kind, p.who, p.args, id, p.engine);
+  void notify(mail.subject, mail.body);
+}
+
+/**
+ * Sends the "skill started" email for a run that was queued, once, when it
+ * is seen past the queue. Safe to call on every poll. A run removed from the
+ * queue never started, so it earns none.
+ */
+export function notifyStartedOnce(run: SkillRun): void {
+  const p = pendingStarts.get(run.id);
+  if (!p || run.status === "queued") return;
+  pendingStarts.delete(run.id);
+  if (hasStarted(run)) sendStartedEmail(run.id, p);
 }
 
 // ------------------------------------------------------------- finish emails
@@ -194,17 +231,20 @@ export function notifyFinishedOnce(run: SkillRun, kind: SkillKind | null): void 
 }
 
 /**
- * Polls in the background so the result email goes out even when the phone
- * that started the run is locked. Lightsail runs one long-lived Node server,
- * so a timer outlives the request that set it.
+ * Polls in the background so the started email (for a queued run) and the
+ * result email go out even when the phone that started the run is locked.
+ * Lightsail runs one long-lived Node server, so a timer outlives the request
+ * that set it. A read run has no result email, so it is watched only until
+ * it leaves the queue.
  */
-function watchUntilFinished(id: string, kind: SkillKind): void {
+function watchRun(id: string, kind: SkillKind): void {
   if (watching.has(id)) return;
   watching.add(id);
   const until = Date.now() + WATCH_MAX_MS;
   const tick = async () => {
     const r = await getRun(id);
-    if (r.ok && isFinished(r.data.status)) {
+    if (r.ok) notifyStartedOnce(r.data);
+    if (r.ok && (isFinished(r.data.status) || (!emailsOnFinish(kind) && r.data.status !== "queued"))) {
       notifyFinishedOnce(r.data, kind);
       watching.delete(id);
       return;

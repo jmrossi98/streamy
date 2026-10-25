@@ -31,7 +31,14 @@ export type SkillArg = { name: string; description: string; required: boolean };
 
 export type SkillInfo = { name: string; description: string; kind: SkillKind; args: SkillArg[] };
 
-export type SkillRunStatus = "running" | "succeeded" | "failed" | "timeout" | "cancelled";
+export type SkillRunStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "cancelled";
+
+/**
+ * What a running run reports about itself (2026-10-25, runner queue): how
+ * long it has been going and the last thing it did, so a quiet run reads as
+ * alive rather than stuck.
+ */
+export type Heartbeat = { elapsedSeconds: number; lastStep: string | null; lastActivityAt: string | null };
 
 /**
  * A question an OpenCode run is parked on (2026-10-25): a command or edit
@@ -63,7 +70,8 @@ export type SkillRun = {
   args: Record<string, string>;
   requestedBy: string;
   status: SkillRunStatus;
-  startedAt: string;
+  /** Null while the run is queued: it has not begun. */
+  startedAt: string | null;
   finishedAt: string | null;
   output: string;
   summary: string | null;
@@ -75,10 +83,14 @@ export type SkillRun = {
   waiting?: PermissionAsk | null;
   /** OpenCode's cost estimate in dollars, when the provider reports one. */
   cost?: number | null;
+  /** 1 = next to start. Only a queued run has one. */
+  position?: number | null;
+  /** Only a running run has one, and runners before the queue send none. */
+  heartbeat?: Heartbeat | null;
 };
 
 const KINDS: readonly SkillKind[] = ["read", "action", "code"];
-const STATUSES: readonly SkillRunStatus[] = ["running", "succeeded", "failed", "timeout", "cancelled"];
+const STATUSES: readonly SkillRunStatus[] = ["queued", "running", "succeeded", "failed", "timeout", "cancelled"];
 
 /** Skill names are slugs (health-sweep, ship-fix); anything else is not one. */
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -109,7 +121,69 @@ export function isRunId(v: unknown): v is string {
 }
 
 export function isFinished(status: SkillRunStatus): boolean {
-  return status !== "running";
+  return status !== "running" && status !== "queued";
+}
+
+/**
+ * Whether a run has begun, as opposed to waiting in the runner's queue. A run
+ * cancelled out of the queue never began; every other status past "queued"
+ * (including a run that ended before a poll caught it running) did.
+ */
+export function hasStarted(run: Pick<SkillRun, "status" | "startedAt">): boolean {
+  if (run.status === "queued") return false;
+  if (run.status === "cancelled" && !run.startedAt) return false;
+  return true;
+}
+
+/** The runner's answer to POST /runs: the id, and whether the run began or is waiting. */
+export type StartedRun = { id: string; status: "queued" | "running"; position: number | null };
+
+/**
+ * Runners before the queue answer {id} alone (the run began); the queue
+ * answers {id, run_id, status, position}, position 0 for a run that began at
+ * once. Any other status is not a run Streamy knows how to follow.
+ */
+export function parseStartedRun(raw: unknown): StartedRun | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (!isRunId(r.id)) return null;
+  if (r.status !== undefined && r.status !== "queued" && r.status !== "running") return null;
+  if (r.status !== "queued") return { id: r.id, status: "running", position: null };
+  return { id: r.id, status: "queued", position: normalizePosition(r.position) };
+}
+
+function normalizePosition(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : null;
+}
+
+function normalizeHeartbeat(raw: unknown): Heartbeat | null {
+  if (!raw || typeof raw !== "object") return null;
+  const h = raw as Record<string, unknown>;
+  if (typeof h.elapsedSeconds !== "number" || !Number.isFinite(h.elapsedSeconds) || h.elapsedSeconds < 0) return null;
+  return {
+    elapsedSeconds: Math.floor(h.elapsedSeconds),
+    lastStep: typeof h.lastStep === "string" && h.lastStep.trim() ? h.lastStep.trim().slice(0, 200) : null,
+    lastActivityAt: typeof h.lastActivityAt === "string" ? h.lastActivityAt : null,
+  };
+}
+
+/** "45s", "3m 05s", "1h 02m": how long a run has been going. */
+export function formatElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${pad(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${pad(Math.floor((s % 3600) / 60))}m`;
+}
+
+/** "Queued, #2", or just "Queued" when the runner gave no place in line. */
+export function queuedLabel(position: number | null | undefined): string {
+  return position ? `Queued, #${position}` : "Queued";
+}
+
+/** "3m 05s · last step: Run npx vitest", for under a running run's badge. */
+export function heartbeatText(h: Heartbeat): string {
+  return `${formatElapsed(h.elapsedSeconds)}${h.lastStep ? ` · last step: ${h.lastStep}` : ""}`;
 }
 
 function str(v: unknown, fallback = ""): string {
@@ -161,7 +235,7 @@ export function normalizeRun(raw: unknown): SkillRun | null {
     args,
     requestedBy: str(r.requestedBy),
     status,
-    startedAt: str(r.startedAt),
+    startedAt: typeof r.startedAt === "string" && r.startedAt ? r.startedAt : null,
     finishedAt: typeof r.finishedAt === "string" ? r.finishedAt : null,
     output: str(r.output),
     summary: typeof r.summary === "string" && r.summary.trim() ? r.summary : null,
@@ -170,6 +244,8 @@ export function normalizeRun(raw: unknown): SkillRun | null {
     model: isOpenCodeModel(r.model) ? r.model : null,
     waiting: status === "running" ? normalizeAsk(r.waiting) : null,
     cost: typeof r.cost === "number" && Number.isFinite(r.cost) ? r.cost : null,
+    position: status === "queued" ? normalizePosition(r.position) : null,
+    heartbeat: status === "running" ? normalizeHeartbeat(r.heartbeat) : null,
   };
 }
 
@@ -334,7 +410,7 @@ export function skillsPrompt(skills: SkillInfo[]): string {
  * there before the model sees it, and the end of the output is what matters.
  */
 export const RUN_TURN_MAX_CHARS = 7_500;
-const RUN_HEADER = /^MEDIABOX SKILL RUN (\S+) (\S+) (running|succeeded|failed|timeout|cancelled)$/;
+const RUN_HEADER = /^MEDIABOX SKILL RUN (\S+) (\S+) (queued|running|succeeded|failed|timeout|cancelled)$/;
 const SUMMARY_MARK = "--- summary ---";
 const LINKS_MARK = "--- links ---";
 const OUTPUT_MARK = "--- output (end) ---";
@@ -432,14 +508,14 @@ export function proposalWasRun(turns: { role: string; content: string; via?: str
 export type ProposalState =
   | { phase: "idle" }
   | { phase: "starting" }
-  | { phase: "started"; runId: string }
+  | { phase: "started"; runId: string; queued: boolean }
   | { phase: "dismissed" }
   | { phase: "failed"; error: string; busyRunId: string | null };
 
 export type ProposalEvent =
   | { type: "run" }
   | { type: "dismiss" }
-  | { type: "started"; runId: string }
+  | { type: "started"; runId: string; queued?: boolean }
   | { type: "startFailed"; error: string; busyRunId?: string | null }
   | { type: "retry" };
 
@@ -451,7 +527,7 @@ export function proposalReducer(s: ProposalState, e: ProposalEvent): ProposalSta
     case "dismiss":
       return s.phase === "idle" || s.phase === "failed" ? { phase: "dismissed" } : s;
     case "started":
-      return s.phase === "starting" ? { phase: "started", runId: e.runId } : s;
+      return s.phase === "starting" ? { phase: "started", runId: e.runId, queued: e.queued === true } : s;
     case "startFailed":
       return s.phase === "starting" ? { phase: "failed", error: e.error, busyRunId: e.busyRunId ?? null } : s;
     case "retry":
@@ -488,7 +564,7 @@ export function runCardReducer(s: RunCardState, e: RunCardEvent): RunCardState {
   }
 }
 
-/** Whether the card should poll again: only while running and not given up. */
+/** Whether the card should poll again: while queued or running, and not given up. */
 export function shouldPoll(s: RunCardState, savedStatus: SkillRunStatus): boolean {
   if (s.stalled) return false;
   const status = s.run?.status ?? savedStatus;
@@ -533,7 +609,7 @@ export function finishedEmail(run: SkillRun) {
       "Links:",
       links,
       "",
-      `Run: ${run.id}, started ${run.startedAt}, finished ${run.finishedAt ?? "?"}`,
+      `Run: ${run.id}, started ${run.startedAt ?? "?"}, finished ${run.finishedAt ?? "?"}`,
     ].join("\n"),
   };
 }
@@ -560,7 +636,7 @@ export function describeRunnerError(status: number, body: unknown): string {
     return "The skill runner on mediabox refused Streamy's token (SKILL_RUNNER_TOKEN doesn't match).";
   }
   if (status === 404) return msg ?? "The skill runner doesn't know that run or skill.";
-  if (status === 409) return msg ?? "Another skill is already running on mediabox.";
+  if (status === 409) return msg ?? "The skill queue on mediabox is full. Try again when a run finishes.";
   if (status === 400) return msg ?? "The skill runner rejected that skill or its arguments.";
   return msg ? `Skill runner: ${msg}` : `The skill runner returned HTTP ${status}.`;
 }
