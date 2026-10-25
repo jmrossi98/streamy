@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { getSession, signIn, useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
 /**
@@ -88,6 +88,15 @@ export default function LoginPage() {
       return;
     }
     if (res?.ok) {
+      // Tell the other open tabs. next-auth broadcasts a sign-out to every
+      // tab (each refetches its session, finds none, and goes signed-out on
+      // the client), but a signIn with redirect:false tells nobody -- so
+      // after a sign-out and sign-in here, every other tab stayed signed-out
+      // on the client for the rest of its life, cookie valid all along:
+      // 2026-10-25, Jake's player tab dropped out of the admin Viewers panel
+      // that way. getSession() refetches and broadcasts, which is what makes
+      // the others refetch too.
+      await getSession().catch(() => null);
       window.location.href = callbackUrl.startsWith("/") ? callbackUrl : "/";
     }
   }
