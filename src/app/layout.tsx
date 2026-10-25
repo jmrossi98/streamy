@@ -29,6 +29,9 @@ export const viewport: Viewport = {
   maximumScale: 5,
   userScalable: true,
   viewportFit: "cover",
+  // Android Chrome: the keyboard shrinks the viewport (and 100dvh) instead of
+  // covering the page. iOS ignores it; see useVisualViewportBox for that.
+  interactiveWidget: "resizes-content",
   themeColor: "#141414",
 };
 

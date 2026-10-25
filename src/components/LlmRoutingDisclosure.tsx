@@ -11,10 +11,10 @@ import { usesIn } from "@/lib/llmRoutingRules";
  * pages that show this give the chat a fixed height, and pushing squeezed the
  * transcript to a strip a few lines tall.
  */
-export async function LlmRoutingDisclosure({ aside }: { aside?: React.ReactNode }) {
+export async function LlmRoutingDisclosure({ aside, className }: { aside?: React.ReactNode; className?: string }) {
   const initial = await routingSnapshot();
   return (
-    <div className="relative flex items-start justify-between gap-3 text-xs">
+    <div className={`relative items-start justify-between gap-3 text-xs ${className ?? "flex"}`}>
       <details className="group min-w-0 flex-1">
         <summary className="inline-flex cursor-pointer list-none items-center text-white/50 hover:text-white/80">
           <span className="mr-1 inline-block transition-transform group-open:rotate-90">▸</span>
