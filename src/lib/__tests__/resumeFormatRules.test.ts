@@ -103,10 +103,23 @@ describe("checkResumeFormat", () => {
 
   it("doesn't ask for more bullets than the per-role caps allow", () => {
     // Three roles, no projects: 6 + 6 + 1 = 13 is the most there can be.
-    const full = checkResumeFormat(resume({ current: 6, previous: 6, intern: 1 }), "leadership");
+    const full = checkResumeFormat(resume({ current: 6, previous: 6, intern: 1 }), "product");
     expect(full.some((i) => /bullets in total/.test(i.message))).toBe(false);
     const short = checkResumeFormat(resume({ current: 5, previous: 4, intern: 1 }), "product");
     expect(short.some((i) => /^10 bullets in total; aim for 14-16/.test(i.message))).toBe(true);
+  });
+
+  it("gives leadership resumes a 7th current-role bullet and no projects", () => {
+    // 7 + 6 + 1 = 14 with no projects.
+    const lead = checkResumeFormat(resume({ current: 7, previous: 6, intern: 1 }), "leadership");
+    expect(lead.filter((i) => i.severity === "trim")).toEqual([]);
+    expect(lead.some((i) => /bullets in total/.test(i.message))).toBe(false);
+    const thirteen = checkResumeFormat(resume({ current: 6, previous: 6, intern: 1 }), "leadership");
+    expect(thirteen.some((i) => /^13 bullets in total; aim for 14-16/.test(i.message))).toBe(true);
+    const seven = checkResumeFormat(resume({ current: 7 }), "product");
+    expect(seven.some((i) => i.severity === "trim" && /^Current role .* has 7 bullets/.test(i.message))).toBe(true);
+    const withProject = checkResumeFormat(resume({ current: 7, previous: 6, intern: 1, projects: 1 }), "leadership");
+    expect(withProject.some((i) => i.severity === "trim" && /remove the Projects section/.test(i.message))).toBe(true);
   });
 
   it("does not count REST as a technology", () => {
