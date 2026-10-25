@@ -51,11 +51,15 @@ export function buildSaveRequest(
   };
 }
 
-/** The request that puts one run's turn into chat `chatId`, server-side. */
-export function buildRunTurnRequest(chatId: string, runId: string): SaveRequest {
+/**
+ * The request that puts one run's turn into chat `chatId`, server-side. With
+ * `proposal` (turn index and block index of the card whose Run was tapped) the
+ * server also links that proposal to the run.
+ */
+export function buildRunTurnRequest(chatId: string, runId: string, proposal?: { turn: number; block: number }): SaveRequest {
   return {
     url: `/api/admin/chat-sessions/${encodeURIComponent(chatId)}/run-turn`,
     method: "POST",
-    body: JSON.stringify({ runId }),
+    body: JSON.stringify(proposal ? { runId, proposal } : { runId }),
   };
 }

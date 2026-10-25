@@ -19,13 +19,23 @@ export async function POST(request: Request, { params }: Ctx) {
   const admin = await requireAdmin(await getSession());
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   const { id } = await params;
-  const body = (await request.json().catch(() => null)) as { runId?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { runId?: unknown; proposal?: unknown } | null;
   if (!body || typeof body.runId !== "string" || !isRunId(body.runId)) {
     return NextResponse.json({ error: "Not a run id." }, { status: 400 });
   }
+  // Optional: the proposal (turn index, block index) the Run tap came from.
+  // A malformed one is refused rather than silently unlinked.
+  let proposal: { turn: number; block: number } | undefined;
+  if (body.proposal !== undefined) {
+    const p = body.proposal as { turn?: unknown; block?: unknown } | null;
+    if (!p || !Number.isInteger(p.turn) || !Number.isInteger(p.block)) {
+      return NextResponse.json({ error: "Not a proposal reference." }, { status: 400 });
+    }
+    proposal = { turn: p.turn as number, block: p.block as number };
+  }
   const run = await getRun(body.runId);
   if (!run.ok) return NextResponse.json({ error: run.error }, { status: run.status });
-  const session = await applyRunTurn(admin.id, id, run.data);
+  const session = await applyRunTurn(admin.id, id, run.data, proposal);
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ session });
 }

@@ -40,11 +40,16 @@ import { buildRunTurnRequest, buildSaveRequest, createSaveQueue } from "@/lib/ch
 import {
   findRunTurn,
   isFinished,
+  linkedRunId,
   parseSkillProposal,
+  PROPOSAL_BLOCK,
   proposalWasRun,
   stripSkillProposal,
   type SkillRun,
 } from "@/lib/skillRunnerRules";
+
+/** The proposal a Run tap came from: the message's index in the chat and the block's index in it. */
+type ProposalRef = { turn: number; block: number };
 
 export type { ChatSlot, ChatSlots } from "@/lib/chatSlots";
 
@@ -404,10 +409,10 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
    * chat is open; the panel takes the result only when it is still the open one.
    */
   const putRunTurn = useCallback(
-    (chatId: string, runId: string): Promise<ChatSessionFull | null> =>
+    (chatId: string, runId: string, proposal?: ProposalRef): Promise<ChatSessionFull | null> =>
       saveQueue.enqueue(async () => {
         try {
-          const req = buildRunTurnRequest(chatId, runId);
+          const req = buildRunTurnRequest(chatId, runId, proposal);
           const { session } = await api<{ session: ChatSessionFull }>(req.url, { method: req.method, body: req.body });
           if (isOpen(chatId)) adoptOpenChat(session);
           upsertSummary(summaryOf(session));
@@ -729,14 +734,14 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
    * chat not saved yet is created first, from what is on screen. The server
    * writes the turn; the panel never sends the whole transcript for it.
    */
-  async function addRunTurn(chatId: string | null, runId: string): Promise<void> {
+  async function addRunTurn(chatId: string | null, runId: string, proposal?: ProposalRef): Promise<void> {
     let target = chatId;
     if (!target) {
       const created = await persist(turnsRef.current, backend, null);
       if (!created) return;
       target = created.id;
     }
-    await putRunTurn(target, runId);
+    await putRunTurn(target, runId, proposal);
   }
 
   /**
@@ -744,7 +749,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
    * own straight away, saved as "running", so a reload (or the phone locking)
    * picks the polling back up from the saved chat.
    */
-  async function startSkill(skill: string, args: Record<string, string>): Promise<StartOutcome> {
+  async function startSkill(skill: string, args: Record<string, string>, proposal?: ProposalRef): Promise<StartOutcome> {
     // The run belongs to the chat it was started from, even if another is
     // open by the time the runner answers (a queued run can take a while).
     const chatId = currentIdRef.current;
@@ -769,7 +774,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       // A queued run is saved as queued (the server reads its state from the
       // runner), so the card shows its place in line until a poll says it began.
       const queued = body.status === "queued";
-      await addRunTurn(chatId, body.id);
+      await addRunTurn(chatId, body.id, proposal);
       return { ok: true, runId: body.id, queued };
     } catch {
       return { ok: false, error: "Lost connection to Streamy.", busyRunId: null };
@@ -1288,9 +1293,10 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                   {skillProposal && (
                     <SkillProposalCard
                       proposal={skillProposal}
+                      linkedRunId={linkedRunId(t)}
                       alreadyRun={proposalWasRun(turns, i, skillProposal.skill)}
                       locked={streaming}
-                      onStart={startSkill}
+                      onStart={(skill, args) => startSkill(skill, args, { turn: i, block: PROPOSAL_BLOCK })}
                       onFollow={(id) => void followRun(id)}
                     />
                   )}

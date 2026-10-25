@@ -9,6 +9,7 @@ import {
   normalizeTurns,
   parseStoredTurns,
   titleFromTurns,
+  withProposalRun,
   withRunTurn,
   type ChatSessionFull,
   type ChatSessionSummary,
@@ -167,11 +168,19 @@ async function refuse(userId: string, id: string, reason: SaveRefusal, stored: n
  * browser, and nothing else in the transcript is touched -- so the report
  * lands in the chat the run was started from, whichever chat is open.
  */
-export async function applyRunTurn(userId: string, id: string, run: SkillRun): Promise<ChatSessionFull | null> {
+export async function applyRunTurn(
+  userId: string,
+  id: string,
+  run: SkillRun,
+  proposal?: { turn: number; block: number }
+): Promise<ChatSessionFull | null> {
   const existing = await prisma.chatSession.findFirst({ where: { id, userId } });
   if (!existing) return null;
   const stored = parseStoredTurns(existing.turns);
-  const turns = withRunTurn(stored, run.id, runTurnContent(run));
+  let turns = withRunTurn(stored, run.id, runTurnContent(run));
+  // The proposal the Run tap came from is linked to the run in the same write,
+  // so the card never has a moment with a run turn but no link.
+  if (proposal) turns = withProposalRun(turns, proposal.turn, proposal.block, run.skill, run.id);
   if (turns.length === stored.length && turns.every((t, i) => t === stored[i])) return { ...summary(existing), turns };
   const row = await prisma.chatSession.update({
     where: { id },

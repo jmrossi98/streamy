@@ -14,7 +14,7 @@
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
 import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
 import { normalizeAttachmentRefs, type AttachmentRef } from "./chatAttachmentRules";
-import { findRunTurn } from "./skillRunnerRules";
+import { findRunTurn, normalizeProposalRuns, parseSkillProposal, type ProposalRuns } from "./skillRunnerRules";
 
 /**
  * One turn. `via` marks a turn that happened in a linked Claude Code session
@@ -30,6 +30,11 @@ export type ChatTurn = {
   via?: ChatTurnVia;
   /** Files attached to a user turn (ChatAttachment rows hold the bytes). */
   attachments?: AttachmentRef[];
+  /**
+   * On an assistant turn: proposal block index -> the skill run its Run tap
+   * started (skillRunnerRules linkedRunId). Set server-side with the run's turn.
+   */
+  proposalRuns?: ProposalRuns;
 };
 
 export type ChatSessionSummary = {
@@ -59,12 +64,14 @@ export function normalizeTurns(raw: unknown): ChatTurn[] {
   const out: ChatTurn[] = [];
   for (const t of raw) {
     if (!t || typeof t !== "object") continue;
-    const { role, content, via, attachments } = t as Record<string, unknown>;
+    const { role, content, via, attachments, proposalRuns } = t as Record<string, unknown>;
     if (role !== "user" && role !== "assistant") continue;
     if (typeof content !== "string") continue;
     const turn: ChatTurn = { role, content: content.slice(0, MAX_TURN_CHARS) };
     const refs = role === "user" ? normalizeAttachmentRefs(attachments) : [];
     if (refs.length > 0) turn.attachments = refs;
+    const links = role === "assistant" ? normalizeProposalRuns(proposalRuns) : null;
+    if (links) turn.proposalRuns = links;
     if (via === "claude-code" || via === "claude-app" || via === "skill-run") turn.via = via;
     out.push(turn);
   }
@@ -161,13 +168,24 @@ export function checkTranscriptSave(
   if (known === stored.length) {
     // Stored turns may have shifted off the front when the chat was full.
     const shifts = stored.length >= MAX_SESSION_TURNS ? stored.length : 0;
-    for (let s = 0; s <= shifts; s++) if (startsWith(incoming, stored.slice(s))) return { ok: true, turns: incoming };
+    for (let s = 0; s <= shifts; s++) {
+      if (startsWith(incoming, stored.slice(s))) return { ok: true, turns: carryLinks(stored.slice(s), incoming) };
+    }
     return { ok: false, reason: "not-append" };
   }
   // Turns were added elsewhere since the panel synced: its copy of the older
   // ones must still match, and its new turns go after the added ones.
   if (!startsWith(incoming, stored.slice(0, known))) return { ok: false, reason: "not-append" };
   return { ok: true, turns: [...stored, ...incoming.slice(known)].slice(-MAX_SESSION_TURNS) };
+}
+
+/**
+ * An append-only save whose first turns are the stored ones keeps the stored
+ * turns' proposal links: the server sets them, so a panel copy that predates
+ * the link must not erase it.
+ */
+function carryLinks(prefix: ChatTurn[], incoming: ChatTurn[]): ChatTurn[] {
+  return incoming.map((t, i) => (i < prefix.length && prefix[i].proposalRuns && !t.proposalRuns ? { ...t, proposalRuns: prefix[i].proposalRuns } : t));
 }
 
 /**
@@ -182,6 +200,21 @@ export function withRunTurn(turns: ChatTurn[], runId: string, content: string): 
     return [...turns, turn].slice(-MAX_SESSION_TURNS);
   }
   return editTurn(turns, index, content);
+}
+
+/**
+ * Links block `block` of the assistant turn at `index` to run `runId`. Only a
+ * turn that really holds a proposal for `skill` takes it, and a block that is
+ * already linked keeps its first run (a second tap must not re-point the card).
+ * Anything else returns the transcript unchanged.
+ */
+export function withProposalRun(turns: ChatTurn[], index: number, block: number, skill: string, runId: string): ChatTurn[] {
+  const turn = turns[index];
+  if (!turn || turn.role !== "assistant" || turn.via) return turns;
+  if (!Number.isInteger(block) || block < 0 || block > 999) return turns;
+  if (parseSkillProposal(turn.content)?.skill !== skill) return turns;
+  if (turn.proposalRuns?.[String(block)]) return turns;
+  return turns.map((t, i) => (i === index ? { ...t, proposalRuns: { ...t.proposalRuns, [String(block)]: runId } } : t));
 }
 
 /** The transcript with one turn's text replaced. Out of range is a no-op. */
