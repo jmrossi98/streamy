@@ -365,7 +365,7 @@ function statusTone(status: SkillRunStatus): "info" | "success" | "danger" | "wa
   if (status === "queued") return "neutral";
   if (status === "succeeded") return "success";
   if (status === "cancelled") return "neutral";
-  return status === "timeout" ? "warning" : "danger";
+  return status === "timeout" || status === "needs_attention" ? "warning" : "danger";
 }
 
 export function SkillRunCard({
