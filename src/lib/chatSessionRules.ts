@@ -175,16 +175,25 @@ export const CHAT_SOURCE_LABELS: Record<ChatListSource, string> = {
 };
 
 /** A vault session as the list gets it (ChatSessionList's ClaudeCodeSessionItem). */
-type VaultSessionLike = { machine: string; modified: string | null };
+type VaultSessionLike = { machine: string; modified: string | null; chatId?: string | null };
 
+/**
+ * A saved chat row. `badge` is where the conversation began: "streamy" for a
+ * plain chat, or the Claude Code / Claude app source it continues, in which
+ * case `vault` is that source (folded into this one row). `at` is the later of
+ * the two activity times.
+ */
 export type ChatListEntry<V extends VaultSessionLike> =
-  | { source: "streamy"; key: string; at: number; session: ChatSessionSummary }
+  | { source: "streamy"; key: string; at: number; session: ChatSessionSummary; badge: ChatListSource; vault: V | null }
   | { source: "claude-code" | "claude-app"; key: string; at: number; vault: V };
 
 /**
  * Saved chats, Claude Code sessions and Claude app chats as one list, most
- * recent activity first. A row with no usable time sorts last; ties keep their
- * incoming order (Array.sort is stable), saved chats first.
+ * recent activity first. A vault session already continued by a saved chat
+ * (its `chatId` names that chat) is not a row of its own: the saved chat's row
+ * carries the source badge and the later of the two times, and opening, renaming
+ * or deleting it acts on the saved chat. A row with no usable time sorts last;
+ * ties keep their incoming order (Array.sort is stable), saved chats first.
  */
 export function mergeChatList<V extends VaultSessionLike & { key: string }>(
   sessions: ChatSessionSummary[],
@@ -194,14 +203,26 @@ export function mergeChatList<V extends VaultSessionLike & { key: string }>(
     const t = iso ? Date.parse(iso) : NaN;
     return Number.isNaN(t) ? 0 : t;
   };
+  const sourceOf = (v: V): "claude-code" | "claude-app" => (v.machine === CLAUDE_APP_MACHINE ? "claude-app" : "claude-code");
+  const ids = new Set(sessions.map((s) => s.id));
+  const linked = new Map<string, V>();
+  for (const v of vault) if (v.chatId && ids.has(v.chatId) && !linked.has(v.chatId)) linked.set(v.chatId, v);
+  const folded = new Set(linked.values());
   const rows: ChatListEntry<V>[] = [
-    ...sessions.map((session): ChatListEntry<V> => ({ source: "streamy", key: `s:${session.id}`, at: time(session.updatedAt), session })),
-    ...vault.map((v): ChatListEntry<V> => ({
-      source: v.machine === CLAUDE_APP_MACHINE ? "claude-app" : "claude-code",
-      key: `v:${v.key}`,
-      at: time(v.modified),
-      vault: v,
-    })),
+    ...sessions.map((session): ChatListEntry<V> => {
+      const v = linked.get(session.id) ?? null;
+      return {
+        source: "streamy",
+        key: `s:${session.id}`,
+        at: Math.max(time(session.updatedAt), v ? time(v.modified) : 0),
+        session,
+        badge: v ? sourceOf(v) : "streamy",
+        vault: v,
+      };
+    }),
+    ...vault
+      .filter((v) => !folded.has(v))
+      .map((v): ChatListEntry<V> => ({ source: sourceOf(v), key: `v:${v.key}`, at: time(v.modified), vault: v })),
   ];
   return rows.sort((a, b) => b.at - a.at);
 }

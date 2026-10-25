@@ -214,7 +214,7 @@ export function ChatSessionList({
               >
                 <span className="w-full truncate">{s.title}</span>
                 <span className="flex items-center gap-1.5 text-[10px] text-white/30">
-                  <SourceBadge source="streamy" />
+                  <SourceBadge source={entry.badge} />
                   <span className="shrink-0">{relativeAge(s.updatedAt)}</span>
                 </span>
               </button>
