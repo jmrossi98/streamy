@@ -20,8 +20,14 @@ export type ProbeResult =
 
 export type VerifyState = { status: "queued" | "checking" } | ProbeResult;
 
-/** How many of the top candidates are checked. Each takes ~7-10s on mediabox. */
-export const VERIFY_LIMIT = 5;
+/**
+ * How many of the top candidates are checked. Each takes ~7-10s on mediabox,
+ * one at a time per provider. Every candidate the list offers (rankGameStreams
+ * caps it at 12): on 2026-10-25 Leeds at Sunderland checked five, found them
+ * dead and played NBC Sports Bay Area with seven of the game's own feeds
+ * unchecked. Providers are checked side by side, so twelve is ~a minute.
+ */
+export const VERIFY_LIMIT = 12;
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
 const text = (v: unknown): string | undefined => (typeof v === "string" && v ? v.slice(0, 120) : undefined);
@@ -74,7 +80,7 @@ export function canAdd(s: VerifyState | undefined): boolean {
   return s?.status !== "dead";
 }
 
-/** The ids to check, best-ranked first: the top `limit` of the list as ranked. */
+/** The ids to check, best-ranked first: every candidate up to `limit`, as ranked. */
 export function streamsToVerify<C extends { id: number }>(candidates: C[], limit = VERIFY_LIMIT): number[] {
   return candidates.slice(0, limit).map((c) => c.id);
 }

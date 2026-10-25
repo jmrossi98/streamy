@@ -83,9 +83,10 @@ describe("canAdd", () => {
 });
 
 describe("streamsToVerify", () => {
-  it("checks the top five, best first", () => {
-    expect(streamsToVerify(candidates)).toEqual([1, 2, 3, 4, 5]);
+  it("checks every candidate the list offers, best first", () => {
+    expect(streamsToVerify(candidates)).toEqual(candidates.map((c) => c.id));
     expect(streamsToVerify(candidates.slice(0, 2))).toEqual([1, 2]);
+    expect(streamsToVerify(candidates, 2)).toEqual([1, 2]);
   });
 });
 

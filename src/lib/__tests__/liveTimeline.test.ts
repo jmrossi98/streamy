@@ -303,6 +303,21 @@ describe("findCandidateChannels", () => {
     expect(findCandidateChannels({ league: "NHL" }, streamers).map((c) => c.id)).toContain("23");
   });
 
+  it("never guesses a regional NBC Sports network for the Premier League", () => {
+    // 2026-10-25: Leeds at Sunderland played NBC Sports Bay Area, a Bay Area
+    // NHL/NBA channel. NBC's national sports channels are still a guess.
+    const nbc = [
+      { id: "30", name: "US| NBC SPORTS BAY AREA" },
+      { id: "31", name: "US| NBC SPORTS CALIFORNIA HD" },
+      { id: "32", name: "US| NBC SPORTS NOW" },
+    ];
+    const epl = findCandidateChannels({ league: "Premier League" }, nbc).map((c) => c.id);
+    expect(epl).not.toContain("30");
+    expect(epl).not.toContain("31");
+    expect(epl).toContain("32");
+    expect(findCandidateChannels({ league: "NHL" }, nbc).map((c) => c.id)).toContain("30");
+  });
+
   it("lists networks tagged for the fixture's league", () => {
     const ids = findCandidateChannels({ league: "NHL" }, channels).map((c) => c.id);
     expect(ids).toContain("3"); // NHL Network

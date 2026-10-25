@@ -31,10 +31,11 @@ type Candidate = { id: number; name: string; provider: string | null; logoUrl: s
  * and the checks fill in; one with no video is hidden and cannot be added.
  */
 /**
- * `autoAdd`: the viewer pressed Watch in Live Now and no channel is confirmed
- * for the game, so the best stream that names the game and passes the video
- * check is added without a click (pickAutoAdd). One per game, enforced by
- * the promote route.
+ * `autoAdd`: the game is on and no channel is confirmed for it, so the best
+ * stream that names the game and passes the video check is added without a
+ * click (pickAutoAdd). One per game, enforced by the promote route. Every
+ * candidate is checked before the page gives up and plays a guess
+ * (GameChannelPicker holds while "checking" is reported).
  */
 const BUSY_RETRIES = 2;
 const BUSY_RETRY_MS = 4_000;
@@ -130,17 +131,28 @@ export function GameStreamFinder({
     );
     const pick = pickAutoAdd(eligible, checks, autoAddMaxScore);
     if (!pick) {
-      // Nothing to add, and nothing left that could change that: tell the
-      // player it can stop holding for a feed and play its best guess.
-      const ids = verify ? streamsToVerify(streams) : [];
-      const settled = ids.every((id) => {
+      // Nothing to add yet. The player holds its guess only while a stream
+      // that *could* be added is still being checked -- one that names the
+      // game well enough (autoAddMaxScore) -- not for the whole list: a
+      // radio station or a documentary channel can never be the pick, so
+      // waiting on its check would only delay the guess.
+      const settled = (id: number) => {
         const s = checks[id]?.status;
         return s !== undefined && s !== "queued" && s !== "checking";
-      });
-      if (streams.length === 0 || !verify || settled) {
+      };
+      const couldAdd = new Set(eligible.filter((c) => c.score != null && c.score <= autoAddMaxScore).map((c) => c.id));
+      const ids = verify ? streamsToVerify(streams).filter((id) => couldAdd.has(id)) : [];
+      const checked = ids.filter(settled).length;
+      if (checked === ids.length) {
+        // Nothing left that could change the answer: tell the player it can
+        // stop holding for a feed and play its best guess.
         autoTried.current = true;
         announceGameFeedSearch({ fixtureId, outcome: "none" });
+        return;
       }
+      // Still checking: how far along, so the player keeps holding (every
+      // candidate is checked before a guess plays) and can say so.
+      announceGameFeedSearch({ fixtureId, outcome: "checking", progress: { checked, total: ids.length } });
       return;
     }
     autoTried.current = true;

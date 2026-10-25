@@ -7,7 +7,10 @@ export const GAME_FEED_SEARCH_EVENT = "streamy:game-feed-search";
 
 export type GameFeedSearchOutcome = {
   fixtureId: string;
-  outcome: "added" | "none";
+  /** "checking": still going, with how far along; "added" / "none": over. */
+  outcome: "added" | "none" | "checking";
+  /** With "checking": streams checked so far, of the ones to check. */
+  progress?: { checked: number; total: number };
   /** The channel added, by its Jellyfin id, once Jellyfin lists it. */
   channel?: { id: string; name: string };
   /** Added by the viewer from the list, not automatically: list it, don't switch to it. */

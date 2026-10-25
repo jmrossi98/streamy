@@ -45,17 +45,9 @@ import { providerAlert } from "@/lib/credentialRules";
  */
 export const dynamic = "force-dynamic";
 
-export default async function GamePage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ fixtureId: string }>;
-  searchParams: Promise<{ auto?: string }>;
-}) {
+export default async function GamePage({ params }: { params: Promise<{ fixtureId: string }> }) {
   unstable_noStore();
   const { fixtureId: encodedFixtureId } = await params;
-  // Live Now's Watch: add a verified stream for the game if nothing is confirmed.
-  const autoRequested = (await searchParams).auto === "1";
   const fixtureId = decodeURIComponent(encodedFixtureId);
 
   const session = await getSession();
@@ -372,8 +364,11 @@ export default async function GamePage({
         {/* Below the lineup's options: what the catalogue has that the lineup
             doesn't, one click from being a channel. */}
         {/* Adds the game's own feed whenever the game is on and the lineup has
-            none -- not only after Watch in Live Now. Without that request it
-            only takes a feed naming both teams (score 0). */}
+            none. A feed naming both teams, or one team with the league or the
+            carrying network ("UK| EPL LEEDS"): until 2026-10-25 only the
+            former unless opened from Live Now, so Leeds at Sunderland played
+            NBC Sports Bay Area with six EPL feeds on offer. Never a feed
+            naming a team alone (a documentary channel, a radio station). */}
         <GameStreamFinder
           fixtureId={fixtureId}
           // Until the game has a confirmed channel, or a feed that is both dated
@@ -384,7 +379,6 @@ export default async function GamePage({
             !channelConfirmed &&
             !(gameFeed && namesGameDate(gameFeed.name, startMs) && feedLanguageRank(gameFeed.name) === 0)
           }
-          autoAddMaxScore={autoRequested && !channelConfirmed ? 1 : 0}
           // An undated game feed is already in the lineup: only a dated one improves on it.
           autoAddDatedOnly={!!gameFeed}
           autoAddEnglishOnly={!!gameFeed && namesGameDate(gameFeed.name, startMs)}

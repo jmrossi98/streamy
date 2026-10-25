@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GAME_FEED_SEARCH_EVENT, type GameFeedSearchOutcome } from "@/lib/gameFeedSearch";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
@@ -35,9 +35,12 @@ type Props = {
    * took a provider line, so the stream probe refused to check the game's
    * feeds ("every line on this provider is in use") and nothing could be
    * added: on 2026-10-18 Bruins at Kings played MSG while ten dedicated feeds
-   * went unchecked. Released when GameStreamFinder reports (an added feed
-   * arrives with the page refresh), when the viewer picks a channel, or
-   * after FEED_SEARCH_LIMIT_MS.
+   * went unchecked. Released when GameStreamFinder reports an outcome, when
+   * the viewer picks a channel, or when the search goes quiet for
+   * FEED_SEARCH_SILENCE_MS (or runs past FEED_SEARCH_LIMIT_MS in all). While
+   * the finder keeps reporting progress the hold stands: every candidate is
+   * checked before a guess plays (2026-10-25, Leeds at Sunderland played NBC
+   * Sports Bay Area after 45 s with seven of its feeds unchecked).
    */
   holdForFeed?: boolean;
 };
@@ -67,8 +70,10 @@ type Props = {
  * pick beats `channel` precisely because the person overrode `channel` once
  * already.
  */
-/** The longest a game page holds off playing while it looks for the game's feed. */
-const FEED_SEARCH_LIMIT_MS = 45_000;
+/** How long the feed search may go without reporting a checked stream before a guess plays. */
+const FEED_SEARCH_SILENCE_MS = 60_000;
+/** The longest a game page holds off playing in all, however many feeds are left to check. */
+const FEED_SEARCH_LIMIT_MS = 4 * 60_000;
 
 export function GameChannelPicker({
   channel,
@@ -84,6 +89,14 @@ export function GameChannelPicker({
   holdForFeed = false,
 }: Props) {
   const [held, setHeld] = useState(holdForFeed);
+  /** How far the feed search has got, while it reports (GameStreamFinder). */
+  const [searchProgress, setSearchProgress] = useState<{ checked: number; total: number } | null>(null);
+  /** Bumped on each progress report, so the silence timer starts over. */
+  const [searchBeat, setSearchBeat] = useState(0);
+  /** Why a guess is playing instead of the game's feed, once the search is over or out of time. */
+  const [searchEnd, setSearchEnd] = useState<"none" | "timeout" | null>(null);
+  /** When the hold began, for the overall limit; set by the hold effect, never during render. */
+  const heldSince = useRef<number | null>(null);
   /** Feeds added this visit, listed at once rather than after a reload. */
   const [added, setAdded] = useState<LiveChannel[]>([]);
   const serverOptions = channel ? [channel, ...candidates] : candidates;
@@ -119,8 +132,19 @@ export function GameChannelPicker({
     const onOutcome = (e: Event) => {
       const d = (e as CustomEvent<GameFeedSearchOutcome>).detail;
       if (d?.fixtureId !== fixtureId) return;
+      if (d.outcome === "checking") {
+        setSearchProgress(d.progress ?? null);
+        setSearchBeat((n) => n + 1);
+        return;
+      }
       if (d.outcome === "none") {
-        setHeld(false);
+        // A guess already playing on the time limit: the note now says the
+        // search is over, not still going.
+        setSearchEnd((prev) => (prev === "timeout" ? "none" : prev));
+        setHeld((wasHeld) => {
+          if (wasHeld) setSearchEnd("none");
+          return false;
+        });
         return;
       }
       if (!d.channel) return;
@@ -131,6 +155,7 @@ export function GameChannelPicker({
       if (!d.manual && !userPicked) {
         setSelectedId(ch.id);
         setHeld(false);
+        setSearchEnd(null);
         setFallbackNote(null);
       }
     };
@@ -140,9 +165,18 @@ export function GameChannelPicker({
 
   useEffect(() => {
     if (!held) return;
-    const limit = setTimeout(() => setHeld(false), FEED_SEARCH_LIMIT_MS);
+    heldSince.current ??= Date.now();
+    const left = FEED_SEARCH_LIMIT_MS - (Date.now() - heldSince.current);
+    const limit = setTimeout(
+      () => {
+        setSearchEnd("timeout");
+        setHeld(false);
+      },
+      Math.max(0, Math.min(FEED_SEARCH_SILENCE_MS, left))
+    );
     return () => clearTimeout(limit);
-  }, [held]);
+    // searchBeat: a progress report starts the silence timer over.
+  }, [held, searchBeat]);
 
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
 
@@ -194,6 +228,7 @@ export function GameChannelPicker({
    */
   function pick(c: LiveChannel) {
     setHeld(false);
+    setSearchEnd(null);
     setUserPicked(true);
     setSelectedId(c.id);
     setFallbackNote(null);
@@ -247,8 +282,15 @@ export function GameChannelPicker({
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" aria-hidden />
           <p className="text-sm text-white/70">Finding the game&rsquo;s own stream…</p>
           <p className="max-w-sm px-4 text-xs text-white/40">
-            Nothing in the lineup is confirmed to carry this game, so the providers are being checked for its feed.
-            Pick a channel below to watch one of them now instead.
+            Nothing in the lineup is confirmed to carry this game, so the providers&rsquo; streams for it are being
+            checked one by one
+            {searchProgress && searchProgress.total > 0 && (
+              <>
+                {" "}
+                ({searchProgress.checked} of {searchProgress.total} done)
+              </>
+            )}
+            . Pick a channel below to watch one of them now instead.
           </p>
         </div>
       ) : (
@@ -260,6 +302,15 @@ export function GameChannelPicker({
         />
       )}
       {fallbackNote && <p className="mt-3 text-sm text-amber-300/90">{fallbackNote}</p>}
+      {/* A guess is playing, and the viewer didn't choose it: say why, so a
+          49ers pregame show on a Leeds page isn't a mystery (2026-10-25). */}
+      {searchEnd && !userPicked && selected && !held && !noLines && (
+        <p className="mt-3 text-sm text-amber-300/90">
+          {searchEnd === "none"
+            ? `None of the providers' streams for this game played, so ${selected.name} is on instead. It's a guess at a channel that might carry the game, not a confirmed one.`
+            : `The game's own stream is still being looked for, so ${selected.name} is on meanwhile. It's a guess at a channel that might carry the game; the player switches if a feed turns up.`}
+        </p>
+      )}
 
       {/* Shown even with one option, so the channel playing is always named
           here -- an auto-added feed used to appear nowhere (2026-10-18). */}
@@ -347,11 +398,21 @@ export function GameChannelPicker({
                         </span>
                       )
                     )}
-                    {isSelected && (
-                      <span className="shrink-0 rounded bg-netflix-red px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                        Playing
-                      </span>
-                    )}
+                    {/* "Playing" only while the player is actually on it: during
+                        the feed search the row is the fallback, not what's on. */}
+                    {isSelected &&
+                      (held || noLines ? (
+                        <span
+                          className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/60"
+                          title="Plays only if the game's own stream can't be found"
+                        >
+                          Fallback
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded bg-netflix-red px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                          Playing
+                        </span>
+                      ))}
                   </button>
                 </li>
               );

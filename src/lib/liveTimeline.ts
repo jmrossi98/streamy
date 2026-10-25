@@ -220,6 +220,14 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   // in the catalogue a candidate for every NFL/Premier League fixture,
   // exactly the false-positive class the market-matching path exists to
   // avoid. National coverage is covered by Peacock below instead.
+  // Before the national pattern below (`find` takes the first match): NBC's
+  // regional sports networks carry their own market's NHL/NBA teams and
+  // nothing national. On 2026-10-25 NBC Sports Bay Area played for Leeds at
+  // Sunderland while the game's own feeds went unchecked.
+  {
+    pattern: /\bnbc\s*sports?\s*(bay\s*area|california|philadelphia|boston|chicago|washington|northwest|ba|ca|ph)\b/,
+    leagues: ["NHL", "NBA"],
+  },
   { pattern: /\bnbc\s*sports?\b/, leagues: ["NFL", "Premier League"] },
   // NBCUniversal's streamer, carrying most Premier League matches since
   // NBCSN shut down in 2021 -- the games that don't air on NBC/USA Network
