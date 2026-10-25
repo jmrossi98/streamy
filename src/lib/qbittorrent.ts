@@ -13,7 +13,7 @@
 import { mustKeepSeeding } from "./privateSeedRules";
 import { cached } from "./ttlCache";
 import { progressKey, type ClientProgress } from "./liveProgressRules";
-import { sharedRead } from "./sharedRead";
+import { forgetShared, sharedRead } from "./sharedRead";
 
 const QBITTORRENT_URL = process.env.QBITTORRENT_URL?.replace(/\/$/, "");
 const QBITTORRENT_USER = process.env.QBITTORRENT_USER;
@@ -362,4 +362,102 @@ export async function getTorrentProgress(): Promise<ClientProgress> {
     console.error("[qbittorrent] could not read torrent progress:", err);
     return new Map();
   }
+}
+
+/** A season pack added to qBittorrent by hand and tagged with its show -- see manualPackRules.ts. */
+export type ManualSeasonPack = {
+  hash: string;
+  name: string;
+  /** The folder the torrent's files sit under, as Sonarr sees it (same /data mount). */
+  savePath: string;
+  /** 0..1. */
+  progress: number;
+  sizeBytes: number;
+  dlSpeed: number;
+  etaSeconds: number | null;
+  connectedSeeds: number;
+  swarmSeeds: number;
+  state: string;
+  /** Unix seconds. */
+  addedOn: number | null;
+  completedOn: number | null;
+  seriesId: number;
+  seasonNumber: number;
+  /** Video files in the pack, each with its path relative to savePath and whether it is complete. */
+  files: { name: string; done: boolean }[];
+};
+
+const MANUAL_PACKS_TTL_MS = 3_000;
+
+/**
+ * Every tagged torrent in the manual-import category, with its files.
+ * Empty when qBittorrent is not configured; throws when it cannot be read,
+ * so a caller can tell "no packs" from "could not ask".
+ */
+export function getManualSeasonPacks(): Promise<ManualSeasonPack[]> {
+  if (!isQbittorrentConfigured()) return Promise.resolve([]);
+  return sharedRead("qbittorrent:manual-packs", MANUAL_PACKS_TTL_MS, readManualSeasonPacks, { serveStale: true });
+}
+
+async function readManualSeasonPacks(): Promise<ManualSeasonPack[]> {
+  const { MANUAL_PACK_CATEGORY, isVideoFile, packTarget } = await import("./manualPackRules");
+  const res = await qbit(`/api/v2/torrents/info?category=${encodeURIComponent(MANUAL_PACK_CATEGORY)}`);
+  if (!res?.ok) {
+    if (res?.status === 403) forgetSession();
+    throw new Error(`qBittorrent torrents/info: ${res?.status ?? "unreachable"}`);
+  }
+  const torrents = (await res.json()) as {
+    hash: string;
+    name: string;
+    save_path: string;
+    progress: number;
+    total_size?: number;
+    size?: number;
+    dlspeed: number;
+    eta: number;
+    num_seeds: number;
+    num_complete: number;
+    state: string;
+    added_on: number;
+    completion_on: number;
+    tags: string;
+  }[];
+  const packs: ManualSeasonPack[] = [];
+  for (const t of torrents) {
+    const target = packTarget(t.tags);
+    if (!target) continue;
+    const filesRes = await qbit(`/api/v2/torrents/files?hash=${t.hash}`);
+    const files = filesRes?.ok ? ((await filesRes.json()) as { name: string; progress: number; priority: number }[]) : [];
+    packs.push({
+      hash: t.hash.toLowerCase(),
+      name: t.name,
+      savePath: t.save_path.replace(/\/$/, ""),
+      progress: t.progress,
+      sizeBytes: t.total_size ?? t.size ?? 0,
+      dlSpeed: t.dlspeed,
+      etaSeconds: t.eta,
+      connectedSeeds: t.num_seeds,
+      swarmSeeds: t.num_complete,
+      state: t.state,
+      addedOn: t.added_on > 0 ? t.added_on : null,
+      completedOn: t.completion_on > 0 ? t.completion_on : null,
+      seriesId: target.seriesId,
+      seasonNumber: target.seasonNumber,
+      // Priority 0 is "do not download": a file left out of the pack on purpose.
+      files: files.filter((f) => f.priority !== 0 && isVideoFile(f.name)).map((f) => ({ name: f.name, done: f.progress >= 1 })),
+    });
+  }
+  return packs;
+}
+
+/** Removes a hand-added pack and its files -- the panel's Cancel on its row. */
+export async function deleteManualPack(hash: string): Promise<boolean> {
+  const { MANUAL_PACK_CATEGORY } = await import("./manualPackRules");
+  const packs = await getManualSeasonPacks().catch(() => [] as ManualSeasonPack[]);
+  // Only ever a torrent this module listed: the hash comes from a browser.
+  if (!packs.some((p) => p.hash === hash.toLowerCase())) return false;
+  const res = await qbit("/api/v2/torrents/delete", { hashes: hash.toLowerCase(), deleteFiles: "true" });
+  if (res?.ok) forgetShared("qbittorrent:manual-packs");
+  console.log(`[qbittorrent] deleted ${MANUAL_PACK_CATEGORY} pack ${hash}: ${res?.ok ? "ok" : res?.status ?? "unreachable"}`);
+  return res?.ok === true;
 }

@@ -40,6 +40,19 @@ export async function POST(request: Request) {
 
   const id = externalId;
 
+  // A hand-added season pack: the torrent is the whole download, and Sonarr
+  // has no queue entry for it. Without this the row's Cancel fell through to
+  // cancelling the entire series.
+  const packHash = typeof body?.packHash === "string" && /^[0-9a-f]{40}$/i.test(body.packHash) ? body.packHash : null;
+  if (packHash && action === "cancel") {
+    const { deleteManualPack } = await import("@/lib/qbittorrent");
+    if (!(await deleteManualPack(packHash))) {
+      return NextResponse.json({ error: "Couldn't cancel" }, { status: 404 });
+    }
+    logAudit(admin.name, `${mediaType}.admin.cancel`, title, "hand-added season pack");
+    return NextResponse.json({ ok: true });
+  }
+
   // A whole show, or one season of it, from the panel's grouped rows: stop
   // everything in flight for it and delete what is on disk, in one go. The
   // single-row paths below each do only one of those, for one entry.

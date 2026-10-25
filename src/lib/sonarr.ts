@@ -889,13 +889,15 @@ const adoptedAt = new Map<number, number>();
 export async function adoptUnsearchedEpisodes(): Promise<number> {
   if (!isSonarrConfigured()) return 0;
   const queue = await searchQueue();
-  const [wanted, downloading, pending] = await Promise.all([
+  const [wanted, downloading, pending, covered] = await Promise.all([
     wantedMissing(),
     episodesInQueue(),
     queue.pendingSearchIds(),
+    packCoveredSeasons(),
   ]);
   const backlog = unsearchedBacklog(
-    wanted.filter((e) => e.monitored),
+    // A season a hand-added pack is bringing is not a backlog -- see packCoveredSeasons.
+    wanted.filter((e) => e.monitored && !covered.has(`${e.seriesId}:${e.seasonNumber}`)),
     new Set([...downloading, ...pending]),
     adoptedAt
   );
@@ -924,9 +926,10 @@ export async function getIdleWantedEpisodes(): Promise<
 > {
   if (!isSonarrConfigured()) return [];
   try {
-    const [wanted, queue] = await Promise.all([
+    const [wanted, queue, covered] = await Promise.all([
       wantedMissing(),
       sonarrFetch<{ records: { episodeId?: number }[] }>(`/api/v3/queue?pageSize=${QUEUE_PAGE_SIZE}`),
+      packCoveredSeasons(),
     ]);
     const queued = new Set(
       queue.records.map((r) => r.episodeId).filter((id): id is number => id != null)
@@ -939,6 +942,8 @@ export async function getIdleWantedEpisodes(): Promise<
       // ahead of real requests. A special someone explicitly asks for still
       // goes through the ordered queue, which retries it on its own.
       .filter((e) => e.monitored && e.seasonNumber !== 0 && !queued.has(e.id))
+      // Its files are arriving in a hand-added pack: searching would only count towards a give-up.
+      .filter((e) => !covered.has(`${e.seriesId}:${e.seasonNumber}`))
       .map((e) => {
         const seriesTitle = e.series?.title ?? titles.get(e.seriesId);
         return {
@@ -2835,4 +2840,118 @@ export async function getSonarrStuckImports(): Promise<string[]> {
     console.error("[sonarr] getSonarrStuckImports failed:", err);
     return [];
   }
+}
+
+/**
+ * Seasons a hand-added pack is downloading -- see manualPackRules.ts. The
+ * healer and the backlog adoption leave these alone: searching them only
+ * walks the season towards a give-up while its files are on their way.
+ * Empty (nothing covered) when qBittorrent cannot be read.
+ */
+async function packCoveredSeasons(): Promise<Set<string>> {
+  try {
+    const { getManualSeasonPacks } = await import("./qbittorrent");
+    const { packCoversSeason, seasonKey } = await import("./manualPackRules");
+    const packs = await getManualSeasonPacks();
+    return new Set(packs.filter((p) => packCoversSeason(p)).map((p) => seasonKey(p.seriesId, p.seasonNumber)));
+  } catch {
+    return new Set();
+  }
+}
+
+/** When each pack file was last handed to Sonarr, so a failed import is retried but not every pass. */
+const packImportAttempts = new Map<string, number>();
+const PACK_IMPORT_RETRY_MS = 30 * 60_000;
+/** Files per ManualImport command: each is a hardlink and a rename, so this stays quick. */
+const PACK_IMPORT_BATCH = 25;
+
+type ParsedRelease = {
+  parsedEpisodeInfo?: { quality?: unknown; languages?: { id: number; name: string }[] } | null;
+};
+
+/**
+ * Imports every finished file of every hand-added pack whose episode has no
+ * file yet. Returns how many were handed to Sonarr.
+ *
+ * Done here because Sonarr will not do it: the torrent is not in its queue,
+ * and its own folder scan gives up on a folder of more than 100 files whose
+ * name ("Primera Temporada") does not say which show it is. Each file is
+ * matched to its episode by the number in its own name and imported with
+ * Sonarr's ManualImport, in copy mode -- a hardlink on /data -- so the
+ * torrent keeps seeding from the original.
+ */
+export async function importManualPackFiles(): Promise<number> {
+  if (!isSonarrConfigured()) return 0;
+  const { getManualSeasonPacks } = await import("./qbittorrent");
+  const { packFileEpisode } = await import("./manualPackRules");
+  const packs = await getManualSeasonPacks();
+  let handed = 0;
+  for (const pack of packs) {
+    const ready = pack.files.filter((f) => f.done);
+    if (ready.length === 0) continue;
+    const [episodes, series] = await Promise.all([
+      sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?seriesId=${pack.seriesId}`),
+      sonarrFetch<{ originalLanguage?: { id: number; name: string } }>(`/api/v3/series/${pack.seriesId}`),
+    ]);
+    const byNumber = new Map(
+      episodes.filter((e) => e.seasonNumber === pack.seasonNumber).map((e) => [e.episodeNumber, e])
+    );
+    const now = Date.now();
+    const due = ready
+      .map((f) => {
+        const n = packFileEpisode(f.name, pack.seasonNumber);
+        const episode = n != null ? byNumber.get(n) : undefined;
+        return { path: `${pack.savePath}/${f.name}`, episode };
+      })
+      .filter(
+        (f): f is { path: string; episode: SonarrEpisode } =>
+          f.episode != null && !f.episode.hasFile && now - (packImportAttempts.get(f.path) ?? 0) > PACK_IMPORT_RETRY_MS
+      );
+    for (let i = 0; i < due.length; i += PACK_IMPORT_BATCH) {
+      const batch = due.slice(i, i + PACK_IMPORT_BATCH);
+      const files = await Promise.all(
+        batch.map(async (f) => {
+          const name = f.path.split("/").pop() ?? f.path;
+          const parsed = await sonarrFetch<ParsedRelease>(`/api/v3/parse?title=${encodeURIComponent(name)}`).catch(
+            () => null
+          );
+          const info = parsed?.parsedEpisodeInfo;
+          const languages = (info?.languages ?? []).filter((l) => l.name !== "Unknown");
+          return {
+            path: f.path,
+            seriesId: pack.seriesId,
+            episodeIds: [f.episode.id],
+            quality: info?.quality,
+            // A release name rarely states its language; the show's own is the safe guess.
+            languages: languages.length > 0 ? languages : series.originalLanguage ? [series.originalLanguage] : [],
+            releaseGroup: "",
+            indexerFlags: 0,
+            releaseType: "singleEpisode",
+          };
+        })
+      );
+      for (const f of batch) packImportAttempts.set(f.path, now);
+      await sonarrFetch(`/api/v3/command`, {
+        method: "POST",
+        body: JSON.stringify({ name: "ManualImport", importMode: "copy", files }),
+      });
+      handed += files.length;
+    }
+    if (due.length > 0) {
+      console.log(`[sonarr] importing ${due.length} file(s) of pack "${pack.name}" into series ${pack.seriesId}`);
+      forgetSeriesPlaces(pack.seriesId);
+      forgetShared(WANTED_KEY);
+    }
+  }
+  return handed;
+}
+
+const PACK_IMPORT_INTERVAL_MS = 60_000;
+let lastPackImportAt = 0;
+
+/** importManualPackFiles at most once a minute, in the background -- for the downloads panel's renders. */
+export function maybeImportManualPacks(): void {
+  if (Date.now() - lastPackImportAt < PACK_IMPORT_INTERVAL_MS) return;
+  lastPackImportAt = Date.now();
+  importManualPackFiles().catch((err) => console.error("[sonarr] pack import failed:", err));
 }

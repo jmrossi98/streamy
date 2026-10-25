@@ -6,8 +6,10 @@ import {
   getSonarrActiveDownloads,
   getSonarrCompletedEpisodes,
   maybeDrainEpisodeSearches,
+  maybeImportManualPacks,
   getSonarrSeriesPlaces,
   getSonarrWantedSeriesIds,
+  type SeriesPlaces,
 } from "@/lib/sonarr";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
@@ -30,6 +32,8 @@ import { foldPacks } from "@/lib/downloadGroupRules";
 import { episodeLabel, placeFromLabel } from "@/lib/wantedEpisodeRules";
 import { recentGiveUps } from "@/lib/wantedSearches";
 import { giveUpNotice } from "@/lib/searchGiveUpRules";
+import { getManualSeasonPacks, type ManualSeasonPack } from "@/lib/qbittorrent";
+import { describePack, packFileEpisode } from "@/lib/manualPackRules";
 
 /**
  * Every downloads panel, as one block.
@@ -47,6 +51,8 @@ export async function AdminDownloadsSections() {
   maybeHealStalledDownloads();
   // Resumes an ordered season search that a restart interrupted.
   maybeDrainEpisodeSearches();
+  // Files of a hand-added season pack land in the library as they finish.
+  maybeImportManualPacks();
 
   // What the panel may spend gathering before it gives up and renders what it
   // has. The active and queued rows come back in milliseconds; the completed
@@ -73,6 +79,7 @@ export async function AdminDownloadsSections() {
     pendingRequests,
     requestTimes,
     gameJobs,
+    manualPacks,
     gameWishlist,
     ownedGames,
     flashDownloads,
@@ -99,6 +106,7 @@ export async function AdminDownloadsSections() {
       })
       .catch(() => []),
     timed("gamarr downloads", withDeadline(getGameDownloads(), [], PANEL_DEADLINE_MS)),
+    timed("season packs", withDeadline(getManualSeasonPacks(), [] as ManualSeasonPack[], PANEL_DEADLINE_MS)),
     timed("gamarr wishlist", withDeadline(getWishlist(), [], PANEL_DEADLINE_MS)),
     timed("games list", withDeadline(getGamesList(), [], PANEL_DEADLINE_MS)),
     prisma.flashGame.findMany({
@@ -328,7 +336,11 @@ export async function AdminDownloadsSections() {
     ...(await timed("sonarr wanted", withDeadline(getSonarrWantedSeriesIds(), [], PANEL_DEADLINE_MS))),
   ];
   const places = await timed("series places", withDeadline(
-    getSonarrSeriesPlaces([...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId), ...activeShowIds]),
+    getSonarrSeriesPlaces([
+      ...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId),
+      ...activeShowIds,
+      ...manualPacks.map((p) => p.seriesId),
+    ]),
     new Map(),
     PANEL_DEADLINE_MS
   ));
@@ -414,6 +426,57 @@ export async function AdminDownloadsSections() {
       (d.episodeId != null ? series.episodes.get(d.episodeId) : undefined) ?? placeFromLabel(d.title) ?? undefined;
     d.seasonNumber = place?.seasonNumber ?? null;
     d.episodeNumber = place?.episodeNumber ?? null;
+  }
+
+  // Hand-added season packs (manualPackRules.ts): one row for the torrent in
+  // place of every queued, searching or given-up row of its season, which
+  // listed a 215-episode pack as 215 "Queued" episodes nothing was searching
+  // for. Episodes already imported from it stay, as finished rows; the pack's
+  // row goes once the transfer is done and nothing of the season is owed.
+  for (const pack of manualPacks) {
+    const series: SeriesPlaces | undefined = places.get(pack.seriesId);
+    const seasonOf = (d: DownloadRow) =>
+      d.seasonNumber ?? (d.episodeId != null ? series?.episodes.get(d.episodeId)?.seasonNumber : undefined);
+    const inSeason = (d: DownloadRow) =>
+      d.mediaType === "show" && d.externalId === pack.seriesId && seasonOf(d) === pack.seasonNumber;
+    const imported = downloads.filter((d) => d.completed && inSeason(d)).length;
+    const owed = series?.wanted.filter((e) => e.seasonNumber === pack.seasonNumber).length ?? 0;
+    for (let i = downloads.length - 1; i >= 0; i--) {
+      const d = downloads[i];
+      if (!d.completed && d.queueId == null && inSeason(d)) downloads.splice(i, 1);
+    }
+    if (pack.progress >= 1 && owed === 0) continue;
+    const files = pack.files.filter((f) => packFileEpisode(f.name, pack.seasonNumber) != null).length || pack.files.length;
+    downloads.unshift({
+      queueId: null,
+      externalId: pack.seriesId,
+      title: pack.name,
+      progress: Math.floor(pack.progress * 1000) / 10,
+      mediaType: "show",
+      completed: false,
+      protocol: "torrent",
+      sizeBytes: pack.sizeBytes,
+      importing: pack.progress >= 1,
+      startedAt: pack.addedOn ? new Date(pack.addedOn * 1000).toISOString() : null,
+      seriesTitle: series?.title ?? null,
+      seasonNumber: pack.seasonNumber,
+      episodeNumber: null,
+      downloadId: pack.hash,
+      packEpisodes: files,
+      packHash: pack.hash,
+      seriesEpisodes: series?.total ?? null,
+      notice: describePack({
+        progress: pack.progress,
+        dlSpeed: pack.dlSpeed,
+        etaSeconds: pack.etaSeconds,
+        connectedSeeds: pack.connectedSeeds,
+        swarmSeeds: pack.swarmSeeds,
+        state: pack.state,
+        filesDone: pack.files.filter((f) => f.done).length,
+        files,
+        imported,
+      }),
+    });
   }
 
   timing.finish(SLOW_RENDER_MS);
