@@ -6,6 +6,7 @@ import {
   MAX_CUSHION_SECONDS,
   behindThreshold,
   cushionForGap,
+  cushionShortfall,
 } from "../liveCushion";
 
 describe("EdgeArrivalTracker", () => {
@@ -43,6 +44,21 @@ describe("cushionForGap", () => {
   });
   it("honours a remembered floor for the channel", () => {
     expect(cushionForGap(1, 9)).toBe(9);
+  });
+});
+
+describe("cushionShortfall", () => {
+  it("rewinds by what the learned cushion lacks in the buffer", () => {
+    expect(cushionShortfall(4, 11)).toBe(7);
+  });
+  it("does nothing when the lead already covers the cushion, or nearly", () => {
+    expect(cushionShortfall(11, 11)).toBe(0);
+    expect(cushionShortfall(10, 11)).toBe(0);
+    expect(cushionShortfall(14, 11)).toBe(0);
+  });
+  it("never rewinds on a lead it cannot measure; a negative lead counts as none", () => {
+    expect(cushionShortfall(NaN, 6)).toBe(0);
+    expect(cushionShortfall(-3, 6)).toBe(6);
   });
 });
 

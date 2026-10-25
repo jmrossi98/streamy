@@ -67,6 +67,27 @@ export function cushionForGap(longestGapSeconds: number, floor: number = BASE_CU
   return Math.min(MAX_CUSHION_SECONDS, Math.max(BASE_CUSHION_SECONDS, floor, wanted));
 }
 
+/** The least a learned cushion must exceed the real lead by before the player rewinds to apply it. */
+export const REWIND_MIN_SECONDS = 2;
+
+/**
+ * How far the playhead must move back so the learned cushion is actually in
+ * the buffer: the cushion less the lead the viewer has now (edge minus
+ * playhead), or 0 when the difference isn't worth a visible jump.
+ *
+ * A grown cushion used to take effect only at the next seek, and stall
+ * recovery never rewinds (liveSeekTarget's forwardOnly) -- so on a feed that
+ * arrives in 6-9 s clumps every ~10 s (trex "UK| EPL LEEDS", 2026-10-25) the
+ * player learned an 11 s cushion, kept playing 4 s from the edge, and stalled
+ * on every gap anyway. One rewind of a few seconds, once, trades a short
+ * replay for no more stalls.
+ */
+export function cushionShortfall(leadSeconds: number, cushion: number): number {
+  if (!Number.isFinite(leadSeconds) || !Number.isFinite(cushion)) return 0;
+  const short = cushion - Math.max(0, leadSeconds);
+  return short >= REWIND_MIN_SECONDS ? short : 0;
+}
+
 /**
  * How far behind counts as genuinely behind (badge greys, drift correction
  * jumps forward).
