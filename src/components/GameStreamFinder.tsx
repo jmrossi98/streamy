@@ -156,6 +156,9 @@ export function GameStreamFinder({
       return;
     }
     autoTried.current = true;
+    // Adding takes a while (Jellyfin lists it, then it is tuned once to warm
+    // it up): tell the player what was found so it keeps holding and says so.
+    announceGameFeedSearch({ fixtureId, outcome: "adding", name: pick.name });
     void add(pick, true)
       .catch(() => false)
       .then((ok) => {

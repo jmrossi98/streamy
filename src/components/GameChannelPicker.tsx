@@ -70,8 +70,12 @@ type Props = {
  * pick beats `channel` precisely because the person overrode `channel` once
  * already.
  */
-/** How long the feed search may go without reporting a checked stream before a guess plays. */
-const FEED_SEARCH_SILENCE_MS = 60_000;
+/**
+ * How long the feed search may go without a report before a guess plays. Long
+ * enough to cover adding a feed once one is found: Jellyfin listing it (up to
+ * 15 s) and the warm-up tune (up to 40 s, see warmLiveChannel).
+ */
+const FEED_SEARCH_SILENCE_MS = 90_000;
 /** The longest a game page holds off playing in all, however many feeds are left to check. */
 const FEED_SEARCH_LIMIT_MS = 4 * 60_000;
 
@@ -95,6 +99,8 @@ export function GameChannelPicker({
   const [searchBeat, setSearchBeat] = useState(0);
   /** Why a guess is playing instead of the game's feed, once the search is over or out of time. */
   const [searchEnd, setSearchEnd] = useState<"none" | "timeout" | null>(null);
+  /** A feed that passed and is being added right now, by name (the spinner says so). */
+  const [addingName, setAddingName] = useState<string | null>(null);
   /** When the hold began, for the overall limit; set by the hold effect, never during render. */
   const heldSince = useRef<number | null>(null);
   /** Feeds added this visit, listed at once rather than after a reload. */
@@ -137,6 +143,12 @@ export function GameChannelPicker({
         setSearchBeat((n) => n + 1);
         return;
       }
+      if (d.outcome === "adding") {
+        setAddingName(d.name ?? null);
+        setSearchBeat((n) => n + 1);
+        return;
+      }
+      setAddingName(null);
       if (d.outcome === "none") {
         // A guess already playing on the time limit: the note now says the
         // search is over, not still going.
@@ -280,18 +292,29 @@ export function GameChannelPicker({
       ) : held || !selected ? (
         <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg bg-black text-center">
           <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" aria-hidden />
-          <p className="text-sm text-white/70">Finding the game&rsquo;s own stream…</p>
-          <p className="max-w-sm px-4 text-xs text-white/40">
-            Nothing in the lineup is confirmed to carry this game, so the providers&rsquo; streams for it are being
-            checked one by one
-            {searchProgress && searchProgress.total > 0 && (
-              <>
-                {" "}
-                ({searchProgress.checked} of {searchProgress.total} done)
-              </>
-            )}
-            . Pick a channel below to watch one of them now instead.
-          </p>
+          {addingName ? (
+            <>
+              <p className="text-sm text-white/70">Found {addingName} — adding it to Live TV…</p>
+              <p className="max-w-sm px-4 text-xs text-white/40">
+                It plays here by itself as soon as it&rsquo;s ready, usually within a minute.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-white/70">Finding the game&rsquo;s own stream…</p>
+              <p className="max-w-sm px-4 text-xs text-white/40">
+                Nothing in the lineup is confirmed to carry this game, so the providers&rsquo; streams for it are
+                being checked one by one
+                {searchProgress && searchProgress.total > 0 && (
+                  <>
+                    {" "}
+                    ({searchProgress.checked} of {searchProgress.total} done)
+                  </>
+                )}
+                . Pick a channel below to watch one of them now instead.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <LivePlayer
