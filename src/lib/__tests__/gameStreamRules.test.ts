@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gameStreamQueries, gameStreamScore, rankGameStreams, TALK_SHOW_SCORE } from "../gameStreamRules";
+import { gameStreamQueries, gameStreamScore, namesLeague, rankGameStreams, TALK_SHOW_SCORE } from "../gameStreamRules";
 
 const sharks = {
   league: "NHL",
@@ -124,5 +124,18 @@ describe("Grizzlies at Warriors, 2026-10-23: an NHL Sharks picture on an NBA gam
     expect(gameStreamScore(show.name, fixture)).toBe(TALK_SHOW_SCORE);
     expect(rankGameStreams([show, streams[3]], fixture, { now }).map((s) => s.id)).toEqual([84942]);
     expect(rankGameStreams([show], fixture, { now }).map((s) => s.id)).toEqual([7]);
+  });
+});
+
+describe("namesLeague", () => {
+  const leeds = { league: "Premier League", awayTeam: "Leeds United", homeTeam: "Sunderland" };
+
+  it("reads a provider's league abbreviation, so a per-team EPL feed scores as the game", () => {
+    expect(namesLeague("UK| EPL LEEDS", "Premier League")).toBe(true);
+    expect(namesLeague("UK: EPL SUNDERLAND", "Premier League")).toBe(true);
+    expect(namesLeague("US| SUNDERLAND TIL I DIE", "Premier League")).toBe(false);
+    expect(gameStreamScore("UK| EPL LEEDS", leeds)).toBe(1);
+    expect(gameStreamScore("US| SUNDERLAND TIL I DIE", leeds)).toBe(2);
+    expect(gameStreamScore("UK-BBC| BBC RADIO LEEDS", leeds)).toBe(2);
   });
 });

@@ -46,6 +46,25 @@ function city(team: string | null | undefined): string | null {
 const has = (name: string, phrase: string) => new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(name);
 
 /**
+ * What providers call each league in a stream name, besides the schedule's
+ * label: "UK| EPL LEEDS" is a Premier League feed, not just a team's name
+ * (2026-10-25: scored as one team only, so it was never auto-added and Leeds
+ * at Sunderland played a regional NBC channel).
+ */
+const LEAGUE_NAMES: Record<string, string[]> = {
+  "Premier League": ["EPL", "Premier League", "PL"],
+  "Champions League": ["UCL", "Champions League"],
+  "College Football": ["NCAAF", "NCAA Football", "CFB"],
+  "College Basketball": ["NCAAB", "NCAA Basketball", "CBB"],
+  "Formula 1": ["F1", "Formula One"],
+};
+
+/** Whether a stream name says which league it is for. */
+export function namesLeague(name: string, league: string): boolean {
+  return (LEAGUE_NAMES[league] ?? [league]).some((l) => has(name, l));
+}
+
+/**
  * What to search the catalogue for: what tells each side apart (teamNames.ts
  * -- "leeds", "man utd", not the "United" both share), each city, each
  * carrying network.
@@ -91,7 +110,7 @@ function gameStreamMatch(name: string, f: GameFixture): number | null {
   const teams = sides.filter(([t, o]) => nameHasTeam(name, t, o)).length;
   const network = (f.broadcasts ?? []).some((b) => channelCarriesNetwork(name, b));
   if (sides.length === 2 && teams === 2) return 0;
-  if (teams === 1 && (has(name, f.league) || network)) return 1;
+  if (teams === 1 && (namesLeague(name, f.league) || network)) return 1;
   if (teams === 1) return 2;
   if (network) return 3;
   const cities = [city(f.awayTeam), city(f.homeTeam)].filter((c): c is string => !!c);
