@@ -138,6 +138,9 @@ export function GameChannelPicker({
         return;
       }
       if (d.outcome === "none") {
+        // A guess already playing on the time limit: the note now says the
+        // search is over, not still going.
+        setSearchEnd((prev) => (prev === "timeout" ? "none" : prev));
         setHeld((wasHeld) => {
           if (wasHeld) setSearchEnd("none");
           return false;
