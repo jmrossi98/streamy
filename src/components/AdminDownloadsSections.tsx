@@ -28,11 +28,12 @@ import { withDeadline } from "@/lib/withDeadline";
 import { startRenderTiming } from "@/lib/renderTiming";
 import { getClientProgress } from "@/lib/clientProgress";
 import { withClientProgress } from "@/lib/liveProgressRules";
+import { withTorrentTransfer } from "@/lib/torrentStatusRules";
 import { foldPacks } from "@/lib/downloadGroupRules";
 import { episodeLabel, placeFromLabel } from "@/lib/wantedEpisodeRules";
 import { recentGiveUps } from "@/lib/wantedSearches";
 import { giveUpNotice } from "@/lib/searchGiveUpRules";
-import { getManualSeasonPacks, type ManualSeasonPack } from "@/lib/qbittorrent";
+import { getManualSeasonPacks, getTorrentTransfers, type ManualSeasonPack } from "@/lib/qbittorrent";
 import { describePack, packFileEpisode } from "@/lib/manualPackRules";
 
 /**
@@ -73,6 +74,7 @@ export async function AdminDownloadsSections() {
     radarrQueue,
     sonarrQueue,
     clientProgress,
+    torrentTransfers,
     radarrCompleted,
     sonarrCompleted,
     queuedSearches,
@@ -89,6 +91,8 @@ export async function AdminDownloadsSections() {
     // The clients' own figure for each transfer: the *arrs' lags their serial
     // command queue, minutes behind a season search (liveProgressRules.ts).
     timed("client progress", withDeadline(getClientProgress(), new Map(), PANEL_DEADLINE_MS)),
+    // Seeders, speed, time left for each torrent: the same qBittorrent read.
+    timed("torrent status", withDeadline(getTorrentTransfers(), new Map(), PANEL_DEADLINE_MS)),
     timed("radarr completed", withDeadline(getRadarrCompletedMovies(), [], PANEL_DEADLINE_MS)),
     timed("sonarr completed", withDeadline(getSonarrCompletedEpisodes(), [], PANEL_DEADLINE_MS)),
     // In the same wave: these rows sit at the top of the panel, so resolving
@@ -116,8 +120,8 @@ export async function AdminDownloadsSections() {
     }),
   ]);
 
-  const radarrDownloads = withClientProgress(radarrQueue, clientProgress);
-  const sonarrDownloads = withClientProgress(sonarrQueue, clientProgress);
+  const radarrDownloads = withTorrentTransfer(withClientProgress(radarrQueue, clientProgress), torrentTransfers);
+  const sonarrDownloads = withTorrentTransfer(withClientProgress(sonarrQueue, clientProgress), torrentTransfers);
 
   // Straight from gamarr's own downloads/wishlist, not the deduped public
   // games list -- that list deliberately folds a *completed* job into
@@ -465,7 +469,7 @@ export async function AdminDownloadsSections() {
       packEpisodes: files,
       packHash: pack.hash,
       seriesEpisodes: series?.total ?? null,
-      notice: describePack({
+      transfer: describePack({
         progress: pack.progress,
         dlSpeed: pack.dlSpeed,
         etaSeconds: pack.etaSeconds,

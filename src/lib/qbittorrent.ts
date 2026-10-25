@@ -13,6 +13,7 @@
 import { mustKeepSeeding } from "./privateSeedRules";
 import { cached } from "./ttlCache";
 import { progressKey, type ClientProgress } from "./liveProgressRules";
+import type { TorrentTransfer } from "./torrentStatusRules";
 import { forgetShared, sharedRead } from "./sharedRead";
 
 const QBITTORRENT_URL = process.env.QBITTORRENT_URL?.replace(/\/$/, "");
@@ -220,6 +221,8 @@ export type TorrentHealth = {
   connectedSeeds: number;
   swarmSeeds: number;
   dlSpeed: number;
+  /** qBittorrent's estimate, seconds; 8640000 means it has none. */
+  etaSeconds?: number | null;
   /** When a piece last moved, in unix seconds. */
   lastActivityAt?: number | null;
   /** The client category: "tv-sonarr", "radarr", ... */
@@ -260,6 +263,7 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
       num_seeds?: number;
       num_complete?: number;
       dlspeed?: number;
+      eta?: number;
       last_activity?: number;
       category?: string;
       added_on?: number;
@@ -272,6 +276,7 @@ export async function getTorrentHealth(): Promise<TorrentHealth[] | null> {
       connectedSeeds: t.num_seeds ?? 0,
       swarmSeeds: t.num_complete ?? 0,
       dlSpeed: t.dlspeed ?? 0,
+      etaSeconds: t.eta ?? null,
       lastActivityAt: t.last_activity && t.last_activity > 0 ? t.last_activity : null,
       category: t.category ?? "",
       addedOn: t.added_on && t.added_on > 0 ? t.added_on : null,
@@ -351,15 +356,47 @@ const PROGRESS_TTL_MS = 2_000;
  * and Sonarr carry for a torrent. Empty when the client is not configured or
  * unreadable (the *arr's own figure then stands, see liveProgressRules.ts).
  */
+/** Every torrent, read once per tick for the panel's progress and status lines. */
+function sharedTorrentHealth(): Promise<TorrentHealth[]> {
+  return sharedRead("qbt:torrents:health", PROGRESS_TTL_MS, async () => (await getTorrentHealth()) ?? []);
+}
+
 export async function getTorrentProgress(): Promise<ClientProgress> {
   if (!isQbittorrentConfigured()) return new Map();
   try {
-    return await sharedRead("qbt:torrents:progress", PROGRESS_TTL_MS, async () => {
-      const torrents = (await getTorrentHealth()) ?? [];
-      return new Map(torrents.map((t) => [progressKey(t.hash), t.progress * 100]));
-    });
+    const torrents = await sharedTorrentHealth();
+    return new Map(torrents.map((t) => [progressKey(t.hash), t.progress * 100]));
   } catch (err) {
     console.error("[qbittorrent] could not read torrent progress:", err);
+    return new Map();
+  }
+}
+
+/**
+ * Seeders, speed and time left for every torrent, by info hash, for the
+ * status line under a torrent row (torrentStatusRules.ts). Empty when
+ * qBittorrent is not configured or unreadable: the row then shows its
+ * percentage alone, as before.
+ */
+export async function getTorrentTransfers(): Promise<Map<string, TorrentTransfer>> {
+  if (!isQbittorrentConfigured()) return new Map();
+  try {
+    const torrents = await sharedTorrentHealth();
+    return new Map(
+      torrents.map((t) => [
+        progressKey(t.hash),
+        {
+          progress: t.progress,
+          dlSpeed: t.dlSpeed,
+          etaSeconds: t.etaSeconds ?? null,
+          connectedSeeds: t.connectedSeeds,
+          swarmSeeds: t.swarmSeeds,
+          state: t.state,
+        },
+      ])
+    );
+  } catch (err) {
+    console.error("[qbittorrent] could not read torrent status:", err);
     return new Map();
   }
 }
