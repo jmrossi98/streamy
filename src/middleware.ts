@@ -47,6 +47,6 @@ export const config = {
   // /api/flash/[fileName], which checks the session itself and is not
   // exempted here.
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|login|dev|test-assets|ruffle).*)",
+    "/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|manifest\\.webmanifest|login|dev|test-assets|ruffle).*)",
   ],
 };

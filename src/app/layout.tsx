@@ -21,6 +21,10 @@ export const metadata: Metadata = {
   title: "Streamy - Watch TV Shows & Movies Online",
   description: "Watch unlimited movies and TV shows. Stream anywhere. Cancel anytime.",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Streamy" },
+  // Next 16 writes the standard `mobile-web-app-capable` tag for `capable`;
+  // iOS before 17.4 only reads the apple- prefixed one, and without it Add to
+  // Home Screen opens Streamy inside Safari's chrome instead of full-screen.
+  other: { "apple-mobile-web-app-capable": "yes" },
 };
 
 export const viewport: Viewport = {
