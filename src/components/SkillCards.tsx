@@ -13,7 +13,9 @@ import {
   kindInfo,
   parseRunTurn,
   POLL_MS,
+  createStartGuard,
   proposalReducer,
+  proposalRunView,
   queuedLabel,
   runCardReducer,
   shouldPoll,
@@ -177,14 +179,109 @@ const CARD = "mt-2 space-y-2 rounded border border-white/15 bg-black/30 p-2.5 te
 
 // ------------------------------------------------------------- proposal
 
+/**
+ * The proposal card once its Run tap has a run behind it: derived from the
+ * runner's own answer on every render (GET /runs/<id>), never from state that
+ * a re-render or reload could lose. Queued (with Remove from queue), running
+ * with its heartbeat, or finished with its final status and the report links.
+ */
+function LinkedRunStatus({ runId, skill }: { runId: string; skill: string }) {
+  const [state, dispatch] = useReducer(runCardReducer, initialRunCard);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const polling = shouldPoll(state, "running");
+
+  useEffect(() => {
+    if (!polling) return;
+    let live = true;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/admin/skills/runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
+        const body = (await res.json().catch(() => ({}))) as { run?: SkillRun; error?: string };
+        if (!live) return;
+        if (res.ok && body.run) dispatch({ type: "polled", run: body.run });
+        else dispatch({ type: "pollFailed", error: body.error ?? `HTTP ${res.status}` });
+      } catch {
+        if (live) dispatch({ type: "pollFailed", error: "Lost connection to Streamy." });
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [polling, runId]);
+
+  async function cancel() {
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const res = await fetch(`/api/admin/skills/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setCancelError(body.error ?? `HTTP ${res.status}`);
+      }
+    } catch {
+      setCancelError("Lost connection to Streamy.");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  const view = proposalRunView(state.run);
+  return (
+    <div className={CARD} role="group" aria-label={`Proposed skill ${skill}, run ${runId}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-white/90">{skill}</span>
+        <Badge tone={view.kind === "finished" ? statusTone(view.status) : view.kind === "running" ? "info" : "neutral"}>
+          {view.kind === "checking" ? "Checking…" : view.label}
+        </Badge>
+      </div>
+      {view.kind === "queued" && <p className="text-[11px] text-white/45">Waiting for the run ahead to finish. This one starts by itself.</p>}
+      {view.kind === "running" && view.heartbeat && <p className="text-[11px] text-white/45">{view.heartbeat}</p>}
+      {view.kind === "finished" && view.links.length > 0 && (
+        <ul className="space-y-0.5">
+          {view.links.map((l) => (
+            <li key={l}>
+              <a href={l} target="_blank" rel="noreferrer" className="break-all text-sky-300 underline-offset-2 hover:underline">
+                Report: {l}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {view.kind === "finished" && view.links.length === 0 && <p className="text-[11px] text-white/45">The report is in the run&apos;s card below.</p>}
+      {state.error && polling && state.misses > 2 && <p className="text-amber-300/80">Can&apos;t check on the run: {state.error}</p>}
+      {state.stalled && (
+        <p className="flex flex-wrap items-center gap-2 text-amber-300">
+          Stopped checking on this run ({state.error}).
+          <Button variant="secondary" size="xs" onClick={() => dispatch({ type: "retry" })}>
+            Check again
+          </Button>
+        </p>
+      )}
+      {cancelError && <p className="text-amber-300">{cancelError}</p>}
+      {view.kind === "queued" && (
+        <Button variant="danger" size="xs" disabled={cancelling} onClick={() => void cancel()}>
+          {cancelling ? "Removing…" : "Remove from queue"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function SkillProposalCard({
   proposal,
+  linkedRunId,
   alreadyRun,
   locked,
   onStart,
   onFollow,
 }: {
   proposal: SkillProposal;
+  /** The run this proposal's Run tap started, from the saved chat; null when none. */
+  linkedRunId: string | null;
   alreadyRun: boolean;
   locked: boolean;
   onStart: (skill: string, args: Record<string, string>) => Promise<StartOutcome>;
@@ -192,7 +289,10 @@ export function SkillProposalCard({
 }) {
   const skills = useSkills();
   const [state, dispatch] = useReducer(proposalReducer, { phase: "idle" });
+  // Two taps in one frame both see an enabled button; this lets only the first reach the runner.
+  const [startOnce] = useState(() => createStartGuard((go: () => Promise<StartOutcome>) => go()));
 
+  if (linkedRunId) return <LinkedRunStatus runId={linkedRunId} skill={proposal.skill} />;
   if (state.phase === "dismissed") return <p className="mt-2 text-[11px] text-white/35">Dismissed: {proposal.skill}</p>;
   if (alreadyRun || state.phase === "started") {
     const queued = state.phase === "started" && state.queued;
@@ -220,7 +320,7 @@ export function SkillProposalCard({
   async function run() {
     if (!checked.ok) return;
     dispatch({ type: "run" });
-    const r = await onStart(proposal.skill, checked.args);
+    const r = await startOnce(() => onStart(proposal.skill, checked.args));
     dispatch(r.ok ? { type: "started", runId: r.runId, queued: r.queued } : { type: "startFailed", error: r.error, busyRunId: r.busyRunId });
   }
 

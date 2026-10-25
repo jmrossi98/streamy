@@ -535,6 +535,69 @@ export function proposalReducer(s: ProposalState, e: ProposalEvent): ProposalSta
   }
 }
 
+// A proposal's link to the run its Run tap started. Kept on the assistant's
+// turn in the saved chat (chatSessionRules ChatTurn.proposalRuns), keyed by
+// the proposal's block index in that message, so the card is derived from the
+// chat on every render and a reload or a later message cannot lose it.
+
+/** A message holds one propose_mediabox_skill block today; its index is 0. */
+export const PROPOSAL_BLOCK = 0;
+
+export type ProposalRuns = Record<string, string>;
+
+/** Coerces a stored link map: numeric block keys to valid run ids, the rest dropped. Null when none are left. */
+export function normalizeProposalRuns(raw: unknown): ProposalRuns | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: ProposalRuns = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (/^\d{1,3}$/.test(k) && isRunId(v)) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** The run linked to block `block` of a message, or null: only then does the card stop offering Run. */
+export function linkedRunId(turn: { proposalRuns?: ProposalRuns } | undefined, block: number = PROPOSAL_BLOCK): string | null {
+  return turn?.proposalRuns?.[String(block)] ?? null;
+}
+
+/** What a proposal card shows for its linked run, from the runner's latest answer (null: none yet). */
+export type ProposalRunView =
+  | { kind: "checking" }
+  | { kind: "queued"; label: string }
+  | { kind: "running"; label: string; heartbeat: string | null; waiting: boolean }
+  | { kind: "finished"; label: string; status: SkillRunStatus; links: string[] };
+
+export function proposalRunView(run: SkillRun | null): ProposalRunView {
+  if (!run) return { kind: "checking" };
+  if (run.status === "queued") return { kind: "queued", label: queuedLabel(run.position) };
+  if (run.status === "running") {
+    return {
+      kind: "running",
+      label: run.waiting ? "Waiting for you" : "Running",
+      heartbeat: run.heartbeat ? heartbeatText(run.heartbeat) : null,
+      waiting: !!run.waiting,
+    };
+  }
+  return { kind: "finished", label: run.status === "succeeded" ? "Succeeded" : run.status[0].toUpperCase() + run.status.slice(1), status: run.status, links: run.links };
+}
+
+/**
+ * Wraps a start request so a second tap while the first is in flight gets the
+ * same answer instead of a second POST /runs. A ref-style guard, not component
+ * state: two taps in one frame both see the pre-render button as enabled.
+ */
+export function createStartGuard<A extends unknown[], T>(start: (...args: A) => Promise<T>): (...args: A) => Promise<T> {
+  let inFlight: Promise<T> | null = null;
+  return (...args: A) => {
+    if (inFlight) return inFlight;
+    const p = start(...args).finally(() => {
+      inFlight = null;
+    });
+    inFlight = p;
+    return p;
+  };
+}
+
 /** The run card: polls while running, then hands the result to the chat once. */
 export type RunCardState = {
   run: SkillRun | null;
