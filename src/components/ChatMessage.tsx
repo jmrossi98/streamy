@@ -137,7 +137,7 @@ function InlineToken({ token }: { token: Token }): ReactNode {
       );
     case "codespan":
       return (
-        <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[0.85em] text-white/90">
+        <code className="break-all rounded bg-white/10 px-1.5 py-0.5 font-mono text-[0.85em] text-white/90">
           {(token as Tokens.Codespan).text}
         </code>
       );

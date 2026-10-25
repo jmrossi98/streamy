@@ -993,7 +993,11 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
         <div
           ref={scrollRef}
           onScroll={onTranscriptScroll}
-          className={`relative overflow-y-auto ${gutter} ${
+          // overflow-x-hidden: the transcript scrolls one way. A long path or
+          // URL wraps (break-words below); code blocks and tables scroll
+          // sideways inside their own box. Without this, one wide line let the
+          // whole chat be dragged sideways on a phone (Jake, 2026-10-25).
+          className={`relative overflow-y-auto overflow-x-hidden overscroll-x-none ${gutter} ${
             // Fixed, not max-h: a max-height collapses to nothing on an empty
             // transcript, so the panel jumped in size as soon as you asked
             // anything. Shorter on a phone, where 34rem is most of the screen.
@@ -1110,8 +1114,8 @@ export function OpsChat({ slots: initialSlots, statusError, searchAvailable, ful
                 <div
                   className={
                     isUser
-                      ? "whitespace-pre-wrap rounded-2xl rounded-br-md bg-white/10 px-4 py-2.5 text-[15px] leading-relaxed text-white"
-                      : "text-[15px] leading-7 text-white/90"
+                      ? "whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-white/10 px-4 py-2.5 text-[15px] leading-relaxed text-white"
+                      : "break-words text-[15px] leading-7 text-white/90"
                   }
                 >
                   {t.content ? (
