@@ -3,18 +3,20 @@
  *
  * Streamy is the source of truth (decided 2026-09-30): every approved Streamy
  * user has a Jellyfin account of the same name, and its password is set to
- * the Streamy one whenever Streamy sees the plaintext -- a successful login or
- * a password change. So one login works on the Roku and in Streamy, and each
- * person's watch progress syncs only with their own Jellyfin account.
+ * the Streamy one at the first login after the account is linked and after
+ * each Streamy password change (never on every login: see passwordPushNeeded).
+ * So one login works on the Roku and in Streamy, and each person's watch
+ * progress syncs only with their own Jellyfin account.
  *
  * Password changes made inside Jellyfin do not flow back; the next Streamy
- * login overwrites them. New Jellyfin accounts are created with Jellyfin's
+ * password change overwrites them. New Jellyfin accounts are created with Jellyfin's
  * defaults: not an administrator, all libraries, remote access.
  *
  * Nothing here ever throws or blocks a login: Jellyfin lives on mediabox,
  * which can be asleep, and Streamy must keep working when it is.
  */
 import { prisma } from "./db";
+import { passwordPushNeeded } from "./jellyfinAccountRules";
 
 const TIMEOUT_MS = 8_000;
 
@@ -60,26 +62,37 @@ export async function syncJellyfinAccount(streamyUserId: string, name: string, p
       if (!id) return;
       console.log(`[jellyfin-accounts] created Jellyfin account for "${name}"`);
     } else {
+      const row = await prisma.user.findUnique({
+        where: { id: streamyUserId },
+        select: { jellyfinUserId: true, jellyfinPasswordSyncedAt: true, passwordChangedAt: true },
+      });
+      if (!passwordPushNeeded(row, id)) {
+        await linkRow(streamyUserId, id);
+        return;
+      }
       // An admin API key may set any user's password without the current one.
       await jf(`/Users/Password?userId=${encodeURIComponent(id)}`, {
         method: "POST",
         body: JSON.stringify({ NewPw: password }),
       });
     }
-    await linkRow(streamyUserId, id);
+    await linkRow(streamyUserId, id, new Date());
   } catch (err) {
     console.error(`[jellyfin-accounts] sync failed for "${name}":`, err instanceof Error ? err.message : err);
   }
 }
 
-async function linkRow(streamyUserId: string, jellyfinUserId: string): Promise<void> {
+async function linkRow(streamyUserId: string, jellyfinUserId: string, passwordSyncedAt?: Date): Promise<void> {
   // Unique: a Jellyfin account belongs to one Streamy user. Clear any stale
   // claim first (an account renamed or recreated on either side).
   await prisma.user.updateMany({
     where: { jellyfinUserId, NOT: { id: streamyUserId } },
     data: { jellyfinUserId: null },
   });
-  await prisma.user.update({ where: { id: streamyUserId }, data: { jellyfinUserId } });
+  await prisma.user.update({
+    where: { id: streamyUserId },
+    data: passwordSyncedAt ? { jellyfinUserId, jellyfinPasswordSyncedAt: passwordSyncedAt } : { jellyfinUserId },
+  });
   idCache.set(streamyUserId, { id: jellyfinUserId, at: Date.now() });
 }
 
