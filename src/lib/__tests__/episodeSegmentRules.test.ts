@@ -89,16 +89,36 @@ describe("parseSegments", () => {
   });
 });
 
+describe("recaps and previews", () => {
+  const seg = (Type: string, a: number, b: number) => ({ Type, StartTicks: a * T, EndTicks: b * T });
+  it("drops a recap in an episode 1: Edgerunners S1E1's cold open was marked as one", () => {
+    const segs = [seg("Recap", 0, 123)];
+    expect(parseSegments(segs, null, RUNTIME, 1).recap).toBeNull();
+    expect(parseSegments(segs, null, RUNTIME, 2).recap).toEqual({ start: 0, end: 123 });
+    expect(parseSegments(segs, null, RUNTIME).recap).toEqual({ start: 0, end: 123 });
+  });
+  it("drops a recap that starts well into the episode", () => {
+    expect(parseSegments([seg("Recap", 40, 90)], null, RUNTIME, 3).recap).toBeNull();
+  });
+  it("reads a Next-time preview as the start of the outro, merged with the credits after it", () => {
+    const ep = 2564 * T;
+    expect(parseSegments([seg("Preview", 2532, 2558)], null, ep).credits).toEqual({ start: 2532, end: 2558 });
+    expect(parseSegments([seg("Preview", 2532, 2548), seg("Outro", 2548, 2564)], null, ep).credits).toEqual({ start: 2532, end: 2564 });
+    expect(parseSegments([seg("Outro", 2548, 2564), seg("Preview", 2532, 2548)], null, ep).credits).toEqual({ start: 2532, end: 2564 });
+  });
+});
+
 describe("skipOfferAt", () => {
   const segs = { intro: { start: 30, end: 60 }, recap: { start: 0, end: 25 }, credits: null };
   it("offers the intro while it plays", () => {
     expect(skipOfferAt(30, segs)).toEqual({ kind: "intro", label: "Skip intro", to: 60 });
   });
-  it("never offers the recap: a first episode's cold open gets marked as one", () => {
-    expect(skipOfferAt(5, segs)).toBeNull();
-    expect(skipOfferAt(5, { ...NO_SEGMENTS, recap: { start: 0, end: 123 } })).toBeNull();
+  it("offers the recap while it plays (Real Housewives: a recap and no intro)", () => {
+    expect(skipOfferAt(5, segs)).toEqual({ kind: "recap", label: "Skip recap", to: 25 });
+    expect(skipOfferAt(5, { ...NO_SEGMENTS, recap: { start: 0, end: 95.2 } })).toEqual({ kind: "recap", label: "Skip recap", to: 95.2 });
   });
-  it("offers nothing outside the intro, or in its last second", () => {
+  it("offers nothing between them, outside them, or in their last second", () => {
+    expect(skipOfferAt(24.5, segs)).toBeNull();
     expect(skipOfferAt(27, segs)).toBeNull();
     expect(skipOfferAt(59.5, segs)).toBeNull();
     expect(skipOfferAt(100, NO_SEGMENTS)).toBeNull();

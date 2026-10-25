@@ -885,12 +885,12 @@ export async function getJellyfinSegments(itemId: string): Promise<EpisodeSegmen
     // List route for the chapters, for the reason given in getJellyfinSubtitleTracks.
     const [segments, items] = await Promise.all([
       jellyfinFetch<{ Items?: JellyfinSegment[] }>(`/MediaSegments/${itemId}`).catch(() => ({ Items: [] })),
-      jellyfinFetch<{ Items: { RunTimeTicks?: number; Chapters?: JellyfinChapter[] }[] }>(
+      jellyfinFetch<{ Items: { RunTimeTicks?: number; IndexNumber?: number; Chapters?: JellyfinChapter[] }[] }>(
         `/Items?Ids=${itemId}&Fields=Chapters`
       ),
     ]);
     const item = items.Items[0];
-    return parseSegments(segments.Items, item?.Chapters, item?.RunTimeTicks);
+    return parseSegments(segments.Items, item?.Chapters, item?.RunTimeTicks, item?.IndexNumber ?? null);
   } catch (err) {
     console.error(`[jellyfin] getJellyfinSegments failed for item ${itemId}:`, err);
     return NO_SEGMENTS;

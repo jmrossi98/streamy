@@ -7,6 +7,11 @@
  * 2026-10-17; see mediabox-infra's README). An episode it has not reached
  * yet falls back to the file's own chapter names ("Intro", "Credits"), which
  * about one episode in twelve has.
+ *
+ * mediabox's segment-guard.py corrects the plugin's markers before they get
+ * here: recaps that ran on into the episode are trimmed, intros it missed are
+ * found by matching the season's theme audio, and a "Next time on..."
+ * preview is marked from the subtitles (2026-10-25).
  */
 
 export type Span = { start: number; end: number };
@@ -27,6 +32,9 @@ export type JellyfinChapter = { Name?: string; StartPositionTicks?: number };
 // The plugin's own default patterns, trimmed to the two kinds used here.
 const INTRO_CHAPTER = /(^|\s)(intro|introduction|op|opening|title sequence)(?![\s:]+end)(\s|:|$)/i;
 const CREDITS_CHAPTER = /(^|\s)(credits?|end credits|ed|ending|outro)(?![\s:]+end)(\s|:|$)/i;
+
+/** A recap has to start this close to the beginning; one further in is a misread. */
+const RECAP_LATEST_START_SECONDS = 15;
 
 /** Credits shorter than this, or starting before this share of the runtime, are not trusted. */
 const MIN_CREDITS_SECONDS = 10;
@@ -78,11 +86,21 @@ function chapterSpans(chapters: JellyfinChapter[], runtimeTicks: number | null):
  * named like an intro or credits fills in whatever they lack. Credits that
  * would start in the first half are dropped -- a mislabelled chapter must
  * not end an episode early.
+ *
+ * "credits" is everything after the story ends: a "Next time on..." preview
+ * (Jellyfin's Preview type) and the end credits after it, as one span from
+ * whichever starts first. Housewives episodes end with a 30 s preview the
+ * plugin never marks, so the next episode was offered late or not at all.
+ *
+ * A recap is not trusted in an episode 1 -- there is nothing before it to
+ * recap. Intro Skipper marked Edgerunners S1E1's first two minutes, its cold
+ * open, as one (2026-10-19).
  */
 export function parseSegments(
   segments: JellyfinSegment[] | null | undefined,
   chapters: JellyfinChapter[] | null | undefined,
-  runtimeTicks: number | null | undefined
+  runtimeTicks: number | null | undefined,
+  episodeNumber: number | null = null
 ): EpisodeSegments {
   const out: EpisodeSegments = { intro: null, recap: null, credits: null };
   for (const s of segments ?? []) {
@@ -90,8 +108,13 @@ export function parseSegments(
     if (!sp) continue;
     if (s.Type === "Intro" && !out.intro) out.intro = sp;
     else if (s.Type === "Recap" && !out.recap) out.recap = sp;
-    else if (s.Type === "Outro" && !out.credits) out.credits = sp;
+    else if (s.Type === "Outro" || s.Type === "Preview") {
+      out.credits = out.credits
+        ? { start: Math.min(out.credits.start, sp.start), end: Math.max(out.credits.end, sp.end) }
+        : sp;
+    }
   }
+  if (out.recap && (episodeNumber === 1 || out.recap.start > RECAP_LATEST_START_SECONDS)) out.recap = null;
   for (const c of chapterSpans(chapters ?? [], runtimeTicks ?? null)) {
     if (!out.intro && (INTRO_CHAPTER.test(c.name) || isOpeningCredits(c, runtimeTicks ?? null))) {
       out.intro = span(c.start, c.end);
@@ -108,19 +131,21 @@ export function parseSegments(
   return out;
 }
 
-export type SkipOffer = { kind: "intro"; label: string; to: number };
+export type SkipOffer = { kind: "intro" | "recap"; label: string; to: number };
 
 /**
  * The skip button to show at `t`, if any. Gone a second before the span
  * ends, so it never jumps nowhere.
  *
- * Only the intro is offered. Intro Skipper's recap markers are not reliable
- * enough to put a button on: Cyberpunk Edgerunners S1E1 carried a "recap"
- * over its first two minutes, which is the cold open of a first episode, so
- * "Skip recap" came up before anything had started (2026-10-19). The recap
- * span is still parsed and kept for anything else that wants it.
+ * Recaps were taken off on 2026-10-19 after Edgerunners S1E1's cold open
+ * came up as one, and with them every real "Previously on" -- most Real
+ * Housewives episodes carry a recap and no intro, so they had no button at
+ * all (reported 2026-10-25). They are back behind the guards in
+ * parseSegments and segment-guard.py's trimming.
  */
 export function skipOfferAt(t: number, segs: EpisodeSegments): SkipOffer | null {
+  const r = segs.recap;
+  if (r && t >= r.start && t < r.end - 1) return { kind: "recap", label: "Skip recap", to: r.end };
   const s = segs.intro;
   if (s && t >= s.start && t < s.end - 1) return { kind: "intro", label: "Skip intro", to: s.end };
   return null;
