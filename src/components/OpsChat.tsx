@@ -35,6 +35,7 @@ import {
 import { LLM_ROUTING_EVENT, cloudSlots, type ChatSlots, type ResolvedRoutes } from "@/lib/chatSlots";
 import { ActionProposal } from "./ActionProposal";
 import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
+import { HISTORY_IDLE, shouldIntercept, stepHistory, userMessages, type HistoryPos } from "@/lib/composerHistory";
 import { buildRunTurnRequest, buildSaveRequest, createSaveQueue } from "@/lib/chatSaver";
 import {
   findRunTurn,
@@ -220,6 +221,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Where the ArrowUp walk through earlier messages is; idle when not walking.
+  const historyPosRef = useRef<HistoryPos>(HISTORY_IDLE);
   // Read by the skill handlers, which resolve after a fetch and must add to
   // the transcript as it is then, not as it was when the tap happened.
   const turnsRef = useRef<Turn[]>([]);
@@ -259,6 +262,10 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   }, []);
 
   const selectSession = useCallback((id: string | null) => {
+    // Switching chats drops the history walk; the first save of a new chat
+    // only gives it an id and is not a switch.
+    if (id !== currentIdRef.current && currentIdRef.current !== null) historyPosRef.current = HISTORY_IDLE;
+    else if (id === null) historyPosRef.current = HISTORY_IDLE;
     currentIdRef.current = id;
     setCurrentId(id);
     writeStorage("local", CURRENT_KEY, id);
@@ -598,6 +605,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     const refs = pendingRef.current.flatMap((p) => (p.status === "done" && p.ref ? [p.ref] : []));
     if ((!question && refs.length === 0) || streaming || pendingRef.current.some((p) => p.status === "uploading")) return;
     setInput("");
+    historyPosRef.current = HISTORY_IDLE;
     for (const p of pendingRef.current) if (p.preview) URL.revokeObjectURL(p.preview);
     updatePending([]);
     setAttachError(null);
@@ -1434,7 +1442,26 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   void send();
+                  return;
                 }
+                // ArrowUp/ArrowDown walk the chat's earlier messages, only when
+                // the caret is at the top/bottom so multi-line editing still works.
+                if ((e.key !== "ArrowUp" && e.key !== "ArrowDown") || e.nativeEvent.isComposing) return;
+                if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+                const el = e.currentTarget;
+                const dir = e.key === "ArrowUp" ? "up" : "down";
+                if (!shouldIntercept(dir, el.value, el.selectionStart, el.selectionEnd)) return;
+                const step = stepHistory(historyPosRef.current, dir, userMessages(turns), el.value);
+                if (!step) return;
+                e.preventDefault();
+                historyPosRef.current = step.pos;
+                setInput(step.text);
+                requestAnimationFrame(() => {
+                  const box = composerRef.current;
+                  if (!box) return;
+                  growComposer(box);
+                  box.setSelectionRange(step.text.length, step.text.length);
+                });
               }}
               placeholder="Ask something…"
               aria-label="Message"
