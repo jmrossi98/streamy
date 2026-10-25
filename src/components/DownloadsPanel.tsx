@@ -83,6 +83,9 @@ export type DownloadRow = {
   downloadId?: string | null;
   /** On the one row standing for a season pack: how many episodes it holds. */
   packEpisodes?: number;
+  /** A season pack added to qBittorrent by hand (manualPackRules.ts): its info
+   *  hash, which is what Cancel removes -- there is no Sonarr queue entry. */
+  packHash?: string;
   /** TV only: every episode of the show that is wanted or on disk, for its progress. */
   seriesEpisodes?: number | null;
 };
@@ -126,6 +129,7 @@ function formatStarted(raw: string | null | undefined): string | null {
 
 export function rowKey(d: DownloadRow): string {
   if (d.mediaType === "movie") return `movie-${d.externalId}`;
+  if (d.packHash) return `pack-${d.packHash}`;
   if (d.episodeId != null) return `ep-${d.episodeId}`;
   if (d.queueId != null) return `q${d.queueId}`;
   return `show-searching-${d.externalId}`;
@@ -328,6 +332,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           queueId: d.queueId,
           episodeId: d.episodeId,
           mediaType: d.mediaType,
+          packHash: d.packHash,
           // A row that has not been searched yet has no Radarr/Sonarr queue
           // entry to remove, so the route has to be told that rather than
           // inferring it from a null queueId -- which also means "whole

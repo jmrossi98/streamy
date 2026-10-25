@@ -26,7 +26,7 @@
  * The page-load kicks stay. They make things feel immediate when someone is
  * looking; this makes them correct when nobody is.
  */
-import { adoptUnsearchedEpisodes, drainEpisodeSearchesNow } from "./sonarr";
+import { adoptUnsearchedEpisodes, drainEpisodeSearchesNow, importManualPackFiles } from "./sonarr";
 import { healStalledDownloads } from "./downloadHealer";
 import { pendingSearchStats, type QueueStats } from "./pendingEpisodeSearch";
 import { isQueueStuck } from "./searchQueueRules";
@@ -119,6 +119,12 @@ export async function runDownloadWarden(): Promise<WardenReport> {
   const healed = await healStalledDownloads().catch((err) => {
     errors.push({ step: "heal", error: message(err) });
     return [];
+  });
+
+  // Finished files of hand-added season packs into the library -- see manualPackRules.ts.
+  await importManualPackFiles().catch((err) => {
+    errors.push({ step: "packImport", error: message(err) });
+    return 0;
   });
 
   const queueAfter = await pendingSearchStats().catch((err) => {
