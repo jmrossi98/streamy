@@ -203,6 +203,9 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   // The phone's options sheet: model, toggles, mediabox runs. On a wide
   // screen those sit in the header row and this is never open.
   const [optionsOpen, setOptionsOpen] = useState(false);
+  // The model picker's drop-down on a wide screen (admin tab).
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<{ index: number; text: string } | null>(null);
   const [confirmDeleteTurn, setConfirmDeleteTurn] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -425,6 +428,22 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   }, [turns, editing, following]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setModelMenuOpen(false);
+    }
+    function onPointer(e: PointerEvent) {
+      if (!modelMenuRef.current?.contains(e.target as Node)) setModelMenuOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, [modelMenuOpen]);
 
   useEffect(() => {
     if (!listOpen && !optionsOpen) return;
@@ -767,9 +786,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const linkedToClaude = !!currentSummary?.claudeSessionId && !isClaudeAppImport(currentSummary.claudeSessionId);
   const fromClaudeApp = !!currentSummary?.claudeSessionId && isClaudeAppImport(currentSummary.claudeSessionId);
 
-  const list = (resizable: boolean) => (
+  const list = () => (
     <ChatSessionList
-      resizable={resizable}
       onRefreshClaude={loadClaudeSessions}
       sessions={sessions}
       loaded={sessionsLoaded}
@@ -789,30 +807,41 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const gutter = layout === "page" ? "px-3" : "px-1 sm:px-3";
 
   /**
-   * The model in use, as a label rather than a switch: the choice lives in
-   * Model routing. On a wide screen it opens that disclosure; the phone's
-   * header opens the options sheet, which carries the same panel.
+   * The model in use, with the picker behind it. On /assistant a wide screen
+   * opens the page's Model routing disclosure; the admin tab has none (the
+   * picker is the only way to change the model there), so it drops the same
+   * panel down from the label. The phone opens the options sheet.
    */
   function openModelRouting() {
     const el = document.getElementById(MODEL_ROUTING_ID);
     if (el instanceof HTMLDetailsElement) {
       el.open = true;
       el.scrollIntoView({ block: "nearest" });
+    } else if (window.matchMedia("(min-width: 768px)").matches) {
+      setModelMenuOpen((v) => !v);
     } else {
       setOptionsOpen(true);
     }
   }
   const modelLabel = (
-    <button
-      type="button"
-      onClick={openModelRouting}
-      title="Change the model in Model routing"
-      className="flex min-w-0 items-center gap-1.5 rounded-lg bg-white/5 px-2 py-1 text-white/70 hover:bg-white/10 hover:text-white"
-    >
-      <span className="font-semibold text-white">{backendById(backend).label}</span>
-      <span className="truncate text-white/50">{modelId}</span>
-      <span aria-hidden className="text-white/40">▾</span>
-    </button>
+    <div ref={modelMenuRef} className="relative min-w-0">
+      <button
+        type="button"
+        onClick={openModelRouting}
+        aria-expanded={modelMenuOpen}
+        title="Change the model"
+        className="flex min-w-0 items-center gap-1.5 rounded-lg bg-white/5 px-2 py-1 text-white/70 hover:bg-white/10 hover:text-white"
+      >
+        <span className="font-semibold text-white">{backendById(backend).label}</span>
+        <span className="truncate text-white/50">{modelId}</span>
+        <span aria-hidden className="text-white/40">▾</span>
+      </button>
+      {modelMenuOpen && (
+        <div className="absolute left-0 top-full z-30 mt-2 max-h-[60vh] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-white/15 bg-netflix-dark p-4 shadow-2xl shadow-black/60">
+          <ModelsPanel />
+        </div>
+      )}
+    </div>
   );
 
   const stackStatusToggle = (className: string) => (
@@ -892,7 +921,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         className={`hidden shrink-0 md:block ${sidebarWidth == null ? "w-52" : ""}`}
         style={sidebarWidth != null ? { width: sidebarWidth, maxWidth: `calc(100% - ${CHAT_TRANSCRIPT_MIN}px)` } : undefined}
       >
-        {list(true)}
+        {list()}
       </aside>
       <ResizeHandle
         orientation="vertical"
@@ -920,7 +949,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                 <HeaderIcon kind="close" />
               </button>
             </div>
-            <div className="min-h-0 flex-1 px-2">{list(false)}</div>
+            <div className="min-h-0 flex-1 px-2">{list()}</div>
             <div className="shrink-0 border-t border-white/10 px-4 py-3 text-xs">{footerLink}</div>
           </div>
         </div>

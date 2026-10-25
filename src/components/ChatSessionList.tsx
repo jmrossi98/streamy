@@ -1,9 +1,7 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, TextInput, cx } from "@/components/ui";
-import { ResizeHandle, usePersistedSize } from "@/components/ui/ResizeHandle";
-import { CHAT_SAVED_LIST_HEIGHT_KEY, CHAT_SECTION_MIN } from "@/lib/paneSizeRules";
 import { relativeAge, type ChatSessionSummary } from "@/lib/chatSessionRules";
 import { CLAUDE_APP_MACHINE } from "@/lib/claudeCodeNoteRules";
 
@@ -24,12 +22,6 @@ type Props = {
   onOpenClaude: (key: string) => void;
   /** Re-reads the Claude Code sessions from the vault; resolves false when that failed. */
   onRefreshClaude: () => Promise<boolean>;
-  /**
-   * Desktop column only: saved chats and the vault sessions get a draggable
-   * divider between them, each scrolling on its own. The phone sheet keeps
-   * one scrolling list.
-   */
-  resizable?: boolean;
   loaded: boolean;
   currentId: string | null;
   /** Switching is locked while a reply streams into the open chat. */
@@ -43,7 +35,9 @@ type Props = {
 /**
  * The saved chats, newest first: open one, start a new one, rename or delete.
  * Delete asks inline (a second click) rather than through a browser dialog.
- * Below them, Claude Code sessions from the vault: opening one continues it
+ * Everything sits in one column with one scrollbar (the saved chats and the
+ * vault sessions used to scroll separately, with a draggable divider).
+ * Below the chats, Claude Code sessions from the vault: opening one continues it
  * here as a chat shared with that session. Below those, chats imported from
  * the Claude app, which open the same way but continue here only.
  */
@@ -52,7 +46,6 @@ export function ChatSessionList({
   claudeSessions,
   onOpenClaude,
   onRefreshClaude,
-  resizable = false,
   loaded,
   currentId,
   locked,
@@ -100,12 +93,12 @@ export function ChatSessionList({
     open: boolean,
     toggle: () => void,
     showMachine: boolean,
-    opts: { first?: boolean; action?: ReactNode } = {}
+    opts: { action?: ReactNode } = {}
   ) {
     // Claude Code's section stays when empty, so its refresh button does too.
     if (items.length === 0 && !opts.action) return null;
     return (
-      <div className={opts.first ? "pt-1" : "mt-3 border-t border-white/10 pt-2"}>
+      <div className="mt-3 border-t border-white/10 pt-2">
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -153,17 +146,6 @@ export function ChatSessionList({
       </div>
     );
   }
-  // The divider between saved chats and the vault sessions (desktop column).
-  const split = resizable;
-  const splitRef = useRef<HTMLDivElement>(null);
-  const topRef = useRef<HTMLDivElement>(null);
-  const [savedHeight, setSavedHeight] = usePersistedSize(CHAT_SAVED_LIST_HEIGHT_KEY, CHAT_SECTION_MIN, 4000);
-  /** Saved chats may grow until the vault sessions are left their minimum (the 16px is the handle). */
-  function savedMax() {
-    const total = splitRef.current?.getBoundingClientRect().height ?? 0;
-    return Math.max(CHAT_SECTION_MIN, total - CHAT_SECTION_MIN - 16);
-  }
-
   const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
@@ -179,16 +161,7 @@ export function ChatSessionList({
       <Button variant="secondary" size="sm" onClick={onNew} disabled={locked} className="w-full">
         + New chat
       </Button>
-      <div
-        ref={splitRef}
-        className={split ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto pr-1"}
-      >
-      <div
-        ref={topRef}
-        className={split ? cx("min-h-0 overflow-y-auto pr-1", savedHeight == null && "flex-1") : undefined}
-        // A remembered height may shrink (never grow) to fit a shorter window.
-        style={split && savedHeight != null ? { height: savedHeight, flex: "0 1 auto", minHeight: CHAT_SECTION_MIN } : undefined}
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
       <ul className="space-y-0.5" aria-label="Saved chats">
         {loaded && sessions.length === 0 && <li className="px-2 py-3 text-xs text-white/35">No saved chats yet.</li>}
         {!loaded && <li className="px-2 py-3 text-xs text-white/35">Loading…</li>}
@@ -276,26 +249,10 @@ export function ChatSessionList({
           );
         })}
       </ul>
-      </div>
-      {split && (
-        <ResizeHandle
-          orientation="horizontal"
-          label="Resize saved chats and Claude Code sessions"
-          getSize={() => topRef.current?.getBoundingClientRect().height ?? CHAT_SECTION_MIN}
-          min={CHAT_SECTION_MIN}
-          max={savedMax}
-          onResize={setSavedHeight}
-          onReset={() => setSavedHeight(null)}
-          className="my-1"
-        />
-      )}
-      <div className={split ? "min-h-0 flex-1 overflow-y-auto pr-1" : undefined} style={split ? { minHeight: CHAT_SECTION_MIN } : undefined}>
       {vaultSection("Claude Code sessions", codeSessions, showClaude, () => setShowClaude((v) => !v), true, {
-        first: split,
         action: refreshButton,
       })}
       {vaultSection("Claude app chats", appChats, showApp, () => setShowApp((v) => !v), false)}
-      </div>
       </div>
     </div>
   );
