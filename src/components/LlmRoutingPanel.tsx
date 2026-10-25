@@ -15,6 +15,7 @@ import {
   type ResolvedRoute,
 } from "@/lib/llmRoutingRules";
 import { LLM_ROUTING_EVENT } from "@/lib/chatSlots";
+import type { ChatBackendId } from "@/lib/chatModels";
 
 export type LlmRoutingSnapshot = {
   routing: LlmRouting;
@@ -23,6 +24,8 @@ export type LlmRoutingSnapshot = {
   suggestions: Record<LlmProvider, string[]>;
   /** Each use's env-default route per provider: what a provider switch lands on. */
   defaults: Record<LlmUse, Partial<Record<LlmProvider, LlmRoute>>>;
+  /** The chat's chosen slot and its local card (chatBackend.modelsSnapshot); absent on the Jobs tab. */
+  chat?: { backend: ChatBackendId; local: { available: boolean; model: string } };
 };
 
 type FallbackText = Record<LlmUse, string>;
@@ -46,8 +49,14 @@ function fallbackTextOf(routing: LlmRouting): FallbackText {
 export function LlmRoutingPanel({
   initial,
   uses,
+  compact = false,
 }: {
   initial: LlmRoutingSnapshot;
+  /**
+   * One row shown inline under the chat's model switch (ModelsPanel): no
+   * card title, fallbacks folded away. The full form is the Jobs tab's.
+   */
+  compact?: boolean;
   /**
    * The rows this panel shows and resets (llmRoutingRules.usesIn). The others
    * are still sent unchanged on every save, since the setting is one record.
@@ -163,6 +172,19 @@ export function LlmRoutingPanel({
 
   const anyConfigured = snapshot.configured.openrouter || snapshot.configured.anthropic;
 
+  const fallbackField = (use: LlmUse, className: string) => (
+    <Field className={className} label="Fallbacks" hint="Comma-separated, tried in order. Keep to the same tier.">
+      <TextInput
+        fieldSize="sm"
+        value={fallbackText[use]}
+        onChange={(e) => setFallbackText((prev) => ({ ...prev, [use]: e.target.value }))}
+        onBlur={() => commitIfChanged(use)}
+        onKeyDown={onEnter(use)}
+        spellCheck={false}
+      />
+    </Field>
+  );
+
   return (
     <div className="space-y-4 text-sm">
       {!anyConfigured && (
@@ -180,15 +202,19 @@ export function LlmRoutingPanel({
         </datalist>
       ))}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className={compact ? "space-y-3" : "grid gap-4 md:grid-cols-2"}>
         {shownUses.map((use) => {
           const route = routing[use.id];
           const resolved = snapshot.resolved[use.id];
           const providerOff = !snapshot.configured[route.provider];
           return (
-            <div key={use.id} className="rounded-lg border border-white/10 bg-black/30 p-4">
-              <h4 className="font-semibold text-white">{use.label}</h4>
-              <p className="mb-3 text-xs text-white/40">{use.description}</p>
+            <div key={use.id} className={compact ? "" : "rounded-lg border border-white/10 bg-black/30 p-4"}>
+              {!compact && (
+                <>
+                  <h4 className="font-semibold text-white">{use.label}</h4>
+                  <p className="mb-3 text-xs text-white/40">{use.description}</p>
+                </>
+              )}
               <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
                 <Field label="Provider">
                   <Select
@@ -218,16 +244,17 @@ export function LlmRoutingPanel({
                   />
                 </Field>
               </div>
-              <Field className="mt-3" label="Fallbacks" hint="Comma-separated, tried in order. Keep to the same tier.">
-                <TextInput
-                  fieldSize="sm"
-                  value={fallbackText[use.id]}
-                  onChange={(e) => setFallbackText((prev) => ({ ...prev, [use.id]: e.target.value }))}
-                  onBlur={() => commitIfChanged(use.id)}
-                  onKeyDown={onEnter(use.id)}
-                  spellCheck={false}
-                />
-              </Field>
+              {compact ? (
+                <details className="group/fb mt-2 text-xs">
+                  <summary className="inline-flex cursor-pointer list-none items-center text-white/40 hover:text-white/70">
+                    <span className="mr-1 inline-block transition-transform group-open/fb:rotate-90">▸</span>
+                    Fallbacks{fallbackText[use.id] ? `: ${fallbackText[use.id]}` : ": none"}
+                  </summary>
+                  {fallbackField(use.id, "mt-2")}
+                </details>
+              ) : (
+                fallbackField(use.id, "mt-3")
+              )}
               {providerOff && (
                 <p className="mt-2 text-xs text-amber-300/80">
                   {PROVIDER_ENV[route.provider]} is unset on the server.{" "}
@@ -242,6 +269,7 @@ export function LlmRoutingPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        {!compact && (
         <Button
           variant="ghost"
           size="sm"
@@ -251,7 +279,8 @@ export function LlmRoutingPanel({
         >
           Reset to defaults
         </Button>
-        <span className="text-xs text-white/35">Changes save as you make them.</span>
+        )}
+        {!compact && <span className="text-xs text-white/35">Changes save as you make them.</span>}
         {busy && <span className="text-xs text-white/50">Saving…</span>}
         {!busy && notice && <span className="text-xs text-emerald-300/80">{notice}</span>}
         {error && <span className="text-xs text-red-300">{error}</span>}

@@ -4,8 +4,11 @@ import {
   DEFAULT_BACKEND,
   FALLBACK_BACKEND,
   backendById,
+  isChatBackendId,
   isRemoteBackend,
   normalizeBackend,
+  pickBackend,
+  routingUseFor,
 } from "../chatModels";
 
 describe("normalizeBackend", () => {
@@ -68,5 +71,36 @@ describe("backendById", () => {
       expect(b.label.length).toBeGreaterThan(0);
       expect(b.hint.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("isChatBackendId", () => {
+  it("accepts the slots and refuses junk rather than coercing it", () => {
+    for (const b of CHAT_BACKENDS) expect(isChatBackendId(b.id)).toBe(true);
+    expect(isChatBackendId("gpt")).toBe(false);
+    expect(isChatBackendId(undefined)).toBe(false);
+  });
+});
+
+describe("routingUseFor", () => {
+  it("maps the metered slots to their routing rows and the local card to none", () => {
+    expect(routingUseFor("claude")).toBe("chatClaude");
+    expect(routingUseFor("open")).toBe("chatOpen");
+    expect(routingUseFor("local")).toBeNull();
+  });
+});
+
+describe("pickBackend", () => {
+  it("keeps the saved choice while it can answer", () => {
+    expect(pickBackend("claude", () => true)).toBe("claude");
+  });
+
+  it("falls to the first slot that can answer", () => {
+    expect(pickBackend("claude", (id) => id === "open")).toBe("open");
+    expect(pickBackend("open", (id) => id === "local")).toBe("local");
+  });
+
+  it("stays on the saved choice when nothing can answer", () => {
+    expect(pickBackend("claude", () => false)).toBe("claude");
   });
 });

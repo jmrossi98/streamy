@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { logAudit } from "@/lib/auditLog";
-import { resetRouting, routingSnapshot, saveRouting } from "@/lib/llm";
+import { resetRouting, saveRouting } from "@/lib/llm";
+import { modelsSnapshot, saveChatBackend } from "@/lib/chatBackend";
+import { isChatBackendId } from "@/lib/chatModels";
 import { parseUseList } from "@/lib/llmRoutingRules";
 
 /**
@@ -17,17 +19,23 @@ export async function GET() {
   if (!(await requireAdmin(await getSession()))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
-  return NextResponse.json(await routingSnapshot());
+  return NextResponse.json(await modelsSnapshot());
 }
 
 export async function PUT(request: Request) {
   const admin = await requireAdmin(await getSession());
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
 
-  const body = (await request.json().catch(() => null)) as { routing?: unknown; reset?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { routing?: unknown; reset?: unknown; chatBackend?: unknown } | null;
   if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
 
-  if (body.reset === true) {
+  if ("chatBackend" in body) {
+    // Which slot the chat answers on. Strict: junk is refused, not coerced,
+    // since the choice decides what gets billed.
+    if (!isChatBackendId(body.chatBackend)) return NextResponse.json({ error: "Unknown chat model slot" }, { status: 400 });
+    await saveChatBackend(body.chatBackend);
+    logAudit(admin.name, "llm.chat-backend", body.chatBackend);
+  } else if (body.reset === true) {
     await resetRouting();
     logAudit(admin.name, "llm.routing.reset", "env defaults");
   } else if (Array.isArray(body.reset)) {
@@ -45,5 +53,5 @@ export async function PUT(request: Request) {
         .join(" ")
     );
   }
-  return NextResponse.json(await routingSnapshot());
+  return NextResponse.json(await modelsSnapshot());
 }
