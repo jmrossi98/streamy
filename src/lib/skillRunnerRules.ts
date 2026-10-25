@@ -31,7 +31,7 @@ export type SkillArg = { name: string; description: string; required: boolean };
 
 export type SkillInfo = { name: string; description: string; kind: SkillKind; args: SkillArg[] };
 
-export type SkillRunStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "cancelled";
+export type SkillRunStatus = "queued" | "running" | "succeeded" | "failed" | "timeout" | "cancelled" | "needs_attention";
 
 /**
  * What a running run reports about itself (2026-10-25, runner queue): how
@@ -90,7 +90,7 @@ export type SkillRun = {
 };
 
 const KINDS: readonly SkillKind[] = ["read", "action", "code"];
-const STATUSES: readonly SkillRunStatus[] = ["queued", "running", "succeeded", "failed", "timeout", "cancelled"];
+const STATUSES: readonly SkillRunStatus[] = ["queued", "running", "succeeded", "failed", "timeout", "cancelled", "needs_attention"];
 
 /** Skill names are slugs (health-sweep, ship-fix); anything else is not one. */
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -410,9 +410,10 @@ export function skillsPrompt(skills: SkillInfo[]): string {
  * there before the model sees it, and the end of the output is what matters.
  */
 export const RUN_TURN_MAX_CHARS = 7_500;
-const RUN_HEADER = /^MEDIABOX SKILL RUN (\S+) (\S+) (queued|running|succeeded|failed|timeout|cancelled)$/;
+const RUN_HEADER = /^MEDIABOX SKILL RUN (\S+) (\S+)(?: (\S+))?$/;
 const SUMMARY_MARK = "--- summary ---";
 const LINKS_MARK = "--- links ---";
+const WARNINGS_MARK = "--- warnings ---";
 const OUTPUT_MARK = "--- output (end) ---";
 
 export type RunTurn = {
@@ -424,6 +425,7 @@ export type RunTurn = {
   model: string | null;
   summary: string | null;
   links: string[];
+  warnings: string[];
   output: string;
 };
 
@@ -447,32 +449,66 @@ export function runTurnContent(run: SkillRun): string {
   return [...parts, tail].join("\n").slice(0, RUN_TURN_MAX_CHARS);
 }
 
+/**
+ * Reads a run turn leniently: the header line with an id and a skill is enough.
+ * Args, Engine, the preamble and the report sections are all optional, the
+ * sections may come in any order, and lines it doesn't know are ignored -- a
+ * newer runner adding a line must not turn the card into "unreadable". Null
+ * (with a console.warn of the start of the text) only when the header, id or
+ * skill is missing. A missing or unknown status reads as "failed", the card's
+ * existing fallback for a turn it can't place.
+ */
 export function parseRunTurn(content: string): RunTurn | null {
-  const [first = "", second = "", third = ""] = content.split("\n", 3);
-  const m = RUN_HEADER.exec(first.trim());
-  if (!m || !isRunId(m[1])) return null;
-  const engineLine = third.startsWith("Engine: ") ? third.slice(8).split(" ") : [];
-  const engine = isSkillEngine(engineLine[0]) ? engineLine[0] : null;
-  const model = isOpenCodeModel(engineLine[1]) ? engineLine[1] : null;
-  const pick = (from: string, to: string | null) => {
-    const a = content.indexOf(from);
-    if (a < 0) return null;
-    const start = a + from.length + 1;
-    const b = to ? content.indexOf(to, start) : -1;
-    return content.slice(start, b < 0 ? undefined : b).trim();
-  };
-  const summary = pick(SUMMARY_MARK, LINKS_MARK);
-  const links = pick(LINKS_MARK, OUTPUT_MARK);
+  const lines = content.split(/\r?\n/);
+  const at = lines.findIndex((l) => l.trim() !== "");
+  const m = at < 0 ? null : RUN_HEADER.exec(lines[at].trim());
+  if (!m || !isRunId(m[1])) {
+    console.warn("parseRunTurn: not a skill run turn:", content.slice(0, 300));
+    return null;
+  }
+  const status = STATUSES.includes(m[3] as SkillRunStatus) ? (m[3] as SkillRunStatus) : "failed";
+  let args = "";
+  let engine: SkillEngine | null = null;
+  let model: string | null = null;
+  const sections: Record<"summary" | "links" | "warnings" | "output", string[] | null> = { summary: null, links: null, warnings: null, output: null };
+  let into: string[] | null = null;
+  let inOutput = false;
+  for (const line of lines.slice(at + 1)) {
+    // The output is the rest of the turn, whatever it contains.
+    if (inOutput) {
+      into?.push(line);
+      continue;
+    }
+    const t = line.trim();
+    const mark =
+      t === SUMMARY_MARK ? "summary" : t === LINKS_MARK ? "links" : t === WARNINGS_MARK ? "warnings" : t === OUTPUT_MARK ? "output" : null;
+    if (mark) {
+      into = sections[mark] ??= [];
+      inOutput = mark === "output";
+    } else if (into) {
+      into.push(line);
+    } else if (line.startsWith("Args: ")) {
+      args = line.slice(6);
+    } else if (line.startsWith("Engine: ")) {
+      const [e, mod] = line.slice(8).trim().split(" ");
+      engine = isSkillEngine(e) ? e : null;
+      model = isOpenCodeModel(mod) ? mod : null;
+    }
+  }
+  const text = (s: string[] | null) => (s ? s.join("\n").trim() : "");
+  const urls = (s: string[] | null) => (s ?? []).map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l));
+  const summary = text(sections.summary);
   return {
     id: m[1],
     skill: m[2],
-    status: m[3] as SkillRunStatus,
-    args: second.startsWith("Args: ") ? second.slice(6) : "",
+    status,
+    args,
     engine,
     model,
     summary: summary && summary !== "(no summary)" ? summary : null,
-    links: links ? links.split("\n").filter((l) => /^https?:\/\//.test(l.trim())).map((l) => l.trim()) : [],
-    output: pick(OUTPUT_MARK, null) ?? "",
+    links: urls(sections.links),
+    warnings: (sections.warnings ?? []).map((l) => l.trim()).filter((l) => l && l !== "(none)"),
+    output: text(sections.output),
   };
 }
 
