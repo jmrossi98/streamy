@@ -23,7 +23,21 @@ const REQUEST_TIMEOUT_MS = 120_000;
 /** Shorter, because this one only asks "are you there". */
 const PING_TIMEOUT_MS = 5_000;
 
-export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+/**
+ * `images` are base64 attachments for a vision-capable cloud route only
+ * (llm.ts decides); the local model never receives them (streamOllamaChat
+ * strips the field).
+ */
+export type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+  images?: { mime: string; data: string }[];
+};
+
+/** The local model can't read images, so they are never put on the wire. */
+export function stripImages(messages: ChatMessage[]): { role: ChatMessage["role"]; content: string }[] {
+  return messages.map(({ role, content }) => ({ role, content }));
+}
 
 export function isOllamaConfigured(): boolean {
   return !!process.env.OLLAMA_URL;
@@ -61,7 +75,7 @@ export async function streamOllamaChat(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: ollamaModel(),
-      messages,
+      messages: stripImages(messages),
       stream: true,
       options: {
         // Keeps the KV cache inside the VRAM budget. Raising this is what
@@ -96,7 +110,7 @@ export async function completeOllama(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: ollamaModel(),
-      messages,
+      messages: stripImages(messages),
       stream: false,
       options: { num_ctx: 8192, num_predict: opts.maxTokens },
     }),

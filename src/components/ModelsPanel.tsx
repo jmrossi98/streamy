@@ -7,7 +7,6 @@ import { SkillEnginePanel } from "@/components/SkillEnginePanel";
 import {
   CHAT_BACKENDS,
   CHAT_BACKEND_EVENT,
-  backendById,
   routingUseFor,
   type ChatBackendId,
 } from "@/lib/chatModels";
@@ -119,10 +118,7 @@ function ChatModelSection({ initial }: { initial: Snapshot }) {
   const use = routingUseFor(backend);
   return (
     <div className="space-y-3">
-      <div>
-        <h4 className="font-semibold text-white">Chat</h4>
-        <p className="text-xs text-white/40">{backendById(backend).hint}</p>
-      </div>
+      <h4 className="font-semibold text-white">Chat</h4>
       <SegmentedControl
         label="Chat model"
         value={backend}

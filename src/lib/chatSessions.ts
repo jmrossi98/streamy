@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { scheduleChatExport } from "@/lib/chatExport";
+import { syncSessionAttachments } from "@/lib/chatAttachments";
 import {
   mergeConcurrentTurns,
   normalizeSessionBackend,
@@ -86,6 +87,7 @@ export async function createChatSession(userId: string, patch: ChatSessionPatch)
       turnCount: turns.length,
     },
   });
+  await syncSessionAttachments(userId, row.id, turns);
   scheduleChatExport(row.id);
   return { ...summary(row), turns };
 }
@@ -129,6 +131,7 @@ export async function updateChatSession(
       ...(patch.turns !== undefined ? { turns: JSON.stringify(turns), turnCount: turns.length } : {}),
     },
   });
+  if (patch.turns !== undefined) await syncSessionAttachments(userId, row.id, turns);
   scheduleChatExport(row.id);
   return { ...summary(row), turns };
 }

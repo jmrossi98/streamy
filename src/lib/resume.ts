@@ -118,6 +118,11 @@ async function extractUncached(file: BankFile): Promise<string> {
     const mammoth = await import("mammoth");
     return (await mammoth.extractRawText({ buffer: buf })).value;
   }
+  return pdfToText(buf);
+}
+
+/** Plain text from a PDF's bytes: the vault's extraction, also used for chat attachments. */
+export async function pdfToText(buf: Uint8Array): Promise<string> {
   const { extractText: pdfText, getDocumentProxy } = await import("unpdf");
   const pdf = await getDocumentProxy(new Uint8Array(buf));
   const { text } = await pdfText(pdf, { mergePages: true });

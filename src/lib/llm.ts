@@ -37,6 +37,7 @@ import {
   normalizeRouting,
   resetUses,
   resolveRoute,
+  routeReadsImages,
   type LlmProvider,
   type LlmRoute,
   type LlmRouting,
@@ -134,6 +135,16 @@ export async function getResolvedRoutes(): Promise<Record<LlmUse, ResolvedRoute 
   const out = {} as Record<LlmUse, ResolvedRoute | null>;
   for (const use of Object.keys(routing) as LlmUse[]) out[use] = resolveRoute(use, routing[use], env);
   return out;
+}
+
+/**
+ * Whether the route that will answer reads images. The chat route asks this
+ * before it attaches any: images go out as image content blocks on a Claude
+ * route (Anthropic direct, OpenRouter Claude) and nowhere else. A null route
+ * is the local model, which never gets them.
+ */
+export function canReadImages(route: ResolvedRoute | null): boolean {
+  return routeReadsImages(route);
 }
 
 /**

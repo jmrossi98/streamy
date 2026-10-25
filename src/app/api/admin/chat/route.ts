@@ -19,16 +19,25 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { completeOllama, isOllamaConfigured, streamOllamaChat } from "@/lib/ollama";
-import { complete, getRoute, streamChat } from "@/lib/llm";
+import { canReadImages, complete, getRoute, streamChat } from "@/lib/llm";
+import { loadAttachments } from "@/lib/chatAttachments";
+import {
+  ATTACHMENT_TEXT_BUDGET,
+  IMAGE_UNREADABLE_NOTICE,
+  imagesWillBeDropped,
+  type AttachmentContext,
+  type LoadedAttachment,
+} from "@/lib/chatAttachmentRules";
 import { isRemoteBackend, normalizeBackend } from "@/lib/chatModels";
 import {
+  attachmentRefsIn,
   hasUserTurn,
   isCareerQuestion,
-  latestUserQuery,
   prepareChatMessages,
   shouldIncludeStatus,
   shouldSearch,
   systemPromptFor,
+  typedUserQuery,
   withContext,
   worthRetrieving,
 } from "@/lib/chatLimits";
@@ -115,6 +124,33 @@ function recordingStream(source: ReadableStream<Uint8Array>, usageId: string | n
   });
 }
 
+/**
+ * The stream with a one-line `{notice}` ahead of it, for something the admin
+ * should know that isn't part of the reply (an image the model won't see).
+ * Added outside recordingStream so the saved transcript never holds it.
+ */
+function withNotice(source: ReadableStream<Uint8Array>, notice: string | null): ReadableStream<Uint8Array> {
+  if (!notice) return source;
+  const head = new TextEncoder().encode(JSON.stringify({ notice }) + "\n");
+  const reader = source.getReader();
+  let sent = false;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!sent) {
+        sent = true;
+        controller.enqueue(head);
+        return;
+      }
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
+
 export async function POST(request: Request) {
   // Kept rather than discarded: the admin's own name is what the usage log
   // records, for the same reason AuditLogEntry stores a name and not an id.
@@ -165,10 +201,31 @@ export async function POST(request: Request) {
     );
   }
 
-  let messages = prepareChatMessages(body.messages, systemPromptFor(backend));
+  // Attachments are loaded here, scoped to this admin, and turned into model
+  // input in prepareChatMessages: images only for a route that reads them
+  // (llm.ts), text and PDF text inlined within the attached-text budget.
+  const refs = attachmentRefsIn(body.messages);
+  const vision = canReadImages(route);
+  let loaded: Map<string, LoadedAttachment>;
+  try {
+    loaded = await loadAttachments(admin.id, refs);
+  } catch (err) {
+    console.error("[chat] attachment load failed:", err);
+    return NextResponse.json({ error: "Couldn't read the attached files." }, { status: 500 });
+  }
+  const attach: AttachmentContext = {
+    loaded,
+    vision,
+    textBudget: remote ? ATTACHMENT_TEXT_BUDGET.remote : ATTACHMENT_TEXT_BUDGET.local,
+  };
+  let messages = prepareChatMessages(body.messages, systemPromptFor(backend), attach);
   if (!hasUserTurn(messages)) {
     return NextResponse.json({ error: "Nothing to answer." }, { status: 400 });
   }
+  // What was typed, without attached file text: usage logging, stack-status,
+  // search and retrieval key off the question, not off a pasted file.
+  const typedQuery = typedUserQuery(body.messages);
+  const imageNotice = imagesWillBeDropped(refs, vision) ? IMAGE_UNREADABLE_NOTICE : null;
 
   // Recorded once the turn is known to be real, but before the model is
   // called: what the visitors log is reporting is that the assistant was
@@ -178,7 +235,7 @@ export async function POST(request: Request) {
   const usageId = await recordAssistantUsage({
     actorName: admin.name,
     backend,
-    prompt: latestUserQuery(messages) ?? "",
+    prompt: typedQuery ?? "",
     headers: request.headers,
   });
 
@@ -188,7 +245,7 @@ export async function POST(request: Request) {
   // back-and-forth doesn't re-probe every service per message.
   // Filler is answered from the transcript. Handing a model 22 lines of probe
   // output followed by "hi" gets a health summary in reply to a greeting.
-  const statusQuery = latestUserQuery(messages);
+  const statusQuery = typedQuery;
   if (body.stackStatus !== false && statusQuery && shouldIncludeStatus(statusQuery)) {
     try {
       const snapshot = await getSnapshot();
@@ -226,7 +283,7 @@ export async function POST(request: Request) {
   // the stack questions they are about. The cloud models now get them on any
   // real question; the local model keeps the narrower gate, since its 8k
   // context already carries the status block on those questions.
-  const docsQuery = latestUserQuery(messages);
+  const docsQuery = typedQuery;
   const retrieve = docsQuery != null && (remote ? worthRetrieving(docsQuery) : shouldSearch(docsQuery));
   if (isDocsRetrievalConfigured() && docsQuery && retrieve) {
     try {
@@ -340,7 +397,7 @@ export async function POST(request: Request) {
   // dictionary definition of the word, and the web knows nothing about this
   // homelab. Offered on any real question; a greeting gets neither tools nor
   // the extra step.
-  const query = latestUserQuery(messages);
+  const query = typedQuery;
   const realQuestion = query != null && shouldIncludeStatus(query);
   const web = isWebSearchConfigured() && realQuestion;
   const forceSearch = web && body.webSearch === true && query && shouldSearch(query) ? query : null;
@@ -390,7 +447,7 @@ export async function POST(request: Request) {
         : await streamOllamaChat(messages, request.signal);
     }
 
-    return new Response(recordingStream(stream, usageId), {
+    return new Response(withNotice(recordingStream(stream, usageId), imageNotice), {
       headers: {
         "Content-Type": "application/x-ndjson; charset=utf-8",
         "Cache-Control": "no-store",

@@ -13,6 +13,12 @@
 
 import type { ChatMessage } from "./ollama";
 import type { ChatBackendId } from "./chatModels";
+import {
+  applyAttachments,
+  normalizeAttachmentRefs,
+  type AttachmentContext,
+  type AttachmentRef,
+} from "./chatAttachmentRules";
 
 /** Characters per message. Roughly 2k tokens -- well clear of a typed question. */
 export const MAX_MESSAGE_CHARS = 8000;
@@ -243,7 +249,7 @@ export function isCareerQuestion(query: string): boolean {
   return CAREER_QUESTION.test(query);
 }
 
-export type IncomingMessage = { role?: unknown; content?: unknown };
+export type IncomingMessage = { role?: unknown; content?: unknown; attachments?: unknown };
 
 /**
  * Builds the message list sent upstream.
@@ -256,19 +262,24 @@ export type IncomingMessage = { role?: unknown; content?: unknown };
  */
 export function prepareChatMessages(
   incoming: unknown,
-  systemPrompt: string = SYSTEM_PROMPT
+  systemPrompt: string = SYSTEM_PROMPT,
+  attach?: AttachmentContext
 ): ChatMessage[] {
   const list = Array.isArray(incoming) ? incoming : [];
 
-  const cleaned: ChatMessage[] = [];
+  const cleaned: (ChatMessage & { refs: AttachmentRef[] })[] = [];
   for (const raw of list as IncomingMessage[]) {
     const content = typeof raw?.content === "string" ? raw.content.trim() : "";
-    if (!content) continue;
+    // Only a user turn carries attachments, and only ones the route loaded
+    // for this admin: a ref the client invents resolves to nothing.
+    const refs = attach && raw?.role !== "assistant" ? normalizeAttachmentRefs(raw?.attachments) : [];
+    if (!content && refs.length === 0) continue;
     cleaned.push({
       // Anything that isn't explicitly an assistant turn is treated as user
       // input -- including "system".
       role: raw?.role === "assistant" ? "assistant" : "user",
       content: content.slice(0, MAX_MESSAGE_CHARS),
+      refs,
     });
   }
 
@@ -276,7 +287,51 @@ export function prepareChatMessages(
   // evicted anyway.
   const trimmed = cleaned.slice(-MAX_HISTORY_MESSAGES);
 
-  return [{ role: "system", content: systemPrompt }, ...trimmed];
+  // Attachments are applied newest message first, after the typed text is
+  // capped, so a long file isn't cut at the per-message limit but at the
+  // attached-text budget.
+  const state = { budget: attach?.textBudget ?? 0, imagesTaken: false };
+  const out: ChatMessage[] = new Array(trimmed.length);
+  for (let i = trimmed.length - 1; i >= 0; i--) {
+    const { refs, ...m } = trimmed[i];
+    if (!attach || refs.length === 0) {
+      out[i] = m;
+      continue;
+    }
+    const applied = applyAttachments(m.content, refs, attach, state);
+    out[i] = { ...m, content: applied.content, ...(applied.images.length > 0 ? { images: applied.images } : {}) };
+  }
+
+  return [{ role: "system", content: systemPrompt }, ...out];
+}
+
+/**
+ * The words typed in the newest question, without any attached file text; null
+ * for a question that is only attachments. What usage logging, the stack
+ * snapshot, search and retrieval key off.
+ */
+export function typedUserQuery(incoming: unknown): string | null {
+  const list = Array.isArray(incoming) ? (incoming as IncomingMessage[]) : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m?.role === "assistant") continue;
+    const text = typeof m?.content === "string" ? m.content.trim() : "";
+    if (text) return text.slice(0, MAX_MESSAGE_CHARS);
+    if (normalizeAttachmentRefs(m?.attachments).length > 0) return null;
+  }
+  return null;
+}
+
+/** The refs on the incoming messages the model will actually see (the last MAX_HISTORY_MESSAGES). */
+export function attachmentRefsIn(incoming: unknown): AttachmentRef[] {
+  const list = Array.isArray(incoming) ? (incoming as IncomingMessage[]) : [];
+  const withContent = list.filter(
+    (m) => (typeof m?.content === "string" && m.content.trim()) || normalizeAttachmentRefs(m?.attachments).length > 0
+  );
+  return withContent
+    .slice(-MAX_HISTORY_MESSAGES)
+    .filter((m) => m?.role !== "assistant")
+    .flatMap((m) => normalizeAttachmentRefs(m?.attachments));
 }
 
 /** A request with nothing to answer -- the route rejects rather than calling out. */

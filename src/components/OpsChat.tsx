@@ -16,11 +16,12 @@ import {
   CHAT_BACKENDS,
   CHAT_BACKEND_EVENT,
   backendById,
-  isRemoteBackend,
   pickBackend,
   type ChatBackendId,
 } from "@/lib/chatModels";
 import { ModelsPanel } from "./ModelsPanel";
+import { PendingChips, SentAttachments, prepareImage, uploadAttachment, type PendingAttachment } from "./ChatAttachments";
+import { ATTACHMENT_ACCEPT, checkPicked } from "@/lib/chatAttachmentRules";
 import { parseProposal, stripProposal } from "@/lib/remediation";
 import { isClaudeAppImport } from "@/lib/claudeCodeNoteRules";
 import {
@@ -198,6 +199,14 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Files chosen for the next message, and a note from the server about how
+  // the last one was handled (an image the model can't read).
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const pendingRef = useRef<PendingAttachment[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [listOpen, setListOpen] = useState(false);
   // The phone's options sheet: model, toggles, mediabox runs. On a wide
   // screen those sit in the header row and this is never open.
@@ -481,19 +490,74 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     el.style.height = `${el.scrollHeight}px`;
   }
 
+  function updatePending(next: PendingAttachment[]) {
+    pendingRef.current = next;
+    setPending(next);
+  }
+
+  function removePending(key: string) {
+    const gone = pendingRef.current.find((p) => p.key === key);
+    if (gone?.preview) URL.revokeObjectURL(gone.preview);
+    updatePending(pendingRef.current.filter((p) => p.key !== key));
+    setAttachError(null);
+  }
+
+  /** Adds picked, pasted or dropped files: checked against the limits, images downscaled, each uploaded. */
+  function addFiles(list: FileList | File[]) {
+    const files = Array.from(list);
+    if (files.length === 0 || streaming) return;
+    const problem = checkPicked(pendingRef.current.length, files);
+    if (problem) {
+      setAttachError(problem);
+      return;
+    }
+    setAttachError(null);
+    const added: PendingAttachment[] = files.map((f) => ({
+      key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name: f.name || "pasted file",
+      preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
+      status: "uploading",
+    }));
+    updatePending([...pendingRef.current, ...added]);
+    files.forEach((file, i) => {
+      const key = added[i].key;
+      const patch = (p: Partial<PendingAttachment>) =>
+        updatePending(pendingRef.current.map((x) => (x.key === key ? { ...x, ...p } : x)));
+      void (async () => {
+        try {
+          const ready = await prepareImage(file);
+          const ref = await uploadAttachment(ready);
+          // Removed while uploading: nothing to attach.
+          if (pendingRef.current.some((x) => x.key === key)) patch({ status: "done", ref, name: ref.name });
+        } catch (err) {
+          patch({ status: "error", error: err instanceof Error ? err.message : "Upload failed." });
+        }
+      })();
+    });
+  }
+
+  const uploading = pending.some((p) => p.status === "uploading");
+  const readyRefs = pending.flatMap((p) => (p.status === "done" && p.ref ? [p.ref] : []));
+  const canSend = (input.trim().length > 0 || readyRefs.length > 0) && !uploading;
+
   async function send(e?: { preventDefault(): void }) {
     e?.preventDefault();
     const question = input.trim();
-    if (!question || streaming) return;
+    const refs = pendingRef.current.flatMap((p) => (p.status === "done" && p.ref ? [p.ref] : []));
+    if ((!question && refs.length === 0) || streaming || pendingRef.current.some((p) => p.status === "uploading")) return;
     setInput("");
+    for (const p of pendingRef.current) if (p.preview) URL.revokeObjectURL(p.preview);
+    updatePending([]);
+    setAttachError(null);
     if (composerRef.current) composerRef.current.style.height = "auto";
-    await runTurn([...turns, { role: "user", content: question }]);
+    await runTurn([...turns, { role: "user", content: question, ...(refs.length > 0 ? { attachments: refs } : {}) }]);
   }
 
   /** Has the model answer the last question in `history`, then saves the chat. */
   async function runTurn(history: Turn[]) {
     streamingRef.current = true;
     setError(null);
+    setNotice(null);
     setEditing(null);
     setConfirmDeleteTurn(null);
 
@@ -545,9 +609,14 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             const parsed = JSON.parse(line) as {
               message?: { content?: string };
               error?: string;
+              notice?: string;
             };
             if (parsed.error) {
               setError(parsed.error);
+              continue;
+            }
+            if (parsed.notice) {
+              setNotice(parsed.notice);
               continue;
             }
             const piece = parsed.message?.content;
@@ -860,19 +929,9 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       />
     ) : null;
 
-  const modelHint = showStatusError ? (
-    <span className="text-amber-400">Model unreachable: {statusError}</span>
-  ) : (
-    <>
-      <span className="text-white/50">{modelId}</span>
-      {slots[backend].provider && <span className="text-white/35"> via {slots[backend].provider}</span>}
-      {" - "}
-      {backendById(backend).hint}
-      {/* The local model never leaves the house; the cloud ones do. That
-          distinction matters when the thing being pasted in is a log. */}
-      {isRemoteBackend(backend) && " Prompts leave your network."}
-    </>
-  );
+  // Only an error is worth a line under the picker (2026-10-25: the
+  // explanatory hint that used to sit here was dropped).
+  const modelHint = showStatusError ? <span className="text-amber-400">Model unreachable: {statusError}</span> : null;
 
   const sourceBadges = (
     <>
@@ -957,7 +1016,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             <div aria-hidden className="mx-auto h-1 w-10 rounded-full bg-white/20" />
             <div className="max-h-[55dvh] space-y-2 overflow-y-auto">
               <ModelsPanel />
-              <p className="text-xs text-white/40">{modelHint}</p>
+              {modelHint && <p className="text-xs text-white/40">{modelHint}</p>}
             </div>
             <div className="space-y-1 text-sm">
               {stackStatusToggle("min-h-10 gap-3 text-white/80")}
@@ -1010,10 +1069,12 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           </div>
         </div>
 
-        <p className="-mt-1 hidden text-xs text-white/40 md:block">
-          {sourceBadges}
-          {modelHint}
-        </p>
+        {(modelHint || linkedToClaude || fromClaudeApp) && (
+          <p className="-mt-1 hidden text-xs text-white/40 md:block">
+            {sourceBadges}
+            {modelHint}
+          </p>
+        )}
 
         <div
           ref={scrollRef}
@@ -1136,10 +1197,13 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                     {t.via === "claude-app" ? "In the Claude app" : isUser ? "In Claude Code" : "Claude Code"}
                   </div>
                 )}
+                {isUser && t.attachments && <SentAttachments items={t.attachments} align="end" />}
                 <div
                   className={
                     isUser
-                      ? "whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-white/10 px-4 py-2.5 text-[15px] leading-relaxed text-white"
+                      ? t.content
+                        ? "whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-white/10 px-4 py-2.5 text-[15px] leading-relaxed text-white"
+                        : "hidden" // files only: the thumbnails above are the message
                       : "break-words text-[15px] leading-7 text-white/90"
                   }
                 >
@@ -1219,6 +1283,11 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             {error}
           </p>
         )}
+        {notice && (
+          <p role="status" className="text-sm text-amber-300/90">
+            {notice}
+          </p>
+        )}
         {saveError && <p className="text-xs text-amber-300/80">{saveError}</p>}
 
         {/* shrink-0 so the composer is never what gets compressed when the
@@ -1226,8 +1295,61 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             an input pushed off the screen. */}
         {/* pb-2 on a phone: a hair of room between the pill and the screen's
             edge, or the keyboard's. */}
-        <form onSubmit={send} className={`mx-auto w-full max-w-3xl shrink-0 pb-2 md:pb-0 ${gutter}`}>
-          <div className="flex items-end gap-2 rounded-2xl border border-white/15 bg-white/[0.06] py-2 pl-4 pr-2 transition-colors focus-within:border-white/35">
+        <form
+          onSubmit={send}
+          // Drop files on the composer (a desktop browser; a phone has no drag).
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) {
+              e.preventDefault();
+              setDragging(true);
+            }
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            setDragging(false);
+            if (e.dataTransfer.files.length > 0) {
+              e.preventDefault();
+              addFiles(e.dataTransfer.files);
+            }
+          }}
+          className={`mx-auto w-full max-w-3xl shrink-0 pb-2 md:pb-0 ${gutter}`}
+        >
+          {attachError && (
+            <p role="alert" className="pb-1 text-xs text-red-300">
+              {attachError}
+            </p>
+          )}
+          <div
+            className={`flex flex-col rounded-2xl border bg-white/[0.06] py-2 pl-4 pr-2 transition-colors focus-within:border-white/35 ${
+              dragging ? "border-sky-400/70 bg-sky-400/10" : "border-white/15"
+            }`}
+          >
+            <PendingChips items={pending} onRemove={removePending} />
+            <div className="flex items-end gap-2">
+            {/* Opens the photo picker on a phone, the file dialog on a desktop. */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ATTACHMENT_ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) addFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              className="-ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
+              aria-label="Attach files"
+              title="Attach images, PDFs or text files (5 MB each, up to 4)"
+            >
+              <svg aria-hidden viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 9.5 9.6 15.9a4 4 0 0 1-5.7-5.7l7-7a2.7 2.7 0 0 1 3.8 3.8l-7 7a1.3 1.3 0 0 1-1.9-1.9l6.4-6.3" />
+              </svg>
+            </button>
             <textarea
               ref={composerRef}
               value={input}
@@ -1235,6 +1357,15 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               onChange={(e) => {
                 setInput(e.target.value);
                 growComposer(e.currentTarget);
+              }}
+              onPaste={(e) => {
+                // A screenshot or copied image/file on the clipboard attaches;
+                // pasted text goes into the box as usual.
+                const files = Array.from(e.clipboardData.files);
+                if (files.length > 0) {
+                  e.preventDefault();
+                  addFiles(files);
+                }
               }}
               onKeyDown={(e) => {
                 // Enter sends; Shift+Enter (and Enter while composing an IME
@@ -1264,7 +1395,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim()}
+                disabled={!canSend}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-black transition-colors hover:bg-white/85 disabled:bg-white/20 disabled:text-white/40"
                 aria-label="Send"
                 title="Send (Enter)"
@@ -1274,6 +1405,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                 </svg>
               </button>
             )}
+            </div>
           </div>
         </form>
       </div>

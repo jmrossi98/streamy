@@ -18,12 +18,24 @@ export type AnthropicTextBlock = {
   cache_control?: { type: "ephemeral" };
 };
 
-export type AnthropicTurn = { role: "user" | "assistant"; content: string };
+export type AnthropicImageBlock = {
+  type: "image";
+  source: { type: "base64"; media_type: "image/png" | "image/jpeg" | "image/webp" | "image/gif"; data: string };
+};
+
+export type AnthropicTurn = {
+  role: "user" | "assistant";
+  content: string | (AnthropicImageBlock | { type: "text"; text: string })[];
+};
 
 export type AnthropicRequestShape = {
   system: AnthropicTextBlock[] | undefined;
   messages: AnthropicTurn[];
 };
+
+function isAnthropicImage(i: { mime: string }): i is { mime: AnthropicImageBlock["source"]["media_type"]; data: string } {
+  return i.mime === "image/png" || i.mime === "image/jpeg" || i.mime === "image/webp" || i.mime === "image/gif";
+}
 
 /**
  * Splits the flat list into Anthropic's two fields.
@@ -47,6 +59,18 @@ export function toAnthropicRequest(messages: ChatMessage[]): AnthropicRequestSha
       continue;
     }
     if (turns.length === 0 && m.role === "assistant") continue;
+    const images = m.role === "user" ? (m.images ?? []).filter(isAnthropicImage) : [];
+    if (images.length > 0) {
+      // Images first, then the words about them, as Anthropic recommends.
+      turns.push({
+        role: "user",
+        content: [
+          ...images.map((i): AnthropicImageBlock => ({ type: "image", source: { type: "base64", media_type: i.mime, data: i.data } })),
+          ...(m.content.trim() ? [{ type: "text" as const, text: m.content }] : []),
+        ],
+      });
+      continue;
+    }
     turns.push({ role: m.role, content: m.content });
   }
   if (system.length > 0) system[0] = { ...system[0], cache_control: { type: "ephemeral" } };

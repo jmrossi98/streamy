@@ -24,6 +24,7 @@
  */
 
 import type { ChatMessage } from "./ollama";
+import { toOpenAiMessages } from "./chatAttachmentRules";
 import {
   DEFAULT_CLAUDE_FALLBACKS,
   DEFAULT_CLAUDE_MODEL,
@@ -212,7 +213,7 @@ export async function streamOpenRouterChat(
     // There is no separate fallbacks field -- the primary is simply the head.
     body: JSON.stringify({
       models,
-      messages,
+      messages: toOpenAiMessages(messages),
       stream: true,
       max_tokens: maxOutputTokens(),
     }),
@@ -242,7 +243,7 @@ export async function streamOpenRouterChat(
  * plugin so the model can research before answering.
  */
 export async function completeOpenRouter(
-  messages: { role: "system" | "user" | "assistant"; content: string }[],
+  messages: ChatMessage[],
   opts: { models: string[]; maxTokens: number; webSearch?: boolean; timeoutMs?: number }
 ): Promise<{ text: string; model: string }> {
   const key = process.env.OPENROUTER_API_KEY;
@@ -254,7 +255,7 @@ export async function completeOpenRouter(
     body: JSON.stringify({
       model: opts.models[0],
       models: opts.models,
-      messages,
+      messages: toOpenAiMessages(messages),
       max_tokens: opts.maxTokens,
       ...(opts.webSearch ? { plugins: [{ id: "web", max_results: 5 }] } : {}),
     }),
