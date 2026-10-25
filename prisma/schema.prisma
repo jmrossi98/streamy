@@ -50,7 +50,8 @@ model User {
   hiddenChannels      HiddenChannelItem[]
   gameChannelChoices  GameChannelChoice[]
   chatSessions        ChatSession[]
-  progress            WatchProgress[]
+  chatAttachments     ChatAttachment[]
+  progress           WatchProgress[]
   episodeProgress     EpisodeProgress[]
 }
 
@@ -1202,10 +1203,34 @@ model ChatSession {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attachments ChatAttachment[]
 
   @@index([userId, updatedAt])
   @@index([claudeSessionId])
+}
+
+/// A file attached to an admin-chat message (chatAttachmentRules.ts). Uploaded
+/// before the message is sent, so it starts with no chat; saving the chat that
+/// holds the message (a turn's `attachments` refs name these ids) links it.
+/// The bytes live here, in SQLite, so reopening a chat shows them. Deleted
+/// with its chat; one never linked is swept a day after upload.
+model ChatAttachment {
+  id        String   @id @default(cuid())
+  userId    String
+  sessionId String?
+  name      String
+  /// What the bytes were sniffed to be, never what the browser claimed.
+  mime      String
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session ChatSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId, sessionId, createdAt])
 }
 
 /// Per-channel live TV bookkeeping that telemetry alone can't hold

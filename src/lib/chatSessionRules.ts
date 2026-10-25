@@ -13,6 +13,7 @@
 
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
 import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
+import { normalizeAttachmentRefs, type AttachmentRef } from "./chatAttachmentRules";
 
 /**
  * One turn. `via` marks a turn that happened in a linked Claude Code session
@@ -22,7 +23,13 @@ import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
  * imported from a claude.ai chat. Absent means typed here.
  */
 export type ChatTurnVia = "claude-code" | "claude-app" | "skill-run";
-export type ChatTurn = { role: "user" | "assistant"; content: string; via?: ChatTurnVia };
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+  via?: ChatTurnVia;
+  /** Files attached to a user turn (ChatAttachment rows hold the bytes). */
+  attachments?: AttachmentRef[];
+};
 
 export type ChatSessionSummary = {
   id: string;
@@ -51,10 +58,12 @@ export function normalizeTurns(raw: unknown): ChatTurn[] {
   const out: ChatTurn[] = [];
   for (const t of raw) {
     if (!t || typeof t !== "object") continue;
-    const { role, content, via } = t as Record<string, unknown>;
+    const { role, content, via, attachments } = t as Record<string, unknown>;
     if (role !== "user" && role !== "assistant") continue;
     if (typeof content !== "string") continue;
     const turn: ChatTurn = { role, content: content.slice(0, MAX_TURN_CHARS) };
+    const refs = role === "user" ? normalizeAttachmentRefs(attachments) : [];
+    if (refs.length > 0) turn.attachments = refs;
     if (via === "claude-code" || via === "claude-app" || via === "skill-run") turn.via = via;
     out.push(turn);
   }
@@ -137,7 +146,8 @@ export function deleteTurn(turns: ChatTurn[], index: number): ChatTurn[] {
 export function resendFrom(turns: ChatTurn[], index: number, content: string): ChatTurn[] | null {
   const turn = turns[index];
   if (!turn || turn.role !== "user" || !content.trim()) return null;
-  return [...turns.slice(0, index), { role: "user", content: content.trim() }];
+  const kept = turn.attachments?.length ? { attachments: turn.attachments } : {};
+  return [...turns.slice(0, index), { role: "user", content: content.trim(), ...kept }];
 }
 
 /** "now", "5m", "3h", "2d", then a short date: how long ago a chat was last used. */

@@ -255,6 +255,18 @@ export function modelChainFor(route: LlmRoute): string[] {
   return [route.model, ...dedupe(route.fallbacks, route.model)];
 }
 
+/**
+ * Whether every model a route may land on reads images: the Claude slot on
+ * Anthropic, or on OpenRouter with Claude model ids. The open-weight slot
+ * (DeepSeek) and the local model do not -- a fallback that can't see the image
+ * would answer as if it hadn't been sent, so the whole chain must qualify.
+ */
+export function routeReadsImages(route: (LlmRoute & { use?: LlmUse }) | null): boolean {
+  if (!route || route.use === "chatOpen") return false;
+  const chain = modelChainFor(route);
+  return route.provider === "anthropic" ? chain.every((m) => /claude/i.test(m)) : chain.every((m) => m.startsWith("anthropic/"));
+}
+
 export type ResolvedRoute = LlmRoute & {
   use: LlmUse;
   /**

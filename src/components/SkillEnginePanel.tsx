@@ -101,14 +101,7 @@ export function SkillEnginePanel({ initial }: { initial: SkillEngineChoice }) {
 
   return (
     <div className="space-y-3 text-sm">
-      <div>
-        <h4 className="font-semibold text-white">Mediabox skills</h4>
-        <p className="text-xs text-white/40">
-          {choice.engine === "claude"
-            ? "Skills you start from the chat run with Claude Code, on the Claude subscription."
-            : "Skills you start from the chat run with OpenCode, billed to the model's provider. It asks on the run card before a command the profile doesn't list."}
-        </p>
-      </div>
+      <h4 className="font-semibold text-white">Mediabox skills</h4>
       <datalist id="skill-engine-models">
         {OPENCODE_MODEL_SUGGESTIONS.map((id) => (
           <option key={id} value={id} />
