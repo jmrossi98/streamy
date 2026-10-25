@@ -3,13 +3,12 @@
 import { markShowWatched } from "@/lib/showResumeFreshness";
 import { useFreshResume, useResumeRecheck } from "@/lib/useFreshResume";
 import { useState, useEffect, useCallback, useRef, type RefObject } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { VideoChrome } from "./VideoChrome";
 import { type SubtitleOption } from "./SubtitleSelector";
 import { PlaybackOptionsMenu, type AudioOption } from "./PlaybackOptionsMenu";
-import { Button } from "./ui";
+import { Artwork, Button } from "./ui";
 import { usePlayerEngine } from "@/lib/usePlayerEngine";
 import { usePageScrollLock } from "@/lib/usePageScrollLock";
 import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
@@ -558,7 +557,7 @@ function EpisodeView({
       )}
       {showOverlay && (
         <>
-          <Image src={backdropUrl} alt="" fill className="object-cover" sizes="100vw" />
+          <Artwork src={backdropUrl} alt="" kind="backdrop" sizes="100vw" priority />
           <div className="hero-overlay absolute inset-0" />
           {(closeHref || onClose) &&
             (closeHref ? (

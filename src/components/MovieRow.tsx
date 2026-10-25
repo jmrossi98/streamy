@@ -4,9 +4,9 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
 import type { Movie } from "@/lib/tmdb";
-import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
+import { Artwork } from "@/components/ui";
 import { setMovieInCache } from "@/lib/movieCache";
 import { rowOverflows, rowWindow } from "@/lib/browseShelfRules";
 
@@ -69,13 +69,11 @@ export function MovieCard({
           className="absolute inset-0 z-0 block"
           onMouseEnter={onHover}
         >
-          <Image
+          <Artwork
             src={movie.poster}
             alt={movie.title}
-            fill
-            className="object-cover"
+            kind="poster"
             sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
-            unoptimized
           />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />

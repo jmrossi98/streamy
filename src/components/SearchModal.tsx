@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import Image from "next/image";
 import type { SearchResultItem } from "@/lib/tmdb";
+import { Artwork } from "@/components/ui";
 
 type SearchModalProps = { open: boolean; onClose: () => void };
 
@@ -190,7 +190,9 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
                       >
                         <div className="relative flex h-9 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-white/10">
                           {c.logoUrl ? (
-                            <Image src={c.logoUrl} alt="" fill className="object-contain p-1" sizes="64px" unoptimized />
+                            // Channel logos are proxied through our own origin (see ChannelCard); a plain <img>.
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={c.logoUrl} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-contain p-1" />
                           ) : (
                             <span className="text-[10px] text-white/50">{c.number ?? "TV"}</span>
                           )}
@@ -219,7 +221,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
                           className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
                         >
                           <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
-                            <Image src={item.poster} alt="" fill className="object-cover" sizes="64px" />
+                            <Artwork src={item.poster} alt="" kind="poster" sizes="64px" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-white font-medium truncate">{item.title}</p>
@@ -235,7 +237,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
                           className="flex gap-3 p-3 min-h-[44px] items-center hover:bg-white/10 active:bg-white/15 transition-colors touch-manipulation"
                         >
                           <div className="relative w-16 h-24 shrink-0 rounded overflow-hidden bg-white/10">
-                            <Image src={item.poster} alt="" fill className="object-cover" sizes="64px" />
+                            <Artwork src={item.poster} alt="" kind="poster" sizes="64px" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-white font-medium truncate">{item.name}</p>

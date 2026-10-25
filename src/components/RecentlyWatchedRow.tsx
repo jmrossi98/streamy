@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import type { Movie, TVShow } from "@/lib/tmdb";
-import Image from "next/image";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { PosterActions } from "@/components/PosterActions";
+import { Artwork } from "@/components/ui";
 import { useHoverPrefetch } from "@/lib/useHoverPrefetch";
 import { ROW_H2_CLASS, ROW_INLINE_TEXT_CLASS, ROW_SECTION_CLASS } from "@/lib/browseLayout";
 
@@ -75,14 +75,7 @@ function MovieCard({
     <div className={CARD_CLASS}>
       <div className="relative aspect-video w-full">
         <Link href={`/watch/${movie.id}`} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
-          <Image
-            src={movie.poster}
-            alt={movie.title}
-            fill
-            className="object-cover"
-            sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
-            unoptimized
-          />
+          <Artwork src={movie.poster} alt={movie.title} kind="poster" sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px" />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         <PosterActions movieId={idStr} />
@@ -110,14 +103,7 @@ function ShowCard({ show }: { show: TVShow }) {
     <div className={CARD_CLASS}>
       <div className="relative aspect-video w-full">
         <Link href={`/show/${show.id}`} prefetch={false} onMouseEnter={onHover} className="absolute inset-0 z-0 block">
-          <Image
-            src={show.poster}
-            alt={show.name}
-            fill
-            className="object-cover"
-            sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px"
-            unoptimized
-          />
+          <Artwork src={show.poster} alt={show.name} kind="poster" sizes="(max-width: 640px) 160px, (max-width: 768px) 180px, 240px" />
         </Link>
         <div className="absolute inset-0 z-[1] bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
         <PosterActions showId={String(show.id)} />

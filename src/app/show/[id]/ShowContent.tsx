@@ -3,11 +3,11 @@
 import { takeShowWatched } from "@/lib/showResumeFreshness";
 import { releaseLabel } from "@/lib/releaseDateRules";
 import { useState, useEffect, useCallback, useRef } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ShowDetail, TVSeason, TVEpisode, TVShow } from "@/lib/tmdb";
 import { Credits } from "@/components/Credits";
+import { Artwork } from "@/components/ui";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
 import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
@@ -491,13 +491,12 @@ export function ShowContent({
                           placeholder, whose "No Poster" text showed through
                           behind the status badge. */}
                       {ep.hasStill && (
-                        <Image
+                        <Artwork
                           src={ep.still}
                           alt=""
-                          fill
-                          className={`object-cover ${playable ? "" : "opacity-40"}`}
-                          sizes="160px"
-                          unoptimized
+                          kind="still"
+                          sizes="(max-width: 640px) 112px, 160px"
+                          className={playable ? undefined : "opacity-40"}
                         />
                       )}
                       {/* Only offer Play when there's actually something to

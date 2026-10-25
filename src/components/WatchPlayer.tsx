@@ -2,7 +2,7 @@
 
 import { useFreshResume, useResumeRecheck } from "@/lib/useFreshResume";
 import { useCallback } from "react";
-import Image from "next/image";
+import { Artwork } from "./ui";
 import Link from "next/link";
 import { VideoChrome } from "./VideoChrome";
 import { type SubtitleOption } from "./SubtitleSelector";
@@ -202,13 +202,7 @@ export function WatchPlayer({
       )}
       {showOverlay && (
         <>
-          <Image
-            src={backdropUrl}
-            alt=""
-            fill
-            className="object-cover"
-            sizes="100vw"
-          />
+          <Artwork src={backdropUrl} alt="" kind="backdrop" sizes="100vw" priority />
           <div className="hero-overlay absolute inset-0" />
           {closeHref && (
             <Link

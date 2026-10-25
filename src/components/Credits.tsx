@@ -1,6 +1,6 @@
-import Image from "next/image";
 import Link from "next/link";
 import type { Credits as CreditsData, CrewMember } from "@/lib/tmdb";
+import { Artwork } from "@/components/ui";
 
 // Cast + key crew for a title page, in the spirit of IMDb/Letterboxd: a row of
 // cast headshots, then director/writer/producer credits. Renders nothing when
@@ -32,13 +32,7 @@ export function Credits({ credits }: { credits?: CreditsData }) {
               >
                 <div className="relative mb-2 h-[92px] w-[92px] overflow-hidden rounded-full bg-netflix-dark ring-1 ring-white/10 transition-shadow group-hover:ring-white/40">
                   {person.profile ? (
-                    <Image
-                      src={person.profile}
-                      alt={person.name}
-                      fill
-                      className="object-cover"
-                      sizes="92px"
-                    />
+                    <Artwork src={person.profile} alt={person.name} kind="profile" sizes="92px" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-2xl text-white/30">
                       {person.name.charAt(0)}
