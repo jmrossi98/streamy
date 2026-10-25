@@ -109,7 +109,8 @@ export default async function HomePage() {
   return (
     <>
       <HomePrefetch movieIds={prefetchIds} showIds={prefetchShowIds} runtimeIds={runtimeIds} />
-      <div className="max-md:pt-[calc(4rem+env(safe-area-inset-top,0px))]">
+      {/* 4rem = the navbar row; LayoutShell's main already adds the status-bar inset. */}
+      <div className="max-md:pt-16">
         <HomeFeedHeader />
         <Hero featured={featured} progressSeconds={featuredProgressSeconds} />
       </div>
