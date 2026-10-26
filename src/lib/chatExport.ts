@@ -51,16 +51,32 @@ async function removeCopies(id: string, keep: string | null): Promise<void> {
   }
 }
 
-/** Writes (or removes) the vault copy of one chat, matching the database now. */
+/** Extra passes when the chat is saved again while its note is being written. */
+const RECHECKS = 3;
+
+/**
+ * Writes (or removes) the vault copy of one chat, matching the database now.
+ * Afterwards the chat is read again: a save that landed during the write would
+ * leave the note older than the database, so it is written once more.
+ */
 export async function exportChatToVault(id: string): Promise<void> {
   if (!isVaultConfigured()) return;
+  for (let pass = 0; pass <= RECHECKS; pass++) {
+    const wrote = await writeChatNote(id);
+    const now = await prisma.chatSession.findUnique({ where: { id }, select: { updatedAt: true } });
+    if ((now ? now.updatedAt.toISOString() : null) === wrote) return;
+  }
+}
+
+/** One write of the note; returns the `updatedAt` it reflects (null: the chat is gone or empty). */
+async function writeChatNote(id: string): Promise<string | null> {
   const row = await prisma.chatSession.findUnique({ where: { id } });
   const turns = row ? parseStoredTurns(row.turns) : [];
   // Deleted, or still an empty "New chat": nothing worth a note.
   if (!row || turns.length === 0) {
     await removeCopies(id, null);
     await markExported(id, null);
-    return;
+    return row ? row.updatedAt.toISOString() : null;
   }
   const user = await prisma.user.findUnique({ where: { id: row.userId }, select: { name: true } });
   const path = chatNotePath(row);
@@ -79,6 +95,7 @@ export async function exportChatToVault(id: string): Promise<void> {
   );
   await removeCopies(id, path);
   await markExported(id, row.updatedAt.toISOString());
+  return row.updatedAt.toISOString();
 }
 
 /** Fire-and-forget export after a save, coalescing a burst of saves into one write. */

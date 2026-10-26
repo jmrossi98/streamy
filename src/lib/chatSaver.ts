@@ -36,7 +36,7 @@ export function buildSaveRequest(
   chatId: string | null,
   turns: ChatTurn[],
   backend: string,
-  opts: { base: number | null; replace: boolean }
+  opts: { base: number | null; replace: boolean; version?: number | null }
 ): SaveRequest {
   if (!chatId) return { url: "/api/admin/chat-sessions", method: "POST", body: JSON.stringify({ turns, backend }) };
   return {
@@ -46,6 +46,7 @@ export function buildSaveRequest(
       turns,
       backend,
       ...(opts.base !== null ? { baseTurnCount: opts.base } : {}),
+      ...(typeof opts.version === "number" ? { baseVersion: opts.version } : {}),
       ...(opts.replace ? { replace: true } : {}),
     }),
   };

@@ -34,6 +34,7 @@ type Row = {
   title: string;
   backend: string;
   turnCount: number;
+  version: number;
   updatedAt: Date;
   claudeSessionId: string | null;
 };
@@ -45,6 +46,7 @@ function summary(row: Row): ChatSessionSummary {
     backend: normalizeSessionBackend(row.backend),
     turnCount: row.turnCount,
     updatedAt: row.updatedAt.toISOString(),
+    version: row.version,
     claudeSessionId: row.claudeSessionId,
   };
 }
@@ -54,7 +56,7 @@ export async function listChatSessions(userId: string): Promise<ChatSessionSumma
     where: { userId },
     orderBy: { updatedAt: "desc" },
     take: LIST_LIMIT,
-    select: { id: true, title: true, backend: true, turnCount: true, updatedAt: true, claudeSessionId: true },
+    select: { id: true, title: true, backend: true, turnCount: true, version: true, updatedAt: true, claudeSessionId: true },
   });
   return rows.map(summary);
 }
@@ -75,6 +77,8 @@ export type ChatSessionPatch = {
   backend?: unknown;
   turns?: unknown;
   baseTurnCount?: unknown;
+  /** The chat's `version` when the panel last received it; a save against an older one is refused. */
+  baseVersion?: unknown;
   /** The panel's explicit "I edited or deleted history" flag; without it a save may only append. */
   replace?: unknown;
 };
@@ -118,6 +122,14 @@ export async function updateChatSession(
   if (!existing) return null;
 
   let turns = parseStoredTurns(existing.turns);
+  if (patch.turns !== undefined) {
+    const seen = typeof patch.baseVersion === "number" && Number.isInteger(patch.baseVersion) ? patch.baseVersion : null;
+    if (seen !== null && seen !== existing.version) return refuse(userId, id, "stale-version", turns.length, 0);
+    // Replacing history needs the turn count the panel saw, and it must still be the stored one.
+    if (patch.replace === true && patch.baseTurnCount !== turns.length) {
+      return refuse(userId, id, "replace-without-base", turns.length, 0);
+    }
+  }
   // A rename is its own request: a transcript save never changes the title.
   if (patch.turns !== undefined && patch.title !== undefined) {
     await refuse(userId, id, "title-with-turns", turns.length, 0);
@@ -139,15 +151,23 @@ export async function updateChatSession(
     title = titleFromTurns(turns);
   }
 
-  const row = await prisma.chatSession.update({
-    where: { id },
-    data: {
-      title,
-      titleEdited,
-      ...(patch.backend !== undefined ? { backend: normalizeSessionBackend(patch.backend) ?? "" } : {}),
-      ...(patch.turns !== undefined ? { turns: JSON.stringify(turns), turnCount: turns.length } : {}),
-    },
-  });
+  // Compare-and-swap on the version read above: a write that landed since is a 409, not an overwrite.
+  let row;
+  try {
+    row = await prisma.chatSession.update({
+      where: { id, version: existing.version },
+      data: {
+        title,
+        titleEdited,
+        version: { increment: 1 },
+        ...(patch.backend !== undefined ? { backend: normalizeSessionBackend(patch.backend) ?? "" } : {}),
+        ...(patch.turns !== undefined ? { turns: JSON.stringify(turns), turnCount: turns.length } : {}),
+      },
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2025") return refuse(userId, id, "stale-version", turns.length, 0);
+    throw err;
+  }
   if (patch.turns !== undefined) await syncSessionAttachments(userId, row.id, turns);
   scheduleChatExport(row.id);
   return { ...summary(row), turns };
@@ -187,6 +207,7 @@ export async function applyRunTurn(
     data: {
       turns: JSON.stringify(turns),
       turnCount: turns.length,
+      version: { increment: 1 },
       ...(existing.titleEdited ? {} : { title: titleFromTurns(turns) }),
     },
   });

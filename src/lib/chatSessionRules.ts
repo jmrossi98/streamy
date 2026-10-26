@@ -43,6 +43,8 @@ export type ChatSessionSummary = {
   backend: ChatBackendId | null;
   turnCount: number;
   updatedAt: string;
+  /** Write counter for the save guard (see ChatSessionPatch.baseVersion). */
+  version?: number;
   /** The Claude Code session this chat is shared with, or null. */
   claudeSessionId: string | null;
 };
@@ -174,7 +176,7 @@ export function mergeConcurrentTurns(stored: ChatTurn[], incoming: ChatTurn[], b
 }
 
 /** Why a save was refused (logged server-side, never shown as a transcript). */
-export type SaveRefusal = "not-append" | "title-with-turns" | "stale-base";
+export type SaveRefusal = "not-append" | "title-with-turns" | "stale-base" | "stale-version" | "replace-without-base";
 
 function startsWith(incoming: ChatTurn[], prefix: ChatTurn[]): boolean {
   if (prefix.length > incoming.length) return false;

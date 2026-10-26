@@ -8,6 +8,7 @@ type Row = {
   backend: string;
   turns: string;
   turnCount: number;
+  version: number;
   claudeSessionId: string | null;
   updatedAt: Date;
 };
@@ -21,9 +22,10 @@ vi.mock("../db", () => ({
         const r = rows.get(where.id);
         return r && r.userId === where.userId ? { ...r } : null;
       }),
-      update: vi.fn(async ({ where, data }: { where: { id: string }; data: Partial<Row> }) => {
+      update: vi.fn(async ({ where, data }: { where: { id: string; version?: number }; data: Partial<Row> & { version?: { increment: number } } }) => {
         const r = rows.get(where.id)!;
-        const next = { ...r, ...data, updatedAt: new Date() };
+        if (where.version !== undefined && where.version !== r.version) throw Object.assign(new Error("not found"), { code: "P2025" });
+        const next = { ...r, ...data, version: r.version + (data.version?.increment ?? 0), updatedAt: new Date() };
         rows.set(r.id, next);
         return { ...next };
       }),
@@ -51,6 +53,7 @@ function seed(id: string, turns: ChatTurn[], over: Partial<Row> = {}) {
     backend: "local",
     turns: JSON.stringify(turns),
     turnCount: turns.length,
+    version: 0,
     claudeSessionId: null,
     updatedAt: new Date("2026-10-25T22:00:00Z"),
     ...over,
@@ -216,6 +219,49 @@ describe("the save endpoint refuses a non-append overwrite", () => {
     await expect(updateChatSession("admin", "A", { turns: edited, baseTurnCount: 2 })).rejects.toBeInstanceOf(ChatConflictError);
     const s = await updateChatSession("admin", "A", { turns: edited, baseTurnCount: 2, replace: true });
     expect(s?.turns[0].content).toBe("question for A, reworded");
+  });
+
+  it("409s a stale version, leaves the chat as stored, and bumps the version on a good write", async () => {
+    seed("A", aTurns, { version: 3 });
+    await expect(updateChatSession("admin", "A", { turns: [...aTurns, u("x")], baseTurnCount: 2, baseVersion: 2 })).rejects.toBeInstanceOf(
+      ChatConflictError
+    );
+    expect(stored("A")).toEqual(aTurns);
+    expect(logAudit).toHaveBeenCalledWith("admin", "assistant.chat.save.refused", "A", expect.stringContaining("stale-version"));
+    const s = await updateChatSession("admin", "A", { turns: [...aTurns, u("x")], baseTurnCount: 2, baseVersion: 3 });
+    expect(s?.turns).toHaveLength(3);
+    expect(rows.get("A")!.version).toBe(4);
+  });
+
+  it("409s when the row changes between the read and the write (compare-and-swap)", async () => {
+    seed("A", aTurns, { version: 1 });
+    const { prisma } = await import("../db");
+    vi.mocked(prisma.chatSession.findFirst).mockImplementationOnce((async () => {
+      const copy = { ...rows.get("A")! };
+      rows.set("A", { ...copy, version: 2 });
+      return copy;
+    }) as never);
+    await expect(updateChatSession("admin", "A", { turns: [...aTurns, u("x")], baseTurnCount: 2 })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(stored("A")).toEqual(aTurns);
+  });
+
+  it("refuses replace with no baseTurnCount, or one that is not the stored count", async () => {
+    seed("A", aTurns);
+    const edited = [u("question for A, reworded"), a("answer for A")];
+    await expect(updateChatSession("admin", "A", { turns: edited, replace: true })).rejects.toBeInstanceOf(ChatConflictError);
+    await expect(updateChatSession("admin", "A", { turns: edited, replace: true, baseTurnCount: 1 })).rejects.toBeInstanceOf(ChatConflictError);
+    await expect(updateChatSession("admin", "A", { turns: edited, replace: true, baseTurnCount: 3 })).rejects.toBeInstanceOf(ChatConflictError);
+    expect(stored("A")).toEqual(aTurns);
+    expect(logAudit).toHaveBeenCalledWith("admin", "assistant.chat.save.refused", "A", expect.stringContaining("replace-without-base"));
+  });
+
+  it("accepts a replace with the stored count, and an append without a version", async () => {
+    seed("A", aTurns);
+    const edited = [u("question for A, reworded"), a("answer for A")];
+    const s = await updateChatSession("admin", "A", { turns: edited, replace: true, baseTurnCount: 2, baseVersion: 0 });
+    expect(s?.turns[0].content).toBe("question for A, reworded");
+    const appended = await updateChatSession("admin", "A", { turns: [...edited, u("more")], baseTurnCount: 2 });
+    expect(appended?.turns).toHaveLength(3);
   });
 
   it("still renames on its own", async () => {
