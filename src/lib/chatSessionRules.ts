@@ -14,7 +14,7 @@
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
 import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
 import { normalizeAttachmentRefs, type AttachmentRef } from "./chatAttachmentRules";
-import { findRunTurn, normalizeProposalRuns, parseSkillProposal, type ProposalRuns } from "./skillRunnerRules";
+import { findRunTurn, isFinished, normalizeProposalRuns, parseRunTurn, parseSkillProposal, type ProposalRuns } from "./skillRunnerRules";
 
 /**
  * One turn. `via` marks a turn that happened in a linked Claude Code session
@@ -78,11 +78,42 @@ export function normalizeTurns(raw: unknown): ChatTurn[] {
   return out.slice(-MAX_SESSION_TURNS);
 }
 
+/** The run id a skill-run turn holds, or null for any other turn. */
+export function runIdOf(turn: Pick<ChatTurn, "content" | "via">): string | null {
+  return turn.via === "skill-run" ? (parseRunTurn(turn.content)?.id ?? null) : null;
+}
+
+/**
+ * At most one turn per skill run: the first turn's place, with the most
+ * finished text seen (a finished report beats a "running" copy; between equals
+ * the later wins). Returns the same array when there is nothing to remove.
+ */
+export function dedupeRunTurns<T extends Pick<ChatTurn, "content" | "via">>(turns: T[]): T[] {
+  const best = new Map<string, { at: number; turn: T; done: boolean }>();
+  let dupes = 0;
+  turns.forEach((turn, at) => {
+    const id = runIdOf(turn);
+    if (id === null) return;
+    const done = isFinished(parseRunTurn(turn.content)?.status ?? "failed");
+    const seen = best.get(id);
+    if (!seen) return void best.set(id, { at, turn, done });
+    dupes++;
+    if (done || !seen.done) best.set(id, { at: seen.at, turn, done });
+  });
+  if (dupes === 0) return turns;
+  return turns.flatMap((turn, at) => {
+    const id = runIdOf(turn);
+    if (id === null) return [turn];
+    const b = best.get(id)!;
+    return b.at === at ? [b.turn] : [];
+  });
+}
+
 /** The stored JSON column, read back. A corrupt row reads as empty, never throws. */
 export function parseStoredTurns(json: string | null | undefined): ChatTurn[] {
   if (!json) return [];
   try {
-    return normalizeTurns(JSON.parse(json));
+    return dedupeRunTurns(normalizeTurns(JSON.parse(json)));
   } catch {
     return [];
   }
@@ -111,8 +142,16 @@ export function normalizeSessionBackend(raw: unknown): ChatBackendId | null {
   return CHAT_BACKENDS.some((b) => b.id === raw) ? (raw as ChatBackendId) : null;
 }
 
-function sameTurn(a: ChatTurn, b: ChatTurn): boolean {
-  return a.role === b.role && a.content === b.content;
+/**
+ * The same turn: role and text, except a run's turn, which is rewritten in
+ * place as the run goes -- two copies of one run's turn are the same turn
+ * whatever state each has reached.
+ */
+export function sameTurn(a: ChatTurn, b: ChatTurn): boolean {
+  if (a.role !== b.role) return false;
+  if (a.content === b.content) return true;
+  const id = runIdOf(a);
+  return id !== null && id === runIdOf(b);
 }
 
 /**
@@ -159,10 +198,39 @@ export function checkTranscriptSave(
   base: number | null,
   replace: boolean
 ): { ok: true; turns: ChatTurn[] } | { ok: false; reason: SaveRefusal } {
+  const checked = checkSave(stored, incoming, base, replace);
+  return checked.ok ? { ok: true, turns: dedupeRunTurns(checked.turns) } : checked;
+}
+
+/**
+ * The panel's copy of a run's turn may be older than the stored one (the server
+ * rewrites it as the run goes), so a plain save keeps the stored text for any
+ * run turn the chat already has.
+ */
+function adoptStoredRunTurns(stored: ChatTurn[], incoming: ChatTurn[]): ChatTurn[] {
+  const byId = new Map<string, ChatTurn>();
+  for (const t of stored) {
+    const id = runIdOf(t);
+    if (id !== null && !byId.has(id)) byId.set(id, t);
+  }
+  if (byId.size === 0) return incoming;
+  return incoming.map((t) => {
+    const id = runIdOf(t);
+    return (id !== null && byId.get(id)) || t;
+  });
+}
+
+function checkSave(
+  stored: ChatTurn[],
+  incoming: ChatTurn[],
+  base: number | null,
+  replace: boolean
+): { ok: true; turns: ChatTurn[] } | { ok: false; reason: SaveRefusal } {
   if (replace) {
     const merged = mergeConcurrentTurns(stored, incoming, base);
     return merged ? { ok: true, turns: merged } : { ok: false, reason: "stale-base" };
   }
+  incoming = adoptStoredRunTurns(stored, incoming);
   if (base !== null && base > stored.length) return { ok: false, reason: "stale-base" };
   const known = base === null ? stored.length : base;
   if (known === stored.length) {

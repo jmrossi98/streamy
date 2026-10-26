@@ -8,7 +8,7 @@
  * saves run one at a time, so switching chats can wait for the pending ones.
  */
 
-import type { ChatTurn } from "./chatSessionRules";
+import { runIdOf, sameTurn, type ChatTurn } from "./chatSessionRules";
 
 /** Runs tasks strictly in order. `flush` resolves once everything queued so far has settled. */
 export function createSaveQueue() {
@@ -49,6 +49,36 @@ export function buildSaveRequest(
       ...(opts.replace ? { replace: true } : {}),
     }),
   };
+}
+
+export type ConflictPlan =
+  /** Save `turns` (the server's transcript plus what the panel added) as a plain append. */
+  | { kind: "retry"; turns: ChatTurn[] }
+  /** The server already has everything the panel meant to add: take its copy. */
+  | { kind: "adopt" }
+  /** The panel's changes really collide with the server's: take the server's copy and say so. */
+  | { kind: "conflict" };
+
+/**
+ * What to do after the server refused a save with 409. `server` is its copy of
+ * the chat now, `local` what the panel tried to save, `base` how many turns the
+ * panel had last received. Local copies of run turns the server holds are
+ * dropped (matched by run id: the server rewrites those in place, so a local
+ * copy is only ever older). If what is left is the turns the panel already had,
+ * still in agreement with the server, plus new ones, the new ones go on after
+ * the server's transcript. An edit or delete of history (`replace`) is never
+ * replayed: it was made against turns that have changed.
+ */
+export function planConflictRetry(server: ChatTurn[], local: ChatTurn[], base: number, replace: boolean): ConflictPlan {
+  if (replace || base > local.length) return { kind: "conflict" };
+  const serverIds = new Set(server.map(runIdOf).filter((id): id is string => id !== null));
+  const shared = new Set(local.map(runIdOf).filter((id): id is string => id !== null && serverIds.has(id)));
+  const mine = (t: ChatTurn) => shared.has(runIdOf(t) ?? "");
+  const synced = local.slice(0, base).filter((t) => !mine(t));
+  const added = local.slice(base).filter((t) => !mine(t));
+  const theirs = server.filter((t) => !mine(t));
+  if (synced.length > theirs.length || synced.some((t, i) => !sameTurn(t, theirs[i]))) return { kind: "conflict" };
+  return added.length === 0 ? { kind: "adopt" } : { kind: "retry", turns: [...server, ...added] };
 }
 
 /**
