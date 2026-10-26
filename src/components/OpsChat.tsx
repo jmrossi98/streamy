@@ -155,6 +155,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** How often the open chat is checked for turns added elsewhere (a linked Claude Code session). */
 const REFRESH_MS = 15_000;
+const SAVE_REFUSED = "Couldn't save. This chat changed elsewhere; the stored copy is shown and your edit is still open.";
 /** Within this many px of the bottom still counts as "at the bottom" (a one-line rounding slop). */
 const FOLLOW_SLACK_PX = 40;
 
@@ -200,6 +201,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   // elsewhere (a linked Claude Code session) is noticed.
   const syncedCountRef = useRef(0);
   const syncedAtRef = useRef<string | null>(null);
+  // The open chat's write counter as last received; a save names it (baseVersion).
+  const syncedVersionRef = useRef<number | null>(null);
   const streamingRef = useRef(false);
   const [claudeSessions, setClaudeSessions] = useState<ClaudeCodeSessionItem[]>([]);
   const slotsRef = useRef(slots);
@@ -288,6 +291,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       setTurns(s.turns);
       syncedCountRef.current = s.turns.length;
       syncedAtRef.current = s.updatedAt;
+      syncedVersionRef.current = s.version ?? null;
       setEditing(null);
       setConfirmDeleteTurn(null);
       setError(null);
@@ -350,6 +354,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     setTurns(session.turns);
     syncedCountRef.current = session.turns.length;
     syncedAtRef.current = session.updatedAt;
+    syncedVersionRef.current = session.version ?? null;
   }, []);
 
   /**
@@ -376,6 +381,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             if (!chatId) selectSession(session.id);
             syncedCountRef.current = session.turns.length;
             syncedAtRef.current = session.updatedAt;
+            syncedVersionRef.current = session.version ?? null;
             // Turns the server added (a run's report) show now, unless an
             // answer is streaming over the transcript.
             if (show && !streamingRef.current) {
@@ -388,7 +394,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           return { id: session.id, turns: session.turns };
         };
         try {
-          const req = buildSaveRequest(chatId, next, slot, { base, replace });
+          const version = chatId !== null && isOpen(chatId) ? syncedVersionRef.current : null;
+          const req = buildSaveRequest(chatId, next, slot, { base, replace, version });
           const { session } = await api<{ session: ChatSessionFull }>(req.url, { method: req.method, body: req.body });
           return landed(session);
         } catch (err) {
@@ -404,20 +411,25 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               const plan = planConflictRetry(session.turns, next, base ?? 0, replace);
               if (plan.kind === "adopt") return landed(session, true);
               if (plan.kind === "retry") {
-                const retry = buildSaveRequest(chatId, plan.turns, slot, { base: session.turns.length, replace: false });
+                const retry = buildSaveRequest(chatId, plan.turns, slot, {
+                  base: session.turns.length,
+                  replace: false,
+                  version: session.version,
+                });
                 try {
                   const again = await api<{ session: ChatSessionFull }>(retry.url, { method: retry.method, body: retry.body });
                   return landed(again.session, true);
                 } catch (second) {
                   if (!(second instanceof ApiError && second.status === 409)) throw second;
                   const latest = await api<{ session: ChatSessionFull }>(url);
-                  applySession(latest.session);
-                  setSaveError("This chat changed elsewhere meanwhile, so it was reloaded. Make the edit again.");
+                  adoptOpenChat(latest.session);
+                  setSaveError(SAVE_REFUSED);
                   return null;
                 }
               }
-              applySession(session);
-              setSaveError("This chat changed elsewhere meanwhile, so it was reloaded. Make the edit again.");
+              // Keep the stored transcript and whatever edit is still open.
+              adoptOpenChat(session);
+              setSaveError(SAVE_REFUSED);
               return null;
             } catch {
               // Fall through to the generic message.
@@ -427,7 +439,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           return null;
         }
       }),
-    [applySession, isOpen, saveQueue, selectSession, upsertSummary]
+    [adoptOpenChat, isOpen, saveQueue, selectSession, upsertSummary]
   );
 
   /**
@@ -469,6 +481,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         setTurns(session.turns);
         syncedCountRef.current = session.turns.length;
         syncedAtRef.current = session.updatedAt;
+        syncedVersionRef.current = session.version ?? null;
       } catch {
         // A missed refresh is caught by the next one.
       }
@@ -889,6 +902,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     selectSession(null);
     setTurns([]);
     syncedCountRef.current = 0;
+    syncedVersionRef.current = null;
     syncedAtRef.current = null;
     setEditing(null);
     setConfirmDeleteTurn(null);

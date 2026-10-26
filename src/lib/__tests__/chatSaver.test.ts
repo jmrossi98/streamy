@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRunTurnRequest, buildSaveRequest, createSaveQueue } from "../chatSaver";
+import { buildRunTurnRequest, buildSaveRequest, createSaveQueue, planConflictRetry } from "../chatSaver";
 import type { ChatTurn } from "../chatSessionRules";
 
 const u = (content: string): ChatTurn => ({ role: "user", content });
@@ -100,6 +100,23 @@ describe("a save goes to the chat it was started for", () => {
     const edit = buildSaveRequest("A", [u("x")], "local", { base: 1, replace: true });
     expect(JSON.parse(edit.body)).toMatchObject({ replace: true, baseTurnCount: 1 });
     expect(JSON.parse(buildSaveRequest("A", [u("x")], "local", { base: 1, replace: false }).body)).not.toHaveProperty("replace");
+  });
+
+  it("sends the chat version it last saw, when it has one", () => {
+    expect(JSON.parse(buildSaveRequest("A", [u("x")], "local", { base: 1, replace: false, version: 4 }).body)).toMatchObject({ baseVersion: 4 });
+    expect(JSON.parse(buildSaveRequest("A", [u("x")], "local", { base: 1, replace: false, version: null }).body)).not.toHaveProperty("baseVersion");
+  });
+
+  it("on a 409 for an edit of history, never retries it: the server's copy stays and the edit is not replayed", () => {
+    const server = [u("one"), u("two"), u("three")];
+    const edited = [u("one, reworded"), u("two")];
+    expect(planConflictRetry(server, edited, 2, true)).toEqual({ kind: "conflict" });
+  });
+
+  it("on a 409 for an append over changed history, reports a conflict and does not drop server turns", () => {
+    const server = [u("one"), u("other"), u("three")];
+    const local = [u("one"), u("two"), u("new")];
+    expect(planConflictRetry(server, local, 2, false)).toEqual({ kind: "conflict" });
   });
 
   it("sends only the run id for a run turn", () => {

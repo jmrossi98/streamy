@@ -1194,6 +1194,9 @@ model ChatSession {
   /// JSON array of {role, content}.
   turns       String   @default("[]")
   turnCount   Int      @default(0)
+  /// Bumped by every write; a transcript save names the version it read and
+  /// is refused (409) when the chat has moved on.
+  version     Int      @default(0)
   /// The Claude Code session this chat is shared with, if any: turns flow
   /// both ways through the chat bridge (chatBridge.ts).
   claudeSessionId String?

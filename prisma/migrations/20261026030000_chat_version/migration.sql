@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "ChatSession" ADD COLUMN "version" INTEGER NOT NULL DEFAULT 0;
