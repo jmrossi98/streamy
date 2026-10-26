@@ -38,6 +38,7 @@ import { ActionProposal } from "./ActionProposal";
 import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
 import { HISTORY_IDLE, shouldIntercept, stepHistory, userMessages, type HistoryPos } from "@/lib/composerHistory";
 import { buildRunTurnRequest, buildSaveRequest, createSaveQueue, planConflictRetry } from "@/lib/chatSaver";
+import * as sendQueue from "@/lib/sendQueue";
 import {
   findRunTurn,
   isFinished,
@@ -51,6 +52,9 @@ import {
 
 /** The proposal a Run tap came from: the message's index in the chat and the block's index in it. */
 type ProposalRef = { turn: number; block: number };
+
+/** How a reply ended: only "ok" lets the send queue go on. */
+type TurnOutcome = "ok" | "error" | "stopped";
 
 export type { ChatSlot, ChatSlots } from "@/lib/chatSlots";
 
@@ -239,6 +243,19 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   // Runs whose result has already gone into the chat: the card may report
   // the end more than once before the rewritten turn reaches it.
   const finishedRunsRef = useRef(new Set<string>());
+  // Messages typed while a reply streams, one line per chat; in memory only.
+  // The ref is what the send loop reads, the state is what is drawn.
+  const queuesRef = useRef<sendQueue.Queues>(sendQueue.EMPTY_QUEUES);
+  const [queues, setQueues] = useState<sendQueue.Queues>(sendQueue.EMPTY_QUEUES);
+  const [queueNote, setQueueNote] = useState<string | null>(null);
+  // Always the latest render's drain, so a stream that started under an older
+  // render still hands on with the current toggles and slots.
+  const drainRef = useRef<(chatId: string | null, outcome: TurnOutcome) => void>(() => {});
+
+  const changeQueues = useCallback((next: sendQueue.Queues) => {
+    queuesRef.current = next;
+    setQueues(next);
+  }, []);
 
   useEffect(() => {
     turnsRef.current = turns;
@@ -379,7 +396,11 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         /** The server's copy after a save (or retry) landed. */
         const landed = (session: ChatSessionFull, show = false) => {
           if (isOpen(chatId)) {
-            if (!chatId) selectSession(session.id);
+            if (!chatId) {
+              // Messages queued while the new chat was still unsaved follow it.
+              changeQueues(sendQueue.rekey(queuesRef.current, sendQueue.NEW_CHAT_KEY, session.id));
+              selectSession(session.id);
+            }
             syncedCountRef.current = session.turns.length;
             syncedAtRef.current = session.updatedAt;
             syncedVersionRef.current = session.version ?? null;
@@ -440,7 +461,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           return null;
         }
       }),
-    [adoptOpenChat, isOpen, saveQueue, selectSession, upsertSummary]
+    [adoptOpenChat, changeQueues, isOpen, saveQueue, selectSession, upsertSummary]
   );
 
   /**
@@ -648,8 +669,13 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   async function send(e?: { preventDefault(): void }) {
     e?.preventDefault();
     const question = input.trim();
+    // A reply is still coming: this message waits its turn instead.
+    if (streamingRef.current) {
+      queueMessage(question);
+      return;
+    }
     const refs = pendingRef.current.flatMap((p) => (p.status === "done" && p.ref ? [p.ref] : []));
-    if ((!question && refs.length === 0) || streaming || pendingRef.current.some((p) => p.status === "uploading")) return;
+    if ((!question && refs.length === 0) || pendingRef.current.some((p) => p.status === "uploading")) return;
     setInput("");
     historyPosRef.current = HISTORY_IDLE;
     for (const p of pendingRef.current) if (p.preview) URL.revokeObjectURL(p.preview);
@@ -659,9 +685,83 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     await runTurn([...turns, { role: "user", content: question, ...(refs.length > 0 ? { attachments: refs } : {}) }]);
   }
 
+  /** Puts `question` at the back of this chat's line, on the backend and model chosen now. */
+  function queueMessage(question: string) {
+    if (!question) return;
+    const key = currentIdRef.current ?? sendQueue.NEW_CHAT_KEY;
+    const item: sendQueue.QueueItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      kind: "message",
+      text: question,
+      backend,
+      model: modelId,
+    };
+    const res = sendQueue.enqueue(queuesRef.current, key, item);
+    if (!res.ok) {
+      setQueueNote(`The queue is full (${sendQueue.QUEUE_MAX}). Remove one or wait for a reply.`);
+      return;
+    }
+    changeQueues(res.queues);
+    setQueueNote(null);
+    setInput("");
+    historyPosRef.current = HISTORY_IDLE;
+    if (composerRef.current) composerRef.current.style.height = "auto";
+  }
+
+  /**
+   * A reply ended. After a good one the next queued item goes out, through the
+   * same runTurn a typed message uses; after an error or a Stop the line is
+   * held until the admin resumes or clears it.
+   */
+  function drainQueue(chatId: string | null, outcome: TurnOutcome) {
+    const key = chatId ?? sendQueue.NEW_CHAT_KEY;
+    if (sendQueue.queueOf(queuesRef.current, key).items.length === 0) return;
+    // A chat that is no longer open can't be sent into from here; hold it for when it is.
+    if (outcome !== "ok" || !isOpen(chatId)) {
+      changeQueues(sendQueue.pause(queuesRef.current, key));
+      return;
+    }
+    void advanceQueue(chatId);
+  }
+  drainRef.current = drainQueue;
+
+  /** Sends queued items from the front of `chatId`'s line until one starts a reply. */
+  async function advanceQueue(chatId: string | null) {
+    const key = chatId ?? sendQueue.NEW_CHAT_KEY;
+    for (;;) {
+      if (streamingRef.current || !isOpen(chatId)) return;
+      const item = sendQueue.peek(queuesRef.current, key);
+      if (!item) return;
+      if (!slotsRef.current[item.backend as ChatBackendId]?.available) {
+        // Held, not dropped: it keeps its backend, and the admin decides.
+        setError(`${item.backend} isn't available, so the queued messages are on hold.`);
+        changeQueues(sendQueue.pause(queuesRef.current, key));
+        return;
+      }
+      changeQueues(sendQueue.dequeue(queuesRef.current, key).queues);
+      const slot = item.backend as ChatBackendId;
+      if (item.kind === "message") {
+        void runTurn([...turnsRef.current, { role: "user", content: item.text }], false, slot);
+        return;
+      }
+      // A run that ended during a reply: its result goes in now, and the model
+      // reads it unless something was said since.
+      if (finishedRunsRef.current.has(item.runId) || findRunTurn(turnsRef.current, item.runId) < 0) continue;
+      finishedRunsRef.current.add(item.runId);
+      const session = await putRunTurn(chatId as string, item.runId);
+      if (!session || !isOpen(chatId) || streamingRef.current) continue;
+      const last = findRunTurn(session.turns, item.runId) === session.turns.length - 1;
+      if (last) {
+        void runTurn(session.turns, false, slot);
+        return;
+      }
+    }
+  }
+
   /** Has the model answer the last question in `history`, then saves the chat. */
-  async function runTurn(history: Turn[], replace = false) {
+  async function runTurn(history: Turn[], replace = false, slotOverride?: ChatBackendId) {
     streamingRef.current = true;
+    let outcome: TurnOutcome = "ok";
     // The chat this exchange belongs to, fixed now: every save below goes
     // there, whatever is open by the time it runs.
     const chatId = currentIdRef.current;
@@ -675,7 +775,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     setStreaming(true);
     // The question is saved before it is answered: a reply that dies halfway
     // still leaves the chat holding what was asked (and creates the chat).
-    const slot = backend;
+    const slot = slotOverride ?? backend;
     const saving = persist(history, slot, chatId, replace);
 
     const controller = new AbortController();
@@ -695,6 +795,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         setError(data.error ?? `Request failed (HTTP ${res.status}).`);
         setTurns(history);
+        outcome = "error";
         return;
       }
 
@@ -723,6 +824,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             };
             if (parsed.error) {
               setError(parsed.error);
+              outcome = "error";
               continue;
             }
             if (parsed.notice) {
@@ -743,11 +845,15 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       if (!answer) {
         setError("The model returned an empty response.");
         setTurns(history);
+        outcome = "error";
       }
     } catch (err) {
       // An abort is the user pressing Stop, not a failure.
       if ((err as Error)?.name !== "AbortError") {
         setError("Lost connection to the model.");
+        outcome = "error";
+      } else {
+        outcome = "stopped";
       }
       if (!answer) setTurns(history);
     } finally {
@@ -763,11 +869,17 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       const open = isOpen(targetId);
       if (answer) {
         const final = [...saved, { role: "assistant" as const, content: answer }];
-        if (open) setTurns(final);
+        if (open) {
+          turnsRef.current = final;
+          setTurns(final);
+        }
         await persist(final, slot, targetId, replace && !savedChat);
       } else if (open && saved.length !== history.length) {
+        turnsRef.current = saved;
         setTurns(saved);
       }
+      // Whatever is queued goes on from here (or is held, if this didn't end well).
+      drainRef.current(targetId, outcome);
     }
   }
 
@@ -850,8 +962,24 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
    * by "so here's the fix", which is the point of running it from the chat.
    */
   function finishRun(run: SkillRun, chatId: string | null) {
-    if (finishedRunsRef.current.has(run.id) || streamingRef.current) return;
+    if (finishedRunsRef.current.has(run.id)) return;
     if (!chatId || !isOpen(chatId) || findRunTurn(turnsRef.current, run.id) < 0) return;
+    // A reply is streaming, or messages are waiting for their turn: the result
+    // joins the line behind them. (The card is locked while a reply streams,
+    // so it normally reports after; this covers the gap between queued sends.)
+    // A full line drops the hand-over (the card still shows the result).
+    if (streamingRef.current || sendQueue.queueOf(queuesRef.current, chatId).items.length > 0) {
+      const item: sendQueue.QueueItem = {
+        id: `run-${run.id}`,
+        kind: "run",
+        runId: run.id,
+        backend,
+        model: modelId,
+      };
+      const res = sendQueue.enqueue(queuesRef.current, chatId, item);
+      if (res.ok) changeQueues(res.queues);
+      return;
+    }
     finishedRunsRef.current.add(run.id);
     void (async () => {
       const session = await putRunTurn(chatId, run.id);
@@ -966,6 +1094,16 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   // shown while a cloud model is selected -- the card being asleep says
   // nothing about whether Claude will answer.
   const showStatusError = backend === "local" && !!statusError;
+  const queueKey = currentId ?? sendQueue.NEW_CHAT_KEY;
+  const line = sendQueue.queueOf(queues, queueKey);
+  function resumeQueue() {
+    changeQueues(sendQueue.resume(queuesRef.current, queueKey));
+    setError(null);
+    if (!streamingRef.current) void advanceQueue(currentIdRef.current);
+  }
+  function clearQueue() {
+    changeQueues(sendQueue.clear(queuesRef.current, queueKey));
+  }
   const currentSummary = sessions.find((s) => s.id === currentId);
   const currentTitle = currentSummary?.title ?? "New chat";
   const linkedToClaude = !!currentSummary?.claudeSessionId && !isClaudeAppImport(currentSummary.claudeSessionId);
@@ -1448,6 +1586,47 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               {attachError}
             </p>
           )}
+          {queueNote && (
+            <p role="alert" className="pb-1 text-xs text-amber-300/90">
+              {queueNote}
+            </p>
+          )}
+          {line.items.length > 0 && (
+            <div className="space-y-1.5 pb-2" aria-label="Queued messages">
+              {line.paused && (
+                <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200">
+                  <span className="mr-auto">
+                    Queue paused: {line.items.length} waiting.
+                  </span>
+                  <Button variant="secondary" size="xs" onClick={resumeQueue}>
+                    Resume
+                  </Button>
+                  <Button variant="ghost" size="xs" onClick={clearQueue}>
+                    Clear
+                  </Button>
+                </div>
+              )}
+              <ul className="flex flex-wrap gap-1.5">
+                {line.items.map((q) => (
+                  <li
+                    key={q.id}
+                    title={`${backendById(q.backend as ChatBackendId).label} · ${q.model}`}
+                    className="flex max-w-full items-center gap-1 rounded-full bg-white/10 py-0.5 pl-3 pr-1 text-xs text-white/80"
+                  >
+                    <span className="truncate">{q.kind === "message" ? q.text : "Run result"}</span>
+                    <button
+                      type="button"
+                      onClick={() => changeQueues(sendQueue.remove(queuesRef.current, queueKey, q.id))}
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white/60 hover:bg-white/15 hover:text-white"
+                      aria-label={`Remove queued message: ${q.kind === "message" ? q.text : "run result"}`}
+                    >
+                      <span aria-hidden>×</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div
             className={`flex flex-col rounded-2xl border bg-white/[0.06] py-2 pl-4 pr-2 transition-colors focus-within:border-white/35 ${
               dragging ? "border-sky-400/70 bg-sky-400/10" : "border-white/15"
@@ -1528,18 +1707,27 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               // text-base on mobile: iOS zooms the viewport when a focused input
               // is under 16px, and there is no way back out without pinching.
               className="chat-composer max-h-48 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 text-white placeholder-white/30 focus:outline-none sm:text-[15px]"
-              disabled={streaming}
             />
             {streaming ? (
-              <button
-                type="button"
-                onClick={stop}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
-                aria-label="Stop"
-                title="Stop"
-              >
-                <span aria-hidden className="block h-3 w-3 rounded-[2px] bg-white" />
-              </button>
+              <>
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="h-8 shrink-0 rounded-full bg-white px-3 text-sm font-medium text-black transition-colors hover:bg-white/85 disabled:bg-white/20 disabled:text-white/40"
+                  title="Queue this message to send after the reply (Enter)"
+                >
+                  Queue
+                </button>
+                <button
+                  type="button"
+                  onClick={stop}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+                  aria-label="Stop"
+                  title="Stop"
+                >
+                  <span aria-hidden className="block h-3 w-3 rounded-[2px] bg-white" />
+                </button>
+              </>
             ) : (
               <button
                 type="submit"
