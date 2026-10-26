@@ -30,7 +30,7 @@ type ModelsInitial = { models: Snapshot; engine: SkillEngineChoice };
  * Rendered in the chat's model drop-down and in the phone's options sheet;
  * it fetches its own data.
  */
-export function ModelsPanel() {
+export function ModelsPanel({ onRunSkill }: { onRunSkill?: () => void }) {
   const [data, setData] = useState<ModelsInitial | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -56,7 +56,7 @@ export function ModelsPanel() {
     <div className="space-y-5 text-sm">
       <ChatModelSection initial={data.models} />
       <div className="border-t border-white/10 pt-4">
-        <SkillEnginePanel initial={data.engine} />
+        <SkillEnginePanel initial={data.engine} onRunSkill={onRunSkill} />
       </div>
     </div>
   );

@@ -518,32 +518,46 @@ export function SkillRunCard({
 
 // ------------------------------------------------------------- menu
 
+/**
+ * The "Run on mediabox" form. Its trigger lives in the model panel's
+ * "Mediabox skills" section (SkillEnginePanel); the chat owns `open` so it can
+ * close that panel first. A popover under the header row on a wide screen, a
+ * bottom sheet on a phone -- either way outside the panel's scroll container.
+ */
 export function SkillRunMenu({
+  open,
+  onClose,
   locked,
   onStart,
   onFollow,
-  placement = "below",
 }: {
+  open: boolean;
+  onClose: () => void;
   locked: boolean;
   onStart: (skill: string, args: Record<string, string>) => Promise<StartOutcome>;
   onFollow: (runId: string) => void;
-  /** Where the picker opens: below the button (a header row) or above it (a sheet at the screen's foot). */
-  placement?: "below" | "above";
 }) {
-  const [open, setOpen] = useState(false);
   const [skills, setSkills] = useState<SkillsState | null>(null);
   const [name, setName] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [starting, setStarting] = useState(false);
   const [failure, setFailure] = useState<{ error: string; busyRunId: string | null } | null>(null);
+  const setOpen = (v: boolean) => {
+    if (!v) {
+      setFailure(null);
+      onClose();
+    }
+  };
 
-  function toggle() {
-    const next = !open;
-    setOpen(next);
-    setFailure(null);
+  useEffect(() => {
+    if (!open) return;
     // Fresh on every open: a skill added on mediabox shows up without a reload.
-    if (next) void loadSkills(true).then(setSkills);
-  }
+    let live = true;
+    void loadSkills(true).then((s) => live && setSkills(s));
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   const skill = skills?.skills.find((s) => s.name === name) ?? null;
   const checked = skill ? validateSkillArgs(skill, values) : null;
@@ -563,16 +577,11 @@ export function SkillRunMenu({
   }
 
   return (
-    <div className="relative">
-      <Button variant="secondary" size="xs" onClick={toggle} aria-expanded={open}>
-        Run on mediabox
-      </Button>
+    <>
       {open && (
-        <div
-          className={`absolute z-30 w-80 max-w-[90vw] space-y-2 rounded-lg border border-white/15 bg-netflix-dark p-3 text-xs shadow-2xl shadow-black/60 ${
-            placement === "above" ? "bottom-full left-0 mb-1" : "right-0 mt-1"
-          }`}
-        >
+        <div className="fixed inset-0 z-[60] md:absolute md:inset-auto md:left-0 md:top-10 md:z-30" role="dialog" aria-label="Run on mediabox">
+          <button type="button" aria-label="Close" className="absolute inset-0 bg-black/60 md:hidden" onClick={() => setOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 max-h-[85dvh] space-y-2 overflow-y-auto rounded-t-2xl border-t border-white/15 bg-netflix-dark p-4 pb-[calc(1rem+var(--safe-bottom,env(safe-area-inset-bottom,0px)))] text-xs shadow-2xl shadow-black/60 md:static md:w-80 md:max-w-[90vw] md:rounded-lg md:border md:p-3">
           {!skills ? (
             <p className="text-white/40">Loading skills…</p>
           ) : !skills.configured || skills.error ? (
@@ -658,8 +667,9 @@ export function SkillRunMenu({
               </div>
             </>
           )}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

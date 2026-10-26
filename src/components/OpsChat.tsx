@@ -222,6 +222,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   // The phone's options sheet: model, toggles, mediabox runs. On a wide
   // screen those sit in the header row and this is never open.
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [runMenuOpen, setRunMenuOpen] = useState(false);
   // The model picker's drop-down on a wide screen (admin tab).
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
@@ -1002,6 +1003,13 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       setOptionsOpen(true);
     }
   }
+  // The model panel's "Run on mediabox" button: close the panel (its scroll
+  // container would clip the form), then open the form outside it.
+  function openRunMenu() {
+    setModelMenuOpen(false);
+    setOptionsOpen(false);
+    setRunMenuOpen(true);
+  }
   const modelLabel = (
     <div ref={modelMenuRef} className="relative min-w-0">
       <button
@@ -1017,7 +1025,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       </button>
       {modelMenuOpen && (
         <div className="absolute left-0 top-full z-30 mt-2 max-h-[60vh] w-[min(32rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-white/15 bg-netflix-dark p-4 shadow-2xl shadow-black/60">
-          <ModelsPanel />
+          <ModelsPanel onRunSkill={openRunMenu} />
         </div>
       )}
     </div>
@@ -1131,19 +1139,24 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           <div className="absolute inset-x-0 bottom-0 space-y-4 rounded-t-2xl border-t border-white/10 bg-netflix-dark px-4 pb-[calc(1rem+var(--safe-bottom,env(safe-area-inset-bottom,0px)))] pt-2 shadow-2xl shadow-black/60">
             <div aria-hidden className="mx-auto h-1 w-10 rounded-full bg-white/20" />
             <div className="max-h-[55dvh] space-y-2 overflow-y-auto">
-              <ModelsPanel />
+              <ModelsPanel onRunSkill={openRunMenu} />
               {modelHint && <p className="text-xs text-white/40">{modelHint}</p>}
             </div>
             <div className="space-y-1 text-sm">
               {stackStatusToggle("min-h-10 gap-3 text-white/80")}
               {searchToggle("min-h-10 gap-3 text-white/80")}
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-              <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} placement="above" />
-            </div>
           </div>
         </div>
       )}
+
+      <SkillRunMenu
+        open={runMenuOpen}
+        onClose={() => setRunMenuOpen(false)}
+        locked={streaming}
+        onStart={startSkill}
+        onFollow={(id) => void followRun(id)}
+      />
 
       <div className={`min-w-0 flex-1 ${fullHeight ? "flex min-h-0 flex-col gap-3" : "space-y-3"}`}>
         {/* Phone header: menu, the chat and its model (tap for options), new
@@ -1179,7 +1192,6 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         <div className="hidden flex-wrap items-center justify-between gap-2 text-xs md:flex">
           {modelLabel}
           <div className="flex items-center gap-3">
-            <SkillRunMenu locked={streaming} onStart={startSkill} onFollow={(id) => void followRun(id)} />
             {stackStatusToggle("gap-1.5 hover:text-white/80")}
             {searchToggle("gap-1.5 hover:text-white/80")}
           </div>
