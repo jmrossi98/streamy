@@ -154,8 +154,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     allLogins,
     visitTotal,
     loginTotal,
-    allAssistant,
-    assistantTotal,
     jellyfinLogins,
     jellyfinPlays,
   ] = await Promise.all([
@@ -188,12 +186,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     }),
     prisma.siteVisit.count(),
     prisma.loginAttempt.count(),
-    prisma.assistantUsage.findMany({
-      orderBy: { at: "desc" },
-      take: LOG_CAP,
-      select: { id: true, actorName: true, backend: true, prompt: true, reply: true, ip: true, at: true },
-    }),
-    prisma.assistantUsage.count(),
     // Live-fetched rather than stored: these are Jellyfin's own log, published
     // as a snapshot by the guard script on mediabox. Cached in
     // jellyfinLogins.ts, so the map and this log share one outbound read.
@@ -203,7 +195,9 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     getJellyfinPlays(),
   ]);
 
-  // One merged, newest-first timeline of everything.
+  // One merged, newest-first timeline. Assistant turns (kind "assistant") are
+  // deliberately not part of it: they are recorded in AssistantUsage and are
+  // simply not read here, so the Visitors section stays about visitors.
   // _locateIp: the address to place a row by when that isn't the one shown --
   // a play on the house's LAN is placed by the house's public address.
   type Row = VisitorSummary["recent"][number] & { _at: Date; _locateIp?: string };
@@ -231,20 +225,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
       success: l.success,
       at: l.at.toISOString(),
       _at: l.at,
-    })),
-    ...allAssistant.map((a) => ({
-      id: a.id,
-      kind: "assistant" as const,
-      site: "assistant",
-      // Who asked and on which model, then what they asked -- the prompt is
-      // already truncated at write time, so this is bounded.
-      path: `${a.actorName} (${a.backend}): ${a.prompt}`,
-      reply: a.reply,
-      ip: a.ip,
-      location: null,
-      referrer: null,
-      at: a.at.toISOString(),
-      _at: a.at,
     })),
     ...jellyfinLogins.attempts.map((j) => ({
       // The snapshot has no ids of its own -- it is a rolling window of log
@@ -314,7 +294,6 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
           : {}),
       };
     }),
-    totalActivity:
-      visitTotal + loginTotal + assistantTotal + jellyfinLogins.attempts.length + jellyfinPlays.length,
+    totalActivity: visitTotal + loginTotal + jellyfinLogins.attempts.length + jellyfinPlays.length,
   };
 }
