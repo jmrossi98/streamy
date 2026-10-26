@@ -98,16 +98,15 @@ export type VisitorSummary = {
     id: string;
     /**
      * "visit" for a page view, "login" for a sign-in attempt to this app,
-     * "jellyfin" for a sign-in attempt to the Jellyfin server, "assistant"
-     * for a turn taken with the admin assistant.
+     * "jellyfin" for a sign-in attempt to the Jellyfin server, "jellyfin-play"
+     * for something watched on Jellyfin.
      */
-    kind: "visit" | "login" | "jellyfin" | "jellyfin-play" | "assistant";
+    kind: "visit" | "login" | "jellyfin" | "jellyfin-play";
     /** "portfolio" | "streamy" for a visit; the kind's own label otherwise. */
     site: string;
     /**
      * The page path for a visit; "name: outcome" for either kind of sign-in;
-     * the (truncated) prompt for an assistant turn; "name: what was played"
-     * for something watched on Jellyfin.
+     * "name: what was played" for something watched on Jellyfin.
      */
     path: string;
     /**
@@ -122,8 +121,6 @@ export type VisitorSummary = {
     referrer: string | null;
     /** Sign-in rows only (either kind): whether the attempt succeeded. */
     success?: boolean;
-    /** Assistant rows only: what it answered, when that was recorded. */
-    reply?: string | null;
     /** Page visits only: the user agent as sent. */
     userAgent?: string | null;
     /** Who owns the address (e.g. "AMAZON-AES"), when the ASN database knows. */
@@ -195,7 +192,7 @@ export async function getVisitorSummary(site: KnownSite = "portfolio"): Promise<
     getJellyfinPlays(),
   ]);
 
-  // One merged, newest-first timeline. Assistant turns (kind "assistant") are
+  // One merged, newest-first timeline. Assistant turns are
   // deliberately not part of it: they are recorded in AssistantUsage and are
   // simply not read here, so the Visitors section stays about visitors.
   // _locateIp: the address to place a row by when that isn't the one shown --
