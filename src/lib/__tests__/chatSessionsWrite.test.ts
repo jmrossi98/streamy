@@ -37,7 +37,7 @@ vi.mock("../chatAttachments", () => ({ syncSessionAttachments: vi.fn(async () =>
 import { logAudit } from "../auditLog";
 import { ChatConflictError, applyRunTurn, updateChatSession } from "../chatSessions";
 import { parseStoredTurns, titleFromTurns, type ChatTurn } from "../chatSessionRules";
-import { findRunTurn, parseRunTurn, type SkillRun } from "../skillRunnerRules";
+import { findRunTurn, parseRunTurn, runTurnContent, type SkillRun } from "../skillRunnerRules";
 
 const u = (content: string): ChatTurn => ({ role: "user", content });
 const a = (content: string): ChatTurn => ({ role: "assistant", content });
@@ -117,6 +117,56 @@ describe("skill-run delivery is scoped to the chat the run came from", () => {
     seed("A", [u("q")], { userId: "someone-else" });
     expect(await applyRunTurn("admin", "A", run({}))).toBeNull();
     expect(stored("A")).toEqual([u("q")]);
+  });
+});
+
+describe("a run turn and the panel's own copy of it", () => {
+  const runCount = (turns: ChatTurn[], id = "run-1") => turns.filter((t) => t.via === "skill-run" && parseRunTurn(t.content)?.id === id).length;
+  const runTurn = (over: Partial<SkillRun>): ChatTurn => ({ role: "user", via: "skill-run", content: runTurnContent(run(over)) });
+  const done = { status: "succeeded", finishedAt: "2026-10-25T22:35:00Z", summary: "all green", output: "ok" } as const;
+  const base = [u("check the stack"), a("sure")];
+
+  it("(a) keeps the panel's pending turns when the server appended the run turn meanwhile", async () => {
+    seed("A", base);
+    await applyRunTurn("admin", "A", run({ status: "queued", startedAt: null }));
+    const s = await updateChatSession("admin", "A", { turns: [...base, u("and the disks?")], baseTurnCount: 2 });
+    expect(s?.turns.map((t) => t.content)).toEqual(["check the stack", "sure", runTurnContent(run({ status: "queued", startedAt: null })), "and the disks?"]);
+  });
+
+  it("(b) accepts a save whose copy of the run turn is older than the server's, keeping the server's", async () => {
+    seed("A", base);
+    await applyRunTurn("admin", "A", run({ status: "running" }));
+    const stale = [...base, runTurn({ status: "running" })];
+    await applyRunTurn("admin", "A", run(done));
+    const s = await updateChatSession("admin", "A", { turns: [...stale, u("and the disks?")], baseTurnCount: 3 });
+    expect(s?.turns).toHaveLength(4);
+    expect(parseRunTurn(s!.turns[2].content)).toMatchObject({ id: "run-1", status: "succeeded", summary: "all green" });
+    expect(s!.turns[3].content).toBe("and the disks?");
+  });
+
+  it("(b) does not store a second run turn when the panel added its own copy of one the server has", async () => {
+    seed("A", base);
+    await applyRunTurn("admin", "A", run(done));
+    const s = await updateChatSession("admin", "A", { turns: [...base, runTurn({ status: "running" }), u("next")], baseTurnCount: 2 });
+    expect(runCount(s!.turns)).toBe(1);
+    expect(parseRunTurn(s!.turns[2].content)?.status).toBe("succeeded");
+    expect(s!.turns.map((t) => t.content).slice(-1)).toEqual(["next"]);
+  });
+
+  it("dedupes run turns already doubled in a stored chat when it is read", async () => {
+    seed("A", [...base, runTurn({ status: "running" }), u("hm"), runTurn(done)]);
+    const s = await applyRunTurn("admin", "A", run({ id: "run-2", status: "queued", startedAt: null }));
+    expect(runCount(s!.turns)).toBe(1);
+    expect(runCount(s!.turns, "run-2")).toBe(1);
+    expect(runCount(stored("A"))).toBe(1);
+    expect(parseRunTurn(stored("A")[2].content)?.status).toBe("succeeded");
+  });
+
+  it("still refuses an edit of an ordinary turn as a non-append", async () => {
+    seed("A", [...base, runTurn(done)]);
+    await expect(
+      updateChatSession("admin", "A", { turns: [u("check, reworded"), a("sure"), runTurn(done), u("x")], baseTurnCount: 3 })
+    ).rejects.toBeInstanceOf(ChatConflictError);
   });
 });
 

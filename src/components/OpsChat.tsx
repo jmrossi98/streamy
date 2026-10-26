@@ -25,6 +25,7 @@ import { ATTACHMENT_ACCEPT, checkPicked } from "@/lib/chatAttachmentRules";
 import { parseProposal, stripProposal } from "@/lib/remediation";
 import { isClaudeAppImport } from "@/lib/claudeCodeNoteRules";
 import {
+  dedupeRunTurns,
   deleteTurn,
   editTurn,
   resendFrom,
@@ -36,7 +37,7 @@ import { LLM_ROUTING_EVENT, cloudSlots, type ChatSlots, type ResolvedRoutes } fr
 import { ActionProposal } from "./ActionProposal";
 import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
 import { HISTORY_IDLE, shouldIntercept, stepHistory, userMessages, type HistoryPos } from "@/lib/composerHistory";
-import { buildRunTurnRequest, buildSaveRequest, createSaveQueue } from "@/lib/chatSaver";
+import { buildRunTurnRequest, buildSaveRequest, createSaveQueue, planConflictRetry } from "@/lib/chatSaver";
 import {
   findRunTurn,
   isFinished,
@@ -365,30 +366,56 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       replace = false
     ): Promise<{ id: string; turns: Turn[] } | null> =>
       saveQueue.enqueue(async () => {
-        try {
-          // base: turns a linked Claude Code session appended since the last
-          // sync are kept by the server, and this save goes after them. Only
-          // the open chat has a sync point.
-          const req = buildSaveRequest(chatId, next, slot, {
-            base: chatId !== null && isOpen(chatId) ? syncedCountRef.current : null,
-            replace,
-          });
-          const { session } = await api<{ session: ChatSessionFull }>(req.url, { method: req.method, body: req.body });
+        // base: turns a linked Claude Code session appended since the last
+        // sync are kept by the server, and this save goes after them. Only
+        // the open chat has a sync point.
+        const base = chatId !== null && isOpen(chatId) ? syncedCountRef.current : null;
+        /** The server's copy after a save (or retry) landed. */
+        const landed = (session: ChatSessionFull, show = false) => {
           if (isOpen(chatId)) {
             if (!chatId) selectSession(session.id);
             syncedCountRef.current = session.turns.length;
             syncedAtRef.current = session.updatedAt;
+            // Turns the server added (a run's report) show now, unless an
+            // answer is streaming over the transcript.
+            if (show && !streamingRef.current) {
+              turnsRef.current = session.turns;
+              setTurns(session.turns);
+            }
           }
           upsertSummary(summaryOf(session));
           setSaveError(null);
           return { id: session.id, turns: session.turns };
+        };
+        try {
+          const req = buildSaveRequest(chatId, next, slot, { base, replace });
+          const { session } = await api<{ session: ChatSessionFull }>(req.url, { method: req.method, body: req.body });
+          return landed(session);
         } catch (err) {
           if (err instanceof ApiError && err.status === 409 && chatId && isOpen(chatId)) {
-            // The server's copy and this one disagree (Claude Code added to
-            // the chat, or the save was not an extension of it): take the
-            // server's copy rather than overwrite it.
+            // The server's copy and this one disagree. Usually the server only
+            // added or rewrote a run's turn: then what the panel meant to add
+            // goes on after it, once, silently. Otherwise (the save was not an
+            // extension of the chat) take the server's copy rather than
+            // overwrite it, and say so.
             try {
-              const { session } = await api<{ session: ChatSessionFull }>(`/api/admin/chat-sessions/${encodeURIComponent(chatId)}`);
+              const url = `/api/admin/chat-sessions/${encodeURIComponent(chatId)}`;
+              const { session } = await api<{ session: ChatSessionFull }>(url);
+              const plan = planConflictRetry(session.turns, next, base ?? 0, replace);
+              if (plan.kind === "adopt") return landed(session, true);
+              if (plan.kind === "retry") {
+                const retry = buildSaveRequest(chatId, plan.turns, slot, { base: session.turns.length, replace: false });
+                try {
+                  const again = await api<{ session: ChatSessionFull }>(retry.url, { method: retry.method, body: retry.body });
+                  return landed(again.session, true);
+                } catch (second) {
+                  if (!(second instanceof ApiError && second.status === 409)) throw second;
+                  const latest = await api<{ session: ChatSessionFull }>(url);
+                  applySession(latest.session);
+                  setSaveError("This chat changed elsewhere meanwhile, so it was reloaded. Make the edit again.");
+                  return null;
+                }
+              }
               applySession(session);
               setSaveError("This chat changed elsewhere meanwhile, so it was reloaded. Make the edit again.");
               return null;
@@ -645,7 +672,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       const res = await fetch("/api/admin/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, webSearch, backend: slot, stackStatus, sessionId: chatId }),
+        // A run's report goes to the model once, whatever copies the panel holds.
+        body: JSON.stringify({ messages: dedupeRunTurns(history), webSearch, backend: slot, stackStatus, sessionId: chatId }),
         signal: controller.signal,
       });
 
