@@ -31,7 +31,7 @@ type VisitorRow = VisitorSummary["recent"][number];
 
 /**
  * Badge colours, kept in step with the map's own legend in VisitorMapPanel:
- * purple for Jellyfin, orange for assistant turns. Two sign-in streams now
+ * purple for Jellyfin. Two sign-in streams now
  * share this log -- this app's and Jellyfin's -- so they are coloured apart
  * rather than both reading as "a sign-in".
  *
@@ -50,8 +50,6 @@ function badgeClass(v: VisitorRow): string {
         : "bg-purple-500/25 text-purple-200";
     case "jellyfin-play":
       return "bg-pink-500/15 text-pink-300";
-    case "assistant":
-      return "bg-orange-500/15 text-orange-300";
     default:
       return v.site === "streamy"
         ? "bg-red-500/15 text-red-300"
@@ -67,8 +65,6 @@ function badgeLabel(v: VisitorRow): string {
       return v.success ? "jellyfin" : "jellyfin ✗";
     case "jellyfin-play":
       return "watched";
-    case "assistant":
-      return "assistant";
     default:
       return v.site;
   }
@@ -192,33 +188,12 @@ export function VisitorsPanel({ summary }: { summary: VisitorSummary }) {
                         <span className="text-white/25">-</span>
                       )}
                     </td>
-                    {/* Assistant rows are the one kind allowed to grow.
-                        A prompt is the content -- truncated to twelve
-                        characters of "why is the download stuck" it tells you
-                        nothing, and hovering for a title attribute does not
-                        work on the phone this panel is mostly read on. Every
-                        other row stays on one line so the table keeps its
-                        shape. */}
-                    {v.kind === "assistant" ? (
-                      <td className="max-w-[28rem] whitespace-pre-wrap break-words px-3 py-2 align-top text-white/80">
-                        {v.path}
-                        {/* The answer, folded away: it can run to a screen
-                            or more, and the table is scanned by prompt. */}
-                        {v.reply && (
-                          <details className="mt-1">
-                            <summary className="cursor-pointer text-xs text-white/40 hover:text-white/70">Reply</summary>
-                            <p className="mt-1 text-white/60">{v.reply}</p>
-                          </details>
-                        )}
-                      </td>
-                    ) : (
-                      <td
-                        className={`${v.kind === "jellyfin-play" ? "max-w-[20rem]" : "max-w-[12rem]"} truncate px-3 py-2 text-white/80`}
-                        title={v.path}
-                      >
-                        {v.path}
-                      </td>
-                    )}
+                    <td
+                      className={`${v.kind === "jellyfin-play" ? "max-w-[20rem]" : "max-w-[12rem]"} truncate px-3 py-2 text-white/80`}
+                      title={v.path}
+                    >
+                      {v.path}
+                    </td>
                     <td className="max-w-[10rem] truncate px-3 py-2 text-white/60">
                       {v.location ?? <span className="text-white/25">-</span>}
                     </td>
