@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Field, SegmentedControl, TextInput } from "@/components/ui";
+import { Button, Field, SegmentedControl, TextInput } from "@/components/ui";
 import {
   ENGINE_LABELS,
   OPENCODE_MODEL_SUGGESTIONS,
@@ -26,7 +26,7 @@ type Snapshot = { choice: SkillEngineChoice; engines: EnginesStatus | null; erro
  * ready (keys on mediabox, OpenCode installed) is fetched when the panel
  * mounts, so the warning sits beside the choice rather than in a failed run.
  */
-export function SkillEnginePanel({ initial }: { initial: SkillEngineChoice }) {
+export function SkillEnginePanel({ initial, onRunSkill }: { initial: SkillEngineChoice; onRunSkill?: () => void }) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ choice: initial, engines: null, error: null });
   const [model, setModel] = useState(initial.model);
   const [busy, setBusy] = useState(false);
@@ -145,6 +145,11 @@ export function SkillEnginePanel({ initial }: { initial: SkillEngineChoice }) {
             }}
           />
         </Field>
+      )}
+      {onRunSkill && (
+        <Button variant="secondary" size="sm" className="min-h-10 w-full md:min-h-0 md:w-auto" onClick={onRunSkill}>
+          Run on mediabox
+        </Button>
       )}
       {problem && <p className="text-xs text-amber-300/80">{problem}</p>}
       {snapshot.error && <p className="text-xs text-white/40">Couldn&apos;t ask mediabox what is ready: {snapshot.error}</p>}
