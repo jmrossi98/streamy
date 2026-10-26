@@ -55,7 +55,7 @@ describe("getVisitorSummary", () => {
 
   it("excludes assistant entries from the visitors list", async () => {
     const s = await getVisitorSummary("portfolio");
-    expect(s.recent.some((r) => r.kind === "assistant")).toBe(false);
+    expect(s.recent.some((r) => (r.kind as string) === "assistant")).toBe(false);
     expect(s.recent.some((r) => r.id === "a1")).toBe(false);
   });
 
