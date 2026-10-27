@@ -165,23 +165,58 @@ export async function startRun(
     ? `run ${r.data.id}${queued ? ` queued${r.data.position ? ` at #${r.data.position}` : ""}` : ""} on ${engine}: ${JSON.stringify(args)}`
     : `refused: ${r.error}`;
   void logAudit(requestedBy, r.ok ? "assistant.skill.start" : "assistant.skill.start.failed", skill.name, detail.slice(0, 500));
+  if (r.ok) afterStart(r.data, { skill: skill.name, kind: skill.kind, who: requestedBy, args, engine });
+  return r;
+}
+
+/**
+ * Continues a finished run with the admin's reply (2026-10-27). The runner
+ * starts a new run of the same skill, args and engine that resumes the
+ * parent's Claude Code session. Audit-logged and emailed like a start: a
+ * reply to a code run can ship code just the same.
+ */
+export async function replyToRun(parent: SkillRun, message: string, by: string): Promise<RunnerResult<StartedRun>> {
+  if (!isRunId(parent.id)) return { ok: false, status: 400, error: "Not a run id." };
+  const r = await call(
+    `/runs/${encodeURIComponent(parent.id)}/reply`,
+    { method: "POST", body: JSON.stringify({ message, by }) },
+    parseStartedRun
+  );
+  const engine = engineText(parent.engine ?? "claude", parent.model ?? null);
+  const queued = r.ok && r.data.status === "queued";
+  const detail = r.ok
+    ? `run ${r.data.id} continues ${parent.id}${queued ? " (queued)" : ""}: ${message.replace(/\s+/g, " ")}`
+    : `reply to ${parent.id} refused: ${r.error}`;
+  void logAudit(by, r.ok ? "assistant.skill.reply" : "assistant.skill.reply.failed", parent.skill, detail.slice(0, 500));
   if (r.ok) {
-    const info: PendingStart = { skill: skill.name, kind: skill.kind, who: requestedBy, args, engine };
-    if (queued) {
-      // The "started" email waits for the run to leave the queue.
-      pendingStarts.set(r.data.id, info);
-      if (pendingStarts.size > 100) pendingStarts.delete(pendingStarts.keys().next().value as string);
-    } else {
-      sendStartedEmail(r.data.id, info);
-    }
-    if (queued || emailsOnFinish(skill.kind)) watchRun(r.data.id, skill.kind);
+    const kind = (await kindOf(parent.skill)) ?? "code";
+    afterStart(r.data, { skill: parent.skill, kind, who: by, args: parent.args, engine, reply: { continues: parent.id, message } });
   }
   return r;
 }
 
+/** The started email (now, or once a queued run begins) and the background watch. */
+function afterStart(run: StartedRun, info: PendingStart): void {
+  if (run.status === "queued") {
+    // The "started" email waits for the run to leave the queue.
+    pendingStarts.set(run.id, info);
+    if (pendingStarts.size > 100) pendingStarts.delete(pendingStarts.keys().next().value as string);
+  } else {
+    sendStartedEmail(run.id, info);
+  }
+  if (run.status === "queued" || emailsOnFinish(info.kind)) watchRun(run.id, info.kind);
+}
+
 // ------------------------------------------------------------- started emails
 
-type PendingStart = { skill: string; kind: SkillKind; who: string; args: Record<string, string>; engine: string };
+type PendingStart = {
+  skill: string;
+  kind: SkillKind;
+  who: string;
+  args: Record<string, string>;
+  engine: string;
+  reply?: { continues: string; message: string };
+};
 
 /**
  * Runs the runner queued when they were asked for, until they leave the
@@ -191,7 +226,7 @@ type PendingStart = { skill: string; kind: SkillKind; who: string; args: Record<
 const pendingStarts = new Map<string, PendingStart>();
 
 function sendStartedEmail(id: string, p: PendingStart): void {
-  const mail = startedEmail(p.skill, p.kind, p.who, p.args, id, p.engine);
+  const mail = startedEmail(p.skill, p.kind, p.who, p.args, id, p.engine, p.reply);
   void notify(mail.subject, mail.body);
 }
 

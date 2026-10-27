@@ -6,11 +6,13 @@ import { ChatMessage } from "@/components/ChatMessage";
 import { engineText, type SkillEngineChoice } from "@/lib/skillEngineRules";
 import {
   argsText,
+  canReplyTo,
   describeAsk,
   heartbeatText,
   initialRunCard,
   isFinished,
   kindInfo,
+  MAX_REPLY_CHARS,
   parseRunTurn,
   POLL_MS,
   createStartGuard,
@@ -18,7 +20,9 @@ import {
   proposalRunView,
   queuedLabel,
   runCardReducer,
+  shortRunId,
   shouldPoll,
+  validateReply,
   validateSkillArgs,
   type PermissionAsk,
   type PermissionResponse,
@@ -368,16 +372,106 @@ function statusTone(status: SkillRunStatus): "info" | "success" | "danger" | "wa
   return status === "timeout" || status === "needs_attention" ? "warning" : "danger";
 }
 
+/**
+ * Reply to a finished run (2026-10-27): the runner continues it as a new run
+ * that resumes the same Claude Code session, so "you stopped at the tests,
+ * fix the lint error and carry on" works without restating the task. The
+ * new run gets its own card, the same way a Run tap's does.
+ */
+function ReplyBox({
+  runId,
+  locked,
+  onReply,
+}: {
+  runId: string;
+  locked: boolean;
+  onReply: (runId: string, message: string) => Promise<StartOutcome>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  // Two taps in one frame must never be two replies.
+  const [sendOnce] = useState(() => createStartGuard((go: () => Promise<StartOutcome>) => go()));
+  const checked = validateReply(text);
+
+  async function send() {
+    if (!checked.ok) return;
+    setSending(true);
+    setError(null);
+    const r = await sendOnce(() => onReply(runId, checked.message));
+    setSending(false);
+    if (r.ok) {
+      setSent(true);
+      setOpen(false);
+      setText("");
+    } else {
+      setError(r.error);
+    }
+  }
+
+  if (sent) return <p className="text-[11px] text-white/40">Replied - the run carries on in its new card below.</p>;
+  if (!open) {
+    return (
+      <Button variant="secondary" size="xs" disabled={locked} onClick={() => setOpen(true)}>
+        Reply
+      </Button>
+    );
+  }
+  return (
+    <div className="space-y-2" role="group" aria-label="Reply to this run">
+      <TextArea
+        fieldSize="sm"
+        rows={3}
+        autoFocus
+        maxLength={MAX_REPLY_CHARS}
+        placeholder="Tell the run what to do next. It remembers everything it did."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+      />
+      {error && <p className="text-amber-300">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" size="xs" disabled={!checked.ok || locked || sending} onClick={() => void send()}>
+          {sending ? "Sending…" : "Send reply"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={sending}
+          onClick={() => {
+            setOpen(false);
+            setError(null);
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function SkillRunCard({
   content,
   locked,
   onFinished,
+  continuedInChat = false,
+  onReply,
 }: {
   /** The run turn's saved text (skillRunnerRules runTurnContent). */
   content: string;
   /** True while the chat is mid-answer: the result waits rather than racing it. */
   locked: boolean;
   onFinished: (run: SkillRun) => void;
+  /** A later run turn in this chat already replies to this run. */
+  continuedInChat?: boolean;
+  onReply?: (runId: string, message: string) => Promise<StartOutcome>;
 }) {
   const saved = parseRunTurn(content);
   const skills = useSkills();
@@ -432,6 +526,9 @@ export function SkillRunCard({
   const cost = state.run?.cost ?? null;
   const queued = status === "queued";
   const heartbeat = status === "running" ? (state.run?.heartbeat ?? null) : null;
+  const continues = state.run?.continues ?? saved.continues;
+  const replyText = state.run?.message ?? saved.message;
+  const replyable = !!onReply && canReplyTo({ status, canReply: state.run?.canReply ?? saved.canReply }, continuedInChat);
 
   async function cancel() {
     setCancelling(true);
@@ -460,8 +557,14 @@ export function SkillRunCard({
         </Badge>
         {engine && <span className="text-[11px] text-white/40">{engine}</span>}
         {cost !== null && cost > 0 && <span className="text-[11px] text-white/40">${cost.toFixed(cost < 0.1 ? 3 : 2)}</span>}
+        {continues && (
+          <span className="font-mono text-[11px] text-white/40" title={`Continues run ${continues}`}>
+            continues {shortRunId(continues)}
+          </span>
+        )}
       </div>
       <p className="break-words font-mono text-[11px] text-white/50">{args}</p>
+      {replyText && <p className="whitespace-pre-wrap break-words text-white/75">Reply: {replyText}</p>}
       {queued && <p className="text-[11px] text-white/45">Waiting for the run ahead to finish. This one starts by itself.</p>}
       {heartbeat && <p className="text-[11px] text-white/45">{heartbeatText(heartbeat)}</p>}
       {/* Keyed by the question: a new one gets a fresh card, not the last answer. */}
@@ -512,6 +615,7 @@ export function SkillRunCard({
           {queued ? (cancelling ? "Removing…" : "Remove from queue") : cancelling ? "Cancelling…" : "Cancel run"}
         </Button>
       )}
+      {replyable && onReply && <ReplyBox runId={id} locked={locked} onReply={onReply} />}
     </div>
   );
 }
