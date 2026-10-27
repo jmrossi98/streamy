@@ -44,6 +44,7 @@ import {
   continuedRunIds,
   findRunTurn,
   parseRunTurn,
+  runCardInThread,
   isFinished,
   linkedRunId,
   parseSkillProposal,
@@ -1563,6 +1564,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                     <SkillProposalCard
                       proposal={skillProposal}
                       linkedRunId={linkedRunId(t)}
+                      runCardInThread={runCardInThread(turns, t)}
                       alreadyRun={proposalWasRun(turns, i, skillProposal.skill)}
                       locked={streaming}
                       onStart={(skill, args) => startSkill(skill, args, { turn: i, block: PROPOSAL_BLOCK })}

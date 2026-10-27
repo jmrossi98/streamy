@@ -189,7 +189,7 @@ const CARD = "mt-2 space-y-2 rounded border border-white/15 bg-black/30 p-2.5 te
  * a re-render or reload could lose. Queued (with Remove from queue), running
  * with its heartbeat, or finished with its final status and the report links.
  */
-function LinkedRunStatus({ runId, skill }: { runId: string; skill: string }) {
+function LinkedRunStatus({ runId, skill, collapsed }: { runId: string; skill: string; collapsed: boolean }) {
   const [state, dispatch] = useReducer(runCardReducer, initialRunCard);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -234,6 +234,18 @@ function LinkedRunStatus({ runId, skill }: { runId: string; skill: string }) {
   }
 
   const view = proposalRunView(state.run);
+  // The run's own card is in the thread: one line here, not a second card.
+  if (collapsed) {
+    return (
+      <p className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-white/45" aria-label={`Proposed skill ${skill}, run ${runId}`}>
+        <span className="font-mono text-white/70">{skill}</span>
+        <Badge tone={view.kind === "finished" ? statusTone(view.status) : view.kind === "running" ? "info" : "neutral"}>
+          {view.kind === "checking" ? "Checking…" : view.label}
+        </Badge>
+        <span>see card below</span>
+      </p>
+    );
+  }
   return (
     <div className={CARD} role="group" aria-label={`Proposed skill ${skill}, run ${runId}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -278,6 +290,7 @@ function LinkedRunStatus({ runId, skill }: { runId: string; skill: string }) {
 export function SkillProposalCard({
   proposal,
   linkedRunId,
+  runCardInThread = false,
   alreadyRun,
   locked,
   onStart,
@@ -286,6 +299,8 @@ export function SkillProposalCard({
   proposal: SkillProposal;
   /** The run this proposal's Run tap started, from the saved chat; null when none. */
   linkedRunId: string | null;
+  /** The linked run's full card (its skill-run turn) is in this thread. */
+  runCardInThread?: boolean;
   alreadyRun: boolean;
   locked: boolean;
   onStart: (skill: string, args: Record<string, string>) => Promise<StartOutcome>;
@@ -296,7 +311,7 @@ export function SkillProposalCard({
   // Two taps in one frame both see an enabled button; this lets only the first reach the runner.
   const [startOnce] = useState(() => createStartGuard((go: () => Promise<StartOutcome>) => go()));
 
-  if (linkedRunId) return <LinkedRunStatus runId={linkedRunId} skill={proposal.skill} />;
+  if (linkedRunId) return <LinkedRunStatus runId={linkedRunId} skill={proposal.skill} collapsed={runCardInThread} />;
   if (state.phase === "dismissed") return <p className="mt-2 text-[11px] text-white/35">Dismissed: {proposal.skill}</p>;
   if (alreadyRun || state.phase === "started") {
     const queued = state.phase === "started" && state.queued;

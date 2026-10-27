@@ -623,6 +623,19 @@ export function findRunTurn(turns: { content: string; via?: string }[], id: stri
 }
 
 /**
+ * Whether the run a proposal turn linked to has its own full card in the
+ * thread. The proposal then shows one collapsed line instead of a second
+ * card for the same run id. Display only: no turn's text changes.
+ */
+export function runCardInThread(
+  turns: { content: string; via?: string }[],
+  proposalTurn: { proposalRuns?: ProposalRuns } | undefined,
+): boolean {
+  const id = linkedRunId(proposalTurn);
+  return !!id && findRunTurn(turns, id) >= 0;
+}
+
+/**
  * Whether a proposal at `index` was already acted on: a run of that skill
  * appears after it, before the assistant's next reply. Read from the saved
  * chat, so a reload doesn't offer Run again for something that ran.
