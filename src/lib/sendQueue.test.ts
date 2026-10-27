@@ -39,6 +39,19 @@ describe("enqueue", () => {
     expect(twice.ok).toBe(true);
     expect(queueOf(twice.queues, "a").items).toHaveLength(1);
   });
+  it("does not queue a second retry, even on another model", () => {
+    const retry = (id: string, model: string): QueueItem => ({ id, kind: "retry", backend: "local", model });
+    const once = enqueue(EMPTY_QUEUES, "a", retry("1", "m")).queues;
+    const twice = enqueue(once, "a", retry("2", "other"));
+    expect(twice.ok).toBe(true);
+    expect(twice.queues).toBe(once);
+    expect(queueOf(twice.queues, "a").items).toHaveLength(1);
+  });
+  it("refuses a retry on a full line like any other item", () => {
+    const retry: QueueItem = { id: "r", kind: "retry", backend: "local", model: "m" };
+    const full = fill("a", QUEUE_MAX);
+    expect(enqueue(full, "a", retry).ok).toBe(false);
+  });
   it("keeps the backend and model it was queued with", () => {
     const item: QueueItem = { id: "x", kind: "message", text: "hi", backend: "claude", model: "opus" };
     const q = enqueue(EMPTY_QUEUES, "a", item).queues;

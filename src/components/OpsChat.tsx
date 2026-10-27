@@ -39,6 +39,7 @@ import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from
 import { HISTORY_IDLE, shouldIntercept, stepHistory, userMessages, type HistoryPos } from "@/lib/composerHistory";
 import { buildRunTurnRequest, buildSaveRequest, createSaveQueue, planConflictRetry } from "@/lib/chatSaver";
 import * as sendQueue from "@/lib/sendQueue";
+import { retryIndex } from "@/lib/retryRules";
 import {
   findRunTurn,
   isFinished,
@@ -162,6 +163,12 @@ const REFRESH_MS = 15_000;
 const SAVE_REFUSED = "Couldn't save. This chat changed elsewhere; the stored copy is shown and your edit is still open.";
 /** Within this many px of the bottom still counts as "at the bottom" (a one-line rounding slop). */
 const FOLLOW_SLACK_PX = 40;
+
+/** What a waiting item is called in the queue strip. */
+function queuedLabel(q: sendQueue.QueueItem): string {
+  if (q.kind === "message") return q.text;
+  return q.kind === "run" ? "Run result" : "Retry";
+}
 
 function summaryOf(s: ChatSessionFull): ChatSessionSummary {
   return {
@@ -709,6 +716,36 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   }
 
   /**
+   * Retry under an unanswered message: asks again on the backend and model
+   * chosen now, with the transcript as it is (the message is not added twice).
+   * A tap that lands while a reply is starting waits in the line instead.
+   */
+  function retry() {
+    if (retryIndex(turnsRef.current) < 0) return;
+    if (streamingRef.current) {
+      const key = currentIdRef.current ?? sendQueue.NEW_CHAT_KEY;
+      const res = sendQueue.enqueue(queuesRef.current, key, {
+        id: `retry-${Date.now()}`,
+        kind: "retry",
+        backend,
+        model: modelId,
+      });
+      if (!res.ok) {
+        setQueueNote(`The queue is full (${sendQueue.QUEUE_MAX}). Remove one or wait for a reply.`);
+        return;
+      }
+      changeQueues(res.queues);
+      setQueueNote(null);
+      return;
+    }
+    if (!available(backend)) {
+      setError(`${backendById(backend).label} isn't available.`);
+      return;
+    }
+    void runTurn(turnsRef.current);
+  }
+
+  /**
    * A reply ended. After a good one the next queued item goes out, through the
    * same runTurn a typed message uses; after an error or a Stop the line is
    * held until the admin resumes or clears it.
@@ -742,6 +779,12 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       const slot = item.backend as ChatBackendId;
       if (item.kind === "message") {
         void runTurn([...turnsRef.current, { role: "user", content: item.text }], false, slot);
+        return;
+      }
+      if (item.kind === "retry") {
+        // Answered since (or the message is gone): nothing left to retry.
+        if (retryIndex(turnsRef.current) < 0) continue;
+        void runTurn(turnsRef.current, false, slot);
         return;
       }
       // A run that ended during a reply: its result goes in now, and the model
@@ -1095,6 +1138,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   // nothing about whether Claude will answer.
   const showStatusError = backend === "local" && !!statusError;
   const queueKey = currentId ?? sendQueue.NEW_CHAT_KEY;
+  const retryAt = streaming ? -1 : retryIndex(turns);
   const line = sendQueue.queueOf(queues, queueKey);
   function resumeQueue() {
     changeQueues(sendQueue.resume(queuesRef.current, queueKey));
@@ -1493,6 +1537,14 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                     />
                   )}
                 </div>
+                {!streaming && i === retryAt && confirmDeleteTurn !== i && (
+                  <div className="mt-1 flex items-center justify-end gap-2 text-[11px]">
+                    <span className="text-white/40">No reply yet.</span>
+                    <Button variant="secondary" size="xs" onClick={retry}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
                 {!streaming && (
                   <div
                     className={`mt-0.5 flex gap-1 text-[11px] ${isUser ? "justify-end" : ""} ${
@@ -1613,12 +1665,12 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                     title={`${backendById(q.backend as ChatBackendId).label} · ${q.model}`}
                     className="flex max-w-full items-center gap-1 rounded-full bg-white/10 py-0.5 pl-3 pr-1 text-xs text-white/80"
                   >
-                    <span className="truncate">{q.kind === "message" ? q.text : "Run result"}</span>
+                    <span className="truncate">{queuedLabel(q)}</span>
                     <button
                       type="button"
                       onClick={() => changeQueues(sendQueue.remove(queuesRef.current, queueKey, q.id))}
                       className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white/60 hover:bg-white/15 hover:text-white"
-                      aria-label={`Remove queued message: ${q.kind === "message" ? q.text : "run result"}`}
+                      aria-label={`Remove queued message: ${queuedLabel(q)}`}
                     >
                       <span aria-hidden>×</span>
                     </button>
