@@ -893,7 +893,15 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
 
   return (
     <div className="w-full">
-      <div ref={containerRef} className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
+      <div
+        ref={containerRef}
+        className="relative aspect-video w-full overflow-hidden rounded-lg bg-black"
+        // iOS Safari sends no click to a <video> without native controls, so a
+        // tap only reveals the chrome if touchstart does it, as in the movie
+        // and episode players. Nothing to reveal over the tuning spinner or an
+        // error.
+        onTouchStart={() => !loading && !error && chrome.surfaceTouchStart()}
+      >
         <video
           ref={videoRef}
           /*
