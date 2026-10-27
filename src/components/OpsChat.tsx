@@ -41,7 +41,9 @@ import { buildRunTurnRequest, buildSaveRequest, createSaveQueue, planConflictRet
 import * as sendQueue from "@/lib/sendQueue";
 import { retryIndex } from "@/lib/retryRules";
 import {
+  continuedRunIds,
   findRunTurn,
+  parseRunTurn,
   isFinished,
   linkedRunId,
   parseSkillProposal,
@@ -546,6 +548,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const available = useCallback((id: ChatBackendId) => slots[id].available, [slots]);
 
   const modelId = useMemo(() => slots[backend].model, [backend, slots]);
+  // Run cards whose run a later turn already replies to stop offering Reply.
+  const continued = useMemo(() => continuedRunIds(turns), [turns]);
 
   // Follow the output as it generates -- but only while the view is at the
   // bottom. Scrolling up to read the start of a reply while it is still
@@ -973,6 +977,29 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       const queued = body.status === "queued";
       await addRunTurn(chatId, body.id, proposal);
       return { ok: true, runId: body.id, queued };
+    } catch {
+      return { ok: false, error: "Lost connection to Streamy.", busyRunId: null };
+    }
+  }
+
+  /**
+   * A Reply on a finished run's card: the runner continues that run as a new
+   * one (same skill, resumed Claude Code session), which joins the chat as a
+   * run turn of its own -- the same path as a Run tap, so it gets a live card
+   * and the saved chat (and its vault copy) holds the reply's text.
+   */
+  async function replySkill(runId: string, message: string): Promise<StartOutcome> {
+    const chatId = currentIdRef.current;
+    try {
+      const res = await fetch(`/api/admin/skills/runs/${encodeURIComponent(runId)}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { id?: string; status?: string; error?: string };
+      if (!res.ok || !body.id) return { ok: false, error: body.error ?? `Couldn't send the reply (HTTP ${res.status}).`, busyRunId: null };
+      await addRunTurn(chatId, body.id);
+      return { ok: true, runId: body.id, queued: body.status === "queued" };
     } catch {
       return { ok: false, error: "Lost connection to Streamy.", busyRunId: null };
     }
@@ -1463,7 +1490,13 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             if (t.via === "skill-run") {
               return (
                 <div key={i} className="group">
-                  <SkillRunCard content={t.content} locked={streaming} onFinished={(r) => finishRun(r, currentId)} />
+                  <SkillRunCard
+                    content={t.content}
+                    locked={streaming}
+                    onFinished={(r) => finishRun(r, currentId)}
+                    continuedInChat={continued.has(parseRunTurn(t.content)?.id ?? "")}
+                    onReply={replySkill}
+                  />
                   {!streaming && (
                     <div
                       className={`mt-0.5 flex gap-1 text-[11px] ${
