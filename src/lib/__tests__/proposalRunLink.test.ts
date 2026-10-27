@@ -5,6 +5,8 @@ import {
   normalizeProposalRuns,
   PROPOSAL_BLOCK,
   proposalRunView,
+  runCardInThread,
+  runTurnContent,
   type SkillRun,
 } from "../skillRunnerRules";
 import { checkTranscriptSave, normalizeTurns, withProposalRun, type ChatTurn } from "../chatSessionRules";
@@ -116,5 +118,28 @@ describe("a double tap", () => {
     await expect(start()).rejects.toThrow("down");
     await expect(start()).resolves.toBe("r2");
     expect(post).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("one card per run id", () => {
+  const linked = withProposalRun(chat, 1, PROPOSAL_BLOCK, "ship-fix", "r1");
+  const runTurn = (id: string): ChatTurn => ({ role: "user", via: "skill-run", content: runTurnContent(run({ id, status: "running" })) });
+
+  it("collapses the proposal's status when the run's own card is in the thread", () => {
+    const turns = [...linked, runTurn("r1")];
+    expect(runCardInThread(turns, turns[1])).toBe(true);
+  });
+
+  it("keeps the full status when no card for that run is in the thread", () => {
+    expect(runCardInThread(linked, linked[1])).toBe(false);
+    const other = [...linked, runTurn("r2")];
+    expect(runCardInThread(other, other[1])).toBe(false);
+  });
+
+  it("is false for a proposal that was never run, and leaves the turn text alone", () => {
+    const turns = [...chat, runTurn("r1")];
+    const before = turns.map((t) => t.content);
+    expect(runCardInThread(turns, turns[1])).toBe(false);
+    expect(turns.map((t) => t.content)).toEqual(before);
   });
 });
