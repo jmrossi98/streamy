@@ -23,7 +23,9 @@ type Base = {
 export type QueuedMessage = Base & { kind: "message"; text: string };
 /** A skill run that ended during a reply: the model reads its result once the line reaches it. */
 export type QueuedRun = Base & { kind: "run"; runId: string };
-export type QueueItem = QueuedMessage | QueuedRun;
+/** A Retry tapped during a reply: asks again for the last unanswered message, with the transcript as it is then. */
+export type QueuedRetry = Base & { kind: "retry" };
+export type QueueItem = QueuedMessage | QueuedRun | QueuedRetry;
 
 export type ChatQueue = { items: QueueItem[]; paused: boolean };
 
@@ -54,13 +56,14 @@ export type EnqueueResult = { queues: Queues; ok: boolean };
 /**
  * Adds `item` to the back of `key`'s line. Refused (ok false, nothing changed)
  * when the line already holds QUEUE_MAX. A run already waiting is not added
- * twice, and that counts as ok.
+ * twice, and neither is a Retry (one asks as much as two would); both count as ok.
  */
 export function enqueue(queues: Queues, key: string, item: QueueItem): EnqueueResult {
   const q = queueOf(queues, key);
   if (item.kind === "run" && q.items.some((x) => x.kind === "run" && x.runId === item.runId)) {
     return { queues, ok: true };
   }
+  if (item.kind === "retry" && q.items.some((x) => x.kind === "retry")) return { queues, ok: true };
   if (q.items.length >= QUEUE_MAX) return { queues, ok: false };
   return { queues: put(queues, key, { ...q, items: [...q.items, item] }), ok: true };
 }
