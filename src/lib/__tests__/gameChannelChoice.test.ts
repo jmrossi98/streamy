@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CHOICE_TTL_DAYS,
+  foundFeedTakesOver,
   resolveStoredChoice,
   staleChoiceCutoff,
 } from "../gameChannelChoice";
@@ -64,5 +65,37 @@ describe("staleChoiceCutoff", () => {
     const now = new Date("2026-09-21T00:00:00.000Z");
     expect(staleChoiceCutoff(now).toISOString()).toBe("2026-09-07T00:00:00.000Z");
     expect(CHOICE_TTL_DAYS).toBe(14);
+  });
+});
+
+describe("foundFeedTakesOver", () => {
+  const base = { foundId: "feed", manual: false, pickedId: null, gameFeedIds: ["feed"], failedIds: [] };
+
+  it("switches when the viewer picked nothing", () => {
+    expect(foundFeedTakesOver(base)).toBe(true);
+  });
+
+  it("takes over from a picked guess (Sabres at Sharks, 2026-10-27)", () => {
+    // The 24/7 team channel is neither confirmed nor a game feed.
+    expect(foundFeedTakesOver({ ...base, pickedId: "nhl-sharks-247" })).toBe(true);
+  });
+
+  it("leaves a picked confirmed channel or another game feed alone", () => {
+    expect(foundFeedTakesOver({ ...base, pickedId: "espn", gameFeedIds: ["espn", "feed"] })).toBe(false);
+    expect(foundFeedTakesOver({ ...base, pickedId: "other-feed", gameFeedIds: ["other-feed", "feed"] })).toBe(false);
+  });
+
+  it("is a no-op yes when the pick is the found feed itself", () => {
+    expect(foundFeedTakesOver({ ...base, pickedId: "feed" })).toBe(true);
+  });
+
+  it("never switches to a viewer's own add from the list", () => {
+    expect(foundFeedTakesOver({ ...base, manual: true })).toBe(false);
+    expect(foundFeedTakesOver({ ...base, manual: true, pickedId: "guess" })).toBe(false);
+  });
+
+  it("never switches back to a feed that already failed this visit", () => {
+    expect(foundFeedTakesOver({ ...base, pickedId: "guess", failedIds: ["feed"] })).toBe(false);
+    expect(foundFeedTakesOver({ ...base, failedIds: ["feed"] })).toBe(false);
   });
 });
