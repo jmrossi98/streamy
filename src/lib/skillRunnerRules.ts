@@ -98,6 +98,11 @@ export type SkillRun = {
   message?: string | null;
   /** The runner says this finished run can take a reply. */
   canReply?: boolean;
+  /**
+   * A chat run's reply so far (2026-10-27, the /chat lane that answers the
+   * admin chat on Claude Code): append-only while it runs. Null on skill runs.
+   */
+  chatText?: string | null;
 };
 
 const KINDS: readonly SkillKind[] = ["read", "action", "code"];
@@ -261,6 +266,10 @@ export function normalizeRun(raw: unknown): SkillRun | null {
     root: isRunId(r.root) ? r.root : null,
     message: typeof r.message === "string" && r.message.trim() ? r.message.trim().slice(0, MAX_REPLY_CHARS) : null,
     canReply: isFinished(status) && r.canReply === true,
+    chatText:
+      r.chat && typeof r.chat === "object" && typeof (r.chat as { text?: unknown }).text === "string"
+        ? (r.chat as { text: string }).text
+        : null,
   };
 }
 

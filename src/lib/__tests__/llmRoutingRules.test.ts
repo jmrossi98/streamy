@@ -12,11 +12,13 @@ import {
   resetUses,
   usesIn,
   resolveRoute,
+  routeReadsImages,
+  providerDefaultRoute,
   type RoutingEnv,
 } from "../llmRoutingRules";
 
-const env = (configured: Partial<Record<"openrouter" | "anthropic", boolean>>): RoutingEnv => ({
-  configured: { openrouter: false, anthropic: false, ...configured },
+const env = (configured: Partial<Record<"openrouter" | "anthropic" | "claudecode", boolean>>): RoutingEnv => ({
+  configured: { openrouter: false, anthropic: false, claudecode: false, ...configured },
   claude: {
     openrouter: ["anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4.5"],
     anthropic: ["claude-opus-5-5", "claude-sonnet-5-5"],
@@ -195,5 +197,56 @@ describe("where each use is edited (2026-10-24)", () => {
   it("keeps only real uses from a submitted list", () => {
     expect(parseUseList(["resume", "bogus", "apply"])).toEqual(["resume", "apply"]);
     expect(parseUseList("resume")).toEqual([]);
+  });
+});
+
+describe("Claude Code provider", () => {
+  it("is never the default, even when it is configured", () => {
+    const routing = defaultRouting(env({ claudecode: true, openrouter: true }));
+    expect(routing.chatClaude.provider).toBe("openrouter");
+  });
+
+  it("is accepted for the Claude chat slot, without fallbacks", () => {
+    const defaults = defaultRouting(env({ anthropic: true }));
+    const out = normalizeRouting({ chatClaude: { provider: "claudecode", model: "opus", fallbacks: ["sonnet"] } }, defaults);
+    expect(out.chatClaude).toEqual({ provider: "claudecode", model: "opus", fallbacks: [] });
+  });
+
+  it("is refused for every other use", () => {
+    const defaults = defaultRouting(env({ anthropic: true }));
+    const row = { provider: "claudecode", model: "sonnet", fallbacks: [] };
+    const out = normalizeRouting({ chatOpen: row, resume: row, apply: row }, defaults);
+    expect(out.chatOpen).toEqual(defaults.chatOpen);
+    expect(out.resume).toEqual(defaults.resume);
+    expect(out.apply).toEqual(defaults.apply);
+  });
+
+  it("still loads a routing saved before it existed", () => {
+    const defaults = defaultRouting(env({ anthropic: true }));
+    const saved = { chatClaude: { provider: "openrouter", model: "anthropic/claude-sonnet-4.6", fallbacks: [] } };
+    expect(normalizeRouting(saved, defaults).chatClaude.provider).toBe("openrouter");
+  });
+
+  it("resolves when the runner is configured, else falls back to a configured API", () => {
+    const route = { provider: "claudecode" as const, model: "sonnet", fallbacks: [] };
+    expect(resolveRoute("chatClaude", route, env({ claudecode: true }))).toMatchObject({
+      provider: "claudecode",
+      model: "sonnet",
+      substituted: false,
+    });
+    expect(resolveRoute("chatClaude", route, env({ anthropic: true }))).toMatchObject({ provider: "anthropic", substituted: true });
+    expect(resolveRoute("chatClaude", route, env({}))).toBeNull();
+  });
+
+  it("defaults to the sonnet alias", () => {
+    expect(providerDefaultRoute("chatClaude", "claudecode", env({ claudecode: true }))).toEqual({
+      provider: "claudecode",
+      model: "sonnet",
+      fallbacks: [],
+    });
+  });
+
+  it("reads images", () => {
+    expect(routeReadsImages({ provider: "claudecode", model: "haiku", fallbacks: [], use: "chatClaude" })).toBe(true);
   });
 });

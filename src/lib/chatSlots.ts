@@ -26,10 +26,19 @@ export const LLM_ROUTING_EVENT = "streamy:llm-routing";
 
 export type ResolvedRoutes = Record<LlmUse, ResolvedRoute | null>;
 
+/**
+ * The model as the chat names it. A Claude Code route's model is an alias
+ * ("sonnet"), so it is marked as Claude Code's: "claude-code/sonnet" says
+ * both who answered and that it came out of the plan, not a balance.
+ */
+export function slotModel(route: Pick<ResolvedRoute, "provider" | "model">): string {
+  return route.provider === "claudecode" ? `claude-code/${route.model}` : route.model;
+}
+
 function cloudSlot(route: ResolvedRoute | null, unavailableHint: string): ChatSlot {
   return {
     available: route !== null,
-    model: route?.model ?? "",
+    model: route ? slotModel(route) : "",
     provider: route ? PROVIDER_LABELS[route.provider] : null,
     unavailableHint,
   };
@@ -39,6 +48,6 @@ function cloudSlot(route: ResolvedRoute | null, unavailableHint: string): ChatSl
 export function cloudSlots(routes: ResolvedRoutes): Pick<ChatSlots, "open" | "claude"> {
   return {
     open: cloudSlot(routes.chatOpen, "OPENROUTER_API_KEY is unset on the server."),
-    claude: cloudSlot(routes.chatClaude, "Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY is set on the server."),
+    claude: cloudSlot(routes.chatClaude, "Nothing can answer: set ANTHROPIC_API_KEY, OPENROUTER_API_KEY, or SKILL_RUNNER_URL (Claude Code) on the server."),
   };
 }

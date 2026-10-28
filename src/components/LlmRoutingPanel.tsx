@@ -3,11 +3,13 @@
 import { useRef, useState } from "react";
 import { Button, Field, Select, TextInput } from "@/components/ui";
 import {
+  LLM_PROVIDERS,
   LLM_USES,
   PROVIDER_ENV,
   PROVIDER_LABELS,
   infoFor,
   parseModelList,
+  takesFallbacks,
   type LlmProvider,
   type LlmRoute,
   type LlmRouting,
@@ -150,7 +152,7 @@ export function LlmRoutingPanel({
   function changeModel(use: LlmUse, model: string) {
     setRouting((prev) => ({ ...prev, [use]: { ...prev[use], model } }));
     // Picked from the suggestions (or pasted whole): save now.
-    if (snapshot.suggestions[routing[use].provider].includes(model)) commit(use, rowOf(use, { model }));
+    if ((snapshot.suggestions[routing[use].provider] ?? []).includes(model)) commit(use, rowOf(use, { model }));
   }
 
   /** Leaving a typed field saves it, if it differs from what was saved. */
@@ -194,9 +196,9 @@ export function LlmRoutingPanel({
         </p>
       )}
 
-      {(["anthropic", "openrouter"] as LlmProvider[]).map((p) => (
+      {LLM_PROVIDERS.map((p) => (
         <datalist key={p} id={`llm-models-${p}`}>
-          {snapshot.suggestions[p].map((id) => (
+          {(snapshot.suggestions[p] ?? []).map((id) => (
             <option key={id} value={id} />
           ))}
         </datalist>
@@ -215,7 +217,7 @@ export function LlmRoutingPanel({
                   <p className="mb-3 text-xs text-white/40">{use.description}</p>
                 </>
               )}
-              <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
+              <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
                 <Field label="Provider">
                   <Select
                     fieldSize="sm"
@@ -236,7 +238,13 @@ export function LlmRoutingPanel({
                     fieldSize="sm"
                     list={`llm-models-${route.provider}`}
                     value={route.model}
-                    placeholder={route.provider === "anthropic" ? "claude-opus-5-5" : "anthropic/claude-sonnet-4.6"}
+                    placeholder={
+                      route.provider === "anthropic"
+                        ? "claude-opus-5-5"
+                        : route.provider === "claudecode"
+                          ? "sonnet"
+                          : "anthropic/claude-sonnet-4.6"
+                    }
                     onChange={(e) => changeModel(use.id, e.target.value)}
                     onBlur={() => commitIfChanged(use.id)}
                     onKeyDown={onEnter(use.id)}
@@ -244,7 +252,12 @@ export function LlmRoutingPanel({
                   />
                 </Field>
               </div>
-              {compact ? (
+              {!takesFallbacks(route.provider) ? (
+                <p className="mt-2 text-xs text-white/40">
+                  Runs on mediabox through Claude Code, billed to your Claude plan. One model, no fallbacks; commands
+                  beyond its read-only rules ask you in the chat.
+                </p>
+              ) : compact ? (
                 <details className="group/fb mt-2 text-xs">
                   <summary className="inline-flex cursor-pointer list-none items-center text-white/40 hover:text-white/70">
                     <span className="mr-1 inline-block transition-transform group-open/fb:rotate-90">▸</span>

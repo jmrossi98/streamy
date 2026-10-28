@@ -61,6 +61,7 @@ import { LOCAL_LIMITS, REMOTE_LIMITS } from "@/lib/assistantToolRules";
 import { isWebSearchConfigured } from "@/lib/webSearch";
 import { skillsForPrompt } from "@/lib/skillRunner";
 import { skillsPrompt } from "@/lib/skillRunnerRules";
+import { CLAUDE_CODE_CHAT_NOTE } from "@/lib/claudeCodeLlmRules";
 
 /**
  * Admin chat proxy. Three slots, chosen per request by the panel: the
@@ -189,7 +190,7 @@ export async function POST(request: Request) {
         error:
           backend === "open"
             ? "The open-weight model isn't configured - OPENROUTER_API_KEY is unset on the server."
-            : "Cloud models aren't configured - set OPENROUTER_API_KEY or ANTHROPIC_API_KEY on the server.",
+            : "Cloud models aren't configured - set OPENROUTER_API_KEY, ANTHROPIC_API_KEY or SKILL_RUNNER_URL (Claude Code) on the server.",
       },
       { status: 503 }
     );
@@ -406,17 +407,23 @@ export async function POST(request: Request) {
   // Same gate as the status block. The local model doesn't drive the
   // diagnostics -- several rounds of picking commands is beyond a 4B model,
   // and each would take longer on the card than looking by hand.
-  const diag = !!route && body.stackStatus !== false && realQuestion;
+  // Claude Code (the admin's plan, on mediabox) brings its own shell, file and
+  // web tools, so none of this loop's tools are offered to it: it answers in
+  // one streamed run, and anything beyond its read-only rules asks the admin
+  // from a card in the chat.
+  const claudeCode = route?.provider === "claudecode";
+  if (claudeCode) messages = withContext(messages, { role: "system", content: CLAUDE_CODE_CHAT_NOTE });
+  const diag = !claudeCode && !!route && body.stackStatus !== false && realQuestion;
   // NOTE: the model can read one vault note in full, read-only. Offered on any
   // real question when the vault is configured.
-  const notes = isVaultConfigured() && realQuestion;
+  const notes = !claudeCode && isVaultConfigured() && realQuestion;
 
   try {
     // request.signal so navigating away actually stops generation -- on the
     // local card that frees the GPU, and on a metered backend it stops paying
     // for tokens nobody will read.
     let stream: ReadableStream<Uint8Array>;
-    if (diag || web || notes) {
+    if (!claudeCode && (diag || web || notes)) {
       const backendFns: LoopBackend = route
         ? {
             // Low effort and a short ceiling: a step writes a few tool lines,

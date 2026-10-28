@@ -14,20 +14,34 @@
  * Pure. Which provider actually has a key is a server-side fact, passed in.
  */
 
-export type LlmProvider = "openrouter" | "anthropic";
+export type LlmProvider = "openrouter" | "anthropic" | "claudecode";
 
-export const LLM_PROVIDERS: readonly LlmProvider[] = ["openrouter", "anthropic"];
+/**
+ * "claudecode" (2026-10-27) is not a metered API: it is Claude Code on
+ * mediabox, signed in to the admin's Claude plan, reached through the skill
+ * runner's /chat lane (claudeCodeLlm.ts). Usage comes out of the plan, not a
+ * prepaid balance. Only the admin chat's Claude slot may use it -- it answers
+ * with its own tools on mediabox and is far too slow for the batch jobs.
+ */
+export const LLM_PROVIDERS: readonly LlmProvider[] = ["openrouter", "anthropic", "claudecode"];
 
 export const PROVIDER_LABELS: Record<LlmProvider, string> = {
   openrouter: "OpenRouter",
   anthropic: "Anthropic",
+  claudecode: "Claude Code (your plan)",
 };
 
 /** The env var that enables each provider; shown when one is greyed out. */
 export const PROVIDER_ENV: Record<LlmProvider, string> = {
   openrouter: "OPENROUTER_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  claudecode: "SKILL_RUNNER_URL",
 };
+
+/** Providers that take one model and no fallback chain. */
+export function takesFallbacks(provider: LlmProvider): boolean {
+  return provider !== "claudecode";
+}
 
 export type LlmUse = "chatClaude" | "chatOpen" | "resume" | "apply";
 
@@ -58,7 +72,7 @@ export const LLM_USES: readonly LlmUseInfo[] = [
     label: "Assistant - Claude",
     description:
       "The admin chat's Claude slot, and the investigation loop it runs on stack questions.",
-    providers: ["anthropic", "openrouter"],
+    providers: ["anthropic", "openrouter", "claudecode"],
     area: "assistant",
   },
   {
@@ -141,6 +155,11 @@ export const ANTHROPIC_MODEL_SUGGESTIONS: readonly string[] = [
   "claude-sonnet-4-6",
 ];
 
+/** Claude Code takes an alias or a full id via --model; omitted is its default. */
+export const DEFAULT_CLAUDE_CODE_MODEL = "sonnet";
+
+export const CLAUDE_CODE_MODEL_SUGGESTIONS: readonly string[] = ["sonnet", "opus", "haiku"];
+
 export const OPENROUTER_MODEL_SUGGESTIONS: readonly string[] = [
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-sonnet-4.5",
@@ -154,8 +173,8 @@ export const OPENROUTER_MODEL_SUGGESTIONS: readonly string[] = [
 /** Everything the defaults depend on, so the pure part never reads env. */
 export type RoutingEnv = {
   configured: Record<LlmProvider, boolean>;
-  /** Default chain per provider for the Claude-tier uses. */
-  claude: Record<LlmProvider, string[]>;
+  /** Default chain per provider for the Claude-tier uses (none given: the built-in default). */
+  claude: Partial<Record<LlmProvider, string[]>>;
   /** Default OpenRouter chain for the open-weight slot. */
   open: string[];
 };
@@ -183,7 +202,7 @@ export function infoFor(use: LlmUse): LlmUseInfo {
 /**
  * The provider a use lands on with nothing saved. Anthropic when its key is
  * set -- that key being set is the signal there is credit to use -- else
- * OpenRouter. With neither configured the route still has to name one; it
+ * OpenRouter. Never Claude Code: that is a deliberate choice in the panel. With neither configured the route still has to name one; it
  * names the first the use allows, and the caller finds nothing configured.
  */
 export function defaultProviderFor(use: LlmUse, env: RoutingEnv): LlmProvider {
@@ -196,9 +215,12 @@ export function defaultProviderFor(use: LlmUse, env: RoutingEnv): LlmProvider {
 /** The env-derived route for a use on a specific provider. */
 export function providerDefaultRoute(use: LlmUse, provider: LlmProvider, env: RoutingEnv): LlmRoute {
   if (use === "chatOpen") return routeFromChain("openrouter", env.open, LAST_RESORT_OPEN_MODEL);
+  if (provider === "claudecode") {
+    return routeFromChain(provider, (env.claude.claudecode ?? []).slice(0, 1), DEFAULT_CLAUDE_CODE_MODEL);
+  }
   return routeFromChain(
     provider,
-    env.claude[provider],
+    env.claude[provider] ?? [],
     provider === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : LAST_RESORT_OPENROUTER_CLAUDE
   );
 }
@@ -236,7 +258,7 @@ export function normalizeRouting(raw: unknown, defaults: LlmRouting): LlmRouting
     const { provider, model, fallbacks } = row as Record<string, unknown>;
     if (!isProvider(provider) || !infoFor(use).providers.includes(provider)) continue;
     if (!isValidModelId(model)) continue;
-    const clean = Array.isArray(fallbacks) ? fallbacks.filter(isValidModelId) : [];
+    const clean = Array.isArray(fallbacks) && takesFallbacks(provider) ? fallbacks.filter(isValidModelId) : [];
     out[use] = { provider, model, fallbacks: dedupe(clean, model) };
   }
   return out;
@@ -263,6 +285,9 @@ export function modelChainFor(route: LlmRoute): string[] {
  */
 export function routeReadsImages(route: (LlmRoute & { use?: LlmUse }) | null): boolean {
   if (!route || route.use === "chatOpen") return false;
+  // Claude Code is Claude whatever alias it runs: the runner saves the
+  // images and Claude Code reads them from disk.
+  if (route.provider === "claudecode") return true;
   const chain = modelChainFor(route);
   return route.provider === "anthropic" ? chain.every((m) => /claude/i.test(m)) : chain.every((m) => m.startsWith("anthropic/"));
 }
