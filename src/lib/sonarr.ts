@@ -50,6 +50,7 @@ import type {
   QueueHealth,
   RadarrHealthIssue,
 } from "./radarr";
+import { PACK_IMPORT_MAX_TRIES } from "./manualPackRules";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -2861,12 +2862,27 @@ async function packCoveredSeasons(): Promise<Set<string>> {
 
 /** When each pack file was last handed to Sonarr, so a failed import is retried but not every pass. */
 const packImportAttempts = new Map<string, number>();
+/** Pack file path -> how many times it has been handed to Sonarr (PACK_IMPORT_MAX_TRIES). */
+const packImportTries = new Map<string, number>();
+/** Pack files whose names Sonarr's parser can't read. */
+const packUnreadable = new Set<string>();
+
+/** Files of these paths the importer gave up on, and why. */
+export function packImportProblems(paths: string[]): { file: string; reason: "unreadable-name" | "not-attached" }[] {
+  return paths
+    .filter((p) => (packImportTries.get(p) ?? 0) >= PACK_IMPORT_MAX_TRIES)
+    .map((p) => ({ file: p, reason: packUnreadable.has(p) ? ("unreadable-name" as const) : ("not-attached" as const) }));
+}
 const PACK_IMPORT_RETRY_MS = 30 * 60_000;
 /** Files per ManualImport command: each is a hardlink and a rename, so this stays quick. */
 const PACK_IMPORT_BATCH = 25;
 
 type ParsedRelease = {
-  parsedEpisodeInfo?: { quality?: unknown; languages?: { id: number; name: string }[] } | null;
+  parsedEpisodeInfo?: {
+    quality?: unknown;
+    languages?: { id: number; name: string }[];
+    episodeNumbers?: number[];
+  } | null;
 };
 
 /**
@@ -2897,16 +2913,25 @@ export async function importManualPackFiles(): Promise<number> {
       episodes.filter((e) => e.seasonNumber === pack.seasonNumber).map((e) => [e.episodeNumber, e])
     );
     const now = Date.now();
-    const due = ready
-      .map((f) => {
-        const n = packFileEpisode(f.name, pack.seasonNumber);
-        const episode = n != null ? byNumber.get(n) : undefined;
-        return { path: `${pack.savePath}/${f.name}`, episode };
-      })
-      .filter(
-        (f): f is { path: string; episode: SonarrEpisode } =>
-          f.episode != null && !f.episode.hasFile && now - (packImportAttempts.get(f.path) ?? 0) > PACK_IMPORT_RETRY_MS
-      );
+    const mapped = ready.map((f) => {
+      const n = packFileEpisode(f.name, pack.seasonNumber);
+      const episode = n != null ? byNumber.get(n) : undefined;
+      return { path: `${pack.savePath}/${f.name}`, episode };
+    });
+    for (const f of mapped) {
+      // Landed (or fixed by hand): nothing to give up on any more.
+      if (f.episode?.hasFile) {
+        packImportTries.delete(f.path);
+        packUnreadable.delete(f.path);
+      }
+    }
+    const due = mapped.filter(
+      (f): f is { path: string; episode: SonarrEpisode } =>
+        f.episode != null &&
+        !f.episode.hasFile &&
+        (packImportTries.get(f.path) ?? 0) < PACK_IMPORT_MAX_TRIES &&
+        now - (packImportAttempts.get(f.path) ?? 0) > PACK_IMPORT_RETRY_MS
+    );
     for (let i = 0; i < due.length; i += PACK_IMPORT_BATCH) {
       const batch = due.slice(i, i + PACK_IMPORT_BATCH);
       const files = await Promise.all(
@@ -2916,6 +2941,9 @@ export async function importManualPackFiles(): Promise<number> {
             () => null
           );
           const info = parsed?.parsedEpisodeInfo;
+          // Sonarr keeps the file's own name (renaming is off), and its rescan
+          // drops a file it can't read an episode number from.
+          if (parsed && !(info?.episodeNumbers?.length)) packUnreadable.add(f.path);
           const languages = (info?.languages ?? []).filter((l) => l.name !== "Unknown");
           return {
             path: f.path,
@@ -2930,7 +2958,18 @@ export async function importManualPackFiles(): Promise<number> {
           };
         })
       );
-      for (const f of batch) packImportAttempts.set(f.path, now);
+      for (const f of batch) {
+        packImportAttempts.set(f.path, now);
+        const tries = (packImportTries.get(f.path) ?? 0) + 1;
+        packImportTries.set(f.path, tries);
+        if (tries >= PACK_IMPORT_MAX_TRIES) {
+          console.warn(
+            `[sonarr] pack file ${f.path} still has no episode after ${tries} imports` +
+              (packUnreadable.has(f.path) ? " (Sonarr can't read its name)" : "") +
+              "; not trying again"
+          );
+        }
+      }
       await sonarrFetch(`/api/v3/command`, {
         method: "POST",
         body: JSON.stringify({ name: "ManualImport", importMode: "copy", files }),
