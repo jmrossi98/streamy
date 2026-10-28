@@ -162,9 +162,10 @@ export function canReadImages(route: ResolvedRoute | null): boolean {
 export function streamChat(
   route: ResolvedRoute,
   messages: ChatMessage[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts: { chatId?: string | null } = {}
 ): Promise<ReadableStream<Uint8Array>> {
-  if (route.provider === "claudecode") return streamClaudeCodeChat(messages, route.model, signal);
+  if (route.provider === "claudecode") return streamClaudeCodeChat(messages, route.model, signal, opts.chatId ?? null);
   const models = modelChainFor(route);
   return route.provider === "anthropic"
     ? streamAnthropicChat(messages, models, signal, { maxTokens: maxOutputTokens() })

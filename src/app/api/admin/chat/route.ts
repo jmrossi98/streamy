@@ -61,7 +61,6 @@ import { LOCAL_LIMITS, REMOTE_LIMITS } from "@/lib/assistantToolRules";
 import { isWebSearchConfigured } from "@/lib/webSearch";
 import { skillsForPrompt } from "@/lib/skillRunner";
 import { skillsPrompt } from "@/lib/skillRunnerRules";
-import { CLAUDE_CODE_CHAT_NOTE } from "@/lib/claudeCodeLlmRules";
 
 /**
  * Admin chat proxy. Three slots, chosen per request by the panel: the
@@ -184,6 +183,11 @@ export async function POST(request: Request) {
   // Resolved once, up front: the routing can change between requests, and
   // the investigation loop and the answer must agree on who is answering.
   const route = remote ? await getRoute(backend === "claude" ? "chatClaude" : "chatOpen") : null;
+  // Claude Code (the admin's plan, on mediabox) keeps one long-running session
+  // per chat and looks things up itself (vault, status files, logs) when it
+  // needs them. Nothing below is injected for it: a context block added to
+  // every message would pile up in its session and be re-read on every turn.
+  const claudeCode = route?.provider === "claudecode";
   if (remote && !route) {
     return NextResponse.json(
       {
@@ -247,7 +251,7 @@ export async function POST(request: Request) {
   // Filler is answered from the transcript. Handing a model 22 lines of probe
   // output followed by "hi" gets a health summary in reply to a greeting.
   const statusQuery = typedQuery;
-  if (body.stackStatus !== false && statusQuery && shouldIncludeStatus(statusQuery)) {
+  if (!claudeCode && body.stackStatus !== false && statusQuery && shouldIncludeStatus(statusQuery)) {
     try {
       const snapshot = await getSnapshot();
       messages = withContext(
@@ -267,7 +271,7 @@ export async function POST(request: Request) {
   // stack questions by shouldIncludeStatus's measure. The list is cached for
   // five minutes, and an unreachable runner just means no skills this turn.
   try {
-    const skills = await skillsForPrompt();
+    const skills = claudeCode ? null : await skillsForPrompt();
     if (skills) messages = withContext(messages, { role: "system", content: skillsPrompt(skills) });
   } catch (err) {
     console.error("[chat] skill list failed:", err);
@@ -286,7 +290,7 @@ export async function POST(request: Request) {
   // context already carries the status block on those questions.
   const docsQuery = typedQuery;
   const retrieve = docsQuery != null && (remote ? worthRetrieving(docsQuery) : shouldSearch(docsQuery));
-  if (isDocsRetrievalConfigured() && docsQuery && retrieve) {
+  if (!claudeCode && isDocsRetrievalConfigured() && docsQuery && retrieve) {
     try {
       const index = await getDocsIndex();
       const block = index && buildDocsContextBlock(searchDocs(index, docsQuery));
@@ -303,7 +307,7 @@ export async function POST(request: Request) {
   // because another model wrote it. A question about the admin's own career
   // gets the whole resume set instead of fragments: the cloud models have the
   // room; the local model's 8k context gets a slice.
-  if (docsQuery && retrieve) {
+  if (!claudeCode && docsQuery && retrieve) {
     let career = false;
     if (isCareerQuestion(docsQuery)) {
       try {
@@ -339,7 +343,7 @@ export async function POST(request: Request) {
 
   // A chat shared with a Claude Code session: turns marked as from Claude
   // Code happened there, and the admin may carry on there afterwards.
-  if (sessionId) {
+  if (!claudeCode && sessionId) {
     try {
       const linked = await prisma.chatSession.findFirst({
         where: { id: sessionId, userId: admin.id, claudeSessionId: { not: null } },
@@ -364,7 +368,7 @@ export async function POST(request: Request) {
   // newest conversations from every assistant are listed instead, with the
   // newest one's text. Read live rather than from the index, which lags a few
   // minutes behind the chat that just ended.
-  if (docsQuery && isVaultConfigured() && isRecentChatQuestion(docsQuery)) {
+  if (!claudeCode && docsQuery && isVaultConfigured() && isRecentChatQuestion(docsQuery)) {
     try {
       const entries = await listVaultFiles(AI_CHATS_DIR, isReadableNote, 600);
       const list = newestChatNotes(entries, sessionId, 8);
@@ -380,7 +384,7 @@ export async function POST(request: Request) {
   // this panel's whole weakness is starting from nothing every time, and the
   // block is small and cheap. A failure to read it costs the context, never
   // the answer.
-  if (isSharedContextConfigured()) {
+  if (!claudeCode && isSharedContextConfigured()) {
     try {
       const shared = await getSharedContext();
       const block = shared && buildSharedContextBlock(shared);
@@ -411,8 +415,6 @@ export async function POST(request: Request) {
   // web tools, so none of this loop's tools are offered to it: it answers in
   // one streamed run, and anything beyond its read-only rules asks the admin
   // from a card in the chat.
-  const claudeCode = route?.provider === "claudecode";
-  if (claudeCode) messages = withContext(messages, { role: "system", content: CLAUDE_CODE_CHAT_NOTE });
   const diag = !claudeCode && !!route && body.stackStatus !== false && realQuestion;
   // NOTE: the model can read one vault note in full, read-only. Offered on any
   // real question when the vault is configured.
@@ -450,7 +452,7 @@ export async function POST(request: Request) {
       });
     } else {
       stream = route
-        ? await streamChat(route, messages, request.signal)
+        ? await streamChat(route, messages, request.signal, { chatId: sessionId })
         : await streamOllamaChat(messages, request.signal);
     }
 

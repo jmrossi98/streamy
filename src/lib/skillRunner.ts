@@ -131,6 +131,10 @@ export async function startChatRun(body: {
   by: string;
   model?: string;
   images?: { mime: string; data: string }[];
+  /** The chat's long-running Claude Code session on mediabox (runner #260). */
+  chatId?: string;
+  /** Start that session over; `prompt` is then the whole conversation. */
+  reset?: boolean;
 }): Promise<RunnerResult<StartedRun>> {
   return call("/chat", { method: "POST", body: JSON.stringify(body) }, parseStartedRun);
 }

@@ -10,6 +10,7 @@
  * one extra line kind, `{"ask": ...}`, for a command Claude Code wants Jake
  * to approve (answered through the existing run-permission route).
  */
+import { createHash, randomBytes } from "node:crypto";
 import { cancelRun, getRun, startChatRun } from "./skillRunner";
 import { isFinished, type SkillRun } from "./skillRunnerRules";
 import type { ChatMessage } from "./ollama";
@@ -17,7 +18,9 @@ import {
   CHAT_MAX_MS,
   CHAT_POLL_MS,
   askChange,
+  conversationKey,
   failureReason,
+  planTurn,
   renderChatPrompt,
   replyDelta,
 } from "./claudeCodeLlmRules";
@@ -40,8 +43,68 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Starts the run; throws with a sentence for the chat when it can't. */
-async function start(messages: ChatMessage[], model: string): Promise<string> {
+/**
+ * Which runner session wrote which reply: a fingerprint of the reply to the
+ * runner's chat id. In memory (kept across hot reloads); after a deploy each
+ * chat starts its session over once, with the whole conversation.
+ */
+type Sessions = Map<string, string>;
+const SESSIONS_KEY = Symbol.for("streamy.claudeCodeSessions");
+function sessions(): Sessions {
+  const g = globalThis as unknown as Record<symbol, Sessions | undefined>;
+  return (g[SESSIONS_KEY] ??= new Map());
+}
+const fingerprint = (key: string) => createHash("sha256").update(key).digest("hex");
+const MAX_TRACKED = 500;
+
+function remember(reply: string, chatId: string) {
+  const map = sessions();
+  map.set(fingerprint(conversationKey(reply)), chatId);
+  while (map.size > MAX_TRACKED) map.delete(map.keys().next().value as string);
+}
+
+/** A chat id the runner accepts: the saved chat's own id, or a fresh one for a chat not saved yet. */
+function runnerChatId(chatId: string | null): string {
+  return chatId && /^[A-Za-z0-9_-]{6,64}$/.test(chatId) ? chatId : `new-${randomBytes(8).toString("hex")}`;
+}
+
+/** Starts the turn in the chat's session; throws with a sentence for the chat when it can't. */
+async function start(
+  messages: ChatMessage[],
+  model: string,
+  chatId: string | null
+): Promise<{ runId: string; chatId: string }> {
+  const map = sessions();
+  let plan = planTurn(messages, (prior) => map.has(fingerprint(prior)));
+  const live = plan.reset ? undefined : map.get(fingerprint(plan.prior));
+  const target = live ?? runnerChatId(chatId);
+  const send = (p: typeof plan) =>
+    startChatRun({
+      prompt: p.prompt,
+      by: "admin-chat",
+      chatId: target,
+      reset: p.reset,
+      ...(model ? { model } : {}),
+      ...(p.images.length > 0 ? { images: p.images } : {}),
+    });
+  let r = await send(plan);
+  if (!r.ok && r.status === 409 && /no session/i.test(r.error)) {
+    // The runner has no session for it (restarted, or reset elsewhere): send it all.
+    plan = planTurn(messages, () => false);
+    r = await send(plan);
+  }
+  if (r.ok) {
+    // That reply is no longer the end of the conversation.
+    if (plan.prior) map.delete(fingerprint(plan.prior));
+    return { runId: r.data.id, chatId: target };
+  }
+  if (r.status === 404) throw new Error("The skill runner on mediabox has no /chat lane yet - deploy the mediabox-infra update.");
+  if (r.status === 409 && /still answering/i.test(r.error)) throw new Error("This chat is still answering the last message.");
+  throw new Error(r.error);
+}
+
+/** A one-off turn with the whole conversation and no session, for complete(). */
+async function startOneOff(messages: ChatMessage[], model: string): Promise<string> {
   const { prompt, images } = renderChatPrompt(messages);
   const r = await startChatRun({
     prompt,
@@ -50,7 +113,6 @@ async function start(messages: ChatMessage[], model: string): Promise<string> {
     ...(images.length > 0 ? { images } : {}),
   });
   if (r.ok) return r.data.id;
-  if (r.status === 404) throw new Error("The skill runner on mediabox has no /chat lane yet - deploy the mediabox-infra update.");
   throw new Error(r.error);
 }
 
@@ -64,9 +126,10 @@ function textOf(run: SkillRun): string {
 export async function streamClaudeCodeChat(
   messages: ChatMessage[],
   model: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  chatId: string | null = null
 ): Promise<ReadableStream<Uint8Array>> {
-  const runId = await start(messages, model);
+  const { runId, chatId: runnerChat } = await start(messages, model, chatId);
   const deadline = Date.now() + CHAT_MAX_MS;
   let stopped = false;
   // The admin pressed Stop or left: the run on mediabox stops too, once.
@@ -113,7 +176,9 @@ export async function streamClaudeCodeChat(
             emit(ask);
           }
           if (isFinished(run.status)) {
-            if (run.status !== "succeeded") emit({ error: failureReason(run) });
+            if (run.status !== "succeeded" && run.status !== "cancelled") emit({ error: failureReason(run) });
+            // The session now ends with this reply: the next message continues it.
+            if ((run.status === "succeeded" || run.status === "cancelled") && sent.trim()) remember(sent, runnerChat);
             break;
           }
         }
@@ -144,7 +209,7 @@ export async function completeClaudeCode(
   model: string,
   timeoutMs = CHAT_MAX_MS
 ): Promise<{ text: string; model: string }> {
-  const runId = await start(messages, model);
+  const runId = await startOneOff(messages, model);
   const deadline = Date.now() + Math.min(timeoutMs, CHAT_MAX_MS);
   let misses = 0;
   while (Date.now() < deadline) {

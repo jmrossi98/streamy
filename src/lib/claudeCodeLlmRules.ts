@@ -4,9 +4,12 @@
  * runner's /chat request, and the run's polled state back into the NDJSON
  * lines every other provider streams. The network half is claudeCodeLlm.ts.
  *
- * The runner is stateless per turn: every turn sends the whole transcript as
- * one prompt, so Streamy's edit, delete and retry never have a server-side
- * session to fall out of step with.
+ * Since 2026-10-28 each chat has one long-running Claude Code session on
+ * mediabox (runner #260), like an interactive session: a turn sends only the
+ * new message. Streamy remembers which session wrote each reply; a message
+ * right after that reply goes to the live session, and anything else -- a
+ * retried or edited turn, a chat the runner has never seen, a restart --
+ * starts the session over with the whole conversation, once.
  */
 
 import type { ChatMessage } from "./ollama";
@@ -168,6 +171,51 @@ function lastLines(text: string, n: number): string {
     .filter(Boolean)
     .slice(-n)
     .join(" ");
+}
+
+/**
+ * The key for "where this conversation stands": the last reply, whitespace
+ * normalised. Not the whole transcript: the chat route keeps only the newest
+ * messages of a long chat and inlines attached text within a budget, so older
+ * turns read differently from one request to the next, but the last reply is
+ * always the same text the session wrote.
+ */
+export function conversationKey(reply: string): string {
+  return reply.replace(/\s+/g, " ").trim();
+}
+
+export type TurnPlan = {
+  /** The key of the conversation before the newest message ("" for a new chat). */
+  prior: string;
+  /** What to send: the newest message, or the whole conversation for a reset. */
+  prompt: string;
+  images: ChatImage[];
+  reset: boolean;
+};
+
+/**
+ * How to send this turn. `continues` says whether a live session's last
+ * reply is the one just before the newest message.
+ */
+export function planTurn(messages: ChatMessage[], continues: (prior: string) => boolean): TurnPlan {
+  const turns = messages.filter((m) => m.role !== "system");
+  const last = turns.map((m) => m.role).lastIndexOf("user");
+  const before = last > 0 ? turns[last - 1] : null;
+  const prior = before && before.role === "assistant" ? conversationKey(before.content) : "";
+  const { prompt: whole, images } = renderChatPrompt(turns);
+  const newest = (turns[last] ?? turns[turns.length - 1])?.content.trim() ?? "";
+  const note = images.length > 0 ? `\n[${images.length} image${images.length === 1 ? "" : "s"} attached]` : "";
+  if (last <= 0) return { prior, prompt: newest + note, images, reset: true };
+  if (prior && continues(prior)) return { prior, prompt: newest + note, images, reset: false };
+  return {
+    prior,
+    prompt:
+      "This conversation started before this session (or was edited), so here it is in full. Answer Jake's last " +
+      "message.\n\n" +
+      whole,
+    images,
+    reset: true,
+  };
 }
 
 /** The system note added to every Claude Code turn. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { askChange, failureReason, parseAskLine, renderChatPrompt, replyDelta } from "../claudeCodeLlmRules";
+import { askChange, conversationKey, failureReason, parseAskLine, planTurn, renderChatPrompt, replyDelta } from "../claudeCodeLlmRules";
 import type { ChatMessage } from "../ollama";
 
 const png = { mime: "image/png", data: "aGVsbG8=" };
@@ -119,5 +119,41 @@ describe("failureReason", () => {
     expect(failureReason({ status: "failed", summary: "Not logged in", output: "" })).toBe("Claude Code failed: Not logged in");
     expect(failureReason({ status: "failed", summary: null, output: "a\nb\n\nc\nd\n" })).toBe("Claude Code failed: b c d");
     expect(failureReason({ status: "failed", summary: null, output: "" })).toMatch(/without saying why/);
+  });
+});
+
+describe("planTurn", () => {
+  const convo: ChatMessage[] = [
+    { role: "system", content: "context" },
+    { role: "user", content: "first?" },
+    { role: "assistant", content: "first  answer\n" },
+    { role: "user", content: "second?", images: [png] },
+  ];
+
+  it("starts a new chat's session with its first message", () => {
+    const plan = planTurn([{ role: "user", content: " hi " }], () => true);
+    expect(plan).toMatchObject({ prior: "", prompt: "hi", reset: true });
+  });
+
+  it("sends only the newest message when the session ends with the last reply", () => {
+    const seen: string[] = [];
+    const plan = planTurn(convo, (prior) => (seen.push(prior), true));
+    expect(seen).toEqual([conversationKey("first answer")]);
+    expect(plan.reset).toBe(false);
+    expect(plan.prompt).toBe("second?\n[1 image attached]");
+    expect(plan.images).toHaveLength(1);
+  });
+
+  it("sends the whole conversation, without system blocks, when no session matches", () => {
+    const plan = planTurn(convo, () => false);
+    expect(plan.reset).toBe(true);
+    expect(plan.prompt).toContain("Jake: first?");
+    expect(plan.prompt).toContain("Assistant: first  answer");
+    expect(plan.prompt).not.toContain("context");
+  });
+
+  it("keys on the last reply, so a trimmed long chat still continues", () => {
+    const trimmed = convo.slice(2);
+    expect(planTurn(trimmed, (p) => p === conversationKey("first answer")).reset).toBe(false);
   });
 });
