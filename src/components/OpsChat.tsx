@@ -35,7 +35,8 @@ import {
 } from "@/lib/chatSessionRules";
 import { LLM_ROUTING_EVENT, cloudSlots, type ChatSlots, type ResolvedRoutes } from "@/lib/chatSlots";
 import { ActionProposal } from "./ActionProposal";
-import { SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
+import { PermissionAskCard, SkillProposalCard, SkillRunCard, SkillRunMenu, type StartOutcome } from "./SkillCards";
+import { parseAskLine } from "@/lib/claudeCodeLlmRules";
 import { HISTORY_IDLE, shouldIntercept, stepHistory, userMessages, type HistoryPos } from "@/lib/composerHistory";
 import { buildRunTurnRequest, buildSaveRequest, createSaveQueue, planConflictRetry } from "@/lib/chatSaver";
 import * as sendQueue from "@/lib/sendQueue";
@@ -51,6 +52,7 @@ import {
   PROPOSAL_BLOCK,
   proposalWasRun,
   stripSkillProposal,
+  type PermissionAsk,
   type SkillRun,
 } from "@/lib/skillRunnerRules";
 
@@ -229,6 +231,9 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const pendingRef = useRef<PendingAttachment[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // A command Claude Code (the "claudecode" route) wants approved while its
+  // reply streams; shown under the reply, gone when it clears or the turn ends.
+  const [liveAsk, setLiveAsk] = useState<(PermissionAsk & { runId: string }) | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -815,6 +820,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     const chatId = currentIdRef.current;
     setError(null);
     setNotice(null);
+    setLiveAsk(null);
     setEditing(null);
     setConfirmDeleteTurn(null);
 
@@ -879,6 +885,11 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               setNotice(parsed.notice);
               continue;
             }
+            const ask = parseAskLine(parsed);
+            if (ask !== undefined) {
+              setLiveAsk(ask);
+              continue;
+            }
             const piece = parsed.message?.content;
             if (piece) {
               answer += piece;
@@ -891,7 +902,8 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       }
 
       if (!answer) {
-        setError("The model returned an empty response.");
+        // A stream error already said why; don't cover it up.
+        if (outcome !== "error") setError("The model returned an empty response.");
         setTurns(history);
         outcome = "error";
       }
@@ -906,6 +918,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
       if (!answer) setTurns(history);
     } finally {
       setStreaming(false);
+      setLiveAsk(null);
       streamingRef.current = false;
       abortRef.current = null;
       // After the question's own save, so the chat exists to save into. That
@@ -1178,7 +1191,6 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   }
   const currentSummary = sessions.find((s) => s.id === currentId);
   const currentTitle = currentSummary?.title ?? "New chat";
-  const linkedToClaude = !!currentSummary?.claudeSessionId && !isClaudeAppImport(currentSummary.claudeSessionId);
   const fromClaudeApp = !!currentSummary?.claudeSessionId && isClaudeAppImport(currentSummary.claudeSessionId);
 
   const list = () => (
@@ -1269,14 +1281,6 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
 
   const sourceBadges = (
     <>
-      {linkedToClaude && (
-        <span
-          className="mr-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-200"
-          title="Shared with a Claude Code session: turns flow both ways."
-        >
-          Shared with Claude Code
-        </span>
-      )}
       {fromClaudeApp && (
         <span
           className="mr-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200"
@@ -1390,7 +1394,6 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             </span>
             <span className="max-w-full truncate text-[11px] text-white/45">
               {backendById(backend).label} · {modelId}
-              {linkedToClaude && " · Claude Code"}
               {fromClaudeApp && " · Claude app"}
             </span>
           </button>
@@ -1407,7 +1410,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           </div>
         </div>
 
-        {(modelHint || linkedToClaude || fromClaudeApp) && (
+        {(modelHint || fromClaudeApp) && (
           <p className="-mt-1 hidden text-xs text-white/40 md:block">
             {sourceBadges}
             {modelHint}
@@ -1560,6 +1563,11 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                       block parses as nothing, and a button that appears mid-token
                       invites a press before the reasoning above it is readable. */}
                   {t.role === "assistant" && !live && <ProposalFor content={t.content} />}
+                  {live && liveAsk && (
+                    <div className="mt-2 text-xs">
+                      <PermissionAskCard key={liveAsk.id} runId={liveAsk.runId} ask={liveAsk} />
+                    </div>
+                  )}
                   {skillProposal && (
                     <SkillProposalCard
                       proposal={skillProposal}

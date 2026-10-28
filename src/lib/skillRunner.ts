@@ -120,6 +120,21 @@ export async function cancelRun(id: string): Promise<RunnerResult<true>> {
   return call(`/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }, () => true);
 }
 
+/**
+ * Starts a chat run: one admin-chat turn answered by Claude Code on the
+ * admin's plan (claudeCodeLlm.ts). Not audit-logged or emailed per turn like
+ * a skill start -- it is the chat itself, already logged as assistant usage;
+ * the commands it wants beyond its read-only rules each ask the admin.
+ */
+export async function startChatRun(body: {
+  prompt: string;
+  by: string;
+  model?: string;
+  images?: { mime: string; data: string }[];
+}): Promise<RunnerResult<StartedRun>> {
+  return call("/chat", { method: "POST", body: JSON.stringify(body) }, parseStartedRun);
+}
+
 /** What each engine on mediabox can do right now (keys present, binaries installed). */
 export async function listEngines(): Promise<RunnerResult<EnginesStatus>> {
   return call("/engines", { method: "GET" }, normalizeEngines);

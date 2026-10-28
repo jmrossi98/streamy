@@ -28,7 +28,11 @@ import {
   modelChain,
   streamOpenRouterChat,
 } from "./openrouter";
+import { completeClaudeCode, streamClaudeCodeChat } from "./claudeCodeLlm";
+import { isSkillRunnerConfigured } from "./skillRunner";
 import {
+  CLAUDE_CODE_MODEL_SUGGESTIONS,
+  DEFAULT_CLAUDE_CODE_MODEL,
   LLM_USES,
   OPENROUTER_MODEL_SUGGESTIONS,
   defaultRouting,
@@ -50,10 +54,10 @@ export const LLM_ROUTING_KEY = "llm_routing";
 const MODELS_TTL_MS = 60 * 60_000;
 
 export function providersConfigured(): Record<LlmProvider, boolean> {
-  return { openrouter: isOpenRouterConfigured(), anthropic: isAnthropicConfigured() };
+  return { openrouter: isOpenRouterConfigured(), anthropic: isAnthropicConfigured(), claudecode: isSkillRunnerConfigured() };
 }
 
-/** True when at least one metered provider has a key. */
+/** True when at least one metered provider has a key (Claude Code is not one). */
 export function isAnyCloudConfigured(): boolean {
   const c = providersConfigured();
   return c.openrouter || c.anthropic;
@@ -62,7 +66,11 @@ export function isAnyCloudConfigured(): boolean {
 export function routingEnv(): RoutingEnv {
   return {
     configured: providersConfigured(),
-    claude: { openrouter: modelChain("claude"), anthropic: anthropicDefaultChain() },
+    claude: {
+      openrouter: modelChain("claude"),
+      anthropic: anthropicDefaultChain(),
+      claudecode: [DEFAULT_CLAUDE_CODE_MODEL],
+    },
     open: modelChain("open"),
   };
 }
@@ -156,6 +164,7 @@ export function streamChat(
   messages: ChatMessage[],
   signal?: AbortSignal
 ): Promise<ReadableStream<Uint8Array>> {
+  if (route.provider === "claudecode") return streamClaudeCodeChat(messages, route.model, signal);
   const models = modelChainFor(route);
   return route.provider === "anthropic"
     ? streamAnthropicChat(messages, models, signal, { maxTokens: maxOutputTokens() })
@@ -168,6 +177,7 @@ export function complete(
   messages: ChatMessage[],
   opts: { maxTokens: number; webSearch?: boolean; timeoutMs?: number; effort?: Effort }
 ): Promise<{ text: string; model: string }> {
+  if (route.provider === "claudecode") return completeClaudeCode(messages, route.model, opts.timeoutMs);
   const models = modelChainFor(route);
   return route.provider === "anthropic"
     ? completeAnthropic(messages, { ...opts, models })
@@ -180,7 +190,7 @@ export function complete(
  */
 export async function modelSuggestions(): Promise<Record<LlmProvider, string[]>> {
   const [anthropic, openrouter] = await Promise.all([listAnthropicModels(), listOpenRouterModels()]);
-  return { anthropic, openrouter };
+  return { anthropic, openrouter, claudecode: [...CLAUDE_CODE_MODEL_SUGGESTIONS] };
 }
 
 function listOpenRouterModels(): Promise<string[]> {

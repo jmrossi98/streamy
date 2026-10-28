@@ -111,7 +111,7 @@ function RunsOn({ engine }: { engine: SkillEngineChoice | null }) {
  * answers, then the card goes back to polling; the next poll clears the
  * question (or shows the next one).
  */
-function PermissionAskCard({ runId, ask }: { runId: string; ask: PermissionAsk }) {
+export function PermissionAskCard({ runId, ask }: { runId: string; ask: PermissionAsk }) {
   const [sending, setSending] = useState<PermissionResponse | null>(null);
   const [answered, setAnswered] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
