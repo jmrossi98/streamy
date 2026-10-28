@@ -182,6 +182,7 @@ function summaryOf(s: ChatSessionFull): ChatSessionSummary {
     backend: s.backend,
     turnCount: s.turnCount,
     updatedAt: s.updatedAt,
+    lastPromptAt: s.lastPromptAt,
     claudeSessionId: s.claudeSessionId,
   };
 }
@@ -313,9 +314,17 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     writeStorage("local", CURRENT_KEY, id);
   }, []);
 
-  /** Puts a saved chat at the top of the list (it was just used). */
+  /**
+   * Records a saved chat in the list. It moves to the top only when a prompt
+   * was sent in it (or it is new); opening, renaming or a run report leaves
+   * its place alone.
+   */
   const upsertSummary = useCallback((s: ChatSessionSummary) => {
-    setSessions((prev) => [s, ...prev.filter((x) => x.id !== s.id)]);
+    setSessions((prev) => {
+      const old = prev.find((x) => x.id === s.id);
+      if (old && (s.lastPromptAt ?? "") <= (old.lastPromptAt ?? "")) return prev.map((x) => (x.id === s.id ? s : x));
+      return [s, ...prev.filter((x) => x.id !== s.id)];
+    });
   }, []);
 
   const applySession = useCallback(
