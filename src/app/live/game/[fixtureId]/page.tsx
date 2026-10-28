@@ -344,6 +344,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
           channel={channel}
           channelConfirmed={channelConfirmed}
           confirmedIds={confirmedIds}
+          gameFeedIds={gameFeeds.map((c) => c.id)}
           marketTeamByName={marketTeamByName}
           candidates={candidates}
           infoByChannel={infoByChannel}

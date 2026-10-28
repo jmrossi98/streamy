@@ -6,7 +6,7 @@ import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
 import { KEEPING_UP_SPEED } from "@/lib/liveChannelRules";
-import { resolveStoredChoice, type StoredChoice } from "@/lib/gameChannelChoice";
+import { foundFeedTakesOver, resolveStoredChoice, type StoredChoice } from "@/lib/gameChannelChoice";
 
 type Props = {
   /** The best single match -- EPG-confirmed or a name-based guess, or null. */
@@ -15,6 +15,12 @@ type Props = {
   channelConfirmed: boolean;
   /** The ids of every option we actually know carries this game, so each is badged honestly -- not just the first. */
   confirmedIds?: string[];
+  /**
+   * The ids of the game's own feeds in the lineup (a stream naming the game,
+   * or one added for it). With confirmedIds, what a pick has to be for a feed
+   * the search finds to leave it alone (foundFeedTakesOver).
+   */
+  gameFeedIds?: string[];
   /** Channel name -> the team whose home market it is, when that is why it's confirmed (badge wording). */
   marketTeamByName?: Record<string, string>;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
@@ -83,6 +89,7 @@ export function GameChannelPicker({
   channel,
   channelConfirmed,
   confirmedIds = [],
+  gameFeedIds = [],
   marketTeamByName = {},
   candidates,
   infoByChannel,
@@ -106,6 +113,7 @@ export function GameChannelPicker({
   /** Feeds added this visit, listed at once rather than after a reload. */
   const [added, setAdded] = useState<LiveChannel[]>([]);
   const serverOptions = channel ? [channel, ...candidates] : candidates;
+  const addedIds = added.map((a) => a.id);
   const options = [...added.filter((a) => !serverOptions.some((o) => o.id === a.id)), ...serverOptions];
   const remembered = resolveStoredChoice(serverOptions, storedChoice);
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -120,8 +128,13 @@ export function GameChannelPicker({
   const [fullProviders, setFullProviders] = useState<string[]>([]);
   /** Set when every option left is on a provider with no free line -- shown instead of spinning forever. */
   const [noLines, setNoLines] = useState(false);
-  /** The viewer chose (now or on an earlier visit): nothing switches it for them after that. */
-  const [userPicked, setUserPicked] = useState(remembered != null);
+  /**
+   * What the viewer chose (now or on an earlier visit). A refresh's new
+   * default never replaces it; a feed the search finds does only when the
+   * pick is a guess rather than the game itself (foundFeedTakesOver).
+   */
+  const [pickedId, setPickedId] = useState<string | null>(remembered?.id ?? null);
+  const userPicked = pickedId != null;
 
   // A better default from a refresh is taken up, unless the viewer chose.
   const defaultId = channel?.id ?? null;
@@ -164,7 +177,20 @@ export function GameChannelPicker({
       // viewer's in the way -- into the player now. No reload.
       const ch: LiveChannel = { id: d.channel.id, name: d.channel.name, number: null, logoUrl: null, now: null, next: null };
       setAdded((prev) => (prev.some((p) => p.id === ch.id) ? prev : [ch, ...prev]));
-      if (!d.manual && !userPicked) {
+      const takesOver = foundFeedTakesOver({
+        foundId: ch.id,
+        manual: !!d.manual,
+        pickedId,
+        gameFeedIds: [...confirmedIds, ...gameFeedIds, ...addedIds],
+        failedIds,
+      });
+      if (takesOver) {
+        // Over a guess the viewer picked: the switch is ours, so the pick is
+        // let go -- and not overwritten in the database, where the reload
+        // rule (page.tsx) already drops a guess once a game feed exists. If
+        // the feed fails, giveUpOn falls back as usual and, with the feed in
+        // failedIds, it is never switched to again.
+        setPickedId(null);
         setSelectedId(ch.id);
         setHeld(false);
         setSearchEnd(null);
@@ -173,7 +199,9 @@ export function GameChannelPicker({
     };
     window.addEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
     return () => window.removeEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
-  }, [fixtureId, userPicked]);
+    // Joined ids: the arrays are new each render, their contents rarely change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixtureId, pickedId, confirmedIds.join(), gameFeedIds.join(), addedIds.join(), failedIds.join()]);
 
   useEffect(() => {
     if (!held) return;
@@ -241,7 +269,7 @@ export function GameChannelPicker({
   function pick(c: LiveChannel) {
     setHeld(false);
     setSearchEnd(null);
-    setUserPicked(true);
+    setPickedId(c.id);
     setSelectedId(c.id);
     setFallbackNote(null);
     // A deliberate pick is a fresh go: it may be on a provider we'd given up on,
