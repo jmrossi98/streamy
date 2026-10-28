@@ -86,9 +86,27 @@ export function streamsToVerify<C extends { id: number }>(candidates: C[], limit
 }
 
 /**
- * Records one result. A busy provider stays busy for the rest of this pass,
- * so the other queued streams on it are marked busy without asking: asking
- * would only get the same refusal, one lock-wait at a time.
+ * Whether a "busy" answer is about the provider's lines -- every one in use --
+ * rather than about the probe itself. Only the first says anything about the
+ * provider's other streams.
+ *
+ * On 2026-10-27 (Sabres at Sharks) the probe could not log in to Dispatcharr
+ * (its logins were throttled) and answered "busy: could not ask Dispatcharr"
+ * for the first stream on each provider. Taking that as "provider full" marked
+ * every other candidate busy unasked, nothing was added, and the game played a
+ * channel running below real time. A probe that could not ask, or was queued
+ * behind another probe, says nothing about the provider: ask about the next.
+ */
+export function busyIsProviderWide(reason: string | undefined): boolean {
+  if (!reason) return true;
+  return !/^could not ask Dispatcharr|^another probe is running/i.test(reason);
+}
+
+/**
+ * Records one result. A provider whose lines are all in use stays busy for the
+ * rest of this pass, so the other queued streams on it are marked busy without
+ * asking: asking would only get the same refusal, one lock-wait at a time.
+ * A busy that is about the probe (busyIsProviderWide) touches only its stream.
  */
 export function applyResult<C extends { id: number; provider?: string | null }>(
   states: Record<number, VerifyState>,
@@ -97,7 +115,7 @@ export function applyResult<C extends { id: number; provider?: string | null }>(
   result: ProbeResult
 ): Record<number, VerifyState> {
   const next: Record<number, VerifyState> = { ...states, [id]: result };
-  if (result.status !== "busy") return next;
+  if (result.status !== "busy" || !busyIsProviderWide(result.reason)) return next;
   const provider = candidates.find((c) => c.id === id)?.provider;
   if (!provider) return next;
   for (const c of candidates) {
