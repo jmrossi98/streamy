@@ -5,7 +5,8 @@
  * to that session: from then on the chat bridge carries turns both ways
  * (chatBridge.ts). Chats imported from the Claude app sit beside them and
  * open the same way, except that nothing flows back (their stored id carries
- * an "app-" prefix, which the bridge leaves alone).
+ * an "app-" prefix, which the bridge leaves alone). ChatGPT imports
+ * (main/ai/chats/chatgpt/) list and open the same way.
  */
 import { prisma } from "@/lib/db";
 import { scheduleChatExport } from "@/lib/chatExport";
@@ -14,6 +15,7 @@ import { normalizeTurns, type ChatSessionFull } from "@/lib/chatSessionRules";
 import {
   CLAUDE_APP_CHATS_DIR,
   CLAUDE_CODE_CHATS_DIR,
+  CHATGPT_CHATS_DIR,
   listClaudeCodeSessions,
   parseClaudeCodeNote,
   storedSessionId,
@@ -35,11 +37,12 @@ export type ClaudeCodeChatListing = {
 
 async function sessionRefs(): Promise<ClaudeCodeSessionRef[]> {
   if (!isVaultConfigured()) return [];
-  const [code, app] = await Promise.all([
+  const [code, app, gpt] = await Promise.all([
     listVaultFiles(CLAUDE_CODE_CHATS_DIR, isReadableNote, 2000),
     listVaultFiles(CLAUDE_APP_CHATS_DIR, isReadableNote, 2000),
+    listVaultFiles(CHATGPT_CHATS_DIR, isReadableNote, 2000),
   ]);
-  return listClaudeCodeSessions([...code, ...app]);
+  return listClaudeCodeSessions([...code, ...app, ...gpt]);
 }
 
 export async function listClaudeCodeChats(userId: string): Promise<ClaudeCodeChatListing[]> {

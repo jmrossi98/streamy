@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage } from "@/components/ChatMessage";
 import { ChatSessionList, type ClaudeCodeSessionItem } from "@/components/ChatSessionList";
-import { Button, Checkbox, TextArea, cx } from "@/components/ui";
+import { Badge, Button, Checkbox, TextArea, cx } from "@/components/ui";
 import { ResizeHandle, usePersistedSize } from "@/components/ui/ResizeHandle";
 import {
   CHAT_SIDEBAR_MAX,
@@ -23,7 +23,7 @@ import { ModelsPanel } from "./ModelsPanel";
 import { PendingChips, SentAttachments, prepareImage, uploadAttachment, type PendingAttachment } from "./ChatAttachments";
 import { ATTACHMENT_ACCEPT, checkPicked } from "@/lib/chatAttachmentRules";
 import { parseProposal, stripProposal } from "@/lib/remediation";
-import { isClaudeAppImport } from "@/lib/claudeCodeNoteRules";
+import { importSource } from "@/lib/claudeCodeNoteRules";
 import {
   dedupeRunTurns,
   deleteTurn,
@@ -1191,7 +1191,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
   }
   const currentSummary = sessions.find((s) => s.id === currentId);
   const currentTitle = currentSummary?.title ?? "New chat";
-  const fromClaudeApp = !!currentSummary?.claudeSessionId && isClaudeAppImport(currentSummary.claudeSessionId);
+  const importedFrom = importSource(currentSummary?.claudeSessionId);
 
   const list = () => (
     <ChatSessionList
@@ -1281,13 +1281,14 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
 
   const sourceBadges = (
     <>
-      {fromClaudeApp && (
-        <span
-          className="mr-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200"
-          title="Imported from a claude.ai data export; continues here only."
+      {importedFrom && (
+        <Badge
+          tone={importedFrom === "chatgpt" ? "chatgpt" : "claude"}
+          className="mr-1"
+          title={`Imported from a ${importedFrom === "chatgpt" ? "ChatGPT" : "claude.ai"} data export; continues here only.`}
         >
-          From the Claude app
-        </span>
+          {importedFrom === "chatgpt" ? "From ChatGPT" : "From the Claude app"}
+        </Badge>
       )}
     </>
   );
@@ -1394,7 +1395,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
             </span>
             <span className="max-w-full truncate text-[11px] text-white/45">
               {backendById(backend).label} · {modelId}
-              {fromClaudeApp && " · Claude app"}
+              {importedFrom && (importedFrom === "chatgpt" ? " · ChatGPT" : " · Claude app")}
             </span>
           </button>
           <button type="button" onClick={newSession} disabled={streaming} className={HEADER_BUTTON} aria-label="New chat" title="New chat">
@@ -1410,7 +1411,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
           </div>
         </div>
 
-        {(modelHint || fromClaudeApp) && (
+        {(modelHint || importedFrom) && (
           <p className="-mt-1 hidden text-xs text-white/40 md:block">
             {sourceBadges}
             {modelHint}
@@ -1539,9 +1540,9 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
                   </div>
                 )}
                 <div className={`min-w-0 ${isUser ? "max-w-[85%]" : "flex-1"}`}>
-                {(t.via === "claude-code" || t.via === "claude-app") && (
+                {(t.via === "claude-code" || t.via === "claude-app" || t.via === "chatgpt") && (
                   <div className={`mb-0.5 text-[10px] uppercase tracking-wide text-sky-300/60 ${isUser ? "text-right" : ""}`}>
-                    {t.via === "claude-app" ? "In the Claude app" : isUser ? "In Claude Code" : "Claude Code"}
+                    {t.via === "chatgpt" ? "In ChatGPT" : t.via === "claude-app" ? "In the Claude app" : isUser ? "In Claude Code" : "Claude Code"}
                   </div>
                 )}
                 {isUser && t.attachments && <SentAttachments items={t.attachments} align="end" />}

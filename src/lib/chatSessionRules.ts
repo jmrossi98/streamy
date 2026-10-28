@@ -12,7 +12,8 @@
  */
 
 import { CHAT_BACKENDS, type ChatBackendId } from "./chatModels";
-import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
+import type { BadgeTone } from "@/components/ui";
+import { CHATGPT_MACHINE, CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
 import { normalizeAttachmentRefs, type AttachmentRef } from "./chatAttachmentRules";
 import { findRunTurn, isFinished, normalizeProposalRuns, parseRunTurn, parseSkillProposal, type ProposalRuns } from "./skillRunnerRules";
 
@@ -23,7 +24,7 @@ import { findRunTurn, isFinished, normalizeProposalRuns, parseRunTurn, parseSkil
  * and can carry on from it (skillRunnerRules.ts) -- or ("claude-app") a turn
  * imported from a claude.ai chat. Absent means typed here.
  */
-export type ChatTurnVia = "claude-code" | "claude-app" | "skill-run";
+export type ChatTurnVia = "claude-code" | "claude-app" | "chatgpt" | "skill-run";
 export type ChatTurn = {
   role: "user" | "assistant";
   content: string;
@@ -74,7 +75,7 @@ export function normalizeTurns(raw: unknown): ChatTurn[] {
     if (refs.length > 0) turn.attachments = refs;
     const links = role === "assistant" ? normalizeProposalRuns(proposalRuns) : null;
     if (links) turn.proposalRuns = links;
-    if (via === "claude-code" || via === "claude-app" || via === "skill-run") turn.via = via;
+    if (via === "claude-code" || via === "claude-app" || via === "chatgpt" || via === "skill-run") turn.via = via;
     out.push(turn);
   }
   return out.slice(-MAX_SESSION_TURNS);
@@ -325,15 +326,32 @@ export function relativeAge(iso: string, now: number = Date.now()): string {
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Where a row of the chat list comes from; its badge reads "Streamy", "Claude Code" or "Claude app". */
-export type ChatListSource = "streamy" | "claude-code" | "claude-app";
+/** Where a row of the chat list comes from; its badge reads "Streamy", "Claude Code", "Claude" or "ChatGPT". */
+export type ChatListSource = "streamy" | "claude-code" | "claude-app" | "chatgpt";
+type VaultListSource = Exclude<ChatListSource, "streamy">;
 
 /** The label on a chat-list row's source badge. */
 export const CHAT_SOURCE_LABELS: Record<ChatListSource, string> = {
   streamy: "Streamy",
   "claude-code": "Claude Code",
-  "claude-app": "Claude app",
+  "claude-app": "Claude",
+  chatgpt: "ChatGPT",
 };
+
+/** The badge tone per source: Streamy red, one Claude orange for both Claude sources, ChatGPT white. */
+export const CHAT_SOURCE_TONES: Record<ChatListSource, BadgeTone> = {
+  streamy: "streamy",
+  "claude-code": "claude",
+  "claude-app": "claude",
+  chatgpt: "chatgpt",
+};
+
+/** Which source a vault session is, by the machine name it lists under. */
+export function vaultChatSource(machine: string): VaultListSource {
+  if (machine === CLAUDE_APP_MACHINE) return "claude-app";
+  if (machine === CHATGPT_MACHINE) return "chatgpt";
+  return "claude-code";
+}
 
 /** A vault session as the list gets it (ChatSessionList's ClaudeCodeSessionItem). */
 type VaultSessionLike = { machine: string; modified: string | null; chatId?: string | null };
@@ -346,7 +364,7 @@ type VaultSessionLike = { machine: string; modified: string | null; chatId?: str
  */
 export type ChatListEntry<V extends VaultSessionLike> =
   | { source: "streamy"; key: string; at: number; session: ChatSessionSummary; badge: ChatListSource; vault: V | null }
-  | { source: "claude-code" | "claude-app"; key: string; at: number; vault: V };
+  | { source: VaultListSource; key: string; at: number; vault: V };
 
 /**
  * Saved chats, Claude Code sessions and Claude app chats as one list, most
@@ -364,7 +382,7 @@ export function mergeChatList<V extends VaultSessionLike & { key: string }>(
     const t = iso ? Date.parse(iso) : NaN;
     return Number.isNaN(t) ? 0 : t;
   };
-  const sourceOf = (v: V): "claude-code" | "claude-app" => (v.machine === CLAUDE_APP_MACHINE ? "claude-app" : "claude-code");
+  const sourceOf = (v: V): VaultListSource => vaultChatSource(v.machine);
   const ids = new Set(sessions.map((s) => s.id));
   const linked = new Map<string, V>();
   for (const v of vault) if (v.chatId && ids.has(v.chatId) && !linked.has(v.chatId)) linked.set(v.chatId, v);

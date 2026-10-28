@@ -148,6 +148,7 @@ describe("chatNoteLabel", () => {
   it("names the source from the folder", () => {
     expect(chatNoteLabel("main/ai/chats/claude-code/desktop/x.md")).toBe("Claude Code on desktop");
     expect(chatNoteLabel("main/ai/chats/streamy/x.md")).toBe("Streamy admin chat");
+    expect(chatNoteLabel("main/ai/chats/chatgpt/x.md")).toBe("ChatGPT chat");
   });
 });
 
