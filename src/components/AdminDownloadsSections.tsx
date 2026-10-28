@@ -10,6 +10,7 @@ import {
   getSonarrSeriesPlaces,
   getSonarrWantedSeriesIds,
   type SeriesPlaces,
+  packImportProblems,
 } from "@/lib/sonarr";
 import { getMovieById, getShowById } from "@/lib/tmdb";
 import { maybeHealStalledDownloads } from "@/lib/downloadHealer";
@@ -479,6 +480,7 @@ export async function AdminDownloadsSections() {
         filesDone: pack.files.filter((f) => f.done).length,
         files,
         imported,
+        problems: packImportProblems(pack.files.map((f) => `${pack.savePath}/${f.name}`)),
       }),
     });
   }

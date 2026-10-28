@@ -78,14 +78,49 @@ export type PackStatus = {
   files: number;
   /** Episodes of the season already in the library. */
   imported: number;
+  /** Files the importer gave up on (packProblemText). */
+  problems?: PackProblem[];
 };
+
+/**
+ * How many times a pack file is handed to Sonarr before the importer stops
+ * and says so. 2026-10-28: Rebelde 1x196 was "imported" every 30 minutes for
+ * a day -- Sonarr took the file, but with renaming off it kept the name
+ * "1x196_31-04-07", which its own parser can't read, so its next rescan
+ * dropped the link and the episode never counted as downloaded.
+ */
+export const PACK_IMPORT_MAX_TRIES = 3;
+
+export type PackProblem = {
+  /** The file's name inside the pack. */
+  file: string;
+  /** unreadable-name: Sonarr's parser can't read an episode number from it. */
+  reason: "unreadable-name" | "not-attached";
+};
+
+/** "1 file needs a hand: Rebelde 1x196_31-04-07.avi (Sonarr can't read its name)". */
+export function packProblemText(problems: PackProblem[]): string | null {
+  if (problems.length === 0) return null;
+  const shown = problems.slice(0, 3).map((p) => {
+    const name = p.file.split("/").pop() ?? p.file;
+    const why = p.reason === "unreadable-name" ? "Sonarr can't read its name" : "Sonarr took it but didn't attach it";
+    return `${name} (${why})`;
+  });
+  const more = problems.length > 3 ? `, and ${problems.length - 3} more` : "";
+  return `${problems.length} file${problems.length === 1 ? " needs" : "s need"} a hand: ${shown.join(", ")}${more}`;
+}
 
 /** The one line under a pack's row: who it is coming from, how fast, and what has landed. */
 export function describePack(p: PackStatus): string {
   const landed = `${p.imported} of ${p.files} episodes in the library`;
-  if (p.progress >= 1) return p.imported >= p.files ? `Finished · ${landed}` : `Finished · importing, ${landed}`;
+  const problem = packProblemText(p.problems ?? []);
+  if (p.progress >= 1) {
+    if (p.imported >= p.files) return `Finished · ${landed}`;
+    return problem ? `Finished · ${landed} · ${problem}` : `Finished · importing, ${landed}`;
+  }
   const parts = transferParts(p) ?? [];
   parts.push(landed);
+  if (problem) parts.push(problem);
   return parts.join(" · ");
 }
 

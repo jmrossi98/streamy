@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describePack,
+  packProblemText,
   formatEta,
   isVideoFile,
   packCoversSeason,
@@ -99,5 +100,24 @@ describe("packCoversSeason", () => {
   it("hands the season back to the searches once its imports had their time", () => {
     expect(packCoversSeason({ progress: 1, completedOn: (now - PACK_IMPORT_GRACE_MS - 1000) / 1000 }, now)).toBe(false);
     expect(packCoversSeason({ progress: 1, completedOn: null }, now)).toBe(false);
+  });
+});
+
+describe("pack problems", () => {
+  it("names the files the importer gave up on, and why", () => {
+    expect(packProblemText([])).toBeNull();
+    expect(
+      packProblemText([{ file: "/data/torrents/manual-import/Primera Temporada/Rebelde 1x196_31-04-07.avi", reason: "unreadable-name" }])
+    ).toBe("1 file needs a hand: Rebelde 1x196_31-04-07.avi (Sonarr can't read its name)");
+    const many = Array.from({ length: 5 }, (_, i) => ({ file: `x/${i}.avi`, reason: "not-attached" as const }));
+    expect(packProblemText(many)).toMatch(/^5 files need a hand: 0\.avi .*, and 2 more$/);
+  });
+
+  it("says so on a finished pack instead of 'importing' forever", () => {
+    const base = { progress: 1, dlSpeed: 0, etaSeconds: null, connectedSeeds: 0, swarmSeeds: 0, state: "stalledUP", filesDone: 215, files: 215, imported: 214 };
+    expect(describePack(base)).toBe("Finished · importing, 214 of 215 episodes in the library");
+    expect(describePack({ ...base, problems: [{ file: "a/Rebelde 1x196_31-04-07.avi", reason: "unreadable-name" }] })).toBe(
+      "Finished · 214 of 215 episodes in the library · 1 file needs a hand: Rebelde 1x196_31-04-07.avi (Sonarr can't read its name)"
+    );
   });
 });
