@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   pickAutoAdd,
   applyResult,
+  busyIsProviderWide,
   canAdd,
   normalizeProbe,
   parseStreamId,
@@ -90,6 +91,19 @@ describe("streamsToVerify", () => {
   });
 });
 
+describe("busyIsProviderWide", () => {
+  it("is about the provider when its lines are in use", () => {
+    expect(busyIsProviderWide("every line on this provider is in use")).toBe(true);
+    expect(busyIsProviderWide("provider line in use")).toBe(true);
+    expect(busyIsProviderWide(undefined)).toBe(true);
+  });
+  it("is about the probe when it could not ask or was waiting its turn", () => {
+    expect(busyIsProviderWide("could not ask Dispatcharr")).toBe(false);
+    expect(busyIsProviderWide("could not ask Dispatcharr (HTTP 503)")).toBe(false);
+    expect(busyIsProviderWide("another probe is running")).toBe(false);
+  });
+});
+
 describe("applyResult", () => {
   const queued = Object.fromEntries([1, 2, 3, 4, 5].map((id) => [id, { status: "queued" } as VerifyState]));
 
@@ -99,6 +113,15 @@ describe("applyResult", () => {
     expect(s[3]?.status).toBe("busy");
     expect(s[4]?.status).toBe("queued"); // a different provider is still worth asking
     expect(s[5]?.status).toBe("queued"); // unknown provider: ask
+  });
+  it("a probe that could not ask Dispatcharr leaves the provider's other streams to be asked (2026-10-27)", () => {
+    const s = applyResult(queued, candidates, 1, { status: "busy", reason: "could not ask Dispatcharr (login throttled)" });
+    expect(s[1]?.status).toBe("busy");
+    expect(s[2]?.status).toBe("queued");
+    expect(s[3]?.status).toBe("queued");
+  });
+  it("a probe queued behind another probe says nothing about the provider either", () => {
+    expect(applyResult(queued, candidates, 1, { status: "busy", reason: "another probe is running" })[2]?.status).toBe("queued");
   });
   it("leaves already-settled streams alone", () => {
     const settled = { ...queued, 2: { status: "ok", bytes: 1, mbps: 20, video: true } as VerifyState };
