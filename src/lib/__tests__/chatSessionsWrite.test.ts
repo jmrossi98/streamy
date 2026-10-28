@@ -11,6 +11,7 @@ type Row = {
   version: number;
   claudeSessionId: string | null;
   updatedAt: Date;
+  lastPromptAt?: Date | null;
 };
 
 const rows = new Map<string, Row>();
@@ -269,5 +270,19 @@ describe("the save endpoint refuses a non-append overwrite", () => {
     const s = await updateChatSession("admin", "A", { title: "My name" });
     expect(s?.title).toBe("My name");
     expect(stored("A")).toEqual(aTurns);
+  });
+});
+
+describe("lastPromptAt orders the list", () => {
+  const at = new Date("2026-10-25T22:00:00Z");
+
+  it("moves on a new prompt but not on a rename, a backend change or a run report", async () => {
+    seed("A", [u("hi"), a("hello")], { lastPromptAt: at });
+    await updateChatSession("admin", "A", { title: "renamed" });
+    await updateChatSession("admin", "A", { backend: "claude" });
+    await updateChatSession("admin", "A", { turns: [u("hi"), a("hello"), { role: "user", via: "skill-run", content: "RUN" }], baseTurnCount: 2 });
+    expect(rows.get("A")!.lastPromptAt).toEqual(at);
+    await updateChatSession("admin", "A", { turns: [...stored("A"), u("again")], baseTurnCount: 3 });
+    expect(rows.get("A")!.lastPromptAt!.getTime()).toBeGreaterThan(at.getTime());
   });
 });

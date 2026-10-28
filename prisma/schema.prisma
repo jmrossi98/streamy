@@ -1205,10 +1205,14 @@ model ChatSession {
   claudeSeenTurns Int     @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  /// When the last prompt was sent in this chat: what the list is ordered by.
+  /// Unlike updatedAt, opening, renaming or linking a chat does not move it.
+  lastPromptAt DateTime?
 
   user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   attachments ChatAttachment[]
 
+  @@index([userId, lastPromptAt])
   @@index([userId, updatedAt])
   @@index([claudeSessionId])
 }

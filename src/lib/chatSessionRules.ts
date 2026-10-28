@@ -44,6 +44,8 @@ export type ChatSessionSummary = {
   backend: ChatBackendId | null;
   turnCount: number;
   updatedAt: string;
+  /** When the last prompt was sent here; the list is ordered by this, not updatedAt. */
+  lastPromptAt?: string;
   /** Write counter for the save guard (see ChatSessionPatch.baseVersion). */
   version?: number;
   /** The Claude Code session this chat is shared with, or null. */

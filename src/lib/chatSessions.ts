@@ -13,6 +13,7 @@ import {
   withRunTurn,
   type ChatSessionFull,
   type ChatSessionSummary,
+  type ChatTurn,
   type SaveRefusal,
 } from "@/lib/chatSessionRules";
 import { runTurnContent, type SkillRun } from "@/lib/skillRunnerRules";
@@ -36,6 +37,7 @@ type Row = {
   turnCount: number;
   version: number;
   updatedAt: Date;
+  lastPromptAt: Date | null;
   claudeSessionId: string | null;
 };
 
@@ -46,17 +48,30 @@ function summary(row: Row): ChatSessionSummary {
     backend: normalizeSessionBackend(row.backend),
     turnCount: row.turnCount,
     updatedAt: row.updatedAt.toISOString(),
+    lastPromptAt: (row.lastPromptAt ?? row.updatedAt).toISOString(),
     version: row.version,
     claudeSessionId: row.claudeSessionId,
   };
 }
 
+/** Prompts typed by a person; a skill run's report is stored as a user turn too but is not one. */
+const promptsIn = (turns: ChatTurn[]) => turns.filter((t) => t.role === "user" && !t.via).length;
+
 export async function listChatSessions(userId: string): Promise<ChatSessionSummary[]> {
   const rows = await prisma.chatSession.findMany({
     where: { userId },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ lastPromptAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
     take: LIST_LIMIT,
-    select: { id: true, title: true, backend: true, turnCount: true, version: true, updatedAt: true, claudeSessionId: true },
+    select: {
+      id: true,
+      title: true,
+      backend: true,
+      turnCount: true,
+      version: true,
+      updatedAt: true,
+      lastPromptAt: true,
+      claudeSessionId: true,
+    },
   });
   return rows.map(summary);
 }
@@ -101,6 +116,7 @@ export async function createChatSession(userId: string, patch: ChatSessionPatch)
       backend: normalizeSessionBackend(patch.backend) ?? "",
       turns: JSON.stringify(turns),
       turnCount: turns.length,
+      lastPromptAt: new Date(),
     },
   });
   await syncSessionAttachments(userId, row.id, turns);
@@ -151,6 +167,9 @@ export async function updateChatSession(
     title = titleFromTurns(turns);
   }
 
+  // Only a saved transcript with more prompts than before moves the chat up the list.
+  const newPrompt = patch.turns !== undefined && promptsIn(turns) > promptsIn(parseStoredTurns(existing.turns));
+
   // Compare-and-swap on the version read above: a write that landed since is a 409, not an overwrite.
   let row;
   try {
@@ -160,6 +179,7 @@ export async function updateChatSession(
         title,
         titleEdited,
         version: { increment: 1 },
+        ...(newPrompt ? { lastPromptAt: new Date() } : {}),
         ...(patch.backend !== undefined ? { backend: normalizeSessionBackend(patch.backend) ?? "" } : {}),
         ...(patch.turns !== undefined ? { turns: JSON.stringify(turns), turnCount: turns.length } : {}),
       },
