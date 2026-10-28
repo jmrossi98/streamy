@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
+import { CHATGPT_MACHINE, CLAUDE_APP_MACHINE } from "./claudeCodeNoteRules";
 import {
   CHAT_SOURCE_LABELS,
+  CHAT_SOURCE_TONES,
   MAX_SESSION_TURNS,
   MAX_TITLE_CHARS,
   MAX_TURN_CHARS,
@@ -225,6 +226,15 @@ describe("mergeChatList", () => {
   });
 
   it("labels each source for its badge", () => {
-    expect(CHAT_SOURCE_LABELS).toEqual({ streamy: "Streamy", "claude-code": "Claude Code", "claude-app": "Claude app" });
+    expect(CHAT_SOURCE_LABELS).toEqual({ streamy: "Streamy", "claude-code": "Claude Code", "claude-app": "Claude", chatgpt: "ChatGPT" });
+  });
+
+  it("colours badges Streamy red, Claude orange for both Claude sources, ChatGPT white", () => {
+    expect(CHAT_SOURCE_TONES).toEqual({ streamy: "streamy", "claude-code": "claude", "claude-app": "claude", chatgpt: "chatgpt" });
+  });
+
+  it("lists ChatGPT chats as their own source", () => {
+    const rows = mergeChatList([], [v("gpt1", CHATGPT_MACHINE, "2026-10-26T00:00:00Z"), v("app1", CLAUDE_APP_MACHINE, "2026-10-22T00:00:00Z")]);
+    expect(rows.map((r) => r.source)).toEqual(["chatgpt", "claude-app"]);
   });
 });

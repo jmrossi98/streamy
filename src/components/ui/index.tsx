@@ -259,7 +259,8 @@ export function TabLink({ href, active, children }: { href: string; active: bool
 
 // ------------------------------------------------------------------- Badge
 
-export type BadgeTone = "neutral" | "success" | "warning" | "danger" | "info";
+/** Status tones, plus brand tones for where something came from (Streamy, Claude, ChatGPT). */
+export type BadgeTone = "neutral" | "success" | "warning" | "danger" | "info" | "streamy" | "claude" | "chatgpt";
 
 const BADGE_TONE: Record<BadgeTone, string> = {
   neutral: "bg-white/10 text-white/55",
@@ -267,6 +268,9 @@ const BADGE_TONE: Record<BadgeTone, string> = {
   warning: "bg-amber-500/20 text-amber-300",
   danger: "bg-red-500/20 text-red-300",
   info: "bg-sky-500/20 text-sky-300",
+  streamy: "bg-netflix-red/20 text-netflix-red",
+  claude: "bg-orange-500/20 text-orange-300",
+  chatgpt: "bg-white/20 text-white",
 };
 
 export function Badge({ tone = "neutral", className, children, title }: { tone?: BadgeTone; className?: string; children: ReactNode; title?: string }) {

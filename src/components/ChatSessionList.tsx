@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Button, TextInput, cx } from "@/components/ui";
+import { Badge, Button, TextInput, cx } from "@/components/ui";
 import {
   CHAT_SOURCE_LABELS,
+  CHAT_SOURCE_TONES,
   mergeChatList,
   relativeAge,
   type ChatListSource,
@@ -37,28 +38,22 @@ type Props = {
   onDelete: (id: string) => void;
 };
 
-/** Source badge colours: Streamy's own chats stay neutral. */
-const SOURCE_BADGE: Record<ChatListSource, string> = {
-  streamy: "bg-white/10 text-white/60",
-  "claude-code": "bg-emerald-500/15 text-emerald-200",
-  "claude-app": "bg-violet-500/15 text-violet-200",
-};
-
+/** Source badge: Streamy red, Claude orange (Claude Code and the Claude app), ChatGPT white. */
 function SourceBadge({ source }: { source: ChatListSource }) {
   return (
-    <span className={cx("shrink-0 rounded px-1 py-px text-[9px] font-medium leading-tight", SOURCE_BADGE[source])}>
+    <Badge tone={CHAT_SOURCE_TONES[source]} className="shrink-0">
       {CHAT_SOURCE_LABELS[source]}
-    </span>
+    </Badge>
   );
 }
 
 /**
  * Every chat in one list, most recent activity first: the saved Streamy chats,
- * Claude Code sessions from the vault and chats imported from the Claude app,
- * interleaved, each with a small badge saying which it is. Open a saved chat,
+ * Claude Code sessions from the vault and chats imported from the Claude app
+ * and ChatGPT, interleaved, each with a small badge saying which it is. Open a saved chat,
  * start a new one, rename or delete. Opening a Claude Code session continues
- * it here as a chat shared with that session; a Claude app chat opens the same
- * way but continues here only.
+ * it here as a chat shared with that session; a Claude app or ChatGPT chat
+ * opens the same way but continues here only.
  * Delete asks inline (a second click) rather than through a browser dialog.
  * One column, one scrollbar.
  */
@@ -104,7 +99,7 @@ export function ChatSessionList({
     </button>
   );
 
-  function vaultRow(c: ClaudeCodeSessionItem, source: "claude-code" | "claude-app") {
+  function vaultRow(c: ClaudeCodeSessionItem, source: Exclude<ChatListSource, "streamy">) {
     const active = !!c.chatId && c.chatId === currentId;
     return (
       <li key={c.key}>

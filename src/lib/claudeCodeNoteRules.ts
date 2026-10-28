@@ -10,6 +10,10 @@
  * "claude-app"; the difference is that nothing flows back to claude.ai, so
  * the chat they open is an import and not a live link.
  *
+ * ChatGPT chats are the same notes again in main/ai/chats/chatgpt/ (front
+ * matter `source: chatgpt`), listed under the machine name "chatgpt" and
+ * opened as imports the same way.
+ *
  * Pure, so it tests without the server stack. The format is set by
  * mediabox-infra/scripts/claude_memory_sync.py (render_session).
  */
@@ -21,16 +25,35 @@ export const CLAUDE_CODE_CHATS_DIR = `${AI_CHATS_DIR}/claude-code`;
 export const CLAUDE_APP_CHATS_DIR = `${AI_CHATS_DIR}/claude-app`;
 /** The machine name a Claude app chat lists under. */
 export const CLAUDE_APP_MACHINE = "claude-app";
-/** Prefix of the stored session id of a chat opened from a Claude app import. */
+export const CHATGPT_CHATS_DIR = `${AI_CHATS_DIR}/chatgpt`;
+/** The machine name a ChatGPT chat lists under. */
+export const CHATGPT_MACHINE = "chatgpt";
+/**
+ * Prefix of the stored session id of a chat opened from an import (Claude app
+ * or ChatGPT). The bridge skips every id with it (chatBridge.ts), so a ChatGPT
+ * import's "app-gpt-" id is left alone too.
+ */
 const CLAUDE_APP_ID_PREFIX = "app-";
+const CHATGPT_ID_PREFIX = "app-gpt-";
 
-/** The id to store for a session continued here; the bridge ignores app imports. */
+/** The id to store for a session continued here; the bridge ignores imports. */
 export function storedSessionId(machine: string, sessionId: string): string {
-  return machine === CLAUDE_APP_MACHINE ? `${CLAUDE_APP_ID_PREFIX}${sessionId}` : sessionId;
+  if (machine === CLAUDE_APP_MACHINE) return `${CLAUDE_APP_ID_PREFIX}${sessionId}`;
+  if (machine === CHATGPT_MACHINE) return `${CHATGPT_ID_PREFIX}${sessionId}`;
+  return sessionId;
 }
 
+/** True for a chat opened from any import (Claude app or ChatGPT): nothing flows back. */
 export function isClaudeAppImport(storedId: string | null | undefined): boolean {
   return !!storedId && storedId.startsWith(CLAUDE_APP_ID_PREFIX);
+}
+
+/** Which app an imported chat came from, by its stored id; null when it is not an import. */
+export function importSource(storedId: string | null | undefined): "claude-app" | "chatgpt" | null {
+  if (!storedId) return null;
+  if (storedId.startsWith(CHATGPT_ID_PREFIX)) return "chatgpt";
+  if (storedId.startsWith(CLAUDE_APP_ID_PREFIX)) return "claude-app";
+  return null;
 }
 
 const NOTE_NAME = /^(\d{4}-\d{2}-\d{2}|undated)-(.+)-([0-9a-f]{8})(?:-part(\d+))?\.md$/;
@@ -69,6 +92,10 @@ export function listClaudeCodeSessions(entries: VaultEntry[]): ClaudeCodeSession
       file = e.path.slice(CLAUDE_APP_CHATS_DIR.length + 1);
       if (file.includes("/")) continue;
       machine = CLAUDE_APP_MACHINE;
+    } else if (e.path.startsWith(`${CHATGPT_CHATS_DIR}/`)) {
+      file = e.path.slice(CHATGPT_CHATS_DIR.length + 1);
+      if (file.includes("/")) continue;
+      machine = CHATGPT_MACHINE;
     } else continue;
     const m = NOTE_NAME.exec(file);
     if (!m || !/^[a-z0-9-]+$/.test(machine)) continue;
@@ -96,7 +123,7 @@ export function isClaudeCodeSessionKey(key: unknown): key is string {
 
 export type ParsedClaudeCodeNote = { title: string | null; sessionId: string | null; turns: ChatTurn[] };
 
-const HEADING = /^### (User|Claude(?: \([^)]*\))?|Context summary[^·\n]*?) · [^\n]*$/gm;
+const HEADING = /^### (User|Claude(?: \([^)]*\))?|ChatGPT(?: \([^)]*\))?|Context summary[^·\n]*?) · [^\n]*$/gm;
 
 /**
  * One note's front matter and turns. User turns stay the user's; Claude's
@@ -123,6 +150,7 @@ export function parseClaudeCodeNote(md: string): ParsedClaudeCodeNote {
       }
       if (k === "session" && /^[0-9a-f-]{8,64}$/i.test(value)) sessionId = value.toLowerCase();
       if (k === "source" && value === "claude-app") via = "claude-app";
+      if (k === "source" && value === "chatgpt") via = "chatgpt";
     }
   }
   const turns: ChatTurn[] = [];
