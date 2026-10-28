@@ -1813,39 +1813,28 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               // is under 16px, and there is no way back out without pinching.
               className="chat-composer max-h-48 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 text-white placeholder-white/30 focus:outline-none sm:text-[15px]"
             />
-            {streaming ? (
-              <>
-                <button
-                  type="submit"
-                  disabled={!input.trim()}
-                  className="h-8 shrink-0 rounded-full bg-white px-3 text-sm font-medium text-black transition-colors hover:bg-white/85 disabled:bg-white/20 disabled:text-white/40"
-                  title="Queue this message to send after the reply (Enter)"
-                >
-                  Queue
-                </button>
-                <button
-                  type="button"
-                  onClick={stop}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
-                  aria-label="Stop"
-                  title="Stop"
-                >
-                  <span aria-hidden className="block h-3 w-3 rounded-[2px] bg-white" />
-                </button>
-              </>
-            ) : (
+            {streaming && (
               <button
-                type="submit"
-                disabled={!canSend}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-black transition-colors hover:bg-white/85 disabled:bg-white/20 disabled:text-white/40"
-                aria-label="Send"
-                title="Send (Enter)"
+                type="button"
+                onClick={stop}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+                aria-label="Stop"
+                title="Stop"
               >
-                <svg aria-hidden viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M10 16V4M4.5 9.5 10 4l5.5 5.5" />
-                </svg>
+                <span aria-hidden className="block h-3 w-3 rounded-[2px] bg-white" />
               </button>
             )}
+            <button
+              type="submit"
+              disabled={streaming ? !input.trim() : !canSend}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-black transition-colors hover:bg-white/85 disabled:bg-white/20 disabled:text-white/40"
+              aria-label={streaming ? "Queue message" : "Send"}
+              title={streaming ? "Queue this message to send after the reply (Enter)" : "Send (Enter)"}
+            >
+              <svg aria-hidden viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 16V4M4.5 9.5 10 4l5.5 5.5" />
+              </svg>
+            </button>
             </div>
           </div>
         </form>
