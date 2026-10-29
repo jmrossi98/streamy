@@ -29,6 +29,13 @@ const encoder = new TextEncoder();
 const ndjson = (obj: unknown) => encoder.encode(JSON.stringify(obj) + "\n");
 /** Consecutive failed polls (~30 s or more) before the turn is given up on. */
 const MAX_MISSES = 50;
+/**
+ * While Claude Code waits on a permission tap or a long command, nothing is
+ * written for minutes; a proxy cuts a silent stream ("Lost connection to the
+ * model") and the permission card goes with it. A ping line keeps it open;
+ * the browser ignores lines it has no use for.
+ */
+const HEARTBEAT_MS = 10_000;
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -145,8 +152,11 @@ export async function streamClaudeCodeChat(
       let sent = "";
       let shownAsk: string | null = null;
       let misses = 0;
+      let lastWrite = Date.now();
       const emit = (obj: unknown) => {
-        if (!stopped) controller.enqueue(ndjson(obj));
+        if (stopped) return;
+        lastWrite = Date.now();
+        controller.enqueue(ndjson(obj));
       };
       try {
         for (;;) {
@@ -157,6 +167,7 @@ export async function streamClaudeCodeChat(
             stop();
             break;
           }
+          if (Date.now() - lastWrite >= HEARTBEAT_MS) emit({ ping: true });
           const r = await getRun(runId);
           if (!r.ok) {
             if (++misses >= MAX_MISSES) {
