@@ -158,7 +158,17 @@ export const ANTHROPIC_MODEL_SUGGESTIONS: readonly string[] = [
 /** Claude Code takes an alias or a full id via --model; omitted is its default. */
 export const DEFAULT_CLAUDE_CODE_MODEL = "sonnet";
 
-export const CLAUDE_CODE_MODEL_SUGGESTIONS: readonly string[] = ["sonnet", "opus", "haiku"];
+export const CLAUDE_CODE_MODEL_SUGGESTIONS: readonly string[] = [
+  "sonnet",
+  "opus",
+  "haiku",
+  "claude-fable-5-1",
+  "claude-opus-5-5",
+  "claude-sonnet-5-5",
+  "claude-haiku-5-5",
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+];
 
 export const OPENROUTER_MODEL_SUGGESTIONS: readonly string[] = [
   "anthropic/claude-sonnet-4.6",
