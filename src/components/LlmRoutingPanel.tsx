@@ -196,14 +196,6 @@ export function LlmRoutingPanel({
         </p>
       )}
 
-      {LLM_PROVIDERS.map((p) => (
-        <datalist key={p} id={`llm-models-${p}`}>
-          {(snapshot.suggestions[p] ?? []).map((id) => (
-            <option key={id} value={id} />
-          ))}
-        </datalist>
-      ))}
-
       <div className={compact ? "space-y-3" : "grid gap-4 md:grid-cols-2"}>
         {shownUses.map((use) => {
           const route = routing[use.id];
@@ -234,22 +226,17 @@ export function LlmRoutingPanel({
                   </Select>
                 </Field>
                 <Field label="Model">
-                  <TextInput
+                  <Select
                     fieldSize="sm"
-                    list={`llm-models-${route.provider}`}
                     value={route.model}
-                    placeholder={
-                      route.provider === "anthropic"
-                        ? "claude-opus-5-5"
-                        : route.provider === "claudecode"
-                          ? "sonnet"
-                          : "anthropic/claude-sonnet-4.6"
-                    }
                     onChange={(e) => changeModel(use.id, e.target.value)}
-                    onBlur={() => commitIfChanged(use.id)}
-                    onKeyDown={onEnter(use.id)}
-                    spellCheck={false}
-                  />
+                  >
+                    {[...new Set([...(snapshot.suggestions[route.provider] ?? []), route.model])].filter(Boolean).map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </Select>
                 </Field>
               </div>
               {!takesFallbacks(route.provider) ? (
