@@ -73,7 +73,8 @@ export function AdminNotWorkingChannels({ rows, generatedAt }: { rows: NotWorkin
       <p className="text-xs text-white/45">
         Hidden from the Live TV rows, the guide and game picks (still greyed in people&rsquo;s My Stations). Each comes
         back by itself after a day as &ldquo;Retrying&rdquo;, as soon as anyone gets a picture from it, or when
-        mediabox&rsquo;s channel check opens it.
+        mediabox&rsquo;s channel check opens it. &ldquo;Slow for viewers&rdquo; channels are still offered, just not
+        as a game&rsquo;s default over a smooth one, for up to 3 hours (1 hour on one viewer&rsquo;s word alone).
       </p>
       <ul className={scrollListClass({}, "space-y-2")}>
         {visible.map((r) => (
@@ -81,14 +82,18 @@ export function AdminNotWorkingChannels({ rows, generatedAt }: { rows: NotWorkin
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate font-medium text-white/85">{r.name}</span>
-                {r.state === "retrying" ? (
+                {r.state === "slow" ? (
+                  <Badge tone="warning">Slow for viewers</Badge>
+                ) : r.state === "retrying" ? (
                   <Badge tone="warning">Retrying</Badge>
                 ) : (
                   <Badge tone="danger">Hidden</Badge>
                 )}
               </div>
               <p className="truncate text-xs text-white/45" title={r.lastError ?? undefined}>
-                {r.source === "checker"
+                {r.source === "viewers"
+                  ? `Kept buffering for ${r.people.join(", ")}${r.corroborated ? "" : " (one viewer, may be their connection)"}, last ${ago(r.lastFailureAt, generatedAt)} · ranked below smooth channels, stops counting ${until(r.retryAt, generatedAt) || "soon"}`
+                  : r.source === "checker"
                   ? `mediabox's channel check could not open it, down since ${ago(r.lastFailureAt, generatedAt)}`
                   : `${r.failedTunes} failed tune${r.failedTunes === 1 ? "" : "s"} (${r.people.join(", ")}), last ${ago(r.lastFailureAt, generatedAt)}`}
                 {r.source === "tunes" && r.state === "not-working" && r.retryAt != null && ` · offered again ${until(r.retryAt, generatedAt)}`}
@@ -99,6 +104,8 @@ export function AdminNotWorkingChannels({ rows, generatedAt }: { rows: NotWorkin
               <Button size="sm" onClick={() => putBack(r.name)} disabled={busy === r.name}>
                 {busy === r.name ? "…" : "Put back"}
               </Button>
+            ) : r.source === "viewers" ? (
+              <span className="text-xs text-white/35">Clears when it plays smoothly</span>
             ) : (
               <span className="text-xs text-white/35">Returns when the check opens it</span>
             )}

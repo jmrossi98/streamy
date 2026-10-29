@@ -19,6 +19,7 @@
 import {
   channelVerdict,
   hiddenForViewers,
+  KEEPING_UP_SPEED,
   liveAliases,
   streamQualityRank,
   type ChannelVerdict,
@@ -27,7 +28,8 @@ import {
 import { getTodaysFixtures } from "./sportsSchedule";
 import { eventSlotLabel, eventSlotState } from "./eventSlotRules";
 import { channelKey, withWorkingState } from "./liveChannelStateRules";
-import { channelWorkingMap } from "./liveChannelState";
+import { channelWorkingMap, viewerSlowMap } from "./liveChannelState";
+import { rankWithViewers, type ViewerSlow } from "./viewerSlowRules";
 
 const PROBE_TIMEOUT_MS = 8_000;
 
@@ -109,22 +111,40 @@ export async function channelHealthForRanking(now: number = Date.now()): Promise
    * instead, so it can still be picked but never as the default.
    */
   notWorking: Set<string>;
+  /** Channels viewers have been stalling on (viewerSlowRules.ts), already folded into `quality`. */
+  viewerSlow: Map<string, ViewerSlow>;
 }> {
   const empty = {
     notResponding: new Set<string>(),
     quality: new Map<string, number>(),
     speeds: new Map<string, number>(),
     notWorking: new Set<string>(),
+    viewerSlow: new Map<string, ViewerSlow>(),
   };
   try {
     const published = await fetchPublishedChannelHealth();
-    const working = await channelWorkingMap(published?.health);
+    const [working, viewerSlow] = await Promise.all([
+      channelWorkingMap(published?.health),
+      viewerSlowMap(published?.health, now),
+    ]);
     for (const [key, w] of working) {
       if (w.state === "not-working") empty.notWorking.add(key);
       else if (w.state === "retrying") empty.notResponding.add(key);
     }
+    // Viewers stalling on a channel ranks it as slow (viewerSlowRules.ts),
+    // whether or not the checker's snapshot is fresh enough to use.
+    const withViewers = (quality: Map<string, number>, speeds: Map<string, number>) => {
+      for (const [key, slow] of viewerSlow) {
+        quality.set(key, rankWithViewers(quality.get(key), slow)!);
+        // A checker speed that reads "keeping up" would badge it Smooth.
+        if ((speeds.get(key) ?? 0) >= KEEPING_UP_SPEED) speeds.delete(key);
+      }
+      return { quality, speeds };
+    };
     const at = published?.generatedAt ? Date.parse(published.generatedAt) : NaN;
-    if (!published || !Number.isFinite(at) || now - at > HEALTH_TRUST_MS) return empty;
+    if (!published || !Number.isFinite(at) || now - at > HEALTH_TRUST_MS) {
+      return { ...empty, ...withViewers(empty.quality, empty.speeds), viewerSlow };
+    }
     const quality = new Map<string, number>();
     const speeds = new Map<string, number>();
     for (const [name, h] of published.health) {
@@ -138,9 +158,9 @@ export async function channelHealthForRanking(now: number = Date.now()): Promise
         ...empty.notResponding,
         ...[...published.health].filter(([, h]) => !h.playable).map(([name]) => name),
       ]),
-      quality,
-      speeds,
+      ...withViewers(quality, speeds),
       notWorking: empty.notWorking,
+      viewerSlow,
     };
   } catch {
     return empty;
@@ -229,20 +249,26 @@ function eventSlotVerdict(name: string, now: number, verdict: ChannelVerdict): C
 /** One row of the admin "Not working" list. */
 export type NotWorkingRow = {
   name: string;
-  state: "not-working" | "retrying";
-  /** "tunes": people could not get a picture. "checker": mediabox's scans found it dead. */
-  source: "tunes" | "checker";
+  /** "slow": still offered, but ranked below smooth channels because viewers kept stalling on it. */
+  state: "not-working" | "retrying" | "slow";
+  /**
+   * "tunes": people could not get a picture. "checker": mediabox's scans found
+   * it dead. "viewers": people's players kept stalling on it.
+   */
+  source: "tunes" | "checker" | "viewers";
   failedTunes: number;
   people: string[];
   lastFailureAt: number | null;
   lastError: string | null;
-  /** When a hidden channel is offered again on its own, for "tunes". */
+  /** When a hidden channel is offered again on its own, for "tunes"; when a slow one stops counting, for "viewers". */
   retryAt: number | null;
+  /** For "viewers": two or more people, or a viewer whose other channels played fine meanwhile. */
+  corroborated?: boolean;
 };
 
 /**
- * Lineup channels hidden for not working, or back on trial, for the admin
- * list. Never throws.
+ * Lineup channels hidden for not working, back on trial, or ranked down for
+ * viewers stalling on them, for the admin list. Never throws.
  */
 export async function notWorkingReport(
   channelNames: string[],
@@ -250,7 +276,10 @@ export async function notWorkingReport(
 ): Promise<{ rows: NotWorkingRow[]; generatedAt: number }> {
   try {
     const published = await fetchPublishedChannelHealth();
-    const working = await channelWorkingMap(published?.health, now);
+    const [working, viewerSlow] = await Promise.all([
+      channelWorkingMap(published?.health, now),
+      viewerSlowMap(published?.health, now),
+    ]);
     const rows: NotWorkingRow[] = [];
     for (const name of channelNames) {
       const key = normaliseName(name);
@@ -279,6 +308,19 @@ export async function notWorkingReport(
           lastFailureAt: w.lastFailureAt,
           lastError: w.lastError,
           retryAt: w.retryAt,
+        });
+      } else if (viewerSlow.has(key)) {
+        const v = viewerSlow.get(key)!;
+        rows.push({
+          name,
+          state: "slow",
+          source: "viewers",
+          failedTunes: v.runs,
+          people: v.people,
+          lastFailureAt: v.lastStallAt,
+          lastError: null,
+          retryAt: v.until,
+          corroborated: v.corroborated,
         });
       }
     }
