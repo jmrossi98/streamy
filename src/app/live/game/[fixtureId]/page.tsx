@@ -7,8 +7,8 @@ import { prisma } from "@/lib/db";
 import type { StoredChoice } from "@/lib/gameChannelChoice";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
-import { getChannelInfo, getMappedChannelPrograms, listIptvAccounts, type ChannelInfo } from "@/lib/dispatcharr";
-import { isLineDead } from "@/lib/iptvLineRules";
+import { getChannelInfo, getMappedChannelPrograms, listIptvAccounts, liveConnections, type ChannelInfo } from "@/lib/dispatcharr";
+import { lineUse, steerForFullLines } from "@/lib/lineSteeringRules";
 import {
   findCandidateChannels,
   namesBothTeams,
@@ -180,7 +180,9 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
     .sort(
       (a, b) =>
         Number(namesGameDate(b.name, startMs)) - Number(namesGameDate(a.name, startMs)) ||
-        feedLanguageRank(a.name) - feedLanguageRank(b.name)
+        feedLanguageRank(a.name) - feedLanguageRank(b.name) ||
+        // The smoother stream between otherwise equal feeds.
+        qualityOf(a.name) - qualityOf(b.name)
     );
   const gameFeed = gameFeeds[0] ?? null;
 
@@ -285,13 +287,30 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   // every provider is full. Best effort: a stale snapshot costs the hint, not
   // the page.
   let providerFreeLines: Record<string, number> = {};
+  // With every line of a provider in use, the default moves to a feed of the
+  // game that can start: one someone is already watching (Dispatcharr shares
+  // its connection), else one on a provider with a line (lineSteeringRules.ts).
+  let pickerChannel = channel;
+  let pickerCandidates = candidates;
   try {
-    const accounts = await listIptvAccounts();
+    const [accounts, connections] = await Promise.all([listIptvAccounts(), liveConnections()]);
     if (accounts) {
-      for (const a of accounts) {
-        const capacity = a.lines.filter((l) => l.active && !isLineDead(l)).reduce((n, l) => n + (l.maxStreams || 0), 0);
-        const used = a.lines.reduce((n, l) => n + (l.viewers || 0), 0);
-        providerFreeLines[a.name] = Math.max(0, capacity - used);
+      const use = lineUse(accounts, connections);
+      providerFreeLines = use.freeLines;
+      const gameIds = new Set([...confirmed, ...gameFeeds].map((c) => c.id));
+      const opts = {
+        use,
+        providerOf: (c: { name: string }) => infoByChannel[c.name]?.provider,
+        isGameFeed: (c: { id: string }) => gameIds.has(c.id),
+      };
+      const steered = steerForFullLines(channel ? [channel, ...candidates] : candidates, opts);
+      if (channel) [pickerChannel, ...pickerCandidates] = steered;
+      else pickerCandidates = steered;
+      // A remembered pick that can't start now gives way the same way.
+      if (storedChoice) {
+        const pick = steered.find((c) => c.id === storedChoice!.channelId) ?? { id: storedChoice.channelId, name: storedChoice.name };
+        const rest = steered.filter((c) => c.id !== pick.id);
+        if (steerForFullLines([pick, ...rest], opts)[0].id !== pick.id) storedChoice = null;
       }
     }
   } catch (err) {
@@ -303,7 +322,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   // in-market affiliate belongs to, for the badge's wording.
   const confirmedIds = confirmed.map((c) => c.id);
   const marketTeamByName: Record<string, string> = {};
-  for (const c of [channel, ...candidates]) {
+  for (const c of [pickerChannel, ...pickerCandidates]) {
     if (!c) continue;
     const team = channelMarketTeam(c.name, fixture);
     if (team) marketTeamByName[c.name] = team;
@@ -341,16 +360,16 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
             (GameStreamFinder -> gameFeedSearch), and a new default from a
             refresh is taken up inside it unless the viewer picked one. */}
         <GameChannelPicker
-          channel={channel}
-          channelConfirmed={channelConfirmed}
+          channel={pickerChannel}
+          channelConfirmed={pickerChannel != null && confirmedIds.includes(pickerChannel.id)}
           confirmedIds={confirmedIds}
           gameFeedIds={gameFeeds.map((c) => c.id)}
           marketTeamByName={marketTeamByName}
-          candidates={candidates}
+          candidates={pickerCandidates}
           infoByChannel={infoByChannel}
           providerFreeLines={providerFreeLines}
           speedByChannel={Object.fromEntries(
-            [channel, ...candidates]
+            [pickerChannel, ...pickerCandidates]
               .filter((c): c is NonNullable<typeof c> => c != null)
               .flatMap((c) => {
                 const speed = speeds.get(normaliseName(c.name));
