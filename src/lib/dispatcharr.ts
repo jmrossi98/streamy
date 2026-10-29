@@ -12,12 +12,13 @@
  * could only do in Dispatcharr's own admin UI, which is why a library of 4,150
  * streams was being watched through a lineup of five.
  *
- * Auth is JWT rather than an API key: POST credentials to get an access token,
- * which expires. The token is cached in module scope and re-fetched on a 401,
- * so a normal request costs one round trip and an expiry costs two.
+ * Auth is JWT rather than an API key: an access token that expires, renewed
+ * with a refresh token (dispatcharrAuth.ts), so a normal request costs one
+ * round trip and an expiry one more, not a login.
  */
 
 import { cleanChannelName } from "./liveChannelRules";
+import { DispatcharrAuth } from "./dispatcharrAuth";
 import { looksLikeNetworkFeed, looksLikePlaceholder } from "@/lib/liveTimeline";
 import { cleanText } from "./text";
 import { cached } from "./ttlCache";
@@ -80,80 +81,28 @@ type RawStream = {
   tvg_id?: string | null;
 };
 
-/** Cached access token. Dispatcharr's JWT is short-lived; 401 means refetch. */
-let cachedToken: string | null = null;
-
 /**
- * The token fetch currently in flight, if any.
+ * The login, shared by every call in this process (dispatcharrAuth.ts).
  *
- * Without this, an expired token means every concurrent call independently
- * discovers the 401 and independently logs in again. That was survivable
- * when a page made one Dispatcharr call; it is not now that the Live TV,
- * channel and game pages make two to five each, plus one per stream search.
- * Dispatcharr throttles /api/accounts/token/ (DRF, a few seconds' window),
- * so a burst of simultaneous logins trips it -- and then every one of those
- * calls fails, the next page load tries again, and the throttle never gets
- * a chance to lapse. Confirmed live: the token endpoint answering 429
- * "Request was throttled" while the app reported "Couldn't reach
- * Dispatcharr" on every search.
- *
- * Sharing one in-flight promise collapses that burst back into the single
- * login it always should have been.
+ * Renewals are single-flight. Without that, an expired token meant every
+ * concurrent call independently discovered the 401 and logged in again; the
+ * Live TV, channel and game pages make two to five calls each, and
+ * Dispatcharr throttles logins (3 a minute per address, shared with
+ * mediabox's crons), so a burst tripped it and every call failed with
+ * "Couldn't reach Dispatcharr". Renewing via the refresh token, which is not
+ * throttled, keeps this process down to about one login a day.
  */
-let tokenFetchInFlight: Promise<string | null> | null = null;
-
-/**
- * When the throttle said to stop asking, as an epoch ms.
- *
- * Honouring Retry-After matters more than it looks: retrying into an active
- * throttle is what keeps it active, so ignoring it turns a few seconds of
- * backoff into an outage that lasts as long as traffic does.
- */
-let tokenRetryAfterMs = 0;
-
-async function fetchTokenUncached(): Promise<string | null> {
-  if (Date.now() < tokenRetryAfterMs) return null;
-  try {
-    const res = await fetch(`${DISPATCHARR_URL}/api/accounts/token/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: DISPATCHARR_USER,
-        password: DISPATCHARR_PASSWORD,
-      }),
-      signal: AbortSignal.timeout(DISPATCHARR_TIMEOUT_MS),
-      cache: "no-store",
-    });
-    if (res.status === 429) {
-      const retryAfter = Number(res.headers.get("retry-after"));
-      const waitMs = (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 10) * 1000;
-      tokenRetryAfterMs = Date.now() + waitMs;
-      console.error(`[dispatcharr] login throttled, backing off ${waitMs}ms`);
-      return null;
-    }
-    if (!res.ok) {
-      // Logged rather than swallowed: this returning null silently is why a
-      // total auth failure showed up only as "Couldn't reach Dispatcharr"
-      // in the UI, with nothing at all in the server logs to say why.
-      console.error(`[dispatcharr] login failed: HTTP ${res.status}`);
-      return null;
-    }
-    const data = (await res.json()) as { access?: string };
-    cachedToken = data?.access ?? null;
-    return cachedToken;
-  } catch (err) {
-    console.error("[dispatcharr] login error:", err instanceof Error ? err.message : err);
-    return null;
-  }
-}
-
-function fetchToken(): Promise<string | null> {
-  if (!tokenFetchInFlight) {
-    tokenFetchInFlight = fetchTokenUncached().finally(() => {
-      tokenFetchInFlight = null;
+let auth: DispatcharrAuth | null = null;
+function getAuth(): DispatcharrAuth {
+  if (!auth) {
+    auth = new DispatcharrAuth({
+      baseUrl: DISPATCHARR_URL!,
+      username: DISPATCHARR_USER!,
+      password: DISPATCHARR_PASSWORD!,
+      timeoutMs: DISPATCHARR_TIMEOUT_MS,
     });
   }
-  return tokenFetchInFlight;
+  return auth;
 }
 
 /**
@@ -179,13 +128,12 @@ async function api<T>(path: string, init?: RequestInit): Promise<T | null> {
     });
 
   try {
-    let token = cachedToken ?? (await fetchToken());
+    let token = await getAuth().token();
     if (!token) return null;
 
     let res = await call(token);
     if (res.status === 401) {
-      cachedToken = null;
-      token = await fetchToken();
+      token = await getAuth().renewAfterRejection(token);
       if (!token) return null;
       res = await call(token);
     }
@@ -219,7 +167,7 @@ function toStream(s: RawStream, accountNameById?: Map<number, string>): Dispatch
  * and game page load, and on every stream search, but change only when
  * someone adds a provider or promotes a channel. Re-fetching them per
  * request is what pushed Dispatcharr's call volume up far enough to matter
- * (see tokenFetchInFlight for what that cost). Deliberately short: a
+ * (see getAuth for what that cost). Deliberately short: a
  * channel promoted through Streamy should show up in the grid seconds
  * later, not minutes.
  *
