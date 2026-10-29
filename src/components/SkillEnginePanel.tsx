@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Field, SegmentedControl, TextInput } from "@/components/ui";
+import { Button, Field, SegmentedControl, Select } from "@/components/ui";
 import {
   ENGINE_LABELS,
   OPENCODE_MODEL_SUGGESTIONS,
   SKILL_ENGINES,
   engineProblem,
   engineText,
-  isOpenCodeModel,
   type EnginesStatus,
   type SkillEngine,
   type SkillEngineChoice,
@@ -88,25 +87,9 @@ export function SkillEnginePanel({ initial, onRunSkill }: { initial: SkillEngine
     void save({ engine, model: choice.model });
   }
 
-  function commitModel() {
-    const m = model.trim();
-    if (m === choice.model) return;
-    if (!isOpenCodeModel(m)) {
-      setNotice(null);
-      setError("Model ids look like anthropic/claude-sonnet-5-5, openrouter/<vendor>/<model> or ollama/<model>.");
-      return;
-    }
-    void save({ engine: choice.engine, model: m });
-  }
-
   return (
     <div className="space-y-3 text-sm">
       <h4 className="font-semibold text-white">Mediabox skills</h4>
-      <datalist id="skill-engine-models">
-        {OPENCODE_MODEL_SUGGESTIONS.map((id) => (
-          <option key={id} value={id} />
-        ))}
-      </datalist>
       <SegmentedControl
         label="Skill engine"
         value={choice.engine}
@@ -126,24 +109,20 @@ export function SkillEnginePanel({ initial, onRunSkill }: { initial: SkillEngine
       {/* The model only matters to OpenCode; Claude Code runs on the subscription's model. */}
       {choice.engine === "opencode" && (
         <Field label="Model">
-          <TextInput
+          <Select
             fieldSize="sm"
-            list="skill-engine-models"
             value={model}
-            placeholder="anthropic/claude-sonnet-5-5"
-            spellCheck={false}
             onChange={(e) => {
               setModel(e.target.value);
-              if (OPENCODE_MODEL_SUGGESTIONS.includes(e.target.value)) void save({ engine: choice.engine, model: e.target.value });
+              void save({ engine: choice.engine, model: e.target.value });
             }}
-            onBlur={commitModel}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitModel();
-              }
-            }}
-          />
+          >
+            {[...new Set([...OPENCODE_MODEL_SUGGESTIONS, model])].filter(Boolean).map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </Select>
         </Field>
       )}
       {onRunSkill && (

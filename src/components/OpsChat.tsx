@@ -188,14 +188,6 @@ function summaryOf(s: ChatSessionFull): ChatSessionSummary {
 }
 
 export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchAvailable, fullHeight = false, layout = "tab" }: Props) {
-  // Off by default, deliberately: search costs latency and a large share of an
-  // 8k context, and it pulls untrusted web text into the prompt. Turning it on
-  // is an explicit choice.
-  const [webSearch, setWebSearch] = useState(false);
-  // On by default, unlike search: the panel's reason to exist is questions
-  // about this stack, and without it the model correctly but uselessly
-  // explains that it can't see any of it.
-  const [stackStatus, setStackStatus] = useState(true);
   // The cloud slots follow the routing panel: it announces every save, so a
   // model picked there is what the next message goes to, with no reload.
   const [slots, setSlots] = useState<ChatSlots>(initialSlots);
@@ -850,7 +842,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // A run's report goes to the model once, whatever copies the panel holds.
-        body: JSON.stringify({ messages: dedupeRunTurns(history), webSearch, backend: slot, stackStatus, sessionId: chatId }),
+        body: JSON.stringify({ messages: dedupeRunTurns(history), webSearch: true, backend: slot, stackStatus: true, sessionId: chatId }),
         signal: controller.signal,
       });
 
@@ -1262,28 +1254,6 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
     </div>
   );
 
-  const stackStatusToggle = (className: string) => (
-    <Checkbox
-      label="Stack status"
-      title="Include a live probe of every service in the stack with your question."
-      checked={stackStatus}
-      onChange={(e) => setStackStatus(e.target.checked)}
-      className={className}
-    />
-  );
-  // Since 2026-10-24 the model searches and reads pages on its own when a
-  // question needs it; this forces a search up front.
-  const searchToggle = (className: string) =>
-    searchAvailable ? (
-      <Checkbox
-        label="Always search"
-        title="The assistant searches the web by itself when it needs to. Tick this to make it search every question."
-        checked={webSearch}
-        onChange={(e) => setWebSearch(e.target.checked)}
-        className={className}
-      />
-    ) : null;
-
   // Only an error is worth a line under the picker (2026-10-25: the
   // explanatory hint that used to sit here was dropped).
   const modelHint = showStatusError ? <span className="text-amber-400">Model unreachable: {statusError}</span> : null;
@@ -1366,23 +1336,19 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               <ModelsPanel onRunSkill={openRunMenu} />
               {modelHint && <p className="text-xs text-white/40">{modelHint}</p>}
             </div>
-            <div className="space-y-1 text-sm">
-              {stackStatusToggle("min-h-10 gap-3 text-white/80")}
-              {searchToggle("min-h-10 gap-3 text-white/80")}
-            </div>
           </div>
         </div>
       )}
 
-      <SkillRunMenu
-        open={runMenuOpen}
-        onClose={() => setRunMenuOpen(false)}
-        locked={streaming}
-        onStart={startSkill}
-        onFollow={(id) => void followRun(id)}
-      />
+      <div className={`relative min-w-0 flex-1 ${fullHeight ? "flex min-h-0 flex-col gap-3" : "space-y-3"}`}>
+        <SkillRunMenu
+          open={runMenuOpen}
+          onClose={() => setRunMenuOpen(false)}
+          locked={streaming}
+          onStart={startSkill}
+          onFollow={(id) => void followRun(id)}
+        />
 
-      <div className={`min-w-0 flex-1 ${fullHeight ? "flex min-h-0 flex-col gap-3" : "space-y-3"}`}>
         {/* Phone header: menu, the chat and its model (tap for options), new
             chat. One row, so the screen is the conversation. */}
         <div className="flex h-12 shrink-0 items-center gap-1 px-1 md:hidden">
@@ -1414,10 +1380,6 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
 
         <div className="hidden flex-wrap items-center justify-between gap-2 text-xs md:flex">
           {modelLabel}
-          <div className="flex items-center gap-3">
-            {stackStatusToggle("gap-1.5 hover:text-white/80")}
-            {searchToggle("gap-1.5 hover:text-white/80")}
-          </div>
         </div>
 
         {(modelHint || importedFrom) && (
@@ -1450,7 +1412,7 @@ export function OpsChat({ slots: initialSlots, chatBackend, statusError, searchA
               </div>
               <p className="text-lg font-medium text-white/80">What can I help with?</p>
               <p className="max-w-md text-sm text-white/35">
-                With “Stack status” on, I can see live service health, disk and backups
+                I can see live service health, disk and backups
                 {searchAvailable ? ", and I search the web by myself for anything current" : ""}.
               </p>
             </div>
