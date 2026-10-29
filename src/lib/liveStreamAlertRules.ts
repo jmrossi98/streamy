@@ -80,38 +80,58 @@ export function streamIncidents(events: LiveEvent[], now: number = Date.now()): 
 
   const stallsBy = new Map<string, LiveEvent[]>();
   for (const e of events) {
-    if (e.kind !== "stall" || !e.media.startsWith(LIVE_MEDIA_PREFIX) || (e.ms ?? 0) < NOTICEABLE_STALL_MS) continue;
+    if (!isNoticeableLiveStall(e)) continue;
     const id = `${e.sessionId}\u0000${e.media}`;
     const list = stallsBy.get(id);
     if (list) list.push(e);
     else stallsBy.set(id, [e]);
   }
   for (const list of stallsBy.values()) {
-    list.sort((a, b) => a.at - b.at);
     // The first moment the window tips over; one incident per tab and channel.
-    for (let i = 0; i < list.length; i++) {
-      const end = list[i].at;
-      const inWindow = list.filter((s) => s.at <= end && s.at > end - STALL_WINDOW_MS);
-      const stalledMs = inWindow.reduce((n, s) => n + (s.ms ?? 0), 0);
-      if (inWindow.length > MAX_STALLS || stalledMs > MAX_STALLED_MS) {
-        if (end >= since) {
-          const channel = list[i].media.slice(LIVE_MEDIA_PREFIX.length).trim();
-          out.push({
-            key: channelKey(channel),
-            channel,
-            userName: list[i].userName,
-            sessionId: list[i].sessionId,
-            kind: "stalling",
-            at: end,
-            stalls: inWindow.length,
-            stalledMs,
-          });
-        }
-        break;
-      }
+    const first = stallingTips(list)[0];
+    if (first && first.at >= since) {
+      const channel = first.event.media.slice(LIVE_MEDIA_PREFIX.length).trim();
+      out.push({
+        key: channelKey(channel),
+        channel,
+        userName: first.event.userName,
+        sessionId: first.event.sessionId,
+        kind: "stalling",
+        at: first.at,
+        stalls: first.stalls,
+        stalledMs: first.stalledMs,
+      });
     }
   }
   return out.sort((a, b) => a.at - b.at);
+}
+
+/** A noticeable stall on a live channel: the only stalls "stalling" counts. */
+export function isNoticeableLiveStall(e: LiveEvent): boolean {
+  return e.kind === "stall" && e.media.startsWith(LIVE_MEDIA_PREFIX) && (e.ms ?? 0) >= NOTICEABLE_STALL_MS;
+}
+
+/**
+ * Every stall in one tab's run of one channel at which the rolling window
+ * reads "keeps buffering" (more than MAX_STALLS, or more than MAX_STALLED_MS
+ * stalled, within STALL_WINDOW_MS), oldest first. `stalls` is that tab's
+ * noticeable stalls of that channel, in any order. The single definition of
+ * "stalling", shared by the alert email and the ranking (viewerSlowRules.ts).
+ */
+export function stallingTips(
+  stalls: LiveEvent[]
+): { at: number; event: LiveEvent; stalls: number; stalledMs: number }[] {
+  const list = [...stalls].sort((a, b) => a.at - b.at);
+  const tips: { at: number; event: LiveEvent; stalls: number; stalledMs: number }[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const end = list[i].at;
+    const inWindow = list.filter((s) => s.at <= end && s.at > end - STALL_WINDOW_MS);
+    const stalledMs = inWindow.reduce((n, s) => n + (s.ms ?? 0), 0);
+    if (inWindow.length > MAX_STALLS || stalledMs > MAX_STALLED_MS) {
+      tips.push({ at: end, event: list[i], stalls: inWindow.length, stalledMs });
+    }
+  }
+  return tips;
 }
 
 /**

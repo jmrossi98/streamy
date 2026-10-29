@@ -24,7 +24,8 @@ import {
   type LiveEvent,
   type SnapshotReading,
 } from "./liveChannelStateRules";
-import type { StreamHealth } from "./liveChannelRules";
+import { SPEED_TRUST_MS, type StreamHealth } from "./liveChannelRules";
+import { CONTROL_WINDOW_MS, viewerSlowChannels, type SpeedReading, type ViewerSlow } from "./viewerSlowRules";
 
 /** PlaybackEvent's own retention (viewerActivity.ts KEEP_DAYS). */
 const EVIDENCE_MS = 14 * 24 * 60 * 60_000;
@@ -86,4 +87,41 @@ export async function clearNotWorking(name: string, by: string): Promise<void> {
     update: { name, clearedAt: now, clearedBy: by },
   });
   invalidateCache(CACHE_KEY);
+}
+
+/** Enough history for a stalling run that still counts, and the control window either side of it. */
+const SLOW_EVIDENCE_MS = SPEED_TRUST_MS + 2 * CONTROL_WINDOW_MS;
+const SLOW_CACHE_KEY = "live-channel-state:viewer-slow";
+
+async function readSlowEvidence(): Promise<{ events: LiveEvent[]; lastSeen: Map<string, number> }> {
+  const since = Date.now() - SLOW_EVIDENCE_MS;
+  const [events, sessions] = await Promise.all([
+    readLiveEvents(since),
+    prisma.viewerSession.findMany({ where: { lastSeenAt: { gte: new Date(since) } }, select: { id: true, lastSeenAt: true } }),
+  ]);
+  return { events, lastSeen: new Map(sessions.map((s) => [s.id, s.lastSeenAt.getTime()])) };
+}
+
+/**
+ * Channels viewers have been stalling on, still counting against them
+ * (viewerSlowRules.ts). `snapshot` is mediabox's published health: a full-speed
+ * reading after the last stall clears a channel. Never throws: on a database
+ * error nothing is demoted.
+ */
+export async function viewerSlowMap(
+  snapshot: Map<string, StreamHealth> | null | undefined,
+  now: number = Date.now()
+): Promise<Map<string, ViewerSlow>> {
+  try {
+    const { events, lastSeen } = await cached(SLOW_CACHE_KEY, CACHE_MS, readSlowEvidence);
+    const checker = new Map<string, SpeedReading>();
+    for (const [key, h] of snapshot ?? []) {
+      const at = h.speedAt ? Date.parse(h.speedAt) : NaN;
+      if (h.speed != null && Number.isFinite(at)) checker.set(key, { speed: h.speed, at });
+    }
+    return viewerSlowChannels(events, { now, checker, lastSeen });
+  } catch (err) {
+    console.error("[live-channel-state] viewer-slow read failed:", err);
+    return new Map();
+  }
 }
