@@ -51,8 +51,14 @@ export type GameChannelInputs = {
   scheduleAvailable: boolean;
   /** Whether Dispatcharr still has the channel; null when it couldn't be asked. */
   channelExists: boolean | null;
-  /** Whether anyone is watching it; null when that couldn't be told. */
+  /** Whether anyone is watching it (Dispatcharr has a client on it); null when that couldn't be told. */
   inUse: boolean | null;
+  /**
+   * Whether a Streamy tab reports playing it right now. A second witness: a
+   * player re-tuning after a stall holds no Dispatcharr client for those
+   * seconds, and a delete then would cut off someone watching overtime.
+   */
+  watchedInStreamy?: boolean;
   now: Date;
 };
 
@@ -70,7 +76,8 @@ export function decideGameChannel(
   row: RecordedGameChannel,
   inputs: GameChannelInputs
 ): GameChannelDecision {
-  const { fixtureState, scheduleAvailable, channelExists, inUse, now } = inputs;
+  const { fixtureState, scheduleAvailable, channelExists, now } = inputs;
+  const inUse = inputs.watchedInStreamy ? true : inputs.inUse;
 
   if (channelExists === false) {
     return { action: "forget", reason: "channel no longer in Dispatcharr" };

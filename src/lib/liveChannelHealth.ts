@@ -26,6 +26,7 @@ import {
   type StreamHealth,
 } from "./liveChannelRules";
 import { getTodaysFixtures } from "./sportsSchedule";
+import { namesBothTeams } from "./liveTimeline";
 import { eventSlotLabel, eventSlotState } from "./eventSlotRules";
 import { channelKey, withWorkingState } from "./liveChannelStateRules";
 import { channelWorkingMap, viewerSlowMap } from "./liveChannelState";
@@ -215,6 +216,7 @@ export async function channelStatuses(
   // Whether people can actually get a picture, from their own tunes.
   const working = await channelWorkingMap(published?.health);
   const live = fixtures ? liveAliases(fixtures) : null;
+  const inProgress = (fixtures ?? []).filter((f) => f.state === "in");
 
   const out = new Map<string, ChannelStatus>();
   const now = Date.now();
@@ -226,6 +228,7 @@ export async function channelStatuses(
       ...eventSlotVerdict(
         name,
         now,
+        inProgress,
         withWorkingState(channelVerdict(name, health, live, now), working.get(normaliseName(name)))
       ),
       checkedAt: published?.generatedAt ?? null,
@@ -239,8 +242,17 @@ export async function channelStatuses(
  * eventSlotRules.ts. Before its game it is a slate however healthy the
  * stream looks; after it, nothing worth listing until tomorrow.
  */
-function eventSlotVerdict(name: string, now: number, verdict: ChannelVerdict): ChannelVerdict {
+function eventSlotVerdict(
+  name: string,
+  now: number,
+  inProgress: { awayTeam: string | null; homeTeam: string | null }[],
+  verdict: ChannelVerdict
+): ChannelVerdict {
   const state = eventSlotState(name, now);
+  // The slot's clock is a guess at when its game ends (SLOT_LASTS_MS). While
+  // ESPN still has the game named in it in progress -- overtime, a rain
+  // delay, extra innings -- it is not over, whatever the clock says.
+  if (state === "over" && inProgress.some((f) => namesBothTeams(name, f))) return verdict;
   if (state === "upcoming") return { state: "no-event", detail: eventSlotLabel(name, now) ?? "Not started yet" };
   if (state === "over") return { state: "filler", detail: eventSlotLabel(name, now) ?? "Game over", hidden: true };
   return verdict;

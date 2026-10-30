@@ -139,3 +139,16 @@ describe("namesLeague", () => {
     expect(gameStreamScore("UK-BBC| BBC RADIO LEEDS", leeds)).toBe(2);
   });
 });
+
+describe("rankGameStreams past the slot's clock", () => {
+  it("keeps the game's own slot while ESPN still has the game in progress (overtime, rain delay)", () => {
+    const streams = [
+      { id: 1, name: "NHL | 02 - 1pm Sharks at Predators" },
+      { id: 2, name: "NHL | 03 - 1pm Jets at Blackhawks" },
+    ];
+    // 6pm Eastern: the 1pm slot's clock says over.
+    const now = Date.parse("2026-10-16T22:00:00Z");
+    expect(rankGameStreams(streams, { ...sharks, state: "post" }, { now })).toEqual([]);
+    expect(rankGameStreams(streams, { ...sharks, state: "in" }, { now }).map((s) => s.id)).toEqual([1]);
+  });
+});
