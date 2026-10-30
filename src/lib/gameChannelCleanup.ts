@@ -15,6 +15,7 @@ import { activeChannelKeys, demoteChannel, isDispatcharrConfigured, listChannels
 import { refreshGuide } from "./liveTv";
 import { getTodaysFixtures, type Fixture } from "./sportsSchedule";
 import { decideGameChannel } from "./gameChannelCleanupRules";
+import { channelKey } from "./liveChannelStateRules";
 
 export type GameChannelCleanupReport = {
   /** Recorded game channels looked at this pass. */
@@ -26,6 +27,27 @@ export type GameChannelCleanupReport = {
   refreshed: boolean | null;
 };
 
+/** How recent a tab's heartbeat must be for its "playing" to count (presenceOf's idle window). */
+const PLAYING_SEEN_MS = 5 * 60_000;
+
+/** channelKeys of live channels a Streamy tab has reported playing in the last few minutes. */
+async function liveChannelsPlayingInStreamy(now: Date): Promise<Set<string>> {
+  const rows = await prisma.viewerSession.findMany({
+    where: { lastSeenAt: { gte: new Date(now.getTime() - PLAYING_SEEN_MS) }, playing: { not: null } },
+    select: { playing: true },
+  });
+  const keys = new Set<string>();
+  for (const r of rows) {
+    try {
+      const p = JSON.parse(r.playing!) as { kind?: string; title?: string };
+      if (p.kind === "live" && p.title) keys.add(channelKey(p.title));
+    } catch {
+      // A malformed row says nothing.
+    }
+  }
+  return keys;
+}
+
 export async function runGameChannelCleanup(now: Date = new Date()): Promise<GameChannelCleanupReport> {
   const report: GameChannelCleanupReport = { checked: 0, removed: [], failed: [], refreshed: null };
   if (!isDispatcharrConfigured()) return report;
@@ -35,10 +57,11 @@ export async function runGameChannelCleanup(now: Date = new Date()): Promise<Gam
   // Most passes: nothing recorded, so nothing else is worth asking.
   if (rows.length === 0) return report;
 
-  const [fixtures, channels, active] = await Promise.all([
+  const [fixtures, channels, active, streamyWatching] = await Promise.all([
     getTodaysFixtures().catch(() => [] as Fixture[]),
     listChannels(),
     activeChannelKeys(),
+    liveChannelsPlayingInStreamy(now).catch(() => new Set<string>()),
   ]);
   const stateById = new Map(fixtures.map((f) => [f.id, f.state]));
   const channelById = channels ? new Map(channels.map((c) => [c.id, c])) : null;
@@ -56,6 +79,7 @@ export async function runGameChannelCleanup(now: Date = new Date()): Promise<Gam
       scheduleAvailable: fixtures.length > 0,
       channelExists: channelById ? channelById.has(row.channelId) : null,
       inUse,
+      watchedInStreamy: streamyWatching.has(channelKey(channel?.name ?? row.name)),
       now,
     });
 

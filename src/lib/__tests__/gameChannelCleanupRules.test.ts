@@ -98,3 +98,12 @@ describe("cleaning up channels added for one game", () => {
     expect(decideGameChannel(r, inputs({ channelExists: null })).action).toBe("keep");
   });
 });
+
+describe("a channel someone is watching in Streamy", () => {
+  it("is never removed, even when Dispatcharr shows no client (a re-tune in progress)", () => {
+    const ended = row({ endedSeenAt: ago(60 * 60_000) });
+    expect(decideGameChannel(ended, inputs({ inUse: false })).action).toBe("remove");
+    expect(decideGameChannel(ended, inputs({ inUse: false, watchedInStreamy: true })).action).toBe("keep");
+    expect(decideGameChannel(row({ createdAt: ago(7 * 60 * 60_000) }), inputs({ fixtureState: null, inUse: false, watchedInStreamy: true })).action).toBe("keep");
+  });
+});

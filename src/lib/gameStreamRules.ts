@@ -22,6 +22,8 @@ export type GameFixture = {
   homeTeam?: string | null;
   broadcasts?: string[];
   startUtc?: string | null;
+  /** ESPN's live state ("pre" | "in" | "post"), when known. */
+  state?: string;
 };
 
 /**
@@ -134,7 +136,10 @@ export function rankGameStreams<S extends GameStreamCandidate>(
       if (seen.has(s.id)) return false;
       seen.add(s.id);
       // A per-game slot whose game is over is a slate -- see eventSlotRules.
-      if (eventSlotState(s.name, now) === "over") return false;
+      // Its clock is only a guess at the end, though (SLOT_LASTS_MS): while
+      // ESPN still has this game in progress -- overtime, a rain delay, extra
+      // innings -- a slot naming both its teams is still its feed.
+      if (eventSlotState(s.name, now) === "over" && !(f.state === "in" && gameStreamScore(s.name, f) === 0)) return false;
       // A feed for another day's game between the same teams (2026-10-16:
       // a Peacock feed for Nov 10 was offered, and added, for that night's game).
       if (f.startUtc && namesOtherDate(s.name, Date.parse(f.startUtc))) return false;
