@@ -281,6 +281,43 @@ export function Badge({ tone = "neutral", className, children, title }: { tone?:
   );
 }
 
+// ------------------------------------------------------------------ Notice
+
+export type NoticeTone = "info" | "warning";
+
+const NOTICE_TONE: Record<NoticeTone, string> = {
+  info: "border-sky-400/25 bg-sky-500/10 text-sky-100/90",
+  warning: "border-amber-400/25 bg-amber-500/10 text-amber-200/90",
+};
+
+/**
+ * A short message about something the page just did by itself ("X kept
+ * buffering, so we switched to Y"), with an optional dismiss. Status, not an
+ * error page: it sits under what it is about and doesn't block it.
+ */
+export function Notice({
+  tone = "warning",
+  onDismiss,
+  className,
+  children,
+}: {
+  tone?: NoticeTone;
+  onDismiss?: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div role="status" aria-live="polite" className={cx("flex items-start gap-3 rounded-md border px-3 py-2 text-sm", NOTICE_TONE[tone], className)}>
+      <div className="min-w-0 flex-1">{children}</div>
+      {onDismiss && (
+        <Button size="xs" variant="ghost" onClick={onDismiss} aria-label="Dismiss">
+          Dismiss
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------ Panel/Section
 
 /** The admin card: dark, bordered, padded. */

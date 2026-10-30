@@ -9,6 +9,7 @@ import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
 import { Button } from "@/components/ui";
 import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
+import { RESUME_CHECK_MS, isChronicStalling, resumeAction, type Stall } from "@/lib/liveFailoverRules";
 
 type Props = {
   channelId: string;
@@ -25,6 +26,13 @@ type Props = {
    * either -- and "offline" means the stream itself never delivered.
    */
   onGiveUp?: (reason?: "busy" | "offline") => void;
+  /**
+   * Called once per tune when the feed keeps stalling after it has played a
+   * while -- the admin alert's measure (liveFailoverRules isChronicStalling).
+   * A game page uses it to move to a feed that plays smoothly. Stalls while
+   * the page is hidden or the viewer has scrubbed back don't count.
+   */
+  onChronicStalling?: () => void;
 };
 
 /**
@@ -99,6 +107,27 @@ const learnedCushion = new Map<string, number>();
  * playback is sitting on. A minute is generous for that.
  */
 const BACK_BUFFER_SECONDS = 60;
+
+/**
+ * The previous tune's stop request, while it is in flight. A new tune waits
+ * for it (at most RELEASE_WAIT_MS) before opening anything.
+ *
+ * On 2026-10-27 a viewer switched from a stalling trex channel to ABC 7
+ * Buffalo and the first tune got a 503: the old channel still held one of
+ * trex's two lines while it tore down, because the stop was sent and the new
+ * tune opened in the same instant. The stop only ends this viewer's own
+ * Jellyfin transcode (by playSessionId -- /api/stream/live/stop), so waiting
+ * for it never touches anyone else watching the same channel; Jellyfin and
+ * Dispatcharr release the line once the last viewer has gone. The 503 retry
+ * (RETRY_BACKOFF_MS) stays as the backstop for whatever the wait doesn't
+ * cover, such as Dispatcharr's own few seconds of shutdown delay.
+ *
+ * Module scope rather than a ref: a game page can unmount the player (the
+ * "all lines are in use" screen) and mount a new one, and that one must wait
+ * too.
+ */
+let pendingRelease: Promise<void> | null = null;
+const RELEASE_WAIT_MS = 2_000;
 
 /**
  * A stall this long at the live edge is treated as having fallen off the end,
@@ -230,14 +259,16 @@ function Spinner({ label }: { label: string }) {
  * Always HLS: Jellyfin delivers a tuned channel as a transcode, and a
  * transcode is always HLS. There is no direct-play path to fall back to.
  */
-export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Props) {
+export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChronicStalling }: Props) {
   // Read through a ref so a new callback each render doesn't re-run the tune effect.
   const onGiveUpRef = useRef(onGiveUp);
+  const onChronicStallingRef = useRef(onChronicStalling);
   /** Set when the last fatal error was a 503 -- the provider had no free line. */
   const lastFailWasBusyRef = useRef(false);
   useEffect(() => {
     onGiveUpRef.current = onGiveUp;
-  }, [onGiveUp]);
+    onChronicStallingRef.current = onChronicStalling;
+  }, [onGiveUp, onChronicStalling]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -401,6 +432,23 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     const REWIND_COOLDOWN_MS = 20_000;
     let lastRewindAt = 0;
 
+    /** When this tune first showed a picture; stalls are judged only after it has played a while. */
+    let playingSince: number | null = null;
+    /** Finished stalls this tune, and the one in progress. */
+    const stalls: Stall[] = [];
+    let stallStartedAt: number | null = null;
+    let stallFrom = 0;
+    let chronicReported = false;
+
+    /** Page-visibility bookkeeping for the resume after a lock (onReturn). */
+    let hiddenAt: number | null = document.visibilityState === "hidden" ? Date.now() : null;
+    let hiddenFromTime = 0;
+    let pausedAtHide = false;
+    /** When the video last paused, while it stays paused. */
+    let pausedAt: number | null = null;
+    let failedWhileHidden = false;
+    let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+
     const arrivals = new EdgeArrivalTracker();
     const startCushion = learnedCushion.get(channelId) ?? LIVE_SYNC_SECONDS;
     cushionRef.current = startCushion;
@@ -434,23 +482,31 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       actually closing, which is the case no unmount handler ever runs for.
       Both are fire-and-forget: the viewer is already gone.
     */
-    const endTune = (useBeacon: boolean) => {
+    const endTune = (useBeacon: boolean): Promise<void> => {
       const body = JSON.stringify({ playSessionId });
       try {
         if (useBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
           navigator.sendBeacon("/api/stream/live/stop", new Blob([body], { type: "text/plain" }));
-          return;
+          return Promise.resolve();
         }
-        void fetch("/api/stream/live/stop", {
+        // Returned so the next tune can wait for it (pendingRelease).
+        return fetch("/api/stream/live/stop", {
           method: "POST",
           body,
           keepalive: true,
           headers: { "Content-Type": "application/json" },
-        }).catch(() => {});
+        }).then(
+          () => {},
+          () => {}
+        );
       } catch {
         // Teardown must never throw into a page that is going away.
+        return Promise.resolve();
       }
     };
+
+    /** Set by the cleanup: a start still waiting on the previous tune's release must not run. */
+    let disposed = false;
 
     const onPageHide = () => endTune(true);
     window.addEventListener("pagehide", onPageHide);
@@ -468,6 +524,15 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
      * shows, not a flash of an error that then heals itself.
      */
     const scheduleRetry = (finalError: string, retryable = true) => {
+      // A phone locked mid-stream loses its HLS session (iOS stops fetching,
+      // and Jellyfin kills an unpinged transcode after 60 s). That is not the
+      // channel failing: giving up here would make a game page switch the
+      // viewer away from a good feed while their phone was in their pocket.
+      // Re-tuned when the page is back on screen (onReturn below).
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        failedWhileHidden = true;
+        return;
+      }
       if (!retryable || retryCountRef.current >= MAX_RETRIES) {
         setError(finalError);
         setLoading(false);
@@ -508,6 +573,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     };
 
     const onPlaying = () => {
+      if (playingSince === null) playingSince = Date.now();
+      endStall();
       clearTuneTimer();
       clearStallTimer();
       setLoading(false);
@@ -594,7 +661,19 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       }
     };
 
-    const onWaiting = () => {
+    const onWaiting = (e?: Event) => {
+      // Counted the way the telemetry counts a stall (usePlaybackTelemetry):
+      // after the first picture, and not the wait a seek causes.
+      if (
+        e?.type === "waiting" &&
+        playingSince !== null &&
+        stallStartedAt === null &&
+        !video.seeking &&
+        document.visibilityState !== "hidden"
+      ) {
+        stallStartedAt = Date.now();
+        stallFrom = video.currentTime;
+      }
       setRebuffering(true);
       if (stallTimer !== null) return;
       stallTimer = setTimeout(() => {
@@ -680,6 +759,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
     // is what replaces a progress bar: a broadcast has no start and no end, so
     // "37% through" is meaningless, but "2 minutes behind live" is not.
     const onTimeUpdate = () => {
+      // Chrome doesn't always fire `playing` after a wait; the playhead moving is the surer sign.
+      if (stallStartedAt !== null && !video.paused && video.currentTime > stallFrom + 0.5) endStall();
       if (video.seekable.length === 0) {
         setBehind(null);
         return;
@@ -757,104 +838,216 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       stayBehindRef.current = edge - video.currentTime > behindLimitRef.current;
     };
 
+    /*
+      Chronic stalling: the player recovers each stall on its own, but a feed
+      arriving under real time stalls again a few seconds later, every time
+      (2026-10-27, 0.93x, six stalls in four minutes). Past the admin alert's
+      measure the caller is told once, and can move the viewer
+      (GameChannelPicker). Stalls while the viewer is scrubbed back or the
+      page is hidden say nothing about the feed and are not counted.
+    */
+    function endStall() {
+      if (stallStartedAt === null) return;
+      const now = Date.now();
+      const ms = now - stallStartedAt;
+      stallStartedAt = null;
+      if (stayBehindRef.current || document.visibilityState === "hidden") return;
+      stalls.push({ at: now, ms });
+      if (!chronicReported && isChronicStalling(stalls, playingSince, now)) {
+        chronicReported = true;
+        onChronicStallingRef.current?.();
+      }
+    }
+
+    /*
+      Back from a locked phone or a background tab. iOS Safari stops fetching
+      while locked, and Jellyfin kills a live transcode nobody has asked for a
+      segment of in 60 s, so the stream the page comes back to is often gone:
+      hls.js then fails a minute later, or the picture just sits frozen. The
+      session is replaced straight away instead, at the live edge
+      (liveFailoverRules resumeAction).
+    */
+    const retuneNow = () => {
+      if (disposed) return;
+      retryCountRef.current = 0;
+      setError(null);
+      setLoading(true);
+      setRebuffering(false);
+      setRetryToken((t) => t + 1);
+    };
+    const onReturn = (restoredFromCache: boolean) => {
+      const now = Date.now();
+      const hiddenForMs = hiddenAt === null ? 0 : now - hiddenAt;
+      const advancedWhileHiddenSec = video.currentTime - hiddenFromTime;
+      hiddenAt = null;
+      // A viewer who paused before locking gets their pause back, not a
+      // stream that starts by itself; pressing play re-tunes if it has to.
+      if (pausedAtHide && !restoredFromCache && !failedWhileHidden) return;
+      const action = resumeAction({
+        hiddenForMs,
+        advancedWhileHiddenSec,
+        failedWhileHidden,
+        restoredFromCache,
+        hadPicture: playingSince !== null,
+      });
+      if (action === "retune") {
+        retuneNow();
+        return;
+      }
+      if (action !== "check") return;
+      stayBehindRef.current = false;
+      seekToLiveEdge(video, {}, cushionRef.current);
+      resumePlayback(video);
+      const from = video.currentTime;
+      if (resumeTimer !== null) clearTimeout(resumeTimer);
+      resumeTimer = setTimeout(() => {
+        resumeTimer = null;
+        if (disposed || document.visibilityState === "hidden") return;
+        if (video.currentTime - from < 0.5) retuneNow();
+      }, RESUME_CHECK_MS);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        hiddenFromTime = video.currentTime;
+        // The viewer's own pause, not the one iOS makes as the screen locks
+        // (which can land a moment before this event).
+        pausedAtHide = video.paused && playingSince !== null && pausedAt !== null && Date.now() - pausedAt > 1_500;
+        // A stall cut short by the lock is not a stall of the feed.
+        stallStartedAt = null;
+        return;
+      }
+      onReturn(false);
+    };
+    const onPauseEvent = () => {
+      pausedAt = Date.now();
+    };
+    const onPlayEvent = () => {
+      pausedAt = null;
+    };
+    const onPageShow = (e: PageTransitionEvent) => {
+      // Restored from the back-forward cache: pagehide already ended the
+      // session (endTune's beacon), so nothing is left to resume.
+      if (e.persisted) onReturn(true);
+    };
+
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("play", onPlay);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("waiting", onWaiting);
     video.addEventListener("stalled", onWaiting);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pageshow", onPageShow);
+    video.addEventListener("pause", onPauseEvent);
+    video.addEventListener("play", onPlayEvent);
 
-    if (supportsNativeHls()) {
-      video.src = src;
-      startPlayback();
-    } else if (Hls.isSupported()) {
-      hls = new Hls({
-        /*
-          Jellyfin serves an EVENT playlist that grows and never slides:
-
-              #EXT-X-PLAYLIST-TYPE:EVENT
-              #EXT-X-MEDIA-SEQUENCE:0     <- never advances
-              4 segments -> 23 over 12s
-
-          So the "live edge" keeps moving away while the start stays at zero,
-          and a player that begins near the front plays a finite-looking
-          timeline, drifts further behind every minute, and stalls when it
-          finally meets the encoder. That is exactly the reported symptom:
-          starts somewhere, runs to an end, buffers, reconnects.
-
-          Expressed in SECONDS rather than segment counts, deliberately. The
-          count-based settings multiply by target duration, and the segment
-          length is now 1s rather than 3s (mediabox-infra#78) -- so the old
-          liveSyncDurationCount: 3 silently went from nine seconds of safety
-          to three, which is not enough to absorb a hiccup on a residential
-          IPTV feed.
-        */
-        liveSyncDuration: startCushion,
-        /*
-          liveMaxLatencyDuration is deliberately NOT set.
-
-          It makes hls.js seek to the live edge on its own once the playhead
-          falls further behind than the limit -- which is precisely what a
-          viewer does on purpose when they scrub back to re-watch something.
-          With it set, going back thirty seconds was quietly undone a moment
-          later by the library, and no amount of intent-tracking in this
-          component could win against it.
-
-          Falling behind unintentionally is handled by the stall recovery
-          below, which knows the difference because it checks stayBehindRef.
-        */
-        backBufferLength: BACK_BUFFER_SECONDS,
-        enableWorker: true,
-        lowLatencyMode: false,
-        /*
-          A hole in the buffer hls.js steps over instead of stalling on.
-          Default 0.1 s. Segment joins on these feeds and ffmpeg's dup-frame
-          fills (strong8k jumps 7.7 s every couple of minutes, 2026-10-25)
-          leave slightly bigger seams, and hls.js only skips a hole up to this
-          size -- anything larger is a stall until the recovery above moves
-          the playhead, six seconds later.
-        */
-        maxBufferHole: 0.5,
-        fragLoadPolicy: { default: LIVE_FRAG_LOAD_POLICY },
-        /*
-          Jellyfin holds the first live playlist until three segments exist --
-          7.6s measured on 2026-10-17 -- and hls.js gives up at 10s by default.
-          A timeout cancels the request, and Jellyfin stops the transcode on a
-          cancelled request, so a slow tune never got a second chance. Same
-          budget as the tune timer, which stays the judge of a dead channel.
-        */
-        manifestLoadPolicy: { default: LIVE_PLAYLIST_LOAD_POLICY },
-        playlistLoadPolicy: { default: LIVE_PLAYLIST_LOAD_POLICY },
-      });
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        // Start at the edge, not wherever the playlist happens to begin.
-        // With an EVENT playlist hls.js has no sliding window to infer the
-        // live point from, so it is set explicitly.
-        seekToLiveEdge(video, {}, startCushion);
+    const start = () => {
+      if (supportsNativeHls()) {
+        video.src = src;
         startPlayback();
-      });
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (!data.fatal) return;
+      } else if (Hls.isSupported()) {
+        hls = new Hls({
+          /*
+            Jellyfin serves an EVENT playlist that grows and never slides:
+
+                #EXT-X-PLAYLIST-TYPE:EVENT
+                #EXT-X-MEDIA-SEQUENCE:0     <- never advances
+                4 segments -> 23 over 12s
+
+            So the "live edge" keeps moving away while the start stays at zero,
+            and a player that begins near the front plays a finite-looking
+            timeline, drifts further behind every minute, and stalls when it
+            finally meets the encoder. That is exactly the reported symptom:
+            starts somewhere, runs to an end, buffers, reconnects.
+
+            Expressed in SECONDS rather than segment counts, deliberately. The
+            count-based settings multiply by target duration, and the segment
+            length is now 1s rather than 3s (mediabox-infra#78) -- so the old
+            liveSyncDurationCount: 3 silently went from nine seconds of safety
+            to three, which is not enough to absorb a hiccup on a residential
+            IPTV feed.
+          */
+          liveSyncDuration: startCushion,
+          /*
+            liveMaxLatencyDuration is deliberately NOT set.
+
+            It makes hls.js seek to the live edge on its own once the playhead
+            falls further behind than the limit -- which is precisely what a
+            viewer does on purpose when they scrub back to re-watch something.
+            With it set, going back thirty seconds was quietly undone a moment
+            later by the library, and no amount of intent-tracking in this
+            component could win against it.
+
+            Falling behind unintentionally is handled by the stall recovery
+            below, which knows the difference because it checks stayBehindRef.
+          */
+          backBufferLength: BACK_BUFFER_SECONDS,
+          enableWorker: true,
+          lowLatencyMode: false,
+          /*
+            A hole in the buffer hls.js steps over instead of stalling on.
+            Default 0.1 s. Segment joins on these feeds and ffmpeg's dup-frame
+            fills (strong8k jumps 7.7 s every couple of minutes, 2026-10-25)
+            leave slightly bigger seams, and hls.js only skips a hole up to this
+            size -- anything larger is a stall until the recovery above moves
+            the playhead, six seconds later.
+          */
+          maxBufferHole: 0.5,
+          fragLoadPolicy: { default: LIVE_FRAG_LOAD_POLICY },
+          /*
+            Jellyfin holds the first live playlist until three segments exist --
+            7.6s measured on 2026-10-17 -- and hls.js gives up at 10s by default.
+            A timeout cancels the request, and Jellyfin stops the transcode on a
+            cancelled request, so a slow tune never got a second chance. Same
+            budget as the tune timer, which stays the judge of a dead channel.
+          */
+          manifestLoadPolicy: { default: LIVE_PLAYLIST_LOAD_POLICY },
+          playlistLoadPolicy: { default: LIVE_PLAYLIST_LOAD_POLICY },
+        });
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          // Start at the edge, not wherever the playlist happens to begin.
+          // With an EVENT playlist hls.js has no sliding window to infer the
+          // live point from, so it is set explicitly.
+          seekToLiveEdge(video, {}, startCushion);
+          startPlayback();
+        });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return;
+          clearTuneTimer();
+          const busy = data.response?.code === 503;
+          lastFailWasBusyRef.current = busy;
+          scheduleRetry(
+            busy
+              ? "This channel couldn’t be tuned — the provider’s lines are all in use."
+              : "Playback failed."
+          );
+        });
+      } else {
         clearTuneTimer();
-        const busy = data.response?.code === 503;
-        lastFailWasBusyRef.current = busy;
-        scheduleRetry(
-          busy
-            ? "This channel couldn’t be tuned — the provider’s lines are all in use."
-            : "Playback failed."
-        );
-      });
-    } else {
-      clearTuneTimer();
        
-      setError("This browser can’t play live streams.");
+        setError("This browser can’t play live streams.");
        
-      setLoading(false);
-    }
+        setLoading(false);
+      }
+    };
+
+    // The previous tune's line first (pendingRelease), then this one.
+    const release = pendingRelease ?? Promise.resolve();
+    pendingRelease = null;
+    void release.then(() => {
+      if (!disposed) start();
+    });
 
     return () => {
+      disposed = true;
+      if (resumeTimer !== null) clearTimeout(resumeTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pageshow", onPageShow);
+      video.removeEventListener("pause", onPauseEvent);
+      video.removeEventListener("play", onPlayEvent);
       clearTuneTimer();
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("play", onPlay);
@@ -869,7 +1062,10 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp }: Pro
       // comment that used to sit here claimed it tore down the transcode
       // upstream, and that is exactly the assumption that left ffmpeg running.
       // Jellyfin has to be told.
-      endTune(false);
+      pendingRelease = Promise.race([
+        endTune(false),
+        new Promise<void>((resolve) => setTimeout(resolve, RELEASE_WAIT_MS)),
+      ]);
       hls?.destroy();
       video.removeAttribute("src");
       video.load();

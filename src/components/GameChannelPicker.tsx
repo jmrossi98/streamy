@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { GAME_FEED_SEARCH_EVENT, type GameFeedSearchOutcome } from "@/lib/gameFeedSearch";
+import { GAME_FEED_SEARCH_EVENT, requestGameFeedRescan, type GameFeedSearchOutcome } from "@/lib/gameFeedSearch";
+import { FEED_RESCAN_MS, shouldRescanForFeed, stallFailoverOrder } from "@/lib/liveFailoverRules";
+import { Notice } from "@/components/ui";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
@@ -84,6 +86,29 @@ type Props = {
 const FEED_SEARCH_SILENCE_MS = 90_000;
 /** The longest a game page holds off playing in all, however many feeds are left to check. */
 const FEED_SEARCH_LIMIT_MS = 4 * 60_000;
+/** How long the name check before an automatic switch may take; past it, the switch goes ahead. */
+const NAME_CHECK_TIMEOUT_MS = 4_000;
+
+/**
+ * Whether a game feed's stream still names this game, asked right before an
+ * automatic switch to it: trex's playlist refresh renames streams in place,
+ * so a channel added for this game can carry another one hours later under
+ * its old name (liveFailoverRules feedStillNamesGame). Any doubt (no answer
+ * in time, an unknown) lets the switch go ahead, as before the check existed.
+ */
+async function feedStillNamesGameNow(fixtureId: string, c: { name: string }): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `/api/live/game-streams/name-check?fixtureId=${encodeURIComponent(fixtureId)}&channel=${encodeURIComponent(c.name)}`,
+      { cache: "no-store", signal: AbortSignal.timeout(NAME_CHECK_TIMEOUT_MS) }
+    );
+    if (!res.ok) return true;
+    const body = (await res.json()) as { verdict?: string };
+    return body.verdict !== "renamed";
+  } catch {
+    return true;
+  }
+}
 
 export function GameChannelPicker({
   channel,
@@ -123,6 +148,14 @@ export function GameChannelPicker({
   );
   /** Channels that already failed to start this visit, so the fallback never loops. */
   const [failedIds, setFailedIds] = useState<string[]>([]);
+  /** Channels the page moved the viewer off for stalling this visit (onChronicStalling). */
+  const [stalledIds, setStalledIds] = useState<string[]>([]);
+  /** Game feeds whose stream now names something else (a playlist refresh renamed it): never switched to. */
+  const [droppedIds, setDroppedIds] = useState<string[]>([]);
+  /** Automatic switches for stalling so far (capped: MAX_STALL_SWITCHES). */
+  const [stallSwitches, setStallSwitches] = useState(0);
+  /** The feed search is running (a "checking" or "adding" report came last). */
+  const [searchActive, setSearchActive] = useState(false);
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   /** Providers found at capacity this visit (a 503 on tune), so we don't keep trying their channels. */
   const [fullProviders, setFullProviders] = useState<string[]>([]);
@@ -135,6 +168,16 @@ export function GameChannelPicker({
    */
   const [pickedId, setPickedId] = useState<string | null>(remembered?.id ?? null);
   const userPicked = pickedId != null;
+  /** Everything known to carry the game: what a guess yields to (foundFeedTakesOver, stallFailoverOrder). */
+  const allGameIds = [...confirmedIds, ...gameFeedIds, ...addedIds];
+  /** Never switched to automatically again this visit. */
+  const triedIds = [...failedIds, ...stalledIds, ...droppedIds];
+
+  /** What's on now, for an automatic switch that finishes after an await. */
+  const selectedRef = useRef(selectedId);
+  useEffect(() => {
+    selectedRef.current = selectedId;
+  }, [selectedId]);
 
   // A better default from a refresh is taken up, unless the viewer chose.
   const defaultId = channel?.id ?? null;
@@ -151,6 +194,7 @@ export function GameChannelPicker({
     const onOutcome = (e: Event) => {
       const d = (e as CustomEvent<GameFeedSearchOutcome>).detail;
       if (d?.fixtureId !== fixtureId) return;
+      setSearchActive(d.outcome === "checking" || d.outcome === "adding");
       if (d.outcome === "checking") {
         setSearchProgress(d.progress ?? null);
         setSearchBeat((n) => n + 1);
@@ -181,27 +225,65 @@ export function GameChannelPicker({
         foundId: ch.id,
         manual: !!d.manual,
         pickedId,
-        gameFeedIds: [...confirmedIds, ...gameFeedIds, ...addedIds],
-        failedIds,
+        gameFeedIds: [...allGameIds, ch.id],
+        failedIds: triedIds,
       });
-      if (takesOver) {
-        // Over a guess the viewer picked: the switch is ours, so the pick is
-        // let go -- and not overwritten in the database, where the reload
-        // rule (page.tsx) already drops a guess once a game feed exists. If
-        // the feed fails, giveUpOn falls back as usual and, with the feed in
-        // failedIds, it is never switched to again.
+      if (!takesOver) return;
+      // Over a guess the viewer picked: the switch is ours, so the pick is
+      // let go -- and not overwritten in the database, where the reload
+      // rule (page.tsx) already drops a guess once a game feed exists. If
+      // the feed fails, giveUpOn falls back as usual and, with the feed in
+      // failedIds, it is never switched to again.
+      // Its name is checked first: the feed was found by name (feedStillNamesGameNow).
+      const before = selectedRef.current;
+      void feedStillNamesGameNow(fixtureId, ch).then((ok) => {
+        if (!ok) {
+          setDroppedIds((ids) => [...ids, ch.id]);
+          return;
+        }
+        // The viewer picked something while the name was checked: theirs stands.
+        if (selectedRef.current !== before) return;
         setPickedId(null);
         setSelectedId(ch.id);
         setHeld(false);
         setSearchEnd(null);
         setFallbackNote(null);
-      }
+      });
     };
     window.addEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
     return () => window.removeEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
     // Joined ids: the arrays are new each render, their contents rarely change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fixtureId, pickedId, confirmedIds.join(), gameFeedIds.join(), addedIds.join(), failedIds.join()]);
+  }, [fixtureId, pickedId, confirmedIds.join(), gameFeedIds.join(), addedIds.join(), triedIds.join()]);
+
+  /*
+    Look again for the game's own feed while a guess plays. Game feeds get
+    their names at the provider's playlist refresh, so the real one can
+    appear mid-game; a found one comes back through the outcome handler
+    above and takes over. Read through a ref so the ten-minute clock isn't
+    restarted by every render.
+  */
+  const rescanInputs = useRef({ selectedId, allGameIds, held: held || noLines, searching: searchActive });
+  useEffect(() => {
+    rescanInputs.current = { selectedId, allGameIds, held: held || noLines, searching: searchActive };
+  });
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const i = rescanInputs.current;
+      if (
+        shouldRescanForFeed({
+          selectedId: i.selectedId,
+          gameFeedIds: i.allGameIds,
+          held: i.held,
+          searching: i.searching,
+          visible: document.visibilityState === "visible",
+        })
+      ) {
+        requestGameFeedRescan(fixtureId);
+      }
+    }, FEED_RESCAN_MS);
+    return () => clearInterval(timer);
+  }, [fixtureId]);
 
   useEffect(() => {
     if (!held) return;
@@ -241,10 +323,18 @@ export function GameChannelPicker({
     if (reason === "busy" && deadProvider) full.add(deadProvider);
     setFullProviders([...full]);
 
-    const usable = options
-      .filter((c) => !failed.includes(c.id) && !providerFull(providerOf(c), full))
-      // A provider with a known free line ahead of one whose capacity we can't see.
-      .sort((a, b) => (providerFreeLines[providerOf(b) ?? ""] ?? 0) - (providerFreeLines[providerOf(a) ?? ""] ?? 0));
+    // A provider with a known free line ahead of one whose capacity we can't see.
+    const byFreeLines = (a: LiveChannel, b: LiveChannel) =>
+      (providerFreeLines[providerOf(b) ?? ""] ?? 0) - (providerFreeLines[providerOf(a) ?? ""] ?? 0);
+    const open = options.filter(
+      (c) => !failed.includes(c.id) && !droppedIds.includes(c.id) && !providerFull(providerOf(c), full)
+    );
+    // A feed left for stalling only as the last resort: it played, roughly,
+    // which beats a blank player.
+    const usable = [
+      ...open.filter((c) => !stalledIds.includes(c.id)).sort(byFreeLines),
+      ...open.filter((c) => stalledIds.includes(c.id)).sort(byFreeLines),
+    ];
     const next = usable[0];
     if (!next) {
       // Everything left is on a provider at capacity (or there's nothing left).
@@ -262,6 +352,53 @@ export function GameChannelPicker({
   }
 
   /**
+   * The feed on screen keeps stalling (LivePlayer onChronicStalling): move to
+   * the next option that could do better, by stallFailoverOrder -- a guess
+   * yields to the game's feeds, a game feed only to another game feed, never
+   * back to one tried this visit, at most MAX_STALL_SWITCHES times. Each
+   * candidate's name is checked first; one that no longer names the game is
+   * dropped and the next is tried. Nowhere better to go: stay, and say so.
+   */
+  async function leaveStalling(current: LiveChannel) {
+    const tried = [...triedIds, current.id];
+    setStalledIds((ids) => (ids.includes(current.id) ? ids : [...ids, current.id]));
+    const full = new Set(fullProviders);
+    const order = stallFailoverOrder({
+      currentId: current.id,
+      pickedId,
+      options: options.map((c) => ({
+        id: c.id,
+        usable: !providerFull(providerOf(c), full) && infoByChannel[c.name]?.stale !== true,
+        slow: speedByChannel[c.name] != null && speedByChannel[c.name] < KEEPING_UP_SPEED,
+      })),
+      gameFeedIds: allGameIds,
+      triedIds: tried,
+      switchesSoFar: stallSwitches,
+    });
+    for (const id of order) {
+      const next = options.find((c) => c.id === id);
+      if (!next) continue;
+      // Only the game's feeds found by name are checked: a confirmed network
+      // channel was never matched by its name.
+      const byName = [...gameFeedIds, ...addedIds].includes(id) && !confirmedIds.includes(id);
+      if (byName && !(await feedStillNamesGameNow(fixtureId, next))) {
+        setDroppedIds((ids) => [...ids, id]);
+        continue;
+      }
+      // The viewer moved on while the name was checked: their choice stands.
+      if (selectedRef.current !== current.id) return;
+      setStallSwitches((n) => n + 1);
+      setPickedId(null);
+      setSelectedId(id);
+      setFallbackNote(`${current.name} kept buffering, so we switched to ${next.name}.`);
+      return;
+    }
+    if (selectedRef.current === current.id) {
+      setFallbackNote(`${current.name} keeps buffering, and nothing else for this game looks better right now. Pick another below to try it.`);
+    }
+  }
+
+  /**
    * Optimistic on purpose: the switch has already happened in the player, and
    * a failed write costs a remembered preference, not the thing being watched.
    * Blocking the tune on a round trip would be the worse trade.
@@ -276,6 +413,7 @@ export function GameChannelPicker({
     // and a line may have freed since.
     setNoLines(false);
     setFailedIds((f) => f.filter((id) => id !== c.id));
+    setStalledIds((f) => f.filter((id) => id !== c.id));
     void fetch("/api/live/game-channel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -350,9 +488,14 @@ export function GameChannelPicker({
           channelName={selected.name}
           nowPlaying={selected.now?.name ?? null}
           onGiveUp={(reason) => giveUpOn(selected, reason)}
+          onChronicStalling={() => void leaveStalling(selected)}
         />
       )}
-      {fallbackNote && <p className="mt-3 text-sm text-amber-300/90">{fallbackNote}</p>}
+      {fallbackNote && (
+        <Notice className="mt-3" onDismiss={() => setFallbackNote(null)}>
+          {fallbackNote}
+        </Notice>
+      )}
       {/* A guess is playing, and the viewer didn't choose it: say why, so a
           49ers pregame show on a Leeds page isn't a mystery (2026-10-25). */}
       {searchEnd && !userPicked && selected && !held && !noLines && (
