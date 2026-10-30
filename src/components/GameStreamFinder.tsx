@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { announceGameFeedSearch } from "@/lib/gameFeedSearch";
+import { GAME_FEED_RESCAN_EVENT, announceGameFeedSearch } from "@/lib/gameFeedSearch";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
 import { Badge, Button } from "@/components/ui";
 import {
@@ -64,6 +64,23 @@ export function GameStreamFinder({
   const [adding, setAdding] = useState<number | null>(null);
   const [added, setAdded] = useState<Record<number, string>>({});
   const autoTried = useRef(false);
+  /**
+   * Which pass of the search this is. The picker asks for another every ten
+   * minutes while a guess plays (GAME_FEED_RESCAN_EVENT): game feeds get their
+   * names at the provider's playlist refresh, so one can appear mid-game.
+   */
+  const [round, setRound] = useState(0);
+  /** The last pass's streams and answers, so a re-run checks only what changed. */
+  const streamsRef = useRef<Candidate[] | null>(null);
+  const checksRef = useRef<Record<number, VerifyState>>({});
+  /** Answers carried into this pass: settled checks of streams whose name hasn't changed. */
+  const carriedRef = useRef<Record<number, VerifyState>>({});
+  /** Checks or an add still running: a re-run is not started on top of them. */
+  const runningQueues = useRef(0);
+  const addingRef = useRef(false);
+  useEffect(() => {
+    checksRef.current = checks;
+  }, [checks]);
 
   useEffect(() => {
     let live = true;
@@ -71,14 +88,44 @@ export function GameStreamFinder({
       .then((r) => (r.ok ? r.json() : { streams: [] }))
       .then((d: { streams?: Candidate[]; verify?: boolean }) => {
         if (!live) return;
-        setStreams(d.streams ?? []);
+        const next = d.streams ?? [];
+        // A re-run: a stream with the same name already answered "plays" or
+        // "no video" keeps that answer, so the probe only pulls from a
+        // provider line for a stream that is new or was renamed -- a check
+        // that could change nothing is a line taken from a viewer for nothing.
+        // Busy and errored answers said nothing, so those are asked again.
+        const prevNames = new Map((streamsRef.current ?? []).map((p) => [p.id, p.name]));
+        const carried: Record<number, VerifyState> = {};
+        if (round > 0) {
+          for (const c of next) {
+            const prev = checksRef.current[c.id];
+            if (prevNames.get(c.id) === c.name && (prev?.status === "ok" || prev?.status === "dead")) carried[c.id] = prev;
+          }
+        }
+        carriedRef.current = carried;
+        streamsRef.current = next;
+        setChecks(carried);
+        setStreams(next);
         setVerify(d.verify === true);
       })
       .catch(() => live && setStreams([]));
     return () => {
       live = false;
     };
-  }, [fixtureId]);
+  }, [fixtureId, round]);
+
+  useEffect(() => {
+    const onRescan = (e: Event) => {
+      if ((e as CustomEvent<{ fixtureId: string }>).detail?.fixtureId !== fixtureId) return;
+      // Only a search that could add a feed is worth its provider pulls, and
+      // never a second one on top of one still running.
+      if (!autoAdd || runningQueues.current > 0 || addingRef.current) return;
+      autoTried.current = false;
+      setRound((r) => r + 1);
+    };
+    window.addEventListener(GAME_FEED_RESCAN_EVENT, onRescan);
+    return () => window.removeEventListener(GAME_FEED_RESCAN_EVENT, onRescan);
+  }, [fixtureId, autoAdd]);
 
   // One queue per provider, run side by side: every provider line takes a
   // single connection, so a provider's streams go one at a time, but two
@@ -89,11 +136,21 @@ export function GameStreamFinder({
     const ids = streamsToVerify(streams);
     const ctrl = new AbortController();
     // Queued shows nothing, so this is only published with the first check.
-    let states: Record<number, VerifyState> = Object.fromEntries(ids.map((id) => [id, { status: "queued" } as VerifyState]));
+    let states: Record<number, VerifyState> = Object.fromEntries(
+      ids.map((id) => [id, carriedRef.current[id] ?? ({ status: "queued" } as VerifyState)])
+    );
     const providerOf = (id: number) => streams.find((s) => s.id === id)?.provider ?? "?";
     const queues = new Map<string, number[]>();
     for (const id of ids) queues.set(providerOf(id), [...(queues.get(providerOf(id)) ?? []), id]);
     const runQueue = async (queue: number[]) => {
+      runningQueues.current += 1;
+      try {
+        await checkQueue(queue);
+      } finally {
+        runningQueues.current -= 1;
+      }
+    };
+    const checkQueue = async (queue: number[]) => {
       for (const id of queue) {
         if (ctrl.signal.aborted) return;
         if (states[id]?.status !== "queued") continue; // already settled, e.g. its provider is busy
@@ -172,6 +229,7 @@ export function GameStreamFinder({
   async function add(s: Candidate, auto = false): Promise<boolean> {
     if (adding !== null || !canAdd(checks[s.id])) return false;
     setAdding(s.id);
+    addingRef.current = true;
     try {
       const res = await fetch("/api/live/streams/promote", {
         method: "POST",
@@ -204,6 +262,7 @@ export function GameStreamFinder({
       }
       return res.ok;
     } finally {
+      addingRef.current = false;
       setAdding(null);
     }
   }

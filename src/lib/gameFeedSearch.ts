@@ -27,3 +27,16 @@ export function announceGameFeedSearch(detail: GameFeedSearchOutcome): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent<GameFeedSearchOutcome>(GAME_FEED_SEARCH_EVENT, { detail }));
 }
+
+/**
+ * The other direction (GameChannelPicker -> GameStreamFinder): look again for
+ * the game's own feed. Sent every FEED_RESCAN_MS while a guess is playing
+ * (liveFailoverRules shouldRescanForFeed); a feed it finds comes back as an
+ * "added" outcome and takes over like any other (foundFeedTakesOver).
+ */
+export const GAME_FEED_RESCAN_EVENT = "streamy:game-feed-rescan";
+
+export function requestGameFeedRescan(fixtureId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<{ fixtureId: string }>(GAME_FEED_RESCAN_EVENT, { detail: { fixtureId } }));
+}
