@@ -257,6 +257,9 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
   // The page's title-row slot, found after mount (portals need a real node).
   const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null);
   useEffect(() => {
+    // Read once after mount: the slot is server-rendered, so reading it during
+    // render would differ between server and client.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActionsSlot(document.getElementById(FLASH_ACTIONS_SLOT_ID));
   }, []);
 
