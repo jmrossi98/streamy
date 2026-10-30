@@ -3,6 +3,7 @@ import {
   MAX_STALL_SWITCHES,
   MIN_PLAY_BEFORE_JUDGING_MS,
   SESSION_LOST_HIDDEN_MS,
+  channelCanStart,
   feedStillNamesGame,
   isChronicStalling,
   resumeAction,
@@ -138,5 +139,24 @@ describe("resumeAction", () => {
   it("leaves alone a stream that played on in the background, or never started", () => {
     expect(resumeAction({ ...base, hiddenForMs: 120_000, advancedWhileHiddenSec: 118 })).toBe("none");
     expect(resumeAction({ ...base, hadPicture: false })).toBe("none");
+  });
+});
+
+describe("channelCanStart", () => {
+  const use = { freeLines: { trex: 0, strong8k: 1 }, watched: new Set(["nhlsanjosesharks"]) };
+  it("starts a channel someone is watching even with its provider full", () => {
+    expect(channelCanStart("NHL SAN JOSE SHARKS", "trex", use)).toBe(true);
+    expect(channelCanStart("NHL SAN JOSE SHARKS", "trex", use, ["trex"])).toBe(true);
+  });
+  it("not an unwatched channel on a full provider", () => {
+    expect(channelCanStart("ABC 7 BUFFALO", "trex", use)).toBe(false);
+  });
+  it("not on a provider that answered lines-full this visit", () => {
+    expect(channelCanStart("ESPN", "strong8k", use, ["strong8k"])).toBe(false);
+  });
+  it("a provider with a line, or an unknown one, is fine", () => {
+    expect(channelCanStart("ESPN", "strong8k", use)).toBe(true);
+    expect(channelCanStart("ESPN", "other", use)).toBe(true);
+    expect(channelCanStart("ESPN", null, use)).toBe(true);
   });
 });

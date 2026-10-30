@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { GAME_FEED_SEARCH_EVENT, requestGameFeedRescan, type GameFeedSearchOutcome } from "@/lib/gameFeedSearch";
-import { FEED_RESCAN_MS, shouldRescanForFeed, stallFailoverOrder } from "@/lib/liveFailoverRules";
+import { FEED_RESCAN_MS, channelCanStart, shouldRescanForFeed, stallFailoverOrder } from "@/lib/liveFailoverRules";
+import { channelKey } from "@/lib/liveChannelStateRules";
+import type { LineUse } from "@/lib/lineSteeringRules";
 import { Notice } from "@/components/ui";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
@@ -31,6 +33,12 @@ type Props = {
   infoByChannel: Record<string, ChannelInfo>;
   /** Provider name -> free lines right now (Dispatcharr snapshot). Absent = unknown, treated as available. */
   providerFreeLines?: Record<string, number>;
+  /**
+   * channelKey of every channel someone is already watching (lineUse). Such a
+   * channel starts even on a provider with no free line: Dispatcharr shares
+   * its connection.
+   */
+  watchedChannels?: string[];
   /** Channel name -> how fast its stream was last measured arriving (1 = real time). */
   speedByChannel?: Record<string, number>;
   /** This game's id, so a pick can be remembered against it. */
@@ -88,6 +96,23 @@ const FEED_SEARCH_SILENCE_MS = 90_000;
 const FEED_SEARCH_LIMIT_MS = 4 * 60_000;
 /** How long the name check before an automatic switch may take; past it, the switch goes ahead. */
 const NAME_CHECK_TIMEOUT_MS = 4_000;
+/** How long a line refresh before a fallback may take; past it, the last snapshot is used. */
+const LINE_REFRESH_TIMEOUT_MS = 3_000;
+
+/** Provider lines now (/api/live/game-streams/line-use), or null when that can't be told in time. */
+async function fetchLineUse(): Promise<LineUse | null> {
+  try {
+    const res = await fetch("/api/live/game-streams/line-use", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(LINE_REFRESH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { freeLines?: Record<string, number>; watched?: string[] };
+    return { freeLines: body.freeLines ?? {}, watched: new Set(body.watched ?? []) };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Whether a game feed's stream still names this game, asked right before an
@@ -118,7 +143,8 @@ export function GameChannelPicker({
   marketTeamByName = {},
   candidates,
   infoByChannel,
-  providerFreeLines = {},
+  providerFreeLines: initialFreeLines = {},
+  watchedChannels = [],
   speedByChannel = {},
   fixtureId,
   storedChoice,
@@ -159,6 +185,19 @@ export function GameChannelPicker({
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   /** Providers found at capacity this visit (a 503 on tune), so we don't keep trying their channels. */
   const [fullProviders, setFullProviders] = useState<string[]>([]);
+  /**
+   * Provider lines: the page's snapshot at load, refreshed before a fallback
+   * or a stall switch and every FEED_RESCAN_MS (fetchLineUse) -- a snapshot
+   * from the start of a game says little an hour in.
+   */
+  const [lines, setLines] = useState<LineUse>(() => ({ freeLines: initialFreeLines, watched: new Set(watchedChannels) }));
+  /** The latest lines, for a refresh that lands after an await. */
+  async function freshLines(): Promise<LineUse> {
+    const next = await fetchLineUse();
+    if (!next) return lines;
+    setLines(next);
+    return next;
+  }
   /** Set when every option left is on a provider with no free line -- shown instead of spinning forever. */
   const [noLines, setNoLines] = useState(false);
   /**
@@ -269,6 +308,10 @@ export function GameChannelPicker({
   });
   useEffect(() => {
     const timer = setInterval(() => {
+      // Cheap (two Dispatcharr reads, no provider line), so whatever is on.
+      if (document.visibilityState === "visible") {
+        void fetchLineUse().then((next) => next && setLines(next));
+      }
       const i = rescanInputs.current;
       if (
         shouldRescanForFeed({
@@ -303,9 +346,13 @@ export function GameChannelPicker({
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
 
   const providerOf = (c: LiveChannel): string | null => infoByChannel[c.name]?.provider ?? null;
-  /** A provider is unusable when we hit its capacity this visit, or the snapshot shows no free line. */
-  const providerFull = (provider: string | null, full: Set<string>): boolean =>
-    provider != null && (full.has(provider) || (providerFreeLines[provider] ?? 1) <= 0);
+  /**
+   * Whether a channel can start as far as lines go: not on a provider we hit
+   * capacity on this visit or with no free line now -- unless someone is
+   * already watching it, which shares their connection (channelCanStart).
+   */
+  const canStart = (c: LiveChannel, full: Set<string>, use: LineUse = lines): boolean =>
+    channelCanStart(c.name, providerOf(c), use, [...full]);
 
   /**
    * A channel that never started, after its own retries: move on. When it
@@ -315,20 +362,22 @@ export function GameChannelPicker({
    * available provider, say so at once rather than spin on a channel we already
    * know can't start. Not remembered as the viewer's pick -- it was ours.
    */
-  function giveUpOn(dead: LiveChannel, reason?: "busy" | "offline") {
+  async function giveUpOn(dead: LiveChannel, reason?: "busy" | "offline") {
     const failed = [...failedIds, dead.id];
     setFailedIds(failed);
     const deadProvider = providerOf(dead);
     const full = new Set(fullProviders);
     if (reason === "busy" && deadProvider) full.add(deadProvider);
     setFullProviders([...full]);
+    // Which channels are on and which lines are free changes through a game.
+    const use = await freshLines();
 
-    // A provider with a known free line ahead of one whose capacity we can't see.
-    const byFreeLines = (a: LiveChannel, b: LiveChannel) =>
-      (providerFreeLines[providerOf(b) ?? ""] ?? 0) - (providerFreeLines[providerOf(a) ?? ""] ?? 0);
-    const open = options.filter(
-      (c) => !failed.includes(c.id) && !droppedIds.includes(c.id) && !providerFull(providerOf(c), full)
-    );
+    // A channel someone is watching first (it costs no line), then a provider
+    // with a known free line ahead of one whose capacity we can't see.
+    const rank = (c: LiveChannel) =>
+      use.watched.has(channelKey(c.name)) ? Infinity : (use.freeLines[providerOf(c) ?? ""] ?? 0);
+    const byFreeLines = (a: LiveChannel, b: LiveChannel) => rank(b) - rank(a);
+    const open = options.filter((c) => !failed.includes(c.id) && !droppedIds.includes(c.id) && canStart(c, full, use));
     // A feed left for stalling only as the last resort: it played, roughly,
     // which beats a blank player.
     const usable = [
@@ -363,12 +412,13 @@ export function GameChannelPicker({
     const tried = [...triedIds, current.id];
     setStalledIds((ids) => (ids.includes(current.id) ? ids : [...ids, current.id]));
     const full = new Set(fullProviders);
+    const use = await freshLines();
     const order = stallFailoverOrder({
       currentId: current.id,
       pickedId,
       options: options.map((c) => ({
         id: c.id,
-        usable: !providerFull(providerOf(c), full) && infoByChannel[c.name]?.stale !== true,
+        usable: canStart(c, full, use) && infoByChannel[c.name]?.stale !== true,
         slow: speedByChannel[c.name] != null && speedByChannel[c.name] < KEEPING_UP_SPEED,
       })),
       gameFeedIds: allGameIds,
@@ -487,7 +537,7 @@ export function GameChannelPicker({
           channelId={selected.id}
           channelName={selected.name}
           nowPlaying={selected.now?.name ?? null}
-          onGiveUp={(reason) => giveUpOn(selected, reason)}
+          onGiveUp={(reason) => void giveUpOn(selected, reason)}
           onChronicStalling={() => void leaveStalling(selected)}
         />
       )}
