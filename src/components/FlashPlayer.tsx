@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui";
 import {
   applySave,
   diffStorage,
@@ -70,9 +71,20 @@ function loadRuffle(): Promise<void> {
  * Sized from the SWF's own header rather than left to fill the container: a
  * Flash movie has a fixed stage, and stretching it to an arbitrary box is how
  * you get a game whose buttons are in the wrong place.
+ *
+ * Within that, it is as big as the window allows: as wide as the column, but
+ * never taller than the screen below the page header, so the whole stage is
+ * visible without scrolling. A Full screen button goes further. Where the
+ * browser can't make an element fullscreen (iPhone Safari), it fills the
+ * window instead. Either way Ruffle letterboxes the stage, so it keeps its
+ * shape.
  */
 export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<RufflePlayerElement | null>(null);
+  /** Fullscreen via the Fullscreen API, or the fill-the-window fallback. */
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /** localStorage as it looked before this game ran -- the diff baseline. */
@@ -156,6 +168,7 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
         if (!api || !host) throw new Error("The Flash player didn’t start.");
 
         player = api.createPlayer();
+        playerRef.current = player;
         player.style.width = "100%";
         player.style.height = "100%";
         host.appendChild(player);
@@ -194,28 +207,89 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
       // leaving one behind on navigation means the previous game is still
       // running, and audible.
       player?.remove();
+      playerRef.current = null;
     };
   }, [src, slug, persist]);
+
+  // Leaving real fullscreen with Esc or the browser's own control ends it here too.
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setExpanded(false);
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // Esc closes the fill-the-window fallback, which the browser doesn't manage.
+  useEffect(() => {
+    if (!expanded || document.fullscreenElement) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  const toggleExpanded = useCallback(async () => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    if (expanded) {
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
+    if (frame.requestFullscreen) {
+      // A refusal (no user gesture, iframe policy) leaves the window fallback.
+      await frame.requestFullscreen().catch(() => {});
+    }
+    // Clicking the button took keyboard focus; games read the keyboard.
+    playerRef.current?.focus();
+  }, [expanded]);
+
+  const ratio = width > 0 && height > 0 ? width / height : 4 / 3;
 
   return (
     <div className="w-full">
       <div
-        ref={hostRef}
-        // The stage's own aspect ratio, so the frame is correct before the
-        // movie loads and doesn't jump when it does.
-        style={{ aspectRatio: width > 0 && height > 0 ? `${width} / ${height}` : "4 / 3" }}
-        className="relative w-full overflow-hidden rounded-lg bg-black"
-        aria-label={title}
+        ref={frameRef}
+        className={
+          expanded
+            ? "fixed inset-0 z-[100] flex flex-col bg-black"
+            : "mx-auto"
+        }
+        // Not taller than the screen below the header and title (~13rem);
+        // the width that height allows, capped at the column.
+        style={expanded ? undefined : { width: `min(100%, calc((100dvh - 13rem) * ${ratio}))`, minWidth: "min(100%, 320px)" }}
       >
-        {(loading || error) && (
-          <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
-            {error ? (
-              <p className="text-sm text-red-400">{error}</p>
-            ) : (
-              <p className="text-sm text-white/50">Loading…</p>
-            )}
-          </div>
-        )}
+        <div
+          ref={hostRef}
+          // The stage's own aspect ratio, so the frame is correct before the
+          // movie loads and doesn't jump when it does. Expanded, it fills the
+          // screen and Ruffle letterboxes the stage inside it.
+          style={expanded ? undefined : { aspectRatio: `${ratio}` }}
+          className={
+            expanded
+              ? "relative min-h-0 w-full flex-1 overflow-hidden bg-black"
+              : "relative w-full overflow-hidden rounded-lg bg-black"
+          }
+          aria-label={title}
+        >
+          {(loading || error) && (
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+              {error ? (
+                <p className="text-sm text-red-400">{error}</p>
+              ) : (
+                <p className="text-sm text-white/50">Loading…</p>
+              )}
+            </div>
+          )}
+        </div>
+        <div className={expanded ? "flex justify-end p-2" : "mt-2 flex justify-end"}>
+          <Button variant="ghost" size="sm" onClick={() => void toggleExpanded()}>
+            {expanded ? "Exit full screen" : "Full screen"}
+          </Button>
+        </div>
       </div>
     </div>
   );

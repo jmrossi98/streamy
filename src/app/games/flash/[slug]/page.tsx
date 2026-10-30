@@ -51,7 +51,7 @@ export default async function FlashGamePage({
 
   return (
     <div className={BROWSE_PAGE_CLASS}>
-      <div className="mx-auto w-full max-w-5xl px-4 md:px-6">
+      <div className="mx-auto w-full max-w-[1600px] px-4 md:px-6">
         <Link href="/games" className="text-sm text-white/50 transition-colors hover:text-white">
           ← Games
         </Link>
