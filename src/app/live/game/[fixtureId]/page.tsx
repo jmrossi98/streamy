@@ -287,6 +287,8 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   // every provider is full. Best effort: a stale snapshot costs the hint, not
   // the page.
   let providerFreeLines: Record<string, number> = {};
+  /** channelKey of every channel someone is watching: startable on a full provider. */
+  let watchedChannels: string[] = [];
   // With every line of a provider in use, the default moves to a feed of the
   // game that can start: one someone is already watching (Dispatcharr shares
   // its connection), else one on a provider with a line (lineSteeringRules.ts).
@@ -297,6 +299,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
     if (accounts) {
       const use = lineUse(accounts, connections);
       providerFreeLines = use.freeLines;
+      watchedChannels = [...use.watched];
       const gameIds = new Set([...confirmed, ...gameFeeds].map((c) => c.id));
       const opts = {
         use,
@@ -368,6 +371,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
           candidates={pickerCandidates}
           infoByChannel={infoByChannel}
           providerFreeLines={providerFreeLines}
+          watchedChannels={watchedChannels}
           speedByChannel={Object.fromEntries(
             [pickerChannel, ...pickerCandidates]
               .filter((c): c is NonNullable<typeof c> => c != null)

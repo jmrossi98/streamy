@@ -12,7 +12,9 @@
 import { STALL_WINDOW_MS, MAX_STALLS, MAX_STALLED_MS } from "./liveStreamAlertRules";
 import { NOTICEABLE_STALL_MS } from "./viewerActivityRules";
 import { gameStreamScore, type GameFixture } from "./gameStreamRules";
+import { channelKey } from "./liveChannelStateRules";
 import { namesOtherDate } from "./liveGuideGrid";
+import { wouldNeedFullLine, type LineUse } from "./lineSteeringRules";
 
 // ------------------------------------------------------- chronic stalling
 
@@ -106,6 +108,27 @@ export function stallFailoverOrder({
     .map((o, i) => ({ o, i }))
     .sort((a, b) => tier(a.o) - tier(b.o) || a.i - b.i)
     .map(({ o }) => o.id);
+}
+
+// ------------------------------------------------------------ line capacity
+
+/**
+ * Whether a channel can start now, as far as provider lines go. A channel
+ * someone is already watching always can: Dispatcharr serves every viewer of
+ * a channel from one upstream connection, so it costs no line even on a
+ * provider with none free (lineSteeringRules). Otherwise not on a provider
+ * that answered a tune with "lines full" this visit (`fullThisVisit`), nor
+ * one the snapshot shows with no free line.
+ */
+export function channelCanStart(
+  name: string,
+  provider: string | null | undefined,
+  use: LineUse,
+  fullThisVisit: readonly string[] = []
+): boolean {
+  if (use.watched.has(channelKey(name))) return true;
+  if (provider && fullThisVisit.includes(provider)) return false;
+  return !wouldNeedFullLine(name, provider, use);
 }
 
 // ----------------------------------------------------- re-running the search
