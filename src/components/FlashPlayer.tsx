@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui";
 import {
   applySave,
@@ -29,6 +30,12 @@ type Props = {
    */
   spoofUrl?: string | null;
 };
+
+/**
+ * Where the Full screen button goes when the page offers a spot for it (the
+ * title row), so it doesn't sit below the fold under a screen-tall stage.
+ */
+export const FLASH_ACTIONS_SLOT_ID = "flash-player-actions";
 
 type RufflePlayerElement = HTMLElement & {
   load: (options: { url: string } | { data: ArrayBuffer; swfFileName?: string }) => Promise<void>;
@@ -247,10 +254,26 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
     playerRef.current?.focus();
   }, [expanded]);
 
+  // The page's title-row slot, found after mount (portals need a real node).
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    // Read once after mount: the slot is server-rendered, so reading it during
+    // render would differ between server and client.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActionsSlot(document.getElementById(FLASH_ACTIONS_SLOT_ID));
+  }, []);
+
   const ratio = width > 0 && height > 0 ? width / height : 4 / 3;
+
+  const toggleButton = (
+    <Button variant="secondary" size="sm" onClick={() => void toggleExpanded()}>
+      {expanded ? "Exit full screen" : "Full screen"}
+    </Button>
+  );
 
   return (
     <div className="w-full">
+      {actionsSlot && !expanded && createPortal(toggleButton, actionsSlot)}
       <div
         ref={frameRef}
         className={
@@ -258,9 +281,9 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
             ? "fixed inset-0 z-[100] flex flex-col bg-black"
             : "mx-auto"
         }
-        // Not taller than the screen below the header and title (~13rem);
+        // Not taller than the screen below the header and title row (~14rem);
         // the width that height allows, capped at the column.
-        style={expanded ? undefined : { width: `min(100%, calc((100dvh - 13rem) * ${ratio}))`, minWidth: "min(100%, 320px)" }}
+        style={expanded ? undefined : { width: `min(100%, calc((100dvh - 14rem) * ${ratio}))`, minWidth: "min(100%, 320px)" }}
       >
         <div
           ref={hostRef}
@@ -285,11 +308,9 @@ export function FlashPlayer({ src, title, slug, width, height, spoofUrl = null }
             </div>
           )}
         </div>
-        <div className={expanded ? "flex justify-end p-2" : "mt-2 flex justify-end"}>
-          <Button variant="ghost" size="sm" onClick={() => void toggleExpanded()}>
-            {expanded ? "Exit full screen" : "Full screen"}
-          </Button>
-        </div>
+        {(expanded || !actionsSlot) && (
+          <div className={expanded ? "flex justify-end p-2" : "mt-2 flex justify-end"}>{toggleButton}</div>
+        )}
       </div>
     </div>
   );

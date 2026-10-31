@@ -5,7 +5,7 @@ import { getSession, getValidSessionUserId, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
 import { getFlashGame } from "@/lib/flashGames";
-import { FlashPlayer } from "@/components/FlashPlayer";
+import { FLASH_ACTIONS_SLOT_ID, FlashPlayer } from "@/components/FlashPlayer";
 import { localFileVersion } from "@/lib/flashStorage";
 import { andkonGameUrl } from "@/lib/andkon";
 import { findCatalogAndkonPath } from "@/lib/flashCatalog";
@@ -59,7 +59,7 @@ export default async function FlashGamePage({
         {/* Title, byline and the list button on one line on desktop: the
             player is the point of this page, and three stacked blocks above it
             pushed it below the fold on a laptop. */}
-        <div className="mb-5 mt-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="mb-4 mt-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <h1 className="font-display text-2xl font-bold text-white sm:text-3xl">
               {game.title}
@@ -69,6 +69,8 @@ export default async function FlashGamePage({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-3">
+            {/* FlashPlayer puts its Full screen button here. */}
+            {game.playable && game.fileName && <span id={FLASH_ACTIONS_SLOT_ID} className="contents" />}
             <WatchlistToggle kind="flash" itemId={game.slug} initialInList={inList} />
             {/* Admin-only, and only once there is something to delete. The
                 game re-downloads on the next play, so this is a repair for a
