@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   airDay,
+  sameTitle,
   seasonInOtherNumbering,
   toOtherNumbering,
   type AirDates,
@@ -104,5 +105,72 @@ describe("air dates settle layouts that differ", () => {
     expect(airDay("2026-10-18T00:00:00.0000000Z")).toBe("2026-10-18");
     expect(airDay("")).toBeNull();
     expect(airDay(null)).toBeNull();
+  });
+});
+
+// SpongeBob season 2, 2026-10-31: 36 episodes on both sides, ordered
+// differently. TMDB has "Christmas Who?" at 9; TVDB files it as a special and
+// has "Gary Takes a Bath" at 20. Playing Shanghaied played The Smoking Peanut.
+const SB_TMDB_S2 = [
+  "Something Smells", "Bossy Boots", "Your Shoe's Untied", "Squid's Day Off", "Big Pink Loser", "Bubble Buddy",
+  "Mermaid Man & Barnacle Boy III", "Squirrel Jokes", "Christmas Who?", "Dying for Pie", "Imitation Krabs", "Wormy",
+  "Patty Hype", "Survival of the Idiots", "Dumped", "Grandma's Kisses", "Squidville", "No Free Rides",
+  "I'm Your Biggest Fanatic", "Pressure", "The Smoking Peanut", "Shanghaied", "Prehibernation Week", "Life of Crime",
+  "The Secret Box", "Band Geeks", "Sailor Mouth", "Artist Unknown", "Jellyfish Hunter", "The Fry Cook Games",
+  "Just One Bite", "The Bully", "Squid on Strike", "Sandy, SpongeBob, and the Worm", "Procrastination", "I'm with Stupid",
+];
+const SB_TVDB_S2 = [
+  "Something Smells", "Bossy Boots", "Your Shoe's Untied", "Squid's Day Off", "Big Pink Loser", "Bubble Buddy",
+  "Mermaid Man and Barnacle Boy III", "Squirrel Jokes", "Dying for Pie", "Imitation Krabs", "Wormy", "Patty Hype",
+  "Survival of the Idiots", "Dumped", "Grandma's Kisses", "Squidville", "No Free Rides", "I'm Your Biggest Fanatic",
+  "Shanghaied", "Gary Takes a Bath", "Pressure", "The Smoking Peanut", "Prehibernation Week", "Life of Crime",
+  "The Secret Box", "Band Geeks", "Sailor Mouth", "Artist Unknown", "Jellyfish Hunter", "The Fry Cook Games",
+  "Just One Bite", "The Bully", "Squid on Strike", "Sandy, SpongeBob, and the Worm", "Procrastination", "I'm with Stupid",
+];
+const SB_TMDB: TmdbLayout = {
+  counts: { 1: 2, 2: 36 },
+  titles: Object.fromEntries(SB_TMDB_S2.map((t, i) => [`2:${i + 1}`, t])),
+};
+const SB_TVDB: EpisodeRef[] = [
+  { season: 0, episode: 1, title: "Christmas Who?" },
+  { season: 1, episode: 1, title: "Help Wanted" },
+  { season: 1, episode: 2, title: "Reef Blower" },
+  ...SB_TVDB_S2.map((title, i) => ({ season: 2, episode: i + 1, title })),
+];
+
+describe("toOtherNumbering by title", () => {
+  it("finds Shanghaied where TVDB numbers it, not at the same number", () => {
+    expect(toOtherNumbering(SB_TMDB, SB_TVDB, { season: 2, episode: 22 })).toMatchObject({ season: 2, episode: 19 });
+    expect(toOtherNumbering(SB_TMDB, SB_TVDB, { season: 2, episode: 21 })).toMatchObject({ season: 2, episode: 22 });
+    expect(toOtherNumbering(SB_TMDB, SB_TVDB, { season: 2, episode: 10 })).toMatchObject({ season: 2, episode: 9 });
+  });
+  it("finds an episode TVDB files as a special", () => {
+    expect(toOtherNumbering(SB_TMDB, SB_TVDB, { season: 2, episode: 9 })).toMatchObject({ season: 0, episode: 1 });
+  });
+  it("keeps the same number when the names agree, & and 'and' alike", () => {
+    expect(toOtherNumbering(SB_TMDB, SB_TVDB, { season: 2, episode: 7 })).toMatchObject({ season: 2, episode: 7 });
+    expect(toOtherNumbering(SB_TMDB, SB_TVDB, { season: 2, episode: 30 })).toMatchObject({ season: 2, episode: 30 });
+  });
+  it("ignores placeholder names and names it can't place", () => {
+    const tmdb: TmdbLayout = { counts: { 1: 3 }, titles: { "1:2": "Episode 2", "1:3": "Something Else" } };
+    const other: EpisodeRef[] = [1, 2, 3].map((e) => ({ season: 1, episode: e, title: `Episode ${e + 1}` }));
+    expect(toOtherNumbering(tmdb, other, { season: 1, episode: 2 })).toMatchObject({ season: 1, episode: 2 });
+    expect(toOtherNumbering(tmdb, other, { season: 1, episode: 3 })).toMatchObject({ season: 1, episode: 3 });
+  });
+  it("maps a whole season by title when the names disagree", () => {
+    const mapped = seasonInOtherNumbering(SB_TMDB, SB_TVDB, 2);
+    const at = (e: number) => mapped.find((m) => m.tmdbEpisode === e)?.other;
+    expect(at(22)).toMatchObject({ season: 2, episode: 19, title: "Shanghaied" });
+    expect(at(9)).toMatchObject({ season: 0, episode: 1 });
+    expect(mapped).toHaveLength(36);
+  });
+});
+
+describe("sameTitle", () => {
+  it("compares names, not spelling", () => {
+    expect(sameTitle("The Smoking Peanut", "Smoking Peanut")).toBe(true);
+    expect(sameTitle("Shanghaied", "The Smoking Peanut")).toBe(false);
+    expect(sameTitle("Episode 4", "Shanghaied")).toBeNull();
+    expect(sameTitle(null, "Shanghaied")).toBeNull();
   });
 });

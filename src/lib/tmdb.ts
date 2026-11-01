@@ -12,7 +12,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { cached } from "./ttlCache";
 import { isRetryable, tmdbFetch, TmdbTransientError } from "./tmdbThrottle";
-import { airKey, type AirDates, type SeasonCounts, type TmdbLayout } from "./episodeNumbering";
+import { airKey, type AirDates, type SeasonCounts, type Titles, type TmdbLayout } from "./episodeNumbering";
 // Lazy-load mock module only when needed (dev without API key) — avoids
 // compiling 200 lines of mock data on every page in dev when using real API.
 let _mock: typeof import("./tmdb-mock") | null = null;
@@ -570,7 +570,7 @@ const TMDB_APPEND_LIMIT = 20;
 export async function getTmdbSeasonLayout(id: string): Promise<TmdbLayout | null> {
   if (USE_MOCK) return null;
   return cached(
-    `tmdb-season-layout:${id}`,
+    `tmdb-season-layout:v2:${id}`,
     ONE_DAY_MS,
     async () => {
       try {
@@ -580,24 +580,26 @@ export async function getTmdbSeasonLayout(id: string): Promise<TmdbLayout | null
         if (Object.keys(counts).length === 0) return null;
 
         const airDates: AirDates = {};
+        const titles: Titles = {};
         const seasons = Object.keys(counts).map(Number);
         for (let i = 0; i < seasons.length; i += TMDB_APPEND_LIMIT) {
           const chunk = seasons.slice(i, i + TMDB_APPEND_LIMIT);
           try {
-            const appended = await fetchTmdb<Record<string, { episodes?: { episode_number: number; air_date?: string | null }[] }>>(
+            const appended = await fetchTmdb<Record<string, { episodes?: { episode_number: number; air_date?: string | null; name?: string | null }[] }>>(
               `tv/${id}`,
               { append_to_response: chunk.map((n) => `season/${n}`).join(",") }
             );
             for (const n of chunk) {
               for (const e of appended[`season/${n}`]?.episodes ?? []) {
                 if (e.air_date) airDates[airKey(n, e.episode_number)] = e.air_date;
+                if (e.name) titles[airKey(n, e.episode_number)] = e.name;
               }
             }
           } catch {
             // The counts still translate by position; only the dates are lost.
           }
         }
-        return { counts, airDates };
+        return { counts, airDates, titles };
       } catch {
         return null;
       }
