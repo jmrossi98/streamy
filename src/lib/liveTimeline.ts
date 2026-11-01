@@ -212,7 +212,11 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   // and the space that usually follows there is no boundary at all and the
   // pattern never matched "PARAMOUNT+ HD" -- caught by the test below. The
   // alternation carries its own boundary only on the spelled-out "plus".
-  { pattern: /\bparamount\s*(?:\+|plus\b)/, leagues: ["Champions League", "NFL"] },
+  //
+  // No leagues since 2026-11-01, like Peacock below: a provider's "PARAMOUNT+"
+  // channel is a promo loop or an event slot, never the service's feed of a
+  // game -- that one names its teams and is found as the game's own feed.
+  { pattern: /\bparamount\s*(?:\+|plus\b)/, leagues: [] },
   // Not widened to bare "nbc": every market has its own local NBC affiliate
   // (see the market-matching tests below, "USA - NBC 10 BUFFALO NY (WGRZ)"),
   // and unlike a team-name match, "NBC" alone says nothing about which game a
@@ -232,7 +236,11 @@ const NETWORK_BRANDS: { pattern: RegExp; leagues: string[] }[] = [
   // NBCUniversal's streamer, carrying most Premier League matches since
   // NBCSN shut down in 2021 -- the games that don't air on NBC/USA Network
   // itself moved here, not to a separate cable channel.
-  { pattern: /\bpeacock\b/, leagues: ["NFL", "Premier League", "College Football"] },
+  //
+  // No leagues: a guess at "PEACOCK ORIGINAL info" played a promo loop for
+  // Liverpool vs Arsenal (2026-11-01). Peacock's feed of a game names the
+  // teams ("US (Peacock 022) | Liverpool v. Arsenal") and is found that way.
+  { pattern: /\bpeacock\b/, leagues: [] },
   { pattern: /\bsky\s*sports?\b/, leagues: ["Premier League", "La Liga", "Champions League"] },
   { pattern: /\bbein\s*sports?\b/, leagues: ["La Liga", "Champions League"] },
   { pattern: /\bdazn\b/, leagues: ["La Liga", "Champions League"] },
@@ -664,6 +672,11 @@ export function contestedLocalNetworks(
  * An over-the-air affiliate in a contested window and NOT in either team's
  * market is not confirmed: it is whatever that region was assigned, the exact
  * Sunday-afternoon case where "a CBS station" means nothing.
+ *
+ * A streaming service never confirms by name (carriesListedNetwork): it is
+ * not a channel. Liverpool vs Arsenal (2026-11-01) was on Peacock, so the
+ * 24/7 promo loop "PEACOCK ORIGINAL info" counted as confirmed, played
+ * first, and switched off the search for the game's own feeds.
  */
 export function networkConfirmsFixture(
   channelName: string,
@@ -671,7 +684,7 @@ export function networkConfirmsFixture(
   contested: Set<string> = new Set()
 ): boolean {
   for (const net of fixture.broadcasts ?? []) {
-    if (!channelCarriesNetwork(channelName, net)) continue;
+    if (!carriesListedNetwork(channelName, net, fixture)) continue;
     if (!isLocalNetwork(net)) return true;
     const key = net.toLowerCase().replace(/[^a-z0-9+]+/g, "");
     if (!contested.has(key)) return true;
@@ -685,8 +698,63 @@ export function channelMarketTeam(
   channelName: string,
   fixture: { awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] }
 ): string | null {
-  const carries = (fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channelName, net));
+  const carries = (fixture.broadcasts ?? []).some((net) => carriesListedNetwork(channelName, net, fixture));
   return carries ? inMarketTeam(channelName, fixture) : null;
+}
+
+/**
+ * Subscription streaming services ESPN lists as broadcasters. None is a TV
+ * channel: what a provider calls "PEACOCK ..." or "US (ESPN+ 322) | ..." is a
+ * promo loop or a numbered per-event slot showing whatever it was booked
+ * for. Squashed the way channelCarriesNetwork squashes a network name.
+ */
+const STREAMING_SERVICES = new Set([
+  "peacock",
+  "espn+",
+  "paramount+",
+  "primevideo",
+  "amazonprimevideo",
+  "prime",
+  "appletv",
+  "appletv+",
+  "mlsseasonpass",
+  "netflix",
+  "max",
+  "hbomax",
+  "fubo",
+  "fubotv",
+  "youtube",
+  "youtubetv",
+  "nfl+",
+  "nbaleaguepass",
+  "nhlpowerplay",
+  "foxone",
+  "dazn",
+]);
+
+/** Whether ESPN's broadcaster is a streaming service rather than a channel. */
+export function isStreamingService(network: string): boolean {
+  return STREAMING_SERVICES.has(network.toLowerCase().replace(/[^a-z0-9+]+/g, ""));
+}
+
+/**
+ * Whether a channel is the network ESPN lists for this game, in the sense the
+ * schedule can vouch for. Two things never count, whatever the name says:
+ *
+ *   - a streaming service (isStreamingService): its channels are event slots
+ *     and promo loops. Its feed of this very game names the teams, and counts
+ *     as the game's own feed instead (namesBothTeams);
+ *   - a feed of another event ("US (ESPN+ 322) | NHL: Jets Broadcast" on a
+ *     Sabres page): a one-off feed names its event, and this isn't it.
+ */
+export function carriesListedNetwork(
+  channelName: string,
+  network: string,
+  fixture: { awayTeam?: string | null; homeTeam?: string | null }
+): boolean {
+  if (isStreamingService(network)) return false;
+  if (!channelCarriesNetwork(channelName, network)) return false;
+  return !looksLikeEventFeed(channelName.toLowerCase()) || namesBothTeams(channelName, fixture);
 }
 
 /** Over-the-air networks: carried by a local affiliate, not one national feed. */
@@ -873,7 +941,7 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     if (looksLikeEventFeed(n)) continue;
 
     // Showing a different game right now, by ESPN's own listing.
-    const carriesThisGame = (fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channel.name, net));
+    const carriesThisGame = (fixture.broadcasts ?? []).some((net) => carriesListedNetwork(channel.name, net, fixture));
     if (!carriesThisGame && (fixture.networksOnOtherGames ?? []).some((net) => channelCarriesNetwork(channel.name, net))) {
       continue;
     }
@@ -911,7 +979,7 @@ export function findCandidateChannels<C extends { id: string; name: string }>(
     // Between those two sits the household's own market: its affiliate of the
     // carrying network shows what this household would get over the air, which
     // an affiliate in some unrelated city does not.
-    if ((fixture.broadcasts ?? []).some((net) => channelCarriesNetwork(channel.name, net))) {
+    if (carriesThisGame) {
       // The carrying network's affiliate in a team's own city first, then in a
       // secondary market city it airs in, then the household's own market, then
       // any other affiliate of the network.

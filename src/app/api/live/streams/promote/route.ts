@@ -5,6 +5,7 @@ import { refreshGuide, waitForLineupChannel, warmLiveChannel } from "@/lib/liveT
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { namesGameDate } from "@/lib/liveGuideGrid";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
+import { cleanChannelName } from "@/lib/liveChannelRules";
 import {
   isDispatcharrConfigured,
   listChannels,
@@ -53,6 +54,13 @@ export async function POST(request: Request) {
   if (!name) {
     return NextResponse.json({ error: "name required" }, { status: 400 });
   }
+  // The name the channel is created under (promoteStreamToChannel cleans it)
+  // and so the one Jellyfin lists. Compared and recorded as this, never as the
+  // stream's own name: "US| EPL ARSENAL" becomes "EPL ARSENAL", and the raw
+  // name matched nothing -- not the lineup's copy, not Jellyfin's listing, not
+  // the game page's list of feeds added for the game.
+  const channelName = cleanChannelName(name);
+  const fixtureId = typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
 
   // Already in the lineup -- the same stream, or a channel of the same name
   // -- is answered with that channel rather than a second copy. Two viewers
@@ -82,20 +90,30 @@ export async function POST(request: Request) {
         channelNumber: null,
         refreshing: false,
         existing: true,
+        // So the page can play it now; it is in the lineup already.
+        jellyfinId: await waitForLineupChannel(already.name, 3_000),
         note: `Already added for this game as "${already.name}".`,
       });
     }
   }
 
+  const sameName = (n: string) => cleanChannelName(n).toLowerCase() === channelName.toLowerCase();
   const existing = (await listChannels().catch(() => null))?.find(
-    (c) => c.streamIds.includes(streamId) || c.name.trim().toLowerCase() === name.toLowerCase()
+    (c) => c.streamIds.includes(streamId) || sameName(c.name)
   );
   if (existing) {
+    // Added from a game page, it is that game's channel from now on: listed on
+    // its page like a feed added for it (2026-11-01, a stream already in the
+    // lineup vanished from both lists -- "More streams" leaves out what is in
+    // the lineup, and the game's list only had what was added for it). Linked,
+    // not owned: the cleanup pass never removes a channel that was there first.
+    if (fixtureId) await linkToGame(fixtureId, existing.id, existing.name);
     return NextResponse.json({
       id: existing.id,
       channelNumber: null,
       refreshing: false,
       existing: true,
+      jellyfinId: await waitForLineupChannel(existing.name, 3_000),
       note: `Already in the lineup as "${existing.name}".`,
     });
   }
@@ -130,13 +148,12 @@ export async function POST(request: Request) {
   // from the general stream browser carries no fixtureId and is never
   // cleaned up. Best effort: failing to record costs a manual delete later,
   // not the add itself.
-  const fixtureId = typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
   if (fixtureId) {
     await prisma.gameChannel
       .upsert({
         where: { channelId: created.id },
-        create: { channelId: created.id, fixtureId, name },
-        update: { fixtureId, name, endedSeenAt: null },
+        create: { channelId: created.id, fixtureId, name: channelName },
+        update: { fixtureId, name: channelName, endedSeenAt: null },
       })
       .catch((err) => console.error("[promote] couldn't record game channel:", err));
   }
@@ -149,7 +166,7 @@ export async function POST(request: Request) {
   const refreshing = await refreshGuide();
   // Answer once Jellyfin actually lists it, so the page can switch straight
   // away instead of waiting a fixed time and hoping (see waitForLineupChannel).
-  const jellyfinId = refreshing ? await waitForLineupChannel(name) : null;
+  const jellyfinId = refreshing ? await waitForLineupChannel(channelName) : null;
   const ready = jellyfinId != null;
   // Tune it once from here before anyone does (warmLiveChannel): Jellyfin
   // probes a channel for ~13 s the first time it is opened, and only then.
@@ -171,4 +188,25 @@ export async function POST(request: Request) {
       ? "Added. Jellyfin is refreshing its guide now - it appears in Live TV in a moment."
       : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",
   });
+}
+
+/** How long a link to a game is kept: games are a day's business. */
+const LINK_TTL_MS = 3 * 86_400_000;
+
+/**
+ * Lists a channel that was already in the lineup on a game's page. Best
+ * effort, like recording a GameChannel: a failure costs the listing, not the
+ * add. Old links are swept here, as game picks are on write.
+ */
+async function linkToGame(fixtureId: string, channelId: number, name: string): Promise<void> {
+  try {
+    await prisma.gameChannelLink.upsert({
+      where: { fixtureId_channelId: { fixtureId, channelId } },
+      create: { fixtureId, channelId, name },
+      update: { name },
+    });
+    await prisma.gameChannelLink.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - LINK_TTL_MS) } } });
+  } catch (err) {
+    console.error("[promote] couldn't link channel to game:", err);
+  }
 }

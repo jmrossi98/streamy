@@ -22,6 +22,7 @@ import {
   contestedLocalNetworks,
   networkConfirmsFixture,
   channelMarketTeam,
+  isStreamingService,
   type ChannelProgramme,
 } from "@/lib/liveTimeline";
 
@@ -286,7 +287,7 @@ describe("findCandidateChannels", () => {
     { id: "6", name: "ABC News AU" },
   ];
 
-  it("offers the streamers that actually hold each competition's US rights", () => {
+  it("offers the networks that actually hold each competition's US rights", () => {
     // The gap these tags close: a Champions League or Formula 1 fixture had
     // no candidate at all, even with the channel sitting in the lineup.
     const streamers = [
@@ -295,8 +296,10 @@ describe("findCandidateChannels", () => {
       { id: "22", name: "USA - ESPN2 HD" },
       { id: "23", name: "SP - TNT HD" },
     ];
-    expect(findCandidateChannels({ league: "Champions League" }, streamers).map((c) => c.id)).toContain("20");
-    expect(findCandidateChannels({ league: "Premier League" }, streamers).map((c) => c.id)).toContain("21");
+    // Never a streaming service's own channel (2026-11-01): it is a promo loop
+    // or an event slot. Its feed of a game names the teams and is found so.
+    expect(findCandidateChannels({ league: "Champions League" }, streamers).map((c) => c.id)).not.toContain("20");
+    expect(findCandidateChannels({ league: "Premier League" }, streamers).map((c) => c.id)).not.toContain("21");
     expect(findCandidateChannels({ league: "Formula 1" }, streamers).map((c) => c.id)).toContain("22");
     expect(findCandidateChannels({ league: "La Liga" }, streamers).map((c) => c.id)).toContain("22");
     // TNT carries NHL in the US and was previously tagged NBA-only.
@@ -873,3 +876,37 @@ describe("findCandidateChannels city match", () => {
   });
 });
 
+
+describe("streaming services never confirm a channel (2026-11-01)", () => {
+  // Liverpool vs Arsenal was on Peacock: the promo loop "PEACOCK ORIGINAL
+  // info" counted as confirmed, played first, and stopped the feed search.
+  const arsenal = { awayTeam: "Arsenal", homeTeam: "Liverpool", league: "Premier League", broadcasts: ["Peacock"] };
+
+  it("does not confirm a streaming service's channel by its name", () => {
+    expect(isStreamingService("Peacock")).toBe(true);
+    expect(isStreamingService("ESPN+")).toBe(true);
+    expect(isStreamingService("Prime Video")).toBe(true);
+    expect(isStreamingService("ESPN")).toBe(false);
+    expect(networkConfirmsFixture("PEACOCK ORIGINAL info ᴴᴰ", arsenal)).toBe(false);
+    expect(networkConfirmsFixture("PEACOCK ORIGINAL 1 ᴿᴬᵂ", arsenal)).toBe(false);
+    // Another event's slot on the same service, least of all.
+    expect(networkConfirmsFixture("US (Peacock 015) | Celtics vs. 76ers (2026-11-10 19:00:05)", arsenal)).toBe(false);
+  });
+
+  it("still finds the service's feed of this game, by its teams", () => {
+    expect(namesBothTeams("US (Peacock 022) | Liverpool v. Arsenal (2026-11-01 10:30:00)", arsenal)).toBe(true);
+    const lineup = [
+      { id: "promo", name: "PEACOCK ORIGINAL info ᴴᴰ" },
+      { id: "game", name: "US (Peacock 022) | Liverpool v. Arsenal (2026-11-01 10:30:00)" },
+    ];
+    expect(findCandidateChannels(arsenal, lineup).map((c) => c.id)).toEqual(["game"]);
+  });
+
+  it("does not confirm another event's feed on a listed network", () => {
+    const sabres = { awayTeam: "Buffalo Sabres", homeTeam: "San Jose Sharks", league: "NHL", broadcasts: ["ESPN+", "ESPN"] };
+    expect(networkConfirmsFixture("US (ESPN+ 322) | NHL: Jets Broadcast", sabres)).toBe(false);
+    expect(networkConfirmsFixture("ESPN: Celtics vs 76ers", sabres)).toBe(false);
+    // The linear network itself still confirms.
+    expect(networkConfirmsFixture("USA - ESPN HD", sabres)).toBe(true);
+  });
+});
