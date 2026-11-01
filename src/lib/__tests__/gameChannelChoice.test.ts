@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
+import { storedPickYields,
   CHOICE_TTL_DAYS,
   foundFeedTakesOver,
   resolveStoredChoice,
@@ -89,13 +89,34 @@ describe("foundFeedTakesOver", () => {
     expect(foundFeedTakesOver({ ...base, pickedId: "feed" })).toBe(true);
   });
 
-  it("never switches to a viewer's own add from the list", () => {
-    expect(foundFeedTakesOver({ ...base, manual: true })).toBe(false);
-    expect(foundFeedTakesOver({ ...base, manual: true, pickedId: "guess" })).toBe(false);
+  it("always plays a viewer's own add from the list: it is their pick now (2026-11-01)", () => {
+    expect(foundFeedTakesOver({ ...base, manual: true })).toBe(true);
+    expect(foundFeedTakesOver({ ...base, manual: true, pickedId: "guess" })).toBe(true);
+    // Even over a game feed they had picked before: the add is the newer choice.
+    expect(foundFeedTakesOver({ ...base, manual: true, pickedId: "otherFeed", gameFeedIds: ["otherFeed", "feed"] })).toBe(true);
   });
 
   it("never switches back to a feed that already failed this visit", () => {
     expect(foundFeedTakesOver({ ...base, pickedId: "guess", failedIds: ["feed"] })).toBe(false);
     expect(foundFeedTakesOver({ ...base, failedIds: ["feed"] })).toBe(false);
+  });
+});
+
+describe("storedPickYields", () => {
+  const pickedAt = new Date("2026-11-01T17:19:28Z");
+  const before = new Date("2026-11-01T17:18:57Z");
+  const after = new Date("2026-11-01T17:25:00Z");
+
+  it("keeps a pick of the game's own channel, whatever is added later", () => {
+    expect(storedPickYields({ pickIsGame: true, pickedAt, feedsAddedAt: [after] })).toBe(false);
+  });
+
+  it("keeps a guess picked when the game's feeds were already there: the viewer chose it over them", () => {
+    expect(storedPickYields({ pickIsGame: false, pickedAt, feedsAddedAt: [before] })).toBe(false);
+    expect(storedPickYields({ pickIsGame: false, pickedAt, feedsAddedAt: [] })).toBe(false);
+  });
+
+  it("lets a guess give way to a feed of the game added after it, as the player does on the spot", () => {
+    expect(storedPickYields({ pickIsGame: false, pickedAt, feedsAddedAt: [before, after] })).toBe(true);
   });
 });

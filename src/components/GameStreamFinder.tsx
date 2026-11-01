@@ -39,6 +39,28 @@ type Candidate = { id: number; name: string; provider: string | null; logoUrl: s
  */
 const BUSY_RETRIES = 2;
 const BUSY_RETRY_MS = 4_000;
+/** How long to keep asking whether Jellyfin lists a just-added channel. */
+const LINEUP_WAIT_MS = 60_000;
+const LINEUP_POLL_MS = 4_000;
+
+/**
+ * Jellyfin's id for a channel just added, once it lists it, or null after
+ * LINEUP_WAIT_MS. The add route waits 15 s; a guide refresh can take longer.
+ */
+async function awaitLineup(streamName: string): Promise<string | null> {
+  const deadline = Date.now() + LINEUP_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`/api/live/lineup-channel?name=${encodeURIComponent(streamName)}`, { cache: "no-store" });
+      const body = res.ok ? ((await res.json()) as { jellyfinId?: string | null }) : null;
+      if (body?.jellyfinId) return body.jellyfinId;
+    } catch {
+      // Ask again until the deadline.
+    }
+    await new Promise((r) => setTimeout(r, LINEUP_POLL_MS));
+  }
+  return null;
+}
 
 export function GameStreamFinder({
   fixtureId,
@@ -244,7 +266,7 @@ export function GameStreamFinder({
         ready?: boolean;
         jellyfinId?: string | null;
       };
-      const okNote = auto ? "Added automatically. It joins the list above in a few seconds." : "Added. It joins the list above in a few seconds.";
+      const okNote = auto ? "Added automatically. It joins the list above in a few seconds." : "Added. It starts playing above in a few seconds.";
       setAdded((a) => ({ ...a, [s.id]: res.ok ? (body.existing && body.note) || okNote : body.error ?? "Couldn't add it." }));
       // Jellyfin picks the new channel up on its guide refresh, which the
       // promote route starts; give it a moment, then reload the options.
@@ -256,9 +278,14 @@ export function GameStreamFinder({
         // refresh after only fills in what the page knows about it.
         if (body.jellyfinId) {
           announceGameFeedSearch({ fixtureId, outcome: "added", channel: { id: body.jellyfinId, name: s.name }, manual: !auto });
+          router.refresh();
+        } else {
+          // Jellyfin hasn't listed it yet: keep asking, then play and list it.
+          void awaitLineup(s.name).then((id) => {
+            if (id) announceGameFeedSearch({ fixtureId, outcome: "added", channel: { id, name: s.name }, manual: !auto });
+            router.refresh();
+          });
         }
-        if (body.ready || body.existing) router.refresh();
-        else setTimeout(() => router.refresh(), 8000);
       }
       return res.ok;
     } finally {
@@ -291,7 +318,7 @@ export function GameStreamFinder({
           disabled={adding !== null || !!added[s.id] || !addable}
           title={addable ? undefined : "This stream sent no video when it was checked"}
         >
-          {adding === s.id ? "Adding…" : added[s.id] ? "Added" : "Add as channel"}
+          {adding === s.id ? "Adding…" : added[s.id] ? "Added" : "Watch"}
         </Button>
       </li>
     );
@@ -302,8 +329,8 @@ export function GameStreamFinder({
       <h3 className="mb-1 text-sm font-semibold text-white/80">More streams for this game</h3>
       <p className="mb-3 text-xs text-white/40">
         From the providers&apos; catalogues, not in Live TV yet. A stream naming both teams is usually the game itself.
-        {verify && " The top few are checked for video before you add them."}
-        Channels added here are removed automatically about 30 minutes after the game ends.
+        {verify && " The top few are checked for video first."} Watch adds one to Live TV, plays it above and keeps it as your
+        pick for this game. Channels added here are removed automatically about 30 minutes after the game ends.
       </p>
       {shown.length > 0 && <ul className="divide-y divide-white/5 rounded-lg border border-white/10">{shown.map(row)}</ul>}
       {hidden.length > 0 && (

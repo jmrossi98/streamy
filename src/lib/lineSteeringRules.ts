@@ -23,7 +23,7 @@ import { isLineDead, type IptvLine } from "./iptvLineRules";
 export type LineUse = {
   /** Provider name -> lines free now. A provider not listed is unknown (assumed free). */
   freeLines: Record<string, number>;
-  /** channelKey of every channel Dispatcharr is streaming to at least one client. */
+  /** channelKey of every channel Dispatcharr has a connection open for (startable without a line). */
   watched: Set<string>;
 };
 
@@ -46,7 +46,13 @@ export function lineUse(accounts: AccountLike[], connections: ConnectionLike[] |
     const byProxy = (connections ?? []).filter((c) => c.lineId != null && ids.has(c.lineId)).length;
     freeLines[a.name] = Math.max(0, capacity - Math.max(byCounter, byProxy));
   }
-  const watched = new Set((connections ?? []).filter((c) => c.clients > 0).map((c) => channelKey(c.channelName)));
+  // Every open connection, a client on it or not. One with nobody on it is a
+  // channel in Dispatcharr's shutdown delay, and a viewer arriving within it
+  // joins that connection rather than taking a line. Most often that viewer is
+  // the one who just left it: on a reload of Liverpool vs Arsenal (2026-11-01)
+  // the page's own stream was still closing on strong8k's single line, so the
+  // line read full and the viewer's saved pick was given up as unstartable.
+  const watched = new Set((connections ?? []).map((c) => channelKey(c.channelName)));
   return { freeLines, watched };
 }
 

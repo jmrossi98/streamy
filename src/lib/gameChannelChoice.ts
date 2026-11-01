@@ -41,6 +41,29 @@ export function resolveStoredChoice<T extends Option>(
   return options.find((o) => o.name.trim().toLowerCase() === wanted) ?? null;
 }
 
+/**
+ * Whether a saved pick gives way on load: only a pick of a guess (not a
+ * confirmed channel, not one of the game's own feeds), and only to a feed of
+ * the game added after the pick was made. That is the switch the player makes
+ * on the spot when the search adds a feed (foundFeedTakesOver), so a reload
+ * lands where the player already is. A guess picked when the feeds were
+ * already there stands: the viewer chose it over them.
+ */
+export function storedPickYields({
+  pickIsGame,
+  pickedAt,
+  feedsAddedAt,
+}: {
+  /** The pick is a confirmed channel or one of the game's own feeds. */
+  pickIsGame: boolean;
+  pickedAt: Date;
+  /** When each feed added for this game (and still in the lineup) was added. */
+  feedsAddedAt: readonly Date[];
+}): boolean {
+  if (pickIsGame) return false;
+  return feedsAddedAt.some((at) => at.getTime() > pickedAt.getTime());
+}
+
 /** The cutoff for the opportunistic sweep of picks for games long finished. */
 export function staleChoiceCutoff(now: Date = new Date()): Date {
   return new Date(now.getTime() - CHOICE_TTL_DAYS * 86_400_000);
@@ -58,8 +81,9 @@ export function staleChoiceCutoff(now: Date = new Date()): Date {
  * search added later never reached her. A guess was picked because nothing
  * better existed yet; the found feed is the better thing.
  *
- * Never for a viewer's own add from the list (listed, not switched to), and
- * never for a feed that already failed to start this visit, so a feed that
+ * A viewer's own add from the list always takes over: since 2026-11-01 the
+ * button is "Watch", and the feed becomes their pick (the picker saves it).
+ * Never for a feed that already failed to start this visit, so a feed that
  * falls over hands back to the fallback once rather than bouncing.
  */
 export function foundFeedTakesOver({
@@ -80,7 +104,7 @@ export function foundFeedTakesOver({
   /** Channels that already failed to start this visit. */
   failedIds: readonly string[];
 }): boolean {
-  if (manual) return false;
+  if (manual) return true;
   if (failedIds.includes(foundId)) return false;
   if (pickedId == null || pickedId === foundId) return true;
   return !gameFeedIds.includes(pickedId);

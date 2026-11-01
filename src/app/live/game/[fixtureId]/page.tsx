@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { unstable_noStore } from "next/cache";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import type { StoredChoice } from "@/lib/gameChannelChoice";
+import { resolveStoredChoice, storedPickYields, type StoredChoice } from "@/lib/gameChannelChoice";
 import { getLiveChannels, isJellyfinReachable } from "@/lib/liveTv";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getChannelInfo, getMappedChannelPrograms, listIptvAccounts, liveConnections, type ChannelInfo } from "@/lib/dispatcharr";
@@ -23,6 +23,7 @@ import {
   channelMarketTeam,
 } from "@/lib/liveTimeline";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
+import { cleanChannelName } from "@/lib/liveChannelRules";
 import { sameSport } from "@/lib/sportMatchRules";
 import { GameChannelPicker } from "@/components/GameChannelPicker";
 import { namesGameDate, namesOtherDate } from "@/lib/liveGuideGrid";
@@ -66,14 +67,18 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   // effort on purpose: a database hiccup should cost the remembered pick and
   // fall back to the best match, not take the game page down.
   let storedChoice: StoredChoice | null = null;
+  let pickedAt: Date | null = null;
   try {
     const userId = await getValidSessionUserId(session);
     if (userId) {
       const row = await prisma.gameChannelChoice.findUnique({
         where: { userId_fixtureId: { userId, fixtureId } },
-        select: { channelId: true, name: true },
+        select: { channelId: true, name: true, pickedAt: true },
       });
-      storedChoice = row ?? null;
+      if (row) {
+        storedChoice = { channelId: row.channelId, name: row.name };
+        pickedAt = row.pickedAt;
+      }
     }
   } catch (err) {
     console.error("[live/game] stored channel lookup failed:", err);
@@ -163,28 +168,41 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
          channel named for one team.
   */
   const startMs = fixture.startUtc ? Date.parse(fixture.startUtc) : NaN;
-  let addedForGame = new Set<string>();
+  /** Channels added (or linked) for this game, by name, and when. */
+  const addedForGame = new Map<string, Date>();
   try {
-    const rows = await prisma.gameChannel.findMany({ where: { fixtureId }, select: { name: true } });
-    addedForGame = new Set(rows.map((r) => normaliseName(r.name)));
+    const [owned, linked] = await Promise.all([
+      prisma.gameChannel.findMany({ where: { fixtureId }, select: { name: true, createdAt: true } }),
+      prisma.gameChannelLink.findMany({ where: { fixtureId }, select: { name: true, createdAt: true } }),
+    ]);
+    // Cleaned, as the channel was created: rows written before 2026-11-01 hold
+    // the stream's own name, "US| EPL ARSENAL" for the channel "EPL ARSENAL".
+    for (const r of [...owned, ...linked]) addedForGame.set(normaliseName(cleanChannelName(r.name)), r.createdAt);
   } catch (err) {
     console.error("[live/game] game channel lookup failed:", err);
   }
+  const isAdded = (c: { name: string }) => addedForGame.has(normaliseName(c.name));
+  const feedOrder = (a: { name: string }, b: { name: string }) =>
+    Number(namesGameDate(b.name, startMs)) - Number(namesGameDate(a.name, startMs)) ||
+    feedLanguageRank(a.name) - feedLanguageRank(b.name) ||
+    // The smoother stream between otherwise equal feeds.
+    qualityOf(a.name) - qualityOf(b.name);
   const gameFeeds = channels
     .filter(
       (c) =>
-        (addedForGame.has(normaliseName(c.name)) || (namesBothTeams(c.name, fixture) && sameSport(c.name, fixture))) &&
+        (isAdded(c) || (namesBothTeams(c.name, fixture) && sameSport(c.name, fixture))) &&
         !isStale(c.name) &&
         !namesOtherDate(c.name, startMs)
     )
-    .sort(
-      (a, b) =>
-        Number(namesGameDate(b.name, startMs)) - Number(namesGameDate(a.name, startMs)) ||
-        feedLanguageRank(a.name) - feedLanguageRank(b.name) ||
-        // The smoother stream between otherwise equal feeds.
-        qualityOf(a.name) - qualityOf(b.name)
-    );
+    .sort(feedOrder);
   const gameFeed = gameFeeds[0] ?? null;
+  // Every channel someone added for this game stays on its page, even one that
+  // is marked dead or hasn't played for anyone yet: listed last, never dropped
+  // (2026-11-01, an added stream missing from the list it was added to). It
+  // was the viewer's call that this is the game; the badges say what we know.
+  const addedButDoubtful = allChannels
+    .filter((c) => isAdded(c) && !gameFeeds.some((g) => g.id === c.id))
+    .sort(feedOrder);
 
   // An over-the-air affiliate only confirms when it is in a participating
   // team's market, or the window is national (the network carries the one game
@@ -215,6 +233,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
       HOME_MARKETS,
       qualityOf
     ),
+    ...addedButDoubtful,
   ].filter((c, i, all) => c.id !== resolved?.id && all.findIndex((x) => x.id === c.id) === i);
 
   /*
@@ -263,21 +282,49 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   const demoteDeadPrimary = primaryIsDead && liveCandidates.length > 0;
 
   const channel = demoteDeadPrimary ? null : primary;
-  // A remembered pick for this game is only honoured while that channel can
-  // still play: the one remembered on 2026-10-15 was an empty channel, and it
-  // kept being the default after the working feeds appeared beside it.
-  if (storedChoice && isStale(storedChoice.name)) storedChoice = null;
-  // A confirmed channel or the game's own feed beats an earlier pick of a
-  // guess: the pick was made before anything better existed. A pick that is
-  // itself confirmed or a game feed stands.
+  /*
+    The viewer's pick for this game plays, on every load, whatever the page
+    would have chosen (2026-11-01). It used to be dropped by any of four rules
+    -- the channel looked dead, a confirmed channel or game feed existed, its
+    provider's lines read full -- and on a reload of Liverpool vs Arsenal the
+    last one fired on the viewer's own stream, still closing on strong8k's one
+    line, and played a Peacock promo loop instead. If the pick can't start,
+    the player falls back for that visit and the pick stays saved.
+
+    One exception (storedPickYields): a pick of a guess gives way to a feed
+    of the game added after it was made -- the same switch the player makes
+    on the spot when the search adds one, so a reload lands where it did.
+  */
   if (
-    resolved &&
-    (channelConfirmed || resolved === gameFeed) &&
     storedChoice &&
-    ![...confirmed, ...gameFeeds].some((c) => c.id === storedChoice!.channelId)
+    pickedAt &&
+    storedPickYields({
+      pickIsGame: [...confirmed, ...gameFeeds].some(
+        (c) => c.id === storedChoice!.channelId || resolveStoredChoice([c], storedChoice) != null
+      ),
+      pickedAt,
+      // Only feeds that can play now: one marked dead is nothing to yield to.
+      feedsAddedAt: gameFeeds.flatMap((c) => addedForGame.get(normaliseName(c.name)) ?? []),
+    })
   ) {
     storedChoice = null;
   }
+  // A pick known to be down right now is skipped for this load, and kept: it
+  // plays first again once it's back. Trying it first would cost a minute of
+  // retries on every load. Only the provider's own verdicts count -- not the
+  // guide (the viewer knows better what the pick shows) and never line use.
+  const savedPick = storedChoice ? resolveStoredChoice(allChannels, storedChoice) : null;
+  const pickDownReason = !savedPick
+    ? null
+    : infoByChannel[savedPick.name]?.stale === true
+      ? "the provider has marked it dead"
+      : providerExpired(savedPick.name)
+        ? "its provider's subscription has lapsed"
+        : notWorking.has(normaliseName(savedPick.name))
+          ? "nobody has been able to get a picture from it"
+          : notResponding.has(normaliseName(savedPick.name))
+            ? "it didn't open at the last check"
+            : null;
   const candidates = demoteDeadPrimary
     ? [...liveCandidates, primary!, ...deadCandidates]
     : [...liveCandidates, ...deadCandidates];
@@ -309,15 +356,20 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
       const steered = steerForFullLines(channel ? [channel, ...candidates] : candidates, opts);
       if (channel) [pickerChannel, ...pickerCandidates] = steered;
       else pickerCandidates = steered;
-      // A remembered pick that can't start now gives way the same way.
-      if (storedChoice) {
-        const pick = steered.find((c) => c.id === storedChoice!.channelId) ?? { id: storedChoice.channelId, name: storedChoice.name };
-        const rest = steered.filter((c) => c.id !== pick.id);
-        if (steerForFullLines([pick, ...rest], opts)[0].id !== pick.id) storedChoice = null;
-      }
     }
   } catch (err) {
     console.error("[live/game] provider capacity lookup failed:", err);
+  }
+  // The saved pick is always one of the options, so it can play: a channel
+  // the ranking above left out (a guess past the cap, one that read as not
+  // working) is still the viewer's choice. Matched by id, then name, the way
+  // the picker matches it (resolveStoredChoice).
+  if (storedChoice) {
+    const listed = [pickerChannel, ...pickerCandidates].filter((c): c is NonNullable<typeof c> => c != null);
+    if (!resolveStoredChoice(listed, storedChoice)) {
+      const saved = resolveStoredChoice(allChannels, storedChoice);
+      if (saved) pickerCandidates = [...pickerCandidates, saved];
+    }
   }
 
   // Every channel we actually know carries this game (not just the primary),
@@ -367,6 +419,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
           channelConfirmed={pickerChannel != null && confirmedIds.includes(pickerChannel.id)}
           confirmedIds={confirmedIds}
           gameFeedIds={gameFeeds.map((c) => c.id)}
+          addedForGameIds={allChannels.filter(isAdded).map((c) => c.id)}
           marketTeamByName={marketTeamByName}
           candidates={pickerCandidates}
           infoByChannel={infoByChannel}
@@ -383,7 +436,8 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
           fixtureId={fixtureId}
           storedChoice={storedChoice}
           // Only guesses on offer: look for the game's own feed before playing one.
-          holdForFeed={fixture.state === "in" && !gameFeed && !channelConfirmed && !storedChoice}
+          pickDownReason={pickDownReason}
+          holdForFeed={fixture.state === "in" && !gameFeed && !channelConfirmed && (!storedChoice || pickDownReason != null)}
         />
         {/* Below the lineup's options: what the catalogue has that the lineup
             doesn't, one click from being a channel. */}

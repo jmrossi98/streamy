@@ -80,3 +80,17 @@ describe("steerForFullLines", () => {
     expect(steerForFullLines(opts, { use, providerOf, isGameFeed })).toEqual(opts);
   });
 });
+
+describe("lineUse: a channel still closing (2026-11-01)", () => {
+  // Liverpool vs Arsenal: a reload's own stream was still in Dispatcharr's
+  // shutdown delay on strong8k's single line, so the line read full and the
+  // viewer's saved pick was given up as unstartable.
+  it("counts a connection with nobody on it as startable: a new viewer joins it", () => {
+    const name = "US (Peacock 022) | Liverpool v. Arsenal (2026-11-01 10:30:00)";
+    const use = lineUse([{ name: "strong8k", lines: [line(9)] }], [{ channelName: name, lineId: 9, clients: 0 }]);
+    expect(use.freeLines).toEqual({ strong8k: 0 });
+    expect(wouldNeedFullLine(name, "strong8k", use)).toBe(false);
+    // Any other strong8k channel still needs the line.
+    expect(wouldNeedFullLine("UK| EPL ARSENAL", "strong8k", use)).toBe(true);
+  });
+});

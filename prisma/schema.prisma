@@ -1093,6 +1093,21 @@ model GameChannel {
   @@index([fixtureId])
 }
 
+// A channel that was already in the lineup when someone added it from a game's
+// page (an "EPL ARSENAL" team feed, a network): listed on that game's page like
+// a feed added for it. Unlike GameChannel it owns nothing -- the cleanup pass
+// never removes the channel -- and rows are swept a couple of days on.
+model GameChannelLink {
+  fixtureId String
+  // Dispatcharr's numeric channel id, as in GameChannel.
+  channelId Int
+  name      String
+  createdAt DateTime @default(now())
+
+  @@id([fixtureId, channelId])
+  @@index([createdAt])
+}
+
 /// The healer's re-searches of a wanted episode or movie, so a title no
 /// indexer carries is given up on after a day instead of re-searched for
 /// ever -- see searchGiveUpRules.ts. One row per title; deleted when it is

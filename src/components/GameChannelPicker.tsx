@@ -5,7 +5,7 @@ import { GAME_FEED_SEARCH_EVENT, requestGameFeedRescan, type GameFeedSearchOutco
 import { FEED_RESCAN_MS, channelCanStart, shouldRescanForFeed, stallFailoverOrder } from "@/lib/liveFailoverRules";
 import { channelKey } from "@/lib/liveChannelStateRules";
 import type { LineUse } from "@/lib/lineSteeringRules";
-import { Notice } from "@/components/ui";
+import { Badge, Button, Notice } from "@/components/ui";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
@@ -25,6 +25,12 @@ type Props = {
    * the search finds to leave it alone (foundFeedTakesOver).
    */
   gameFeedIds?: string[];
+  /**
+   * The ids of every channel added (or linked) for this game from its page,
+   * including ones marked dead or not yet seen to play: listed under "This
+   * game" with the rest of its feeds, whatever else is known about them.
+   */
+  addedForGameIds?: string[];
   /** Channel name -> the team whose home market it is, when that is why it's confirmed (badge wording). */
   marketTeamByName?: Record<string, string>;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
@@ -45,6 +51,12 @@ type Props = {
   fixtureId: string;
   /** What this user picked last time, if anything. Null for signed-out viewers. */
   storedChoice: StoredChoice | null;
+  /**
+   * Why the saved pick is known to be down right now, or null. Such a pick is
+   * skipped for this visit (the next option plays, and the page says why) and
+   * stays saved: it plays first again once it's back.
+   */
+  pickDownReason?: string | null;
   /**
    * Hold off playing while the page looks for the game's own feed, because
    * every option on offer is only a guess. Playing a guess straight away
@@ -135,11 +147,25 @@ async function feedStillNamesGameNow(fixtureId: string, c: { name: string }): Pr
   }
 }
 
+/**
+ * Remember a pick for this game (per user, every device). Fire and forget: the
+ * switch has already happened in the player, and a failed write costs a
+ * remembered preference, not the thing being watched.
+ */
+function savePick(fixtureId: string, c: { id: string; name: string }) {
+  void fetch("/api/live/game-channel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fixtureId, channelId: c.id, name: c.name }),
+  }).catch(() => {});
+}
+
 export function GameChannelPicker({
   channel,
   channelConfirmed,
   confirmedIds = [],
   gameFeedIds = [],
+  addedForGameIds = [],
   marketTeamByName = {},
   candidates,
   infoByChannel,
@@ -148,6 +174,7 @@ export function GameChannelPicker({
   speedByChannel = {},
   fixtureId,
   storedChoice,
+  pickDownReason = null,
   holdForFeed = false,
 }: Props) {
   const [held, setHeld] = useState(holdForFeed);
@@ -167,10 +194,13 @@ export function GameChannelPicker({
   const addedIds = added.map((a) => a.id);
   const options = [...added.filter((a) => !serverOptions.some((o) => o.id === a.id)), ...serverOptions];
   const remembered = resolveStoredChoice(serverOptions, storedChoice);
+  /** What plays while a saved pick is down: the best option that isn't it. */
+  const standIn = remembered && pickDownReason ? (serverOptions.find((o) => o.id !== remembered.id) ?? null) : null;
   const [selectedId, setSelectedId] = useState<string | null>(
-    // The remembered pick if it's still in the lineup, otherwise the best
-    // match. resolveStoredChoice returns null on a miss rather than guessing.
-    (remembered ?? serverOptions[0])?.id ?? null
+    // The remembered pick if it's still in the lineup and not known to be
+    // down, otherwise the best match. resolveStoredChoice returns null on a
+    // miss rather than guessing.
+    (standIn ?? remembered ?? serverOptions[0])?.id ?? null
   );
   /** Channels that already failed to start this visit, so the fallback never loops. */
   const [failedIds, setFailedIds] = useState<string[]>([]);
@@ -182,7 +212,11 @@ export function GameChannelPicker({
   const [stallSwitches, setStallSwitches] = useState(0);
   /** The feed search is running (a "checking" or "adding" report came last). */
   const [searchActive, setSearchActive] = useState(false);
-  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
+  const [fallbackNote, setFallbackNote] = useState<string | null>(() =>
+    remembered && standIn
+      ? `Your pick, ${remembered.name}, isn't working right now (${pickDownReason}), so ${standIn.name} is on. It plays first again once it's back; pick it below to try it now.`
+      : null
+  );
   /** Providers found at capacity this visit (a 503 on tune), so we don't keep trying their channels. */
   const [fullProviders, setFullProviders] = useState<string[]>([]);
   /**
@@ -260,6 +294,17 @@ export function GameChannelPicker({
       // viewer's in the way -- into the player now. No reload.
       const ch: LiveChannel = { id: d.channel.id, name: d.channel.name, number: null, logoUrl: null, now: null, next: null };
       setAdded((prev) => (prev.some((p) => p.id === ch.id) ? prev : [ch, ...prev]));
+      // The viewer's own "Watch" on a stream: theirs, played and saved now.
+      if (d.manual) {
+        setHeld(false);
+        setSearchEnd(null);
+        setFallbackNote(null);
+        setNoLines(false);
+        setPickedId(ch.id);
+        setSelectedId(ch.id);
+        savePick(fixtureId, ch);
+        return;
+      }
       const takesOver = foundFeedTakesOver({
         foundId: ch.id,
         manual: !!d.manual,
@@ -392,11 +437,13 @@ export function GameChannelPicker({
       return;
     }
     setNoLines(false);
-    setFallbackNote(
+    const why =
       reason === "busy" && deadProvider
         ? `${deadProvider} is at capacity (all its lines are in use), so we switched to ${next.name}.`
-        : `${dead.name} didn’t start, so we switched to ${next.name}.`
-    );
+        : `${dead.name} didn’t start, so we switched to ${next.name}.`;
+    // The viewer's pick stays saved: it may only have been out of lines for a
+    // minute, and it is still what plays first next time.
+    setFallbackNote(dead.id === pickedId ? `${why} ${dead.name} is still your pick and plays first next time.` : why);
     setSelectedId(next.id);
   }
 
@@ -464,12 +511,101 @@ export function GameChannelPicker({
     setNoLines(false);
     setFailedIds((f) => f.filter((id) => id !== c.id));
     setStalledIds((f) => f.filter((id) => id !== c.id));
-    void fetch("/api/live/game-channel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fixtureId, channelId: c.id, name: c.name }),
-    }).catch(() => {});
+    savePick(fixtureId, c);
   }
+
+  /** Forget the saved pick: the page's own choice plays from now on, here and on reload. */
+  function backToAutomatic() {
+    setPickedId(null);
+    setFallbackNote(null);
+    const best = serverOptions.find((c) => !triedIds.includes(c.id)) ?? serverOptions[0];
+    if (best) setSelectedId(best.id);
+    void fetch(`/api/live/game-channel?fixtureId=${encodeURIComponent(fixtureId)}`, { method: "DELETE" }).catch(() => {});
+  }
+
+  /** Known to be this game: confirmed, one of its own feeds, or added for it. */
+  const isGameChannel = (id: string) =>
+    confirmedIds.includes(id) || gameFeedIds.includes(id) || addedForGameIds.includes(id) || addedIds.includes(id);
+
+  const row = (c: LiveChannel) => {
+    const isSelected = c.id === selected?.id;
+    // Only the single best match earns a badge -- a claim about the match,
+    // not about where it sits in the list.
+    const isBestMatch = channel != null && c.id === channel.id;
+    const speed = speedByChannel[c.name];
+    const provider = infoByChannel[c.name]?.provider;
+    return (
+      <li key={c.id}>
+        <button
+          type="button"
+          onClick={() => pick(c)}
+          aria-pressed={isSelected}
+          className={`flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded px-3 py-2 text-left transition-colors ${
+            isSelected ? "bg-netflix-red/15 ring-1 ring-netflix-red/50" : "bg-white/5 hover:bg-white/10"
+          }`}
+        >
+          {c.number && <span className="shrink-0 tabular-nums text-xs text-white/40">{c.number}</span>}
+          <span className="min-w-0 flex-1 basis-40 truncate text-sm text-white/90">
+            {c.name}
+            {provider && <span className="ml-2 text-xs text-white/35">{provider}</span>}
+          </span>
+          <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {/* Only said when it was measured: a stream that cannot deliver a
+                second of picture per second buffers and drifts behind live. */}
+            {speed != null &&
+              (speed >= KEEPING_UP_SPEED ? (
+                <Badge tone="success" title="Arriving in real time when last measured">
+                  Smooth
+                </Badge>
+              ) : (
+                <Badge tone="warning" title="Arriving slower than real time when last measured, so it buffers and falls behind live">
+                  Slow {speed.toFixed(2)}×
+                </Badge>
+              ))}
+            {/* Still clickable: the flag can lag a stream that came back, and a
+                dead option beats no option when it is the only one. */}
+            {infoByChannel[c.name]?.stale && (
+              <Badge tone="warning" title="The provider has marked this stream dead">
+                Dead
+              </Badge>
+            )}
+            {confirmedIds.includes(c.id) ? (
+              <Badge
+                tone="success"
+                title={
+                  marketTeamByName[c.name]
+                    ? `${marketTeamByName[c.name]} home market — this market always gets its team's game on the carrying network`
+                    : "The guide names this game here, or it's the single national feed the game is on"
+                }
+              >
+                {marketTeamByName[c.name] ? "In market" : "Confirmed"}
+              </Badge>
+            ) : (
+              isBestMatch &&
+              !isGameChannel(c.id) && (
+                <Badge title="The closest match in the lineup, but not confirmed to be showing this game">Best match</Badge>
+              )
+            )}
+            {c.id === pickedId && (
+              <Badge tone="info" title="You picked this one. It plays first for this game, on every device.">
+                Your pick
+              </Badge>
+            )}
+            {/* "Playing" only while the player is actually on it: during the
+                feed search the row is the fallback, not what's on. */}
+            {isSelected &&
+              (held || noLines ? (
+                <Badge title="Plays only if the game's own stream can't be found">Fallback</Badge>
+              ) : (
+                <Badge tone="streamy" className="font-bold uppercase tracking-wide">
+                  Playing
+                </Badge>
+              ))}
+          </span>
+        </button>
+      </li>
+    );
+  };
 
   if (!selected && !held) {
     return (
@@ -557,111 +693,33 @@ export function GameChannelPicker({
       )}
 
       {/* Shown even with one option, so the channel playing is always named
-          here -- an auto-added feed used to appear nowhere (2026-10-18). */}
+          here -- an auto-added feed used to appear nowhere (2026-10-18).
+          Two groups since 2026-11-01: what is known to be this game (the
+          guide or ESPN says so, it names both teams, or someone added it for
+          this game), then channels that only might have it. */}
       {options.length > 0 && (
-        <div className="mt-6">
-          <h2 className="mb-2 text-sm font-semibold text-white/70">
-            {options.length === 1 ? "Channel" : channel ? "Also on" : "Might be on"}
-          </h2>
-          <ul className="space-y-1.5">
-            {options.map((c, i) => {
-              const isSelected = c.id === selected.id;
-              // Only the single best match earns a badge, and only when
-              // it's actually one of the options -- the badge is a claim
-              // about the match, not about being first in the list.
-              const isBestMatch = channel != null && i === 0;
-              return (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    onClick={() => pick(c)}
-                    aria-pressed={isSelected}
-                    className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors ${
-                      isSelected
-                        ? "bg-netflix-red/15 ring-1 ring-netflix-red/50"
-                        : "bg-white/5 hover:bg-white/10"
-                    }`}
-                  >
-                    {c.number && (
-                      <span className="shrink-0 tabular-nums text-xs text-white/40">{c.number}</span>
-                    )}
-                    <span className="min-w-0 flex-1 truncate text-sm text-white/90">
-                      {c.name}
-                      {infoByChannel[c.name]?.provider && (
-                        <span className="ml-2 text-xs text-white/35">
-                          {infoByChannel[c.name].provider}
-                        </span>
-                      )}
-                    </span>
-                    {/* Why this one is down here rather than at the top: the
-                        provider has marked it dead. Still clickable -- the
-                        flag can lag a stream that came back, and a dead
-                        option beats no option when it is the only one. */}
-                    {/* Only said when it was measured: a stream that cannot
-                        deliver a second of picture per second buffers and
-                        drifts behind live. */}
-                    {speedByChannel[c.name] != null &&
-                      (speedByChannel[c.name] >= KEEPING_UP_SPEED ? (
-                        <span
-                          className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400/80"
-                          title="Arriving in real time when last measured"
-                        >
-                          Smooth
-                        </span>
-                      ) : (
-                        <span
-                          className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300"
-                          title="Arriving slower than real time when last measured, so it buffers and falls behind live"
-                        >
-                          Slow {speedByChannel[c.name].toFixed(2)}×
-                        </span>
-                      ))}
-                    {infoByChannel[c.name]?.stale && (
-                      <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
-                        Dead
-                      </span>
-                    )}
-                    {confirmedIds.includes(c.id) ? (
-                      <span
-                        className="shrink-0 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-400"
-                        title={
-                          marketTeamByName[c.name]
-                            ? `${marketTeamByName[c.name]} home market — this market always gets its team's game on the carrying network`
-                            : "The guide names this game here, or it's the single national feed the game is on"
-                        }
-                      >
-                        {marketTeamByName[c.name] ? "In market" : "Confirmed"}
-                      </span>
-                    ) : (
-                      isBestMatch && (
-                        <span
-                          className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/60"
-                          title="The closest match in the lineup, but not confirmed to be showing this game"
-                        >
-                          Best match
-                        </span>
-                      )
-                    )}
-                    {/* "Playing" only while the player is actually on it: during
-                        the feed search the row is the fallback, not what's on. */}
-                    {isSelected &&
-                      (held || noLines ? (
-                        <span
-                          className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/60"
-                          title="Plays only if the game's own stream can't be found"
-                        >
-                          Fallback
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded bg-netflix-red px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                          Playing
-                        </span>
-                      ))}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="mt-6 space-y-5">
+          {userPicked && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-white/50">
+              <span>
+                Your pick plays first for this game, on every device, until you change it.
+              </span>
+              <Button size="xs" variant="ghost" onClick={backToAutomatic}>
+                Back to automatic
+              </Button>
+            </div>
+          )}
+          {[
+            { title: "This game", list: options.filter((c) => isGameChannel(c.id)) },
+            { title: "Might have it", list: options.filter((c) => !isGameChannel(c.id)) },
+          ]
+            .filter((g) => g.list.length > 0)
+            .map((g) => (
+              <section key={g.title}>
+                <h2 className="mb-2 text-sm font-semibold text-white/70">{g.title}</h2>
+                <ul className="space-y-1.5">{g.list.map(row)}</ul>
+              </section>
+            ))}
         </div>
       )}
     </div>
