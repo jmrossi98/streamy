@@ -1378,6 +1378,8 @@ export type SonarrEpisode = {
   lastSearchTime?: string | null;
   /** "2026-10-18"; matches TMDB's numbering across layouts that differ. */
   airDate?: string | null;
+  /** The episode's name; catches seasons numbered in a different order. */
+  title?: string;
 };
 
 /**
@@ -1506,7 +1508,7 @@ async function waitForSeriesRefresh(seriesId: number, deadline: number): Promise
 /** Every episode Sonarr knows about for one season. */
 /** Sonarr's episodes as {season, episode}, for episodeNumbering.ts. */
 function asRefs<E extends SonarrEpisode>(episodes: E[]) {
-  return episodes.map((e) => ({ season: e.seasonNumber, episode: e.episodeNumber, airDate: e.airDate ?? null, ep: e }));
+  return episodes.map((e) => ({ season: e.seasonNumber, episode: e.episodeNumber, airDate: e.airDate ?? null, title: e.title ?? null, ep: e }));
 }
 
 /**

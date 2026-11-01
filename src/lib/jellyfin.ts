@@ -12,7 +12,7 @@
  * handed to the client.
  */
 import { cached } from "./ttlCache";
-import { toOtherNumbering } from "./episodeNumbering";
+import { airKey, sameTitle, toOtherNumbering } from "./episodeNumbering";
 import { isAllowedSubtitleLanguage, type AudioTrack } from "./audioLanguageRules";
 import { targetCovers, type HistoryTarget } from "./watchHistoryRules";
 import { containerBlocksDirectPlay } from "./directPlayRules";
@@ -90,6 +90,7 @@ export type JellyfinItem = {
   ParentIndexNumber?: number;
   /** ISO datetime of the air date, when asked for (fields=PremiereDate). */
   PremiereDate?: string | null;
+  Name?: string;
 };
 
 /**
@@ -215,25 +216,32 @@ export async function findJellyfinEpisodeItemId(
       `/Shows/${seriesId}/Episodes?season=${seasonNumber}&fields=ProviderIds`
     );
     let episode = episodes.Items.find((e) => matchesEpisode(e, seasonNumber, episodeNumber) && isPlayable(e));
-    if (!episode && seasonNumber > 0) {
-      // Jellyfin numbers by TVDB, which can split TMDB's season differently:
-      // Frieren's TMDB S1E29 is Jellyfin's S2E1. Translate by position across
-      // the whole show -- see episodeNumbering.ts.
+    if (seasonNumber > 0) {
+      // Jellyfin numbers by TVDB, which can split TMDB's season differently
+      // (Frieren's TMDB S1E29 is Jellyfin's S2E1) or order it differently
+      // with the same count (SpongeBob's TMDB S2E22 Shanghaied is TVDB's
+      // S2E19). So the episode at the same number is kept only while its
+      // name doesn't contradict TMDB's -- see episodeNumbering.ts.
       // Loaded lazily: tmdb.ts pulls in React's cache(), which this module
       // otherwise has no need for.
       const { getTmdbSeasonLayout } = await import("./tmdb");
-      const [all, tmdb] = await Promise.all([
-        jellyfinFetch<{ Items: JellyfinItem[] }>(`/Shows/${seriesId}/Episodes?fields=ProviderIds,PremiereDate`),
-        getTmdbSeasonLayout(showTmdbId),
-      ]);
-      const refs = all.Items.filter((i) => i.ParentIndexNumber != null && i.IndexNumber != null).map((i) => ({
-        season: i.ParentIndexNumber!,
-        episode: i.IndexNumber!,
-        airDate: i.PremiereDate ?? null,
-        item: i,
-      }));
-      const hit = tmdb ? toOtherNumbering(tmdb, refs, { season: seasonNumber, episode: episodeNumber }) : null;
-      if (hit && isPlayable(hit.item)) episode = hit.item;
+      const tmdb = await getTmdbSeasonLayout(showTmdbId);
+      const contradicted =
+        episode != null && sameTitle(episode.Name, tmdb?.titles?.[airKey(seasonNumber, episodeNumber)]) === false;
+      if (tmdb && (!episode || contradicted)) {
+        const all = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+          `/Shows/${seriesId}/Episodes?fields=ProviderIds,PremiereDate`
+        );
+        const refs = all.Items.filter((i) => i.ParentIndexNumber != null && i.IndexNumber != null).map((i) => ({
+          season: i.ParentIndexNumber!,
+          episode: i.IndexNumber!,
+          airDate: i.PremiereDate ?? null,
+          title: i.Name ?? null,
+          item: i,
+        }));
+        const hit = toOtherNumbering(tmdb, refs, { season: seasonNumber, episode: episodeNumber });
+        if (hit && isPlayable(hit.item)) episode = hit.item;
+      }
     }
     if (!episode) scanIfDownloaded("show", showTmdbId);
     return episode?.Id ?? null;
