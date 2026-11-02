@@ -448,6 +448,12 @@ export type ShowDetail = TVShow & {
    * still reports number_of_seasons: 1, so specials were invisible to the UI.
    */
   hasSpecials: boolean;
+  /**
+   * TMDB's in_production: false once a show has ended or been cancelled, so
+   * there are no new episodes to follow. Absent on a copy cached before it
+   * was added -- read that as still running.
+   */
+  inProduction?: boolean;
   credits?: Credits;
 };
 
@@ -462,6 +468,7 @@ async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
     vote_average: number;
     genres: { id: number; name: string }[];
     number_of_seasons: number;
+    in_production?: boolean;
     seasons?: { season_number: number; episode_count: number }[];
     created_by?: { id: number; name: string }[];
     credits?: { cast?: TmdbCastRaw[]; crew?: TmdbCrewRaw[] };
@@ -483,6 +490,7 @@ async function getShowByIdUncached(id: string): Promise<ShowDetail | null> {
     // shows, and offering a "Specials" tab that opens on nothing is worse
     // than not offering it.
     hasSpecials: (data.seasons || []).some((s) => s.season_number === 0 && s.episode_count > 0),
+    inProduction: data.in_production,
     credits: extractCredits(data.credits, data.created_by),
   };
 }

@@ -10,6 +10,7 @@ import { Credits } from "@/components/Credits";
 import { Artwork } from "@/components/ui";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { RequestButton } from "@/components/RequestButton";
+import { NewEpisodesToggle } from "@/components/NewEpisodesToggle";
 import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
 import { InfoHero } from "@/components/InfoHero";
 import { EpisodePlayer } from "@/components/EpisodePlayer";
@@ -426,6 +427,10 @@ export function ShowContent({
             />
           )}
         </div>
+        {/* Nothing new comes for a show that has ended. */}
+        {requestConfigured && show.inProduction !== false && (
+          <NewEpisodesToggle showId={show.id} onChanged={refreshEpisodeStatuses} />
+        )}
 
         {seasonLoading && (
           <div className="flex items-center justify-center py-12">

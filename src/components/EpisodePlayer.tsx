@@ -163,6 +163,8 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
   // Jellyfin has it -- the same swap rolling on to the next episode does.
   // See pendingSourceRules.ts.
   const [pending, setPending] = useState<PendingSource | null>(null);
+  // Bumped to give the episode a fresh player when its source comes or goes.
+  const [viewGeneration, setViewGeneration] = useState(0);
   const { videoUrl: sourceUrl, seasonNumber: pendingSeason, episodeNumber: pendingEpisode } = episode;
   useEffect(() => {
     if (sourceUrl) return;
@@ -184,7 +186,10 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
       fetch(`/api/stream/episode/${showId}/${pendingSeason}/${pendingEpisode}/playback`, { cache: "no-store" })
         .then((r) => (r.ok ? (r.json() as Promise<EpisodePlayback>) : null))
         .then((data) => {
-          if (live && data?.videoUrl) setRolled({ from: propsKey, episode: data });
+          if (!live || !data?.videoUrl) return;
+          setRolled({ from: propsKey, episode: data });
+          // A fresh player for the file, not the one that had nothing to play.
+          setViewGeneration((g) => g + 1);
         })
         .catch(() => {});
     }, SOURCE_POLL_EVERY_MS);
@@ -193,6 +198,28 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
       clearInterval(timer);
     };
   }, [sourceUrl, showId, pendingSeason, pendingEpisode, propsKey]);
+
+  // A stream that would not start: if Jellyfin has no file for the episode
+  // (yet), wait for one like above instead of leaving "Couldn't start
+  // playback" up. That was the show page's overlay a minute after a download
+  // (Potomac S11E4, 2026-11-02): it hands the player a source as soon as
+  // Sonarr has the file, before Jellyfin has indexed it, and the stream 404s.
+  // A failure with the file there keeps its Retry.
+  const episodeRef = useRef(episode);
+  useEffect(() => {
+    episodeRef.current = episode;
+  });
+  const recheckSource = useCallback(() => {
+    const current = episodeRef.current;
+    fetch(`/api/stream/episode/${showId}/${current.seasonNumber}/${current.episodeNumber}/playback`, { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<EpisodePlayback>) : null))
+      .then((data) => {
+        if (!data || data.videoUrl) return;
+        setRolled({ from: propsKey, episode: { ...current, videoUrl: null } });
+        setViewGeneration((g) => g + 1);
+      })
+      .catch(() => {});
+  }, [showId, propsKey]);
 
   // Episodes rolled on to with nobody touching anything (see shouldAskStillWatching).
   const unattendedRef = useRef(0);
@@ -252,7 +279,7 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
       className="bg-black fixed inset-0 z-30"
     >
       <EpisodeView
-        key={`${episode.seasonNumber}-${episode.episodeNumber}`}
+        key={`${episode.seasonNumber}-${episode.episodeNumber}-${viewGeneration}`}
         showId={showId}
         showName={showName}
         backdropUrl={backdropUrl}
@@ -264,6 +291,7 @@ export function EpisodePlayer(props: EpisodePlayerProps) {
         onClose={onClose}
         frameRef={frameRef}
         onAdvance={advance}
+        onStartFailed={recheckSource}
       />
       {askStillWatching && episode.next && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-5 bg-black/85 px-6 text-center">
@@ -309,6 +337,8 @@ type EpisodeViewProps = {
   onClose?: () => void;
   frameRef: RefObject<HTMLDivElement | null>;
   onAdvance: (how: "auto" | "manual") => void;
+  /** Playback gave up; the frame checks whether the file is there at all. */
+  onStartFailed: () => void;
 };
 
 /** One episode's player, inside EpisodePlayer's frame. */
@@ -324,6 +354,7 @@ function EpisodeView({
   onClose,
   frameRef,
   onAdvance,
+  onStartFailed,
 }: EpisodeViewProps) {
   const {
     seasonNumber,
@@ -431,6 +462,15 @@ function EpisodeView({
     title: `${showName} S${seasonNumber}E${episodeNumber}`,
     error: playbackError ? "Playback failed" : null,
   });
+  // Through a ref: the frame's callback is a new function on most renders,
+  // and this must ask once per failure, not once per render.
+  const onStartFailedRef = useRef(onStartFailed);
+  useEffect(() => {
+    onStartFailedRef.current = onStartFailed;
+  });
+  useEffect(() => {
+    if (playbackError) onStartFailedRef.current();
+  }, [playbackError]);
   // Back to a paused player after watching elsewhere: pick up that spot.
   useResumeRecheck(resumeQuery, videoRef);
   useEffect(() => {
