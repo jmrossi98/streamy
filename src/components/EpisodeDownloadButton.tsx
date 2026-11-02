@@ -295,6 +295,9 @@ export function EpisodeDownloadButton({
   const { status: authStatus } = useSession();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  // The request came back "not in Sonarr's episode list" -- see
+  // EpisodeRequestResult. Held until the page reloads.
+  const [notListed, setNotListed] = useState(false);
 
   const scope = episodeNumber == null ? "season" : "episode";
 
@@ -437,6 +440,17 @@ export function EpisodeDownloadButton({
     );
   }
 
+  if (notListed) {
+    return (
+      <span
+        className={`shrink-0 text-xs font-medium text-white/40 ${className}`}
+        title="No download source lists this episode yet. Try again in a few days."
+      >
+        Not available yet
+      </span>
+    );
+  }
+
   if (unaired) {
     // Nothing to fetch yet. The season button above still covers it: a
     // season request monitors every episode, aired or not, so Sonarr picks
@@ -468,7 +482,9 @@ export function EpisodeDownloadButton({
       });
       if (!res.ok) {
         onOptimistic?.(null);
-        setError(true);
+        const body = res.status === 404 ? await res.json().catch(() => null) : null;
+        if (body?.notListed) setNotListed(true);
+        else setError(true);
         return;
       }
       onRequested();
