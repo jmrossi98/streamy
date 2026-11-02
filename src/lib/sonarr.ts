@@ -1,9 +1,10 @@
 /**
  * Sonarr API client (server-side only). Set SONARR_URL/SONARR_API_KEY/
  * SONARR_ROOT_FOLDER/SONARR_QUALITY_PROFILE_ID in env to enable.
- * Sonarr is keyed by TVDB id, not TMDB — requestShow() resolves the TVDB id
- * via TMDB's own external_ids endpoint first, so this is still deterministic
- * ID matching, never fuzzy title search.
+ * Sonarr is keyed by TVDB id, not TMDB — tvdbIdForTmdb() resolves the TVDB id
+ * via TMDB's own external_ids endpoint, then Sonarr's `tmdb:` lookup when TMDB
+ * has no link, so this is still deterministic ID matching, never fuzzy title
+ * search.
  */
 
 import { unsearchedBacklog } from "./searchBacklogRules";
@@ -19,6 +20,7 @@ import {
 } from "./searchQueueRules";
 import { cached } from "./ttlCache";
 import { getTmdbSeasonLayout, getTvExternalIds } from "./tmdb";
+import { tvdbIdFromLookup, type SonarrLookupHit } from "./tvdbIdRules";
 import { seasonInOtherNumbering, toOtherNumbering, type TmdbLayout } from "./episodeNumbering";
 import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
@@ -1389,6 +1391,27 @@ export type SonarrEpisode = {
   title?: string;
 };
 
+/** How long a TMDB -> TVDB answer from Sonarr's lookup is kept. */
+const TVDB_LOOKUP_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * The TVDB id Sonarr keys a show by. TMDB's external_ids first; when TMDB has
+ * no TVDB link (common for new streaming shows), Sonarr's own `tmdb:` lookup --
+ * see tvdbIdRules.ts. Held for an hour, since the show page polls statuses
+ * every second while a download starts and each lookup goes out to Sonarr's
+ * metadata server.
+ */
+async function tvdbIdForTmdb(tmdbId: string): Promise<number | null> {
+  const { tvdbId } = await getTvExternalIds(tmdbId);
+  if (tvdbId) return tvdbId;
+  return cached(`sonarr:tvdb-for-tmdb:${tmdbId}`, TVDB_LOOKUP_TTL_MS, async () =>
+    tvdbIdFromLookup(
+      await sonarrFetch<SonarrLookupHit[]>(`/api/v3/series/lookup?term=tmdb:${encodeURIComponent(tmdbId)}`),
+      tmdbId
+    )
+  );
+}
+
 /**
  * Finds the series in Sonarr, adding it first if it isn't there yet.
  *
@@ -1404,8 +1427,8 @@ async function ensureSeriesInSonarr(
 ): Promise<
   { ok: true; sonarrId: number; created: boolean } | { ok: false; error: string }
 > {
-  const { tvdbId } = await getTvExternalIds(tmdbId);
-  if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+  const tvdbId = await tvdbIdForTmdb(tmdbId);
+  if (!tvdbId) return { ok: false, error: "No TVDB id found for this show" };
 
   const existing = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
   if (existing[0]) return { ok: true, sonarrId: existing[0].id, created: false };
@@ -1546,7 +1569,7 @@ export async function getSonarrSeasonEpisodes(
 ): Promise<(SonarrEpisode & { tmdbEpisode: number })[]> {
   if (!isSonarrConfigured()) return [];
   try {
-    const { tvdbId } = await getTvExternalIds(tmdbId);
+    const tvdbId = await tvdbIdForTmdb(tmdbId);
     if (!tvdbId) return [];
     const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
     if (!series[0]) return [];
@@ -1567,7 +1590,7 @@ export async function getEarliestDownloadedEpisode(
 ): Promise<{ seasonNumber: number; episodeNumber: number } | null> {
   if (!isSonarrConfigured()) return null;
   try {
-    const { tvdbId } = await getTvExternalIds(tmdbId);
+    const tvdbId = await tvdbIdForTmdb(tmdbId);
     if (!tvdbId) return null;
     const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
     if (!series[0]) return null;
@@ -2489,8 +2512,8 @@ export async function manageSonarrEpisodes(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
-    const { tvdbId } = await getTvExternalIds(tmdbId);
-    if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+    const tvdbId = await tvdbIdForTmdb(tmdbId);
+    if (!tvdbId) return { ok: false, error: "No TVDB id found for this show" };
     const series = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
     if (!series[0]) return { ok: false, error: "Show is not in Sonarr" };
     const seriesId = series[0].id;
@@ -2757,8 +2780,8 @@ export async function requestShow(
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
 
   try {
-    const { tvdbId } = await getTvExternalIds(tmdbId);
-    if (!tvdbId) return { ok: false, error: "No TVDB id found for this show on TMDB" };
+    const tvdbId = await tvdbIdForTmdb(tmdbId);
+    if (!tvdbId) return { ok: false, error: "No TVDB id found for this show" };
 
     const existing = await sonarrFetch<
       { id: number; statistics?: { episodeFileCount?: number } }[]
@@ -3089,7 +3112,7 @@ export type NewEpisodeFollow = {
 const NOT_FOLLOWING: NewEpisodeFollow = { following: false, nextAiring: null };
 
 async function sonarrSeriesForTmdb(tmdbId: string): Promise<FollowSeries | null> {
-  const { tvdbId } = await getTvExternalIds(tmdbId);
+  const tvdbId = await tvdbIdForTmdb(tmdbId);
   if (!tvdbId) return null;
   const existing = await sonarrFetch<FollowSeries[]>(`/api/v3/series?tvdbId=${tvdbId}`);
   return existing[0] ?? null;
