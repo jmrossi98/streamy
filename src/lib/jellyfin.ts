@@ -157,6 +157,42 @@ export function requestJellyfinPathScan(path: string): void {
   }).catch((err) => console.error(`[jellyfin] scan of ${path} failed:`, err));
 }
 
+/**
+ * Has Jellyfin look through one show's folder now -- the "scan for new and
+ * updated files" refresh of its own UI, not a metadata refresh.
+ *
+ * A path scan (above) waits out Jellyfin's 60 s library-monitor delay before
+ * it looks. On 2026-11-02 that minute was most of the wait between Potomac
+ * S11E4 importing and being playable, and when its file was replaced it was
+ * a minute of the old item pointing at a deleted file. This refresh starts at
+ * once and takes seconds. False when the show is not in Jellyfin yet (its
+ * first episode), where the path scan is what finds it.
+ */
+export async function refreshJellyfinShowNow(ids: { tmdbId?: string | null; tvdbId?: string | null }): Promise<boolean> {
+  if (!isJellyfinConfigured() || (!ids.tmdbId && !ids.tvdbId)) return false;
+  try {
+    const result = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+      `/Items?IncludeItemTypes=Series&Recursive=true&fields=ProviderIds`
+    );
+    const series = result.Items.find(
+      (i) => (ids.tmdbId && matchesTmdbId(i, ids.tmdbId)) || (ids.tvdbId && (i.ProviderIds?.Tvdb ?? i.ProviderIds?.tvdb) === ids.tvdbId)
+    );
+    if (!series) return false;
+    const params = new URLSearchParams({
+      Recursive: "true",
+      MetadataRefreshMode: "Default",
+      ImageRefreshMode: "Default",
+      ReplaceAllMetadata: "false",
+      ReplaceAllImages: "false",
+    });
+    await jellyfinFetch(`/Items/${series.Id}/Refresh?${params.toString()}`, { method: "POST" });
+    return true;
+  } catch (err) {
+    console.error(`[jellyfin] refresh of show ${ids.tmdbId ?? ids.tvdbId} failed:`, err);
+    return false;
+  }
+}
+
 /** Rescans only when Radarr/Sonarr hold the title: a miss for anything else is just "not downloaded". */
 function scanIfDownloaded(kind: "movie" | "show", tmdbId: string): void {
   // Loaded lazily: downloadedLibrary pulls in the TMDB client.

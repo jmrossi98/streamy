@@ -354,7 +354,7 @@ export function EpisodeDownloadButton({
       // search is running and nothing is on its way.
       return (
         <span className={`shrink-0 text-xs font-medium text-white/40 ${className}`} title="Sonarr will pick it up once it airs">
-          Not aired yet
+          Downloads when it airs
         </span>
       );
     }

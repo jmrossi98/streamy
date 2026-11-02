@@ -438,8 +438,21 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
       const action = hlsFatalAction(String(data.type), fatalAttempts);
       if (action !== "give-up") {
         fatalAttempts += 1;
-        if (action === "restart-load") setTimeout(() => hls.startLoad(), 1000 * fatalAttempts);
-        else hls.recoverMediaError();
+        // startLoad() resumes segments; it never asks again for a playlist
+        // that did not load (a 404 while Jellyfin is still indexing a fresh
+        // download), so those retries did nothing and the error that sends
+        // the player to wait for the file never came.
+        const playlistFailed =
+          data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+          data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
+          data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR;
+        if (action === "restart-load") {
+          setTimeout(() => {
+            if (hlsRef.current !== hls) return;
+            if (playlistFailed) hls.loadSource(videoSrc);
+            else hls.startLoad();
+          }, 1000 * fatalAttempts);
+        } else hls.recoverMediaError();
         return;
       }
       // Nothing lower to fall back to here -- this is already the

@@ -135,3 +135,70 @@ describe("proxyJellyfinHlsResource", () => {
     expect(res.status).toBe(502);
   });
 });
+
+/**
+ * Potomac S11E4, 2026-11-02: the file was replaced under a playing stream, and
+ * the session kept failing for seven minutes after Jellyfin had the new file.
+ * See streamRecoveryRules.ts.
+ */
+describe("a recorded title whose file changed under it", () => {
+  const req = (url: string) => new Request(url);
+
+  it("names the item being served, not the one the playlist was made for", async () => {
+    const calls = captureUpstream("binary", "video/mp2t");
+    await proxyJellyfinHlsResource(
+      "newItem",
+      "hls1/main/0.ts",
+      "/api/stream/episode/65300/11/4/hls",
+      req("https://streamy.test/api/stream/episode/65300/11/4/hls/hls1/main/0.ts?mediaSourceId=oldItem&PlaySessionId=s1")
+    );
+    expect(calls[0]).toContain("/Videos/newItem/hls1/main/0.ts");
+    expect(calls[0]).toContain("mediaSourceId=newItem");
+    expect(calls[0]).not.toContain("oldItem");
+  });
+
+  it("stops the session's transcode when Jellyfin fails a segment, so the next try starts fresh", async () => {
+    const calls: { url: string; method: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET" });
+        return String(url).includes("ActiveEncodings") ? new Response(null, { status: 204 }) : new Response("ffmpeg", { status: 500 });
+      })
+    );
+    const res = await proxyJellyfinHlsResource(
+      "item1",
+      "hls1/main/0.ts",
+      "/api/stream/episode/65300/11/4/hls",
+      req("https://streamy.test/api/stream/episode/65300/11/4/hls/hls1/main/0.ts?mediaSourceId=item1&PlaySessionId=s1")
+    );
+    expect(res.status).toBe(502);
+    await new Promise((r) => setTimeout(r, 0));
+    const stop = calls.find((c) => c.url.includes("ActiveEncodings"));
+    expect(stop?.method).toBe("DELETE");
+    expect(stop?.url).toContain("playSessionId=s1");
+  });
+
+  it("leaves live TV's media source and sessions alone", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(String(url));
+        return new Response("nope", { status: 500 });
+      })
+    );
+    await proxyJellyfinHlsResource(
+      "channel1",
+      "hls1/main/0.ts",
+      "/api/stream/live/channel1/hls",
+      req("https://streamy.test/api/stream/live/channel1/hls/hls1/main/0.ts?mediaSourceId=stream9&PlaySessionId=s1"),
+      "stream9",
+      undefined,
+      true
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls[0]).toContain("mediaSourceId=stream9");
+    expect(calls.some((u) => u.includes("ActiveEncodings"))).toBe(false);
+  });
+});

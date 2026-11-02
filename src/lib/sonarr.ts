@@ -51,6 +51,8 @@ import type {
   RadarrHealthIssue,
 } from "./radarr";
 import { PACK_IMPORT_MAX_TRIES } from "./manualPackRules";
+import { isDuplicateGrab, sameDownload, type GrabQueueRecord } from "./duplicateGrabRules";
+import { followPlan, followSeriesUpdate, isFollowing, latestSeason, type FollowEpisode } from "./newEpisodeRules";
 
 const SONARR_URL = process.env.SONARR_URL?.replace(/\/$/, "");
 const SONARR_API_KEY = process.env.SONARR_API_KEY;
@@ -663,14 +665,19 @@ async function stopWantingSeries(sonarrId: number): Promise<void> {
     console.error(`[sonarr] could not unmonitor episodes of series ${sonarrId}:`, err);
   }
   try {
-    // Seasons too, or a metadata refresh re-monitors newly listed episodes.
-    const series = await sonarrFetch<{ seasons?: { seasonNumber: number; monitored: boolean }[] } & Record<string, unknown>>(
-      `/api/v3/series/${sonarrId}`
-    );
-    if ((series.seasons ?? []).some((s) => s.monitored)) {
+    // Seasons too, or a metadata refresh re-monitors newly listed episodes;
+    // and new seasons, or the next one Sonarr lists comes back wanted.
+    const series = await sonarrFetch<
+      { monitorNewItems?: string; seasons?: { seasonNumber: number; monitored: boolean }[] } & Record<string, unknown>
+    >(`/api/v3/series/${sonarrId}`);
+    if ((series.seasons ?? []).some((s) => s.monitored) || series.monitorNewItems !== "none") {
       await sonarrFetch(`/api/v3/series/${sonarrId}`, {
         method: "PUT",
-        body: JSON.stringify({ ...series, seasons: (series.seasons ?? []).map((s) => ({ ...s, monitored: false })) }),
+        body: JSON.stringify({
+          ...series,
+          monitorNewItems: "none",
+          seasons: (series.seasons ?? []).map((s) => ({ ...s, monitored: false })),
+        }),
       });
     }
   } catch (err) {
@@ -2362,13 +2369,19 @@ export async function requestSeason(
   }
 }
 
-/** Monitors the given seasons of a series, so future episodes are picked up too. */
+/**
+ * Monitors the given seasons of a series, so future episodes are picked up
+ * too. The newest season whole is following the show, new seasons included,
+ * which is what the show page then says -- see newEpisodeRules.ts.
+ */
 async function monitorSonarrSeasons(seriesId: number, seasonNumbers: number[]): Promise<void> {
-  const full = await sonarrFetch<{ seasons: { seasonNumber: number; monitored: boolean }[] }>(
+  const full = await sonarrFetch<{ monitorNewItems?: string; seasons: { seasonNumber: number; monitored: boolean }[] }>(
     `/api/v3/series/${seriesId}`
   );
+  const latest = latestSeason(full.seasons);
   const updated = {
     ...full,
+    ...(latest != null && seasonNumbers.includes(latest) ? { monitorNewItems: "all" } : {}),
     seasons: full.seasons.map((s) => (seasonNumbers.includes(s.seasonNumber) ? { ...s, monitored: true } : s)),
   };
   await sonarrFetch(`/api/v3/series/${seriesId}`, { method: "PUT", body: JSON.stringify(updated) });
@@ -2801,6 +2814,8 @@ export async function requestShow(
       ),
         rootFolderPath: SONARR_ROOT_FOLDER,
         monitored: true,
+        // The whole show includes what is still to come -- see newEpisodeRules.ts.
+        monitorNewItems: "all",
         // Sonarr's own bulk search grabs the whole show at once, in no
         // particular order; we drive an ordered search instead.
         addOptions: { searchForMissingEpisodes: false },
@@ -2995,4 +3010,155 @@ export function maybeImportManualPacks(): void {
   if (Date.now() - lastPackImportAt < PACK_IMPORT_INTERVAL_MS) return;
   lastPackImportAt = Date.now();
   importManualPackFiles().catch((err) => console.error("[sonarr] pack import failed:", err));
+}
+
+// ------------------------------------------------------------ Duplicate grabs
+
+/** How long to look for a fresh grab's queue entry: Sonarr lists it a few seconds after sending it. */
+const GRAB_QUEUE_WAIT_MS = 60_000;
+const GRAB_QUEUE_POLL_MS = 5_000;
+
+type GrabQueueDetail = GrabQueueRecord & { id: number };
+
+/**
+ * Takes a grab back out when it only duplicates episodes already on disk or
+ * already downloading -- see duplicateGrabRules.ts. Run from the Grab
+ * webhook, in the background; never throws. Not blocklisted: the release was
+ * fine, it just was not needed.
+ */
+export async function dropDuplicateGrab(grab: {
+  seriesId: number;
+  episodeIds: number[];
+  downloadId: string;
+  title: string;
+}): Promise<void> {
+  if (!isSonarrConfigured() || !grab.downloadId || grab.episodeIds.length === 0) return;
+  try {
+    const deadline = Date.now() + GRAB_QUEUE_WAIT_MS;
+    let queue: GrabQueueDetail[] = [];
+    let mine: GrabQueueDetail[] = [];
+    for (;;) {
+      queue = await sonarrFetch<GrabQueueDetail[]>(`/api/v3/queue/details?seriesId=${grab.seriesId}`);
+      mine = queue.filter((r) => sameDownload(r.downloadId, grab.downloadId));
+      if (mine.length > 0 || Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, GRAB_QUEUE_POLL_MS));
+    }
+    // Already finished or gone: nothing to take back.
+    if (mine.length === 0) return;
+    const [history, episodes] = await Promise.all([
+      sonarrFetch<{ records: { data?: { releaseSource?: string } }[] }>(
+        `/api/v3/history?downloadId=${encodeURIComponent(grab.downloadId)}&eventType=1&pageSize=5`
+      ),
+      sonarrFetch<SonarrEpisode[]>(`/api/v3/episode?${grab.episodeIds.map((id) => `episodeIds=${id}`).join("&")}`),
+    ]);
+    const releaseSource = history.records[0]?.data?.releaseSource ?? null;
+    if (!isDuplicateGrab({ releaseSource, downloadId: grab.downloadId, episodes, queue })) return;
+    // A private tracker's torrent that still owes seeding stays in the client.
+    const removal = await clientRemoval(grab.downloadId);
+    await sonarrFetch(
+      `/api/v3/queue/bulk?removeFromClient=${removal.removeFromClient}&blocklist=false&skipRedownload=true`,
+      { method: "DELETE", body: JSON.stringify({ ids: mine.map((r) => r.id) }) }
+    );
+    await removal.after();
+    console.log(
+      `[sonarr] dropped duplicate grab "${grab.title}" (${releaseSource}): episode(s) ${grab.episodeIds.join(", ")} already on disk or downloading`
+    );
+  } catch (err) {
+    console.error(`[sonarr] duplicate-grab check for "${grab.title}" failed:`, err);
+  }
+}
+
+// --------------------------------------------------------------- New episodes
+
+type FollowSeries = {
+  id: number;
+  monitored: boolean;
+  monitorNewItems?: string;
+  status?: string;
+  nextAiring?: string | null;
+  seasons: { seasonNumber: number; monitored: boolean }[];
+} & Record<string, unknown>;
+
+export type NewEpisodeFollow = {
+  /** New episodes download as they air. */
+  following: boolean;
+  /** When Sonarr expects the next episode, if it knows. */
+  nextAiring: string | null;
+};
+
+const NOT_FOLLOWING: NewEpisodeFollow = { following: false, nextAiring: null };
+
+async function sonarrSeriesForTmdb(tmdbId: string): Promise<FollowSeries | null> {
+  const { tvdbId } = await getTvExternalIds(tmdbId);
+  if (!tvdbId) return null;
+  const existing = await sonarrFetch<FollowSeries[]>(`/api/v3/series?tvdbId=${tvdbId}`);
+  return existing[0] ?? null;
+}
+
+function followOf(series: FollowSeries): NewEpisodeFollow {
+  return { following: isFollowing(series), nextAiring: series.nextAiring ?? null };
+}
+
+/** Whether a show's new episodes download as they air -- see newEpisodeRules.ts. */
+export async function getNewEpisodeFollow(tmdbId: string): Promise<NewEpisodeFollow> {
+  if (!isSonarrConfigured()) return NOT_FOLLOWING;
+  const series = await sonarrSeriesForTmdb(tmdbId);
+  return series ? followOf(series) : NOT_FOLLOWING;
+}
+
+/**
+ * Starts or stops downloading a show's new episodes as they air, without
+ * touching any episode that has already aired -- see newEpisodeRules.ts.
+ * Turning it on for a show Sonarr does not have yet adds it, with nothing
+ * from the past wanted.
+ */
+export async function setNewEpisodeFollow(
+  tmdbId: string,
+  on: boolean,
+  tier: QualityTier = "hd"
+): Promise<{ ok: true; follow: NewEpisodeFollow } | { ok: false; error: string }> {
+  if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
+  try {
+    let seriesId: number;
+    if (on) {
+      const added = await ensureSeriesInSonarr(tmdbId, tier);
+      if (!added.ok) return added;
+      seriesId = added.sonarrId;
+      // A series just added has no episodes until its first refresh, and
+      // that refresh resets monitoring -- see episodesWhenReady.
+      await episodesWhenReady(seriesId, null, added.created);
+    } else {
+      const existing = await sonarrSeriesForTmdb(tmdbId);
+      if (!existing) return { ok: true, follow: NOT_FOLLOWING };
+      seriesId = existing.id;
+    }
+
+    const before = await sonarrFetch<FollowEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+    const series = await sonarrFetch<FollowSeries>(`/api/v3/series/${seriesId}`);
+    await sonarrFetch(`/api/v3/series/${seriesId}`, {
+      method: "PUT",
+      body: JSON.stringify(followSeriesUpdate(series, on)),
+    });
+    // The season flag just flipped every episode of the season; put the aired
+    // ones back and set the upcoming ones. Unmonitor first, so an aired
+    // episode nobody asked for is wanted for as short a time as possible.
+    const after = await sonarrFetch<FollowEpisode[]>(`/api/v3/episode?seriesId=${seriesId}`);
+    const plan = followPlan(before, after, on, Date.now());
+    if (plan.unmonitor.length > 0) {
+      await sonarrFetch(`/api/v3/episode/monitor`, {
+        method: "PUT",
+        body: JSON.stringify({ episodeIds: plan.unmonitor, monitored: false }),
+      });
+    }
+    if (plan.monitor.length > 0) {
+      await sonarrFetch(`/api/v3/episode/monitor`, {
+        method: "PUT",
+        body: JSON.stringify({ episodeIds: plan.monitor, monitored: true }),
+      });
+    }
+    return { ok: true, follow: followOf(await sonarrFetch<FollowSeries>(`/api/v3/series/${seriesId}`)) };
+  } catch (err) {
+    console.error(`[sonarr] setNewEpisodeFollow(${tmdbId}, ${on}) failed:`, err);
+    return { ok: false, error: err instanceof Error ? err.message : "Unknown Sonarr error" };
+  }
 }

@@ -6,7 +6,9 @@ import {
   jellyfinSubtitleStreamUrl,
   jellyfinTrickplaySheetUrl,
   getJellyfinTrickplay,
+  stopJellyfinTranscode,
 } from "./jellyfin";
+import { pinRecordedMediaSource, shouldResetTranscode } from "./streamRecoveryRules";
 import { trickplayVersion } from "./trickplayRules";
 import { windowLivePlaylist } from "./hlsPlaylistRules";
 import { streamMeter, type MeterTag } from "./streamMeter";
@@ -174,6 +176,9 @@ export async function proxyJellyfinHlsResource(
   // itself tells the player to fetch next -- strip it back out here.
   const forwardedParams = new URLSearchParams(incoming.searchParams);
   forwardedParams.delete("startTimeTicks");
+  // A recorded title is served as the item it is now, even when the player's
+  // playlist predates a replaced file -- see streamRecoveryRules.ts.
+  if (!live && !mediaSourceId) pinRecordedMediaSource(forwardedParams, itemId);
   // A recorded title's session is kept alive on a timer between fetches;
   // live pings on every request itself (keepLiveSessionAlive), since a live
   // player never goes quiet. See playbackKeepaliveRules.ts.
@@ -197,6 +202,12 @@ export async function proxyJellyfinHlsResource(
 
   if (!upstream.ok && upstream.status !== 206) {
     got.done();
+    // Let the session's next request start a fresh job instead of reusing
+    // this broken one -- see streamRecoveryRules.ts.
+    if (shouldResetTranscode({ live, jellyfinPath, status: upstream.status })) {
+      const session = playSessionOf(incoming.searchParams);
+      if (session) void stopJellyfinTranscode(session);
+    }
     return new Response("Upstream stream unavailable", { status: 502 });
   }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requestJellyfinLibraryScan, requestJellyfinPathScan } from "@/lib/jellyfin";
+import { refreshJellyfinShowNow, requestJellyfinLibraryScan, requestJellyfinPathScan } from "@/lib/jellyfin";
+import { dropDuplicateGrab } from "@/lib/sonarr";
 
 /**
  * Inbound webhook from Sonarr (Settings -> Connect -> Webhook).
@@ -42,6 +43,18 @@ export async function POST(request: Request) {
       where: { tvdbId, mediaType: "show", status: "requested" },
       data: { status: "downloading" },
     });
+    // A second copy of something already on disk or on its way is taken
+    // back out -- see duplicateGrabRules.ts. In the background: the queue
+    // entry it needs shows up a few seconds after this call.
+    const seriesId = (body?.series as { id?: number } | undefined)?.id;
+    const episodeIds = ((body?.episodes as { id?: number }[] | undefined) ?? [])
+      .map((e) => e.id)
+      .filter((id): id is number => typeof id === "number");
+    const downloadId = typeof body?.downloadId === "string" ? body.downloadId : "";
+    const title = (body?.release as { releaseTitle?: string } | undefined)?.releaseTitle ?? "unknown release";
+    if (typeof seriesId === "number" && downloadId && episodeIds.length > 0) {
+      void dropDuplicateGrab({ seriesId, episodeIds, downloadId, title });
+    }
   } else if (eventType === "Download") {
     await prisma.mediaRequest.updateMany({
       where: { tvdbId, mediaType: "show" },
@@ -52,6 +65,10 @@ export async function POST(request: Request) {
     const seriesPath = (body?.series as { path?: string } | undefined)?.path;
     if (typeof seriesPath === "string" && seriesPath) requestJellyfinPathScan(seriesPath);
     else requestJellyfinLibraryScan();
+    // And the show itself straight away, rather than after the path scan's
+    // one-minute wait, so a new episode plays within seconds of landing.
+    const tmdbId = (body?.series as { tmdbId?: number } | undefined)?.tmdbId;
+    void refreshJellyfinShowNow({ tmdbId: tmdbId ? String(tmdbId) : null, tvdbId });
   }
   // Unrecognized event types (Test, SeriesDelete, Health, etc.) no-op so
   // Sonarr's "Test" button and other lifecycle events don't error out.
