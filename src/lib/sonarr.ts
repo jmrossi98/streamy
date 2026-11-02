@@ -1669,13 +1669,22 @@ export async function getSonarrSeasonStatuses(
   }
 }
 
+/**
+ * An episode request's answer. `notListed` means Sonarr's episode list (from
+ * TVDB) doesn't have the episode at all, so there is nothing to monitor or
+ * search: TVDB often trails TMDB by weeks for new streaming shows (The Rotten
+ * Files S1E8-E10, 2026-11). It is a dead end the viewer can't retry past, not
+ * a failure.
+ */
+export type EpisodeRequestResult = { ok: true } | { ok: false; error: string; notListed?: true };
+
 /** Monitors and searches a single episode. */
 export async function requestEpisode(
   tmdbId: string,
   seasonNumber: number,
   episodeNumber: number,
   tier: QualityTier = "hd"
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<EpisodeRequestResult> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
     const series = await ensureSeriesInSonarr(tmdbId, tier);
@@ -1708,9 +1717,9 @@ async function searchEpisode(
   episodeNumber: number,
   episodes: SonarrEpisode[],
   tmdb: TmdbLayout | null
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<EpisodeRequestResult> {
   const episode = tmdbEpisodeInSonarr(tmdb, episodes, seasonNumber, episodeNumber);
-  if (!episode) return { ok: false, error: "Episode not found in Sonarr" };
+  if (!episode) return { ok: false, error: "Episode not found in Sonarr", notListed: true };
 
   await sonarrFetch(`/api/v3/episode/monitor`, {
     method: "PUT",

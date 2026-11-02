@@ -82,6 +82,11 @@ export async function POST(request: Request) {
     : await requestSeason(tmdbId, seasonNumber, tier);
 
   if (!result.ok) {
+    // Not in Sonarr's episode list yet, so nothing can be searched. A 404 the
+    // button shows as "Not available yet", not a failure to retry.
+    if ("notListed" in result && result.notListed) {
+      return NextResponse.json({ error: result.error, notListed: true }, { status: 404 });
+    }
     return NextResponse.json({ error: result.error }, { status: 502 });
   }
   // Who asked, as the title-level request route already records. Without it
