@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { GAME_FEED_RESCAN_EVENT, announceGameFeedSearch } from "@/lib/gameFeedSearch";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
+import { cleanChannelName } from "@/lib/liveChannelRules";
 import { Badge, Button } from "@/components/ui";
 import {
   applyResult,
@@ -39,28 +40,6 @@ type Candidate = { id: number; name: string; provider: string | null; logoUrl: s
  */
 const BUSY_RETRIES = 2;
 const BUSY_RETRY_MS = 4_000;
-/** How long to keep asking whether Jellyfin lists a just-added channel. */
-const LINEUP_WAIT_MS = 60_000;
-const LINEUP_POLL_MS = 4_000;
-
-/**
- * Jellyfin's id for a channel just added, once it lists it, or null after
- * LINEUP_WAIT_MS. The add route waits 15 s; a guide refresh can take longer.
- */
-async function awaitLineup(streamName: string): Promise<string | null> {
-  const deadline = Date.now() + LINEUP_WAIT_MS;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`/api/live/lineup-channel?name=${encodeURIComponent(streamName)}`, { cache: "no-store" });
-      const body = res.ok ? ((await res.json()) as { jellyfinId?: string | null }) : null;
-      if (body?.jellyfinId) return body.jellyfinId;
-    } catch {
-      // Ask again until the deadline.
-    }
-    await new Promise((r) => setTimeout(r, LINEUP_POLL_MS));
-  }
-  return null;
-}
 
 export function GameStreamFinder({
   fixtureId,
@@ -280,11 +259,10 @@ export function GameStreamFinder({
           announceGameFeedSearch({ fixtureId, outcome: "added", channel: { id: body.jellyfinId, name: s.name }, manual: !auto });
           router.refresh();
         } else {
-          // Jellyfin hasn't listed it yet: keep asking, then play and list it.
-          void awaitLineup(s.name).then((id) => {
-            if (id) announceGameFeedSearch({ fixtureId, outcome: "added", channel: { id, name: s.name }, manual: !auto });
-            router.refresh();
-          });
+          // Jellyfin hasn't listed it yet: the player lists it as joining and
+          // waits for it, then plays and lists it for real (GameChannelPicker).
+          // A reload rebuilds that from the game's added channels.
+          announceGameFeedSearch({ fixtureId, outcome: "pending", name: cleanChannelName(s.name), manual: !auto });
         }
       }
       return res.ok;

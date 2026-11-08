@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { GAME_FEED_SEARCH_EVENT, requestGameFeedRescan, type GameFeedSearchOutcome } from "@/lib/gameFeedSearch";
+import { useRouter } from "next/navigation";
+import {
+  GAME_FEED_SEARCH_EVENT,
+  announceGameFeedSearch,
+  awaitLineupChannel,
+  requestGameFeedRescan,
+  type GameFeedSearchOutcome,
+} from "@/lib/gameFeedSearch";
 import { FEED_RESCAN_MS, channelCanStart, shouldRescanForFeed, stallFailoverOrder } from "@/lib/liveFailoverRules";
 import { channelKey } from "@/lib/liveChannelStateRules";
 import type { LineUse } from "@/lib/lineSteeringRules";
@@ -9,8 +16,18 @@ import { Badge, Button, Notice } from "@/components/ui";
 import type { LiveChannel } from "@/lib/liveTv";
 import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
-import { KEEPING_UP_SPEED } from "@/lib/liveChannelRules";
+import { KEEPING_UP_SPEED, cleanChannelName } from "@/lib/liveChannelRules";
 import { foundFeedTakesOver, resolveStoredChoice, type StoredChoice } from "@/lib/gameChannelChoice";
+
+export type PendingAdd = { name: string; mine: boolean };
+
+/**
+ * Names compared the way the channel was created and Jellyfin lists it: the
+ * finder announces a stream's own name ("US| EPL ARSENAL") for the channel
+ * "EPL ARSENAL", and case and repeated spaces don't count.
+ */
+const channelNameKey = (n: string) => cleanChannelName(n).trim().replace(/\s+/g, " ").toLowerCase();
+const sameChannelName = (a: string, b: string) => channelNameKey(a) === channelNameKey(b);
 
 type Props = {
   /** The best single match -- EPG-confirmed or a name-based guess, or null. */
@@ -31,6 +48,14 @@ type Props = {
    * game" with the rest of its feeds, whatever else is known about them.
    */
   addedForGameIds?: string[];
+  /**
+   * Channels added for this game in the last few minutes that Jellyfin doesn't
+   * list yet, by name; `mine` when the viewer added it with Watch (it is their
+   * pick). Listed as joining, and played once Jellyfin has it -- a reload used
+   * to drop both the wait and the row (2026-11-07, "it said added but didn't
+   * add to the channel list").
+   */
+  pendingAdds?: PendingAdd[];
   /** Channel name -> the team whose home market it is, when that is why it's confirmed (badge wording). */
   marketTeamByName?: Record<string, string>;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
@@ -166,6 +191,7 @@ export function GameChannelPicker({
   confirmedIds = [],
   gameFeedIds = [],
   addedForGameIds = [],
+  pendingAdds = [],
   marketTeamByName = {},
   candidates,
   infoByChannel,
@@ -177,6 +203,7 @@ export function GameChannelPicker({
   pickDownReason = null,
   holdForFeed = false,
 }: Props) {
+  const router = useRouter();
   const [held, setHeld] = useState(holdForFeed);
   /** How far the feed search has got, while it reports (GameStreamFinder). */
   const [searchProgress, setSearchProgress] = useState<{ checked: number; total: number } | null>(null);
@@ -190,6 +217,8 @@ export function GameChannelPicker({
   const heldSince = useRef<number | null>(null);
   /** Feeds added this visit, listed at once rather than after a reload. */
   const [added, setAdded] = useState<LiveChannel[]>([]);
+  /** Added, but not in Jellyfin's lineup yet: listed as joining. `late` once the wait ran out. */
+  const [pending, setPending] = useState<(PendingAdd & { late?: boolean })[]>(pendingAdds);
   const serverOptions = channel ? [channel, ...candidates] : candidates;
   const addedIds = added.map((a) => a.id);
   const options = [...added.filter((a) => !serverOptions.some((o) => o.id === a.id)), ...serverOptions];
@@ -263,10 +292,57 @@ export function GameChannelPicker({
     }
   }
 
+  /*
+    Channels joining the lineup -- added this visit (a "pending" report from
+    the finder) or before it (the server's list: a reload, another device) --
+    are waited for here, in one place. Once Jellyfin lists one it arrives like
+    any other added feed: the viewer's own Watch plays, someone else's is listed
+    (and takes over a guess, foundFeedTakesOver). The page is then refreshed
+    for what the server knows about it (provider, speed).
+  */
+  const joinWait = useRef<{ signal: AbortSignal | null; waiting: Set<string> }>({ signal: null, waiting: new Set() });
+  function waitForJoining(p: PendingAdd) {
+    const { signal, waiting } = joinWait.current;
+    const key = channelNameKey(p.name);
+    if (!signal || waiting.has(key)) return;
+    waiting.add(key);
+    void awaitLineupChannel(p.name, undefined, signal).then((id) => {
+      waiting.delete(key);
+      if (signal.aborted) return;
+      if (id) {
+        announceGameFeedSearch({ fixtureId, outcome: "added", channel: { id, name: p.name }, manual: p.mine });
+        router.refresh();
+      } else {
+        setPending((prev) => prev.map((q) => (sameChannelName(q.name, p.name) ? { ...q, late: true } : q)));
+      }
+    });
+  }
+  useEffect(() => {
+    const ctrl = new AbortController();
+    joinWait.current = { signal: ctrl.signal, waiting: new Set() };
+    for (const p of pendingAdds) waitForJoining(p);
+    return () => ctrl.abort();
+    // Once per load: the server's list is what this visit started with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const onOutcome = (e: Event) => {
       const d = (e as CustomEvent<GameFeedSearchOutcome>).detail;
       if (d?.fixtureId !== fixtureId) return;
+      if (d.outcome === "pending") {
+        // Added, waiting on Jellyfin: listed as joining, and waited for here.
+        const name = d.name;
+        if (!name) return;
+        const p = { name, mine: !!d.manual };
+        setPending((prev) => (prev.some((q) => sameChannelName(q.name, name)) ? prev : [...prev, p]));
+        waitForJoining(p);
+        return;
+      }
+      if (d.channel) {
+        const name = d.channel.name;
+        setPending((prev) => prev.filter((p) => !sameChannelName(p.name, name)));
+      }
       setSearchActive(d.outcome === "checking" || d.outcome === "adding");
       if (d.outcome === "checking") {
         setSearchProgress(d.progress ?? null);
@@ -607,6 +683,33 @@ export function GameChannelPicker({
     );
   };
 
+  /** Added channels Jellyfin doesn't list yet, unless one has turned up among the options since. */
+  const joining = pending.filter((p) => !options.some((o) => sameChannelName(o.name, p.name)));
+  const joiningRow = (p: PendingAdd & { late?: boolean }) => (
+    <li
+      key={`joining:${p.name}`}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded bg-white/5 px-3 py-2 text-left"
+    >
+      <span className="min-w-0 flex-1 basis-40 truncate text-sm text-white/60">{p.name}</span>
+      <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+        {p.late ? (
+          <Badge tone="warning" title="Added, but Live TV still doesn't list it. Reload in a minute.">
+            Not in Live TV yet
+          </Badge>
+        ) : (
+          <Badge title={p.mine ? "Added. It plays here by itself as soon as Live TV lists it." : "Added. It appears here as soon as Live TV lists it."}>
+            Joining Live TV…
+          </Badge>
+        )}
+        {p.mine && (
+          <Badge tone="info" title="You picked this one. It plays first for this game, on every device.">
+            Your pick
+          </Badge>
+        )}
+      </span>
+    </li>
+  );
+
   if (!selected && !held) {
     return (
       <div className="rounded-lg border border-white/10 bg-netflix-dark/60 px-4 py-10 text-center">
@@ -697,7 +800,7 @@ export function GameChannelPicker({
           Two groups since 2026-11-01: what is known to be this game (the
           guide or ESPN says so, it names both teams, or someone added it for
           this game), then channels that only might have it. */}
-      {options.length > 0 && (
+      {(options.length > 0 || joining.length > 0) && (
         <div className="mt-6 space-y-5">
           {userPicked && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-white/50">
@@ -710,14 +813,17 @@ export function GameChannelPicker({
             </div>
           )}
           {[
-            { title: "This game", list: options.filter((c) => isGameChannel(c.id)) },
-            { title: "Might have it", list: options.filter((c) => !isGameChannel(c.id)) },
+            { title: "This game", list: options.filter((c) => isGameChannel(c.id)), joining },
+            { title: "Might have it", list: options.filter((c) => !isGameChannel(c.id)), joining: [] },
           ]
-            .filter((g) => g.list.length > 0)
+            .filter((g) => g.list.length > 0 || g.joining.length > 0)
             .map((g) => (
               <section key={g.title}>
                 <h2 className="mb-2 text-sm font-semibold text-white/70">{g.title}</h2>
-                <ul className="space-y-1.5">{g.list.map(row)}</ul>
+                <ul className="space-y-1.5">
+                  {g.list.map(row)}
+                  {g.joining.map(joiningRow)}
+                </ul>
               </section>
             ))}
         </div>
