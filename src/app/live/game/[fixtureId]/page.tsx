@@ -25,7 +25,7 @@ import {
 import { feedLanguageRank } from "@/lib/gameStreamRules";
 import { cleanChannelName } from "@/lib/liveChannelRules";
 import { sameSport } from "@/lib/sportMatchRules";
-import { GameChannelPicker } from "@/components/GameChannelPicker";
+import { GameChannelPicker, type PendingAdd } from "@/components/GameChannelPicker";
 import { namesGameDate, namesOtherDate } from "@/lib/liveGuideGrid";
 import { GameStreamFinder } from "@/components/GameStreamFinder";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
@@ -45,6 +45,13 @@ import { providerAlert } from "@/lib/credentialRules";
  * it a reason to).
  */
 export const dynamic = "force-dynamic";
+
+/** How long a channel added for the game can be missing from Jellyfin's lineup and still be shown as joining it. */
+const PENDING_ADD_MS = 10 * 60_000;
+
+function addedRecently(createdAt: Date): boolean {
+  return Date.now() - createdAt.getTime() < PENDING_ADD_MS;
+}
 
 export default async function GamePage({ params }: { params: Promise<{ fixtureId: string }> }) {
   unstable_noStore();
@@ -170,6 +177,8 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   const startMs = fixture.startUtc ? Date.parse(fixture.startUtc) : NaN;
   /** Channels added (or linked) for this game, by name, and when. */
   const addedForGame = new Map<string, Date>();
+  /** The same, by the name the channel was created under, for the ones Jellyfin doesn't list yet. */
+  const addedRows: { name: string; createdAt: Date }[] = [];
   try {
     const [owned, linked] = await Promise.all([
       prisma.gameChannel.findMany({ where: { fixtureId }, select: { name: true, createdAt: true } }),
@@ -177,10 +186,23 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
     ]);
     // Cleaned, as the channel was created: rows written before 2026-11-01 hold
     // the stream's own name, "US| EPL ARSENAL" for the channel "EPL ARSENAL".
-    for (const r of [...owned, ...linked]) addedForGame.set(normaliseName(cleanChannelName(r.name)), r.createdAt);
+    for (const r of [...owned, ...linked]) {
+      addedForGame.set(normaliseName(cleanChannelName(r.name)), r.createdAt);
+      addedRows.push({ name: cleanChannelName(r.name), createdAt: r.createdAt });
+    }
   } catch (err) {
     console.error("[live/game] game channel lookup failed:", err);
   }
+  // Added in the last few minutes and not in Jellyfin's lineup yet: Jellyfin
+  // lists a new channel only after a guide refresh, which can take minutes
+  // when another add's refresh is running. Listed as joining, and played if it
+  // is the viewer's pick, instead of missing from the page (2026-11-07). Older
+  // than that, something else is wrong, and a row saying "joining" would lie.
+  const inLineup = new Set(allChannels.map((c) => normaliseName(c.name)));
+  const pendingAdds: PendingAdd[] = addedRows
+    .filter((r) => !inLineup.has(normaliseName(r.name)) && addedRecently(r.createdAt))
+    .filter((r, i, all) => all.findIndex((x) => normaliseName(x.name) === normaliseName(r.name)) === i)
+    .map((r) => ({ name: r.name, mine: storedChoice != null && normaliseName(storedChoice.name) === normaliseName(r.name) }));
   const isAdded = (c: { name: string }) => addedForGame.has(normaliseName(c.name));
   const feedOrder = (a: { name: string }, b: { name: string }) =>
     Number(namesGameDate(b.name, startMs)) - Number(namesGameDate(a.name, startMs)) ||
@@ -420,6 +442,7 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
           confirmedIds={confirmedIds}
           gameFeedIds={gameFeeds.map((c) => c.id)}
           addedForGameIds={allChannels.filter(isAdded).map((c) => c.id)}
+          pendingAdds={pendingAdds}
           marketTeamByName={marketTeamByName}
           candidates={pickerCandidates}
           infoByChannel={infoByChannel}

@@ -420,41 +420,92 @@ export type ChannelProgramme = {
  * any one league or channel, so it applies to whatever gets mapped next.
  */
 export function findEpgConfirmedChannelNames(
-  fixture: { awayTeam: string | null; homeTeam: string | null; startUtc?: string | null; league?: string },
+  fixture: GuideFixture,
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): string[] {
-  const away = fixture.awayTeam?.trim().toLowerCase() || null;
-  const home = fixture.homeTeam?.trim().toLowerCase() || null;
-  if (!away && !home) return [];
+  if (!fixture.awayTeam?.trim() && !fixture.homeTeam?.trim()) return [];
   const now = gameReferenceTime(fixture.startUtc, nowUtc);
   if (!Number.isFinite(now)) return [];
-  const sport = fixture.league ? LEAGUE_GUIDE_WORDS[fixture.league] : undefined;
-  const nicknames = [teamNickname(fixture.awayTeam), teamNickname(fixture.homeTeam)]
-    .filter((n): n is string => n != null)
-    .map((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
 
   const confirmed: string[] = [];
   for (const [channelName, programmes] of programsByChannelName) {
-    const current = programmes.find((p) => {
-      const start = Date.parse(p.startUtc);
-      const end = Date.parse(p.endUtc);
-      return Number.isFinite(start) && Number.isFinite(end) && now >= start && now < end;
-    });
-    if (!current) continue;
-    // Not a game of this sport, or not a game: "Live: NHL Hockey" never
-    // confirms an NBA game, and neither does a preview show naming both
-    // teams (2026-10-23, sportMatchRules.ts).
-    if (programmeSportConflict(current, fixture) || looksLikeTalkShow(current.title)) continue;
-
-    const text = `${current.title} ${current.description}`.toLowerCase();
-    const mentions =
-      away && home ? text.includes(away) && text.includes(home) : text.includes((away ?? home)!);
-    if (mentions || (sport && sport.test(text) && bracketedByTeamShow(current, programmes, nicknames))) {
+    const current = airingAt(programmes, now);
+    if ((current && programmeConfirmsGame(current, programmes, fixture)) || stillOnAfterItsSlot(fixture, programmes, now)) {
       confirmed.push(channelName);
     }
   }
   return confirmed;
+}
+
+/** What a guide fixture has to say for the checks below. */
+type GuideFixture = {
+  awayTeam: string | null;
+  homeTeam: string | null;
+  startUtc?: string | null;
+  league?: string;
+  /** ESPN's state: "in" while the game is being played. */
+  state?: string;
+};
+
+/** The programme on at `atMs`, if the guide lists one. */
+function airingAt(programmes: ChannelProgramme[], atMs: number): ChannelProgramme | undefined {
+  return programmes.find((p) => {
+    const start = Date.parse(p.startUtc);
+    const end = Date.parse(p.endUtc);
+    return Number.isFinite(start) && Number.isFinite(end) && atMs >= start && atMs < end;
+  });
+}
+
+/**
+ * Whether this programme is the game: it names both teams, or it is a game of
+ * the league's sport with one team's own show right before or after it.
+ */
+function programmeConfirmsGame(current: ChannelProgramme, programmes: ChannelProgramme[], fixture: GuideFixture): boolean {
+  // Not a game of this sport, or not a game: "Live: NHL Hockey" never
+  // confirms an NBA game, and neither does a preview show naming both
+  // teams (2026-10-23, sportMatchRules.ts).
+  if (programmeSportConflict(current, fixture) || looksLikeTalkShow(current.title)) return false;
+  const away = fixture.awayTeam?.trim().toLowerCase() || null;
+  const home = fixture.homeTeam?.trim().toLowerCase() || null;
+  if (!away && !home) return false;
+  const sport = fixture.league ? LEAGUE_GUIDE_WORDS[fixture.league] : undefined;
+  const nicknames = [teamNickname(fixture.awayTeam), teamNickname(fixture.homeTeam)]
+    .filter((n): n is string => n != null)
+    .map((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
+  const text = `${current.title} ${current.description}`.toLowerCase();
+  const mentions = away && home ? text.includes(away) && text.includes(home) : text.includes((away ?? home)!);
+  return mentions || (!!sport && sport.test(text) && bracketedByTeamShow(current, programmes, nicknames));
+}
+
+/** How long past its guide slot a game still being played is followed on the channel that had it. */
+const OVERRUN_MS = 3 * 60 * 60_000;
+
+/**
+ * Whether the channel's guide slot for the game has ended while the game is
+ * still being played -- a long game, overtime -- so the channel is still on
+ * it, whatever the guide lists now.
+ *
+ * On 2026-11-07 Sharks at Stars ran past 10:30 PM, the end of NBC Sports
+ * California's "Live: NHL Hockey" slot. The guide moved on to "Live: Sharks
+ * Postgame", so from then the game page found nothing confirmed, marked the
+ * channel as showing something else, and auto-added an ESPN+ feed that
+ * dropped every few seconds, while NBC Sports California kept showing the
+ * game. The slot is the one airing just after kickoff, and it must have been
+ * confirmed by the usual rules. A channel now on a game of another sport has
+ * moved on (an overflow channel took the rest).
+ */
+function stillOnAfterItsSlot(fixture: GuideFixture, programmes: ChannelProgramme[], nowMs: number): boolean {
+  if (fixture.state !== "in" || !fixture.startUtc) return false;
+  const kickoff = gameReferenceTime(fixture.startUtc, fixture.startUtc);
+  if (!Number.isFinite(kickoff)) return false;
+  const slot = airingAt(programmes, kickoff);
+  if (!slot) return false;
+  const slotEnd = Date.parse(slot.endUtc);
+  if (nowMs < slotEnd || nowMs - slotEnd > OVERRUN_MS) return false;
+  if (!programmeConfirmsGame(slot, programmes, fixture)) return false;
+  const current = airingAt(programmes, nowMs);
+  return !(current && programmeSportConflict(current, fixture));
 }
 
 /** How far apart two programmes can be and still count as back to back. */
@@ -532,7 +583,7 @@ const LEAGUE_GUIDE_WORDS: Record<string, RegExp> = {
  * no teams), which is why this only ever demotes.
  */
 export function findEpgElsewhereChannelNames(
-  fixture: { league: string; startUtc?: string | null },
+  fixture: GuideFixture & { league: string },
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): string[] {
@@ -541,18 +592,17 @@ export function findEpgElsewhereChannelNames(
   if (!words || !Number.isFinite(at)) return [];
   const elsewhere: string[] = [];
   for (const [channelName, programmes] of programsByChannelName) {
-    const airing = programmes.find((p) => {
-      const start = Date.parse(p.startUtc);
-      const end = Date.parse(p.endUtc);
-      return Number.isFinite(start) && Number.isFinite(end) && at >= start && at < end;
-    });
-    if (airing && !words.test(`${airing.title} ${airing.description}`)) elsewhere.push(channelName);
+    const airing = airingAt(programmes, at);
+    if (!airing || words.test(`${airing.title} ${airing.description}`)) continue;
+    // Its postgame show is listed, but the game ran long and is still on here.
+    if (stillOnAfterItsSlot(fixture, programmes, at)) continue;
+    elsewhere.push(channelName);
   }
   return elsewhere;
 }
 
 export function matchFixturesToEpgProgrammes(
-  fixtures: { id: string; awayTeam: string | null; homeTeam: string | null; startUtc?: string | null; league?: string }[],
+  fixtures: ({ id: string } & GuideFixture)[],
   programsByChannelName: Map<string, ChannelProgramme[]>,
   nowUtc: string = new Date().toISOString()
 ): Map<string, string[]> {

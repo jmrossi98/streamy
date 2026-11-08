@@ -34,7 +34,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!(await getValidSessionUserId(await getSession()))) {
+  const userId = await getValidSessionUserId(await getSession());
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!isDispatcharrConfigured()) {
@@ -61,6 +62,8 @@ export async function POST(request: Request) {
   // the game page's list of feeds added for the game.
   const channelName = cleanChannelName(name);
   const fixtureId = typeof body?.fixtureId === "string" ? body.fixtureId.trim() : "";
+  // The viewer's own Watch on a game page, not the page's automatic add.
+  const watchedForGame = fixtureId && body?.auto !== true ? fixtureId : "";
 
   // Already in the lineup -- the same stream, or a channel of the same name
   // -- is answered with that channel rather than a second copy. Two viewers
@@ -108,12 +111,14 @@ export async function POST(request: Request) {
     // the lineup, and the game's list only had what was added for it). Linked,
     // not owned: the cleanup pass never removes a channel that was there first.
     if (fixtureId) await linkToGame(fixtureId, existing.id, existing.name);
+    const existingJellyfinId = await waitForLineupChannel(existing.name, 3_000);
+    if (watchedForGame) await rememberWatch(userId, watchedForGame, existing.name, existingJellyfinId);
     return NextResponse.json({
       id: existing.id,
       channelNumber: null,
       refreshing: false,
       existing: true,
-      jellyfinId: await waitForLineupChannel(existing.name, 3_000),
+      jellyfinId: existingJellyfinId,
       note: `Already in the lineup as "${existing.name}".`,
     });
   }
@@ -168,6 +173,7 @@ export async function POST(request: Request) {
   // away instead of waiting a fixed time and hoping (see waitForLineupChannel).
   const jellyfinId = refreshing ? await waitForLineupChannel(channelName) : null;
   const ready = jellyfinId != null;
+  if (watchedForGame) await rememberWatch(userId, watchedForGame, channelName, jellyfinId);
   // Tune it once from here before anyone does (warmLiveChannel): Jellyfin
   // probes a channel for ~13 s the first time it is opened, and only then.
   // Paid now, while the game page is still holding, rather than inside the
@@ -188,6 +194,27 @@ export async function POST(request: Request) {
       ? "Added. Jellyfin is refreshing its guide now - it appears in Live TV in a moment."
       : "Added to Dispatcharr, but Jellyfin didn't accept a refresh. It appears on Jellyfin's next scheduled guide update.",
   });
+}
+
+/**
+ * Saves the viewer's Watch as their pick for the game now, not when it first
+ * plays. Watch is add + play + remember, and Jellyfin can take minutes to list
+ * a new channel: a reload in between used to forget both the wait and the
+ * choice (2026-11-07). Saved by name when Jellyfin has no id for it yet --
+ * the page matches a pick by id, then by name (resolveStoredChoice). Best
+ * effort: a failure costs the remembering, never the add.
+ */
+async function rememberWatch(userId: string, fixtureId: string, name: string, jellyfinId: string | null): Promise<void> {
+  const pickName = name.trim().replace(/\s+/g, " ");
+  try {
+    await prisma.gameChannelChoice.upsert({
+      where: { userId_fixtureId: { userId, fixtureId } },
+      create: { userId, fixtureId, channelId: jellyfinId ?? "", name: pickName },
+      update: { channelId: jellyfinId ?? "", name: pickName, pickedAt: new Date() },
+    });
+  } catch (err) {
+    console.error("[promote] couldn't remember the pick:", err);
+  }
 }
 
 /** How long a link to a game is kept: games are a day's business. */

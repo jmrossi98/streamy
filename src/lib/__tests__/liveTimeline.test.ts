@@ -541,6 +541,71 @@ describe("findEpgConfirmedChannelNames: a game bracketed by a team's own shows",
   });
 });
 
+describe("a game still on after its guide slot ends", () => {
+  // 2026-11-07, Sharks at Stars: NBC Sports California's guide, as Dispatcharr
+  // held it. The game was in the third period at 10:35 PM ET (03:35Z), five
+  // minutes into "Live: Sharks Postgame".
+  const fixture = {
+    league: "NHL",
+    awayTeam: "San Jose Sharks",
+    homeTeam: "Dallas Stars",
+    startUtc: "2026-11-08T01:00:00Z",
+    state: "in",
+  };
+  const show = (title: string, start: string, end: string): ChannelProgramme => ({
+    title,
+    description: "",
+    startUtc: start,
+    endUtc: end,
+  });
+  const nbcsCalifornia = [
+    show("Live: College Football", "2026-11-07T21:00:00Z", "2026-11-08T00:30:00Z"),
+    show("Live: Sharks Pregame", "2026-11-08T00:30:00Z", "2026-11-08T01:00:00Z"),
+    show("Live: NHL Hockey", "2026-11-08T01:00:00Z", "2026-11-08T03:30:00Z"),
+    show("Live: Sharks Postgame", "2026-11-08T03:30:00Z", "2026-11-08T04:00:00Z"),
+    show("Pro Football Weekly", "2026-11-08T04:00:00Z", "2026-11-08T04:30:00Z"),
+  ];
+  // The Warriors' channel that night: ESPN listed the Sharks game on it.
+  const nbcsBayArea = [show("Live: NBA Basketball", "2026-11-08T02:30:00Z", "2026-11-08T05:00:00Z")];
+  const programs = new Map([
+    ["NBC SPORTS CALIFORNIA", nbcsCalifornia],
+    ["NBC Sports Bay Area", nbcsBayArea],
+  ]);
+  const late = "2026-11-08T03:35:00Z";
+
+  it("keeps the channel confirmed while the game is still being played", () => {
+    expect(findEpgConfirmedChannelNames(fixture, programs, late)).toEqual(["NBC SPORTS CALIFORNIA"]);
+  });
+
+  it("doesn't count it as showing something else", () => {
+    expect(findEpgElsewhereChannelNames(fixture, programs, late)).toEqual(["NBC Sports Bay Area"]);
+  });
+
+  it("lets go once ESPN says the game is over", () => {
+    const over = { ...fixture, state: "post" };
+    expect(findEpgConfirmedChannelNames(over, programs, late)).toEqual([]);
+    expect(findEpgElsewhereChannelNames(over, programs, late)).toContain("NBC SPORTS CALIFORNIA");
+  });
+
+  it("lets go three hours after the slot ended", () => {
+    expect(findEpgConfirmedChannelNames(fixture, programs, "2026-11-08T06:31:00Z")).toEqual([]);
+  });
+
+  it("lets go when the channel is on a game of another sport", () => {
+    const moved = new Map([
+      ["NBC SPORTS CALIFORNIA", [...nbcsCalifornia.slice(0, 3), show("Live: NBA Basketball", "2026-11-08T03:30:00Z", "2026-11-08T06:00:00Z")]],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, moved, late)).toEqual([]);
+  });
+
+  it("needs the slot itself to have been the game", () => {
+    const other = new Map([
+      ["NHL NETWORK HD", [show("Live: NHL Hockey", "2026-11-08T01:00:00Z", "2026-11-08T03:30:00Z"), show("NHL Tonight", "2026-11-08T03:30:00Z", "2026-11-08T04:30:00Z")]],
+    ]);
+    expect(findEpgConfirmedChannelNames(fixture, other, late)).toEqual([]);
+  });
+});
+
 describe("matchFixturesToEpgProgrammes", () => {
   const programme: ChannelProgramme = {
     title: "NFL Football",
