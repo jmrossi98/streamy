@@ -21,6 +21,7 @@ import {
   secondsBehindLive,
   contestedLocalNetworks,
   networkConfirmsFixture,
+  networkCertainty,
   channelMarketTeam,
   isStreamingService,
   type ChannelProgramme,
@@ -827,10 +828,59 @@ describe("contestedLocalNetworks", () => {
     const other = { id: "nfl:3", league: "NFL", startUtc: "2026-10-18T20:25:00Z", broadcasts: ["FOX"] };
     expect([...contestedLocalNetworks(bills, [bills, other])]).toEqual([]);
   });
-  it("ignores a game in another league or a finished one", () => {
+  it("ignores a game in another league", () => {
     const nba = { id: "nba:1", league: "NBA", startUtc: "2026-10-18T20:25:00Z", broadcasts: ["CBS"] };
-    const done = { id: "nfl:4", league: "NFL", startUtc: "2026-10-18T20:25:00Z", state: "post", broadcasts: ["CBS"] };
-    expect([...contestedLocalNetworks(bills, [bills, nba, done])]).toEqual([]);
+    expect([...contestedLocalNetworks(bills, [bills, nba])]).toEqual([]);
+  });
+  it("still counts a game in the window that has finished: its markets went to the late games, not this one", () => {
+    // 2026-11-08, 1 PM ET on FOX: Cowboys at Colts and Rams at Commanders
+    // ended first, and Rochester FOX went to Packers at Patriots.
+    const giants = { id: "nfl:401873044", league: "NFL", startUtc: "2026-11-08T18:00Z", state: "post", broadcasts: ["Fox"] };
+    const cowboys = { id: "nfl:401873040", league: "NFL", startUtc: "2026-11-08T18:00Z", state: "post", broadcasts: ["Fox"] };
+    const rams = { id: "nfl:401873043", league: "NFL", startUtc: "2026-11-08T18:00Z", state: "post", broadcasts: ["Fox"] };
+    const packers = { id: "nfl:401873049", league: "NFL", startUtc: "2026-11-08T21:25Z", state: "in", broadcasts: ["Fox"] };
+    expect([...contestedLocalNetworks(giants, [giants, cowboys, rams, packers])]).toEqual(["fox"]);
+  });
+});
+
+describe("networkCertainty", () => {
+  const contested = new Set(["cbs"]);
+  const bills = { awayTeam: "Buffalo Bills", homeTeam: "Las Vegas Raiders", broadcasts: ["CBS"] };
+
+  it("is certain for a national network, and for an over-the-air network in a national window", () => {
+    const tnt = { awayTeam: "Boston Celtics", homeTeam: "Miami Heat", broadcasts: ["TNT"] };
+    expect(networkCertainty("TNT", tnt)).toBe("certain");
+    expect(networkCertainty("CBS 13 BALTIMORE MD (WJZ)", bills, new Set())).toBe("certain");
+  });
+
+  it("is only likely for an affiliate in a team's market during a regional window", () => {
+    expect(networkCertainty("CBS 8 (WROC) ROCHESTER HD", bills, contested)).toBe("likely");
+  });
+
+  it("is nothing for an affiliate in neither team's market during a regional window", () => {
+    // Rochester FOX for Giants at Eagles, showing Packers at Patriots (2026-11-08).
+    const giants = { awayTeam: "New York Giants", homeTeam: "Philadelphia Eagles", broadcasts: ["Fox"] };
+    expect(networkCertainty("FOX 31 ROCHESTER NY (WUHF)", giants, new Set(["fox"]))).toBeNull();
+  });
+
+  it("is only likely for a network ESPN lists for one team's market", () => {
+    // ESPN listed "NBC Sports BA" (home) for the Sharks while they were on NBC
+    // Sports California and Bay Area had the Warriors (2026-11-07).
+    const sharks = {
+      awayTeam: "San Jose Sharks",
+      homeTeam: "Dallas Stars",
+      broadcasts: ["ESPN+", "NBC Sports BA"],
+      regionalBroadcasts: ["NBC Sports BA"],
+    };
+    expect(networkCertainty("NBC Sports Bay Area", sharks)).toBe("likely");
+    // The same network listed nationally is the one feed everywhere.
+    expect(networkCertainty("NBC Sports Bay Area", { ...sharks, regionalBroadcasts: [] })).toBe("certain");
+  });
+
+  it("takes the surer of two listings for the same channel", () => {
+    const both = { awayTeam: "New York Rangers", homeTeam: "Seattle Kraken", broadcasts: ["MSG", "TNT"], regionalBroadcasts: ["MSG"] };
+    expect(networkCertainty("TNT", both)).toBe("certain");
+    expect(networkCertainty("MSG", both)).toBe("likely");
   });
 });
 
