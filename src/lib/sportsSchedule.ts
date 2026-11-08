@@ -70,6 +70,15 @@ export type Fixture = {
    * Optional so older callers and tests that build fixtures by hand still fit.
    */
   broadcasts?: string[];
+  /**
+   * The ones ESPN lists for one team's market only (its "home" or "away"
+   * broadcast: a regional sports network, a team's local station), never as
+   * national. Such a channel is the right one only if it is that market's own
+   * feed, and ESPN's name for it can point at the wrong one: it listed "NBC
+   * Sports BA" for the Sharks while they were on NBC Sports California
+   * (2026-11-07). Optional, like `broadcasts`.
+   */
+  regionalBroadcasts?: string[];
 };
 
 type EspnCompetitor = {
@@ -85,11 +94,29 @@ type EspnEvent = {
   shortName?: string;
   competitions?: {
     competitors?: EspnCompetitor[];
-    broadcasts?: { names?: string[] }[];
-    geoBroadcasts?: { media?: { shortName?: string } }[];
+    broadcasts?: { market?: string; names?: string[] }[];
+    geoBroadcasts?: { market?: { type?: string }; media?: { shortName?: string } }[];
     status?: { type?: { state?: string; shortDetail?: string; detail?: string } };
   }[];
 };
+
+type EspnCompetition = NonNullable<EspnEvent["competitions"]>[number];
+
+/** The networks ESPN lists for a team's market ("home"/"away") and never nationally. Exported for tests. */
+export function regionalBroadcasts(comp: EspnCompetition | undefined): string[] {
+  const national = new Set<string>();
+  const regional = new Set<string>();
+  const note = (market: string | undefined, name: string | undefined) => {
+    const n = cleanText(name ?? "");
+    if (!n) return;
+    const m = (market ?? "").toLowerCase();
+    if (m === "home" || m === "away") regional.add(n);
+    else national.add(n);
+  };
+  for (const b of comp?.broadcasts ?? []) for (const n of b.names ?? []) note(b.market, n);
+  for (const g of comp?.geoBroadcasts ?? []) note(g.market?.type, g.media?.shortName);
+  return [...regional].filter((n) => !national.has(n));
+}
 
 function toFixture(league: string, e: EspnEvent): Fixture | null {
   if (!e?.id) return null;
@@ -137,6 +164,7 @@ function toFixture(league: string, e: EspnEvent): Fixture | null {
           .filter(Boolean)
       ),
     ],
+    regionalBroadcasts: regionalBroadcasts(comp),
   };
 }
 

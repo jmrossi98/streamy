@@ -19,7 +19,7 @@ import {
   networksOnOtherGames,
   resolveChannelForFixture,
   contestedLocalNetworks,
-  networkConfirmsFixture,
+  networkCertainty,
   channelMarketTeam,
 } from "@/lib/liveTimeline";
 import { feedLanguageRank } from "@/lib/gameStreamRules";
@@ -164,16 +164,25 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
     The order a game is played from (2026-10-18, after Manchester United at
     Leeds played "NBC Sports Now" with twelve of its own feeds unused):
 
-      1. Confirmed: the guide names the game on the channel, or ESPN lists
-         the channel's network for it -- any channel of a national network,
-         only a home-market affiliate of an over-the-air one.
+      1. Confirmed: the guide names the game on the channel, or it is the one
+         feed the game is on everywhere -- a national network ESPN lists, or
+         an over-the-air network in a national window.
       2. The game's own feeds: channels added for this game (whatever their
          names say), or named for both teams. One carrying the game's date
          first (a day-old slot label showed soccer for the Bruins), then
          English commentary. Never one naming another date.
-      3. Everything else: networks that carry the league, local markets, a
+      3. Likely: a local station or regional sports network ESPN's listing
+         points at (a team's market) without the guide confirming it. Below
+         the game's feeds since 2026-11-08: in eleven days of playback the
+         feeds never showed the wrong game, while local and regional channels
+         did four times (ABC 7 Buffalo, CBS 4 Buffalo, NBCS Bay Area, and
+         Rochester FOX on Packers at Patriots for a Giants page).
+      4. Everything else: networks that carry the league, local markets, a
          channel named for one team.
+
+    A game that is over has no confirmed channel: its network has moved on.
   */
+  const ended = fixture.state === "post";
   const startMs = fixture.startUtc ? Date.parse(fixture.startUtc) : NaN;
   /** Channels added (or linked) for this game, by name, and when. */
   const addedForGame = new Map<string, Date>();
@@ -236,18 +245,34 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   // showing the Bills, and Baltimore CBS confirmed for Bills/Raiders showing
   // Steelers/Bucs.
   const contested = contestedLocalNetworks(fixture, fixtures);
-  const networkConfirmed = channels.filter((c) => !isStale(c.name) && networkConfirmsFixture(c.name, fixture, contested));
-  const confirmed = [...findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf), ...networkConfirmed].filter(
-    (c, i, all) => all.findIndex((x) => x.id === c.id) === i
-  );
+  const byNetwork = ended
+    ? []
+    : channels.flatMap((c) => {
+        const how = isStale(c.name) ? null : networkCertainty(c.name, fixture, contested);
+        return how ? [{ channel: c, how }] : [];
+      });
+  const confirmed = ended
+    ? []
+    : [
+        ...findEpgConfirmedChannels(epgConfirmedNames, channels, qualityOf),
+        ...byNetwork.filter((n) => n.how === "certain").map((n) => n.channel),
+      ].filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+  const likely = byNetwork
+    .filter((n) => n.how === "likely" && !confirmed.some((c) => c.id === n.channel.id))
+    .map((n) => n.channel)
+    // The smoother stream first; the lineup's order otherwise (sort is stable).
+    .sort((a, b) => qualityOf(a.name) - qualityOf(b.name));
 
-  const resolved = confirmed[0] ?? gameFeed ?? resolveChannelForFixture(fixture, channels, [], qualityOf);
+  const resolved =
+    confirmed[0] ?? gameFeed ?? likely[0] ?? resolveChannelForFixture(fixture, channels, [], qualityOf);
   const channelConfirmed = resolved != null && confirmed.some((c) => c.id === resolved.id);
-  // Confirmed, then the game's feeds, then the guesses -- always all three
-  // (a confirmed channel used to hide the rest), the default left out.
+  // Confirmed, then the game's feeds, the likely channels, then the guesses --
+  // always all of them (a confirmed channel used to hide the rest), the
+  // default left out.
   const networkOrMarketCandidates = [
     ...confirmed,
     ...gameFeeds,
+    ...likely,
     ...findCandidateChannels(
       { ...fixture, networksOnOtherGames: networksOnOtherGames(fixture, fixtures) },
       channels,
@@ -271,7 +296,11 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
     nothing better to offer when it's genuinely the only option.
   */
   const demoteUnconfirmedFixtureGuess =
-    resolved != null && resolved !== gameFeed && !channelConfirmed && networkOrMarketCandidates.length > 0;
+    resolved != null &&
+    resolved !== gameFeed &&
+    !likely.includes(resolved) &&
+    !channelConfirmed &&
+    networkOrMarketCandidates.length > 0;
   const primary = demoteUnconfirmedFixtureGuess ? null : resolved;
   const restCandidates = demoteUnconfirmedFixtureGuess
     ? [...networkOrMarketCandidates, resolved!]
@@ -321,7 +350,8 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
     storedChoice &&
     pickedAt &&
     storedPickYields({
-      pickIsGame: [...confirmed, ...gameFeeds].some(
+      // A likely channel the viewer chose stands too: they can see what it shows.
+      pickIsGame: [...confirmed, ...gameFeeds, ...likely].some(
         (c) => c.id === storedChoice!.channelId || resolveStoredChoice([c], storedChoice) != null
       ),
       pickedAt,
@@ -395,12 +425,11 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   }
 
   // Every channel we actually know carries this game (not just the primary),
-  // so the picker badges each honestly, and the team whose market each
-  // in-market affiliate belongs to, for the badge's wording.
+  // so the picker badges each honestly, and the team whose market each likely
+  // channel is in, for its badge's wording.
   const confirmedIds = confirmed.map((c) => c.id);
   const marketTeamByName: Record<string, string> = {};
-  for (const c of [pickerChannel, ...pickerCandidates]) {
-    if (!c) continue;
+  for (const c of likely) {
     const team = channelMarketTeam(c.name, fixture);
     if (team) marketTeamByName[c.name] = team;
   }
@@ -440,6 +469,8 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
           channel={pickerChannel}
           channelConfirmed={pickerChannel != null && confirmedIds.includes(pickerChannel.id)}
           confirmedIds={confirmedIds}
+          likelyIds={likely.map((c) => c.id)}
+          ended={ended}
           gameFeedIds={gameFeeds.map((c) => c.id)}
           addedForGameIds={allChannels.filter(isAdded).map((c) => c.id)}
           pendingAdds={pendingAdds}

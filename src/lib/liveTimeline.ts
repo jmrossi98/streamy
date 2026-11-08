@@ -683,6 +683,11 @@ export const HOME_MARKETS = ["Rochester", "Buffalo"];
  * (Sunday/Monday/Thursday night, a playoff): the network carries this one game
  * on every affiliate. That is why "it's on CBS" can be trusted in one case and
  * not the other.
+ *
+ * A finished game still counts. Its markets don't move to this game when it
+ * ends: they go to the network's late games. Leaving finished games out made
+ * every FOX station "confirmed" for Giants at Eagles once the other two 1 PM
+ * FOX games ended, and Rochester's FOX was on Packers at Patriots (2026-11-08).
  */
 export function contestedLocalNetworks(
   fixture: { id: string; league: string; startUtc: string | null; broadcasts?: string[] },
@@ -696,7 +701,7 @@ export function contestedLocalNetworks(
   const contested = new Set<string>();
   if (mine.length === 0) return contested;
   for (const other of fixtures) {
-    if (other.id === fixture.id || other.league !== fixture.league || other.state === "post") continue;
+    if (other.id === fixture.id || other.league !== fixture.league) continue;
     const otherStart = other.startUtc ? Date.parse(other.startUtc) : NaN;
     if (!Number.isFinite(start) || !Number.isFinite(otherStart) || Math.abs(start - otherStart) > overlapMs) continue;
     for (const net of other.broadcasts ?? []) {
@@ -708,8 +713,8 @@ export function contestedLocalNetworks(
 }
 
 /**
- * Whether a channel is *confirmed* to carry a fixture by ESPN's listed
- * networks -- a real "it has this game", not "worth a look":
+ * Whether ESPN's listed networks point at this channel for a fixture, as
+ * certain or likely (networkCertainty) -- more than "worth a look":
  *
  *   - a national network (ESPN, TNT, NBA TV, an RSN) carrying it -- that feed
  *     shows one game, and networksOnOtherGames has already dropped it if busy
@@ -730,17 +735,57 @@ export function contestedLocalNetworks(
  */
 export function networkConfirmsFixture(
   channelName: string,
-  fixture: { awayTeam?: string | null; homeTeam?: string | null; broadcasts?: string[] },
+  fixture: NetworkFixture,
   contested: Set<string> = new Set()
 ): boolean {
+  return networkCertainty(channelName, fixture, contested) != null;
+}
+
+type NetworkFixture = {
+  awayTeam?: string | null;
+  homeTeam?: string | null;
+  broadcasts?: string[];
+  regionalBroadcasts?: string[];
+};
+
+/**
+ * How far ESPN's listing alone vouches for a channel showing this game:
+ *
+ *   - "certain": the one feed the game is on everywhere -- a national network
+ *     (ESPN, TNT, NHL Network), or an over-the-air network in a national
+ *     window. Every viewer of that channel sees this game.
+ *   - "likely": a feed that differs by market -- an over-the-air affiliate in
+ *     a team's market during a regional window, or a network ESPN lists only
+ *     for one team's market (a regional sports network, a team's local
+ *     station). Usually right, but not a fact about this channel: ESPN listed
+ *     "NBC Sports BA" for the Sharks while they were on NBC Sports California
+ *     (2026-11-07), and a local station can be on something else.
+ *   - null: not this game's network, or an affiliate in neither team's market
+ *     during a regional window (whatever that region was assigned).
+ *
+ * The game page plays a "likely" channel only after the game's own feeds,
+ * which have never shown the wrong game (playback history, 2026-10-28 to
+ * 2026-11-08, while local and regional channels did four times).
+ */
+export function networkCertainty(
+  channelName: string,
+  fixture: NetworkFixture,
+  contested: Set<string> = new Set()
+): "certain" | "likely" | null {
+  const key = (net: string) => net.toLowerCase().replace(/[^a-z0-9+]+/g, "");
+  const regional = new Set((fixture.regionalBroadcasts ?? []).map(key));
+  let found: "likely" | null = null;
   for (const net of fixture.broadcasts ?? []) {
     if (!carriesListedNetwork(channelName, net, fixture)) continue;
-    if (!isLocalNetwork(net)) return true;
-    const key = net.toLowerCase().replace(/[^a-z0-9+]+/g, "");
-    if (!contested.has(key)) return true;
-    if (channelInTeamMarket(channelName, fixture.homeTeam) || channelInTeamMarket(channelName, fixture.awayTeam)) return true;
+    if (regional.has(key(net))) {
+      found = "likely";
+    } else if (!isLocalNetwork(net) || !contested.has(key(net))) {
+      return "certain";
+    } else if (channelInTeamMarket(channelName, fixture.homeTeam) || channelInTeamMarket(channelName, fixture.awayTeam)) {
+      found = "likely";
+    }
   }
-  return false;
+  return found;
 }
 
 /** The team whose market this channel is in and that carries this game, for a badge. */

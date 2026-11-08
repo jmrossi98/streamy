@@ -37,6 +37,20 @@ type Props = {
   /** The ids of every option we actually know carries this game, so each is badged honestly -- not just the first. */
   confirmedIds?: string[];
   /**
+   * The ids of local stations and regional sports networks ESPN's listing
+   * points at without the guide confirming them (networkCertainty "likely").
+   * Listed with the game's channels and played when nothing better is found,
+   * but not the game for certain: a feed the search finds takes over one the
+   * page chose, and the rescan keeps looking while one plays.
+   */
+  likelyIds?: string[];
+  /**
+   * The game is over. Nothing plays by itself -- the channels that carried it
+   * have moved on (Rochester FOX was on Packers at Patriots for a finished
+   * Giants page, 2026-11-08) -- until the viewer picks one.
+   */
+  ended?: boolean;
+  /**
    * The ids of the game's own feeds in the lineup (a stream naming the game,
    * or one added for it). With confirmedIds, what a pick has to be for a feed
    * the search finds to leave it alone (foundFeedTakesOver).
@@ -56,7 +70,7 @@ type Props = {
    * add to the channel list").
    */
   pendingAdds?: PendingAdd[];
-  /** Channel name -> the team whose home market it is, when that is why it's confirmed (badge wording). */
+  /** Channel name -> the team whose home market it is, for a likely channel in one (badge wording). */
   marketTeamByName?: Record<string, string>;
   /** Networks that plausibly carry this game's league, when there's no confident match. */
   candidates: LiveChannel[];
@@ -189,6 +203,8 @@ export function GameChannelPicker({
   channel,
   channelConfirmed,
   confirmedIds = [],
+  likelyIds = [],
+  ended = false,
   gameFeedIds = [],
   addedForGameIds = [],
   pendingAdds = [],
@@ -205,6 +221,8 @@ export function GameChannelPicker({
 }: Props) {
   const router = useRouter();
   const [held, setHeld] = useState(holdForFeed);
+  /** A finished game's page, before the viewer picks: nothing plays. */
+  const [idle, setIdle] = useState(ended);
   /** How far the feed search has got, while it reports (GameStreamFinder). */
   const [searchProgress, setSearchProgress] = useState<{ checked: number; total: number } | null>(null);
   /** Bumped on each progress report, so the silence timer starts over. */
@@ -373,6 +391,7 @@ export function GameChannelPicker({
       // The viewer's own "Watch" on a stream: theirs, played and saved now.
       if (d.manual) {
         setHeld(false);
+        setIdle(false);
         setSearchEnd(null);
         setFallbackNote(null);
         setNoLines(false);
@@ -385,7 +404,8 @@ export function GameChannelPicker({
         foundId: ch.id,
         manual: !!d.manual,
         pickedId,
-        gameFeedIds: [...allGameIds, ch.id],
+        // A likely channel stands only as the viewer's own pick (pickedId).
+        gameFeedIds: [...allGameIds, ...likelyIds, ch.id],
         failedIds: triedIds,
       });
       if (!takesOver) return;
@@ -414,7 +434,7 @@ export function GameChannelPicker({
     return () => window.removeEventListener(GAME_FEED_SEARCH_EVENT, onOutcome);
     // Joined ids: the arrays are new each render, their contents rarely change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fixtureId, pickedId, confirmedIds.join(), gameFeedIds.join(), addedIds.join(), triedIds.join()]);
+  }, [fixtureId, pickedId, confirmedIds.join(), likelyIds.join(), gameFeedIds.join(), addedIds.join(), triedIds.join()]);
 
   /*
     Look again for the game's own feed while a guess plays. Game feeds get
@@ -423,9 +443,9 @@ export function GameChannelPicker({
     above and takes over. Read through a ref so the ten-minute clock isn't
     restarted by every render.
   */
-  const rescanInputs = useRef({ selectedId, allGameIds, held: held || noLines, searching: searchActive });
+  const rescanInputs = useRef({ selectedId, allGameIds, held: held || noLines || idle, searching: searchActive });
   useEffect(() => {
-    rescanInputs.current = { selectedId, allGameIds, held: held || noLines, searching: searchActive };
+    rescanInputs.current = { selectedId, allGameIds, held: held || noLines || idle, searching: searchActive };
   });
   useEffect(() => {
     const timer = setInterval(() => {
@@ -578,6 +598,7 @@ export function GameChannelPicker({
    */
   function pick(c: LiveChannel) {
     setHeld(false);
+    setIdle(false);
     setSearchEnd(null);
     setPickedId(c.id);
     setSelectedId(c.id);
@@ -599,9 +620,13 @@ export function GameChannelPicker({
     void fetch(`/api/live/game-channel?fixtureId=${encodeURIComponent(fixtureId)}`, { method: "DELETE" }).catch(() => {});
   }
 
-  /** Known to be this game: confirmed, one of its own feeds, or added for it. */
+  /** Known (or, for a likely channel, listed) to be this game: confirmed, one of its own feeds, or added for it. */
   const isGameChannel = (id: string) =>
-    confirmedIds.includes(id) || gameFeedIds.includes(id) || addedForGameIds.includes(id) || addedIds.includes(id);
+    confirmedIds.includes(id) ||
+    likelyIds.includes(id) ||
+    gameFeedIds.includes(id) ||
+    addedForGameIds.includes(id) ||
+    addedIds.includes(id);
 
   const row = (c: LiveChannel) => {
     const isSelected = c.id === selected?.id;
@@ -646,15 +671,18 @@ export function GameChannelPicker({
               </Badge>
             )}
             {confirmedIds.includes(c.id) ? (
+              <Badge tone="success" title="The guide names this game here, or it's the single national feed the game is on">
+                Confirmed
+              </Badge>
+            ) : likelyIds.includes(c.id) ? (
               <Badge
-                tone="success"
                 title={
                   marketTeamByName[c.name]
-                    ? `${marketTeamByName[c.name]} home market — this market always gets its team's game on the carrying network`
-                    : "The guide names this game here, or it's the single national feed the game is on"
+                    ? `In the ${marketTeamByName[c.name]} market, which usually gets its team's game on this network. The guide doesn't confirm it, so the game's own streams are tried first.`
+                    : "ESPN lists this channel for one team's market. The guide doesn't confirm it, so the game's own streams are tried first."
                 }
               >
-                {marketTeamByName[c.name] ? "In market" : "Confirmed"}
+                {marketTeamByName[c.name] ? "In market" : "Likely"}
               </Badge>
             ) : (
               isBestMatch &&
@@ -670,6 +698,7 @@ export function GameChannelPicker({
             {/* "Playing" only while the player is actually on it: during the
                 feed search the row is the fallback, not what's on. */}
             {isSelected &&
+              !idle &&
               (held || noLines ? (
                 <Badge title="Plays only if the game's own stream can't be found">Fallback</Badge>
               ) : (
@@ -710,7 +739,7 @@ export function GameChannelPicker({
     </li>
   );
 
-  if (!selected && !held) {
+  if (!selected && !held && !idle) {
     return (
       <div className="rounded-lg border border-white/10 bg-netflix-dark/60 px-4 py-10 text-center">
         <p className="text-base font-semibold text-white/80">No channel available</p>
@@ -743,6 +772,14 @@ export function GameChannelPicker({
           >
             Try again
           </button>
+        </div>
+      ) : idle ? (
+        <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg bg-black px-6 text-center">
+          <p className="text-base font-semibold text-white/85">This game is over</p>
+          <p className="max-w-md text-sm text-white/55">
+            The channels that carried it have moved on, so nothing plays by itself.
+            {options.length > 0 && " Pick one below to watch what it's showing now."}
+          </p>
         </div>
       ) : held || !selected ? (
         <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg bg-black text-center">
@@ -790,8 +827,16 @@ export function GameChannelPicker({
       {searchEnd && !userPicked && selected && !held && !noLines && (
         <p className="mt-3 text-sm text-amber-300/90">
           {searchEnd === "none"
-            ? `None of the providers' streams for this game played, so ${selected.name} is on instead. It's a guess at a channel that might carry the game, not a confirmed one.`
-            : `The game's own stream is still being looked for, so ${selected.name} is on meanwhile. It's a guess at a channel that might carry the game; the player switches if a feed turns up.`}
+            ? `None of the providers' streams for this game played, so ${selected.name} is on instead. ${
+                likelyIds.includes(selected.id)
+                  ? "ESPN lists it for this game, but the guide doesn't confirm it, so it may be showing another game."
+                  : "It's a guess at a channel that might carry the game, not a confirmed one."
+              }`
+            : `The game's own stream is still being looked for, so ${selected.name} is on meanwhile. ${
+                likelyIds.includes(selected.id)
+                  ? "ESPN lists it for this game, but the guide doesn't confirm it; the player switches if a feed turns up."
+                  : "It's a guess at a channel that might carry the game; the player switches if a feed turns up."
+              }`}
         </p>
       )}
 
