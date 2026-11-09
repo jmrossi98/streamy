@@ -4,6 +4,7 @@ import {
   isUnhealthy,
   isImportStuck,
   isRedundantImport,
+  isAwaitingEpisodeTitle,
   isDeadSwarm,
   isMetadataDead,
   orphanedTorrents,
@@ -411,7 +412,7 @@ function dueStuckImports(entries: QueueHealth[], now = Date.now()): QueueHealth[
   const seen = new Set<number>();
   const due: QueueHealth[] = [];
   for (const e of entries) {
-    if (e.unsafe || isRedundantImport(e) || !isImportStuck(e)) continue;
+    if (e.unsafe || isRedundantImport(e) || isAwaitingEpisodeTitle(e) || !isImportStuck(e)) continue;
     seen.add(e.queueId);
     const since = importStuckSince.get(e.queueId) ?? now;
     importStuckSince.set(e.queueId, since);
