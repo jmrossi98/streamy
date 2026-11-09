@@ -184,6 +184,31 @@ export function isRedundantImport(entry: {
   );
 }
 
+// Sonarr's wording when it holds a new episode until TVDB has a title for it
+// (the "Episode Title Required" setting): "Episode has a TBA title and recently
+// aired", or "...does not have a title..." when the title is blank.
+const AWAITING_TITLE = /^episode (?:has a tba title|does not have a title) and recently aired/i;
+
+/**
+ * Whether a finished download is only waiting for its episode's title.
+ *
+ * Nothing is wrong with the file: Sonarr imports it by itself once TVDB posts
+ * a title or 48 hours after airing. Treating it as stuck threw away good copies.
+ * The Real Housewives of Potomac S11E05 (2026-11-09) went through nine releases
+ * in six hours, each blocklisted after 30 minutes, because reality shows often
+ * stay "TBA" on TVDB for a day or more.
+ */
+export function isAwaitingEpisodeTitle(entry: {
+  clientStatus?: string | null;
+  statusMessages: string[];
+}): boolean {
+  return (
+    (entry.clientStatus ?? "").toLowerCase() === "completed" &&
+    entry.statusMessages.length > 0 &&
+    entry.statusMessages.every((m) => AWAITING_TITLE.test(m.trim()))
+  );
+}
+
 /**
  * Whether a dropped release should also be blocklisted.
  *

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRedundantImport, orphanedTorrents, isDeadSwarm, isMetadataDead, isTorrentClientOffline, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
+import { isAwaitingEpisodeTitle, isRedundantImport, orphanedTorrents, isDeadSwarm, isMetadataDead, isTorrentClientOffline, isImportStuck, isPermanentlyBlocked, pickIdleEpisodeBatch, isUnhealthy, shouldBlocklist, UNSAFE_REASONS, type DownloadHealth } from "../downloadHealthRules";
 
 function entry(overrides: Partial<DownloadHealth> = {}): DownloadHealth {
   return {
@@ -222,6 +222,34 @@ describe("isRedundantImport", () => {
 
   it("does not claim one that is still downloading", () => {
     expect(isRedundantImport({ clientStatus: "downloading", statusMessages: [notAnUpgrade] })).toBe(false);
+  });
+});
+
+describe("isAwaitingEpisodeTitle", () => {
+  const tba = "Episode has a TBA title and recently aired";
+
+  it("recognises Sonarr holding a new episode until it has a title", () => {
+    expect(isAwaitingEpisodeTitle({ clientStatus: "completed", statusMessages: [tba] })).toBe(true);
+    expect(
+      isAwaitingEpisodeTitle({
+        clientStatus: "completed",
+        statusMessages: ["Episode does not have a title and recently aired"],
+      })
+    ).toBe(true);
+  });
+
+  it("does not shield a download that also has a real problem", () => {
+    expect(
+      isAwaitingEpisodeTitle({
+        clientStatus: "completed",
+        statusMessages: [tba, "Unable to determine if file is a sample"],
+      })
+    ).toBe(false);
+    expect(isAwaitingEpisodeTitle({ clientStatus: "completed", statusMessages: [] })).toBe(false);
+  });
+
+  it("does not claim one that is still downloading", () => {
+    expect(isAwaitingEpisodeTitle({ clientStatus: "downloading", statusMessages: [tba] })).toBe(false);
   });
 });
 
