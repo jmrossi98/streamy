@@ -9,7 +9,7 @@ import { usePlayerChrome } from "@/lib/usePlayerChrome";
 import { VideoChrome } from "@/components/VideoChrome";
 import { Button } from "@/components/ui";
 import { usePlaybackTelemetry } from "@/lib/usePlaybackTelemetry";
-import { RESUME_CHECK_MS, isChronicStalling, resumeAction, type Stall } from "@/lib/liveFailoverRules";
+import { RESUME_CHECK_MS, isChronicStalling, isViewerPause, resumeAction, type Stall } from "@/lib/liveFailoverRules";
 
 type Props = {
   channelId: string;
@@ -446,6 +446,12 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     let pausedAtHide = false;
     /** When the video last paused, while it stays paused. */
     let pausedAt: number | null = null;
+    /** Whether that pause followed a tap or key press (isViewerPause). */
+    let pausedByViewer = false;
+    /** Last tap, click or key press anywhere on the page. */
+    let lastGestureAt = 0;
+    /** Back from a lock on the viewer's own pause: their next play checks the session is still alive. */
+    let checkOnNextPlay = false;
     let failedWhileHidden = false;
     let resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -511,6 +517,54 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     const onPageHide = () => endTune(true);
     window.addEventListener("pagehide", onPageHide);
 
+    /*
+      Keeps the screen on while a channel plays. iOS lets a muted video sleep
+      the screen, and an autoplayed channel stays muted until the viewer taps
+      for sound. The auto-lock that follows ends the stream (iOS stops
+      fetching, Jellyfin kills the transcode). On 2026-11-09 an iPhone on the
+      Bills game went dark about 30 s after each tune. The system drops the
+      lock when the page is hidden, so it is taken again on every `playing`
+      and on return (onVisibility).
+    */
+    let wakeLock: WakeLockSentinel | null = null;
+    let wakeRequested = false;
+    let wantWake = false;
+    const holdScreen = () => {
+      wantWake = true;
+      if (wakeLock || wakeRequested || document.visibilityState !== "visible") return;
+      if (!("wakeLock" in navigator)) return;
+      wakeRequested = true;
+      navigator.wakeLock.request("screen").then(
+        (sentinel) => {
+          wakeRequested = false;
+          if (disposed || !wantWake) {
+            void sentinel.release().catch(() => {});
+            return;
+          }
+          wakeLock = sentinel;
+          sentinel.addEventListener("release", () => {
+            if (wakeLock === sentinel) wakeLock = null;
+          });
+        },
+        () => {
+          // Not allowed here (no permission, Low Power Mode): the screen just
+          // follows the device's own setting, as before.
+          wakeRequested = false;
+        }
+      );
+    };
+    const releaseScreen = () => {
+      wantWake = false;
+      const sentinel = wakeLock;
+      wakeLock = null;
+      if (sentinel) void sentinel.release().catch(() => {});
+    };
+    const onGesture = () => {
+      lastGestureAt = Date.now();
+    };
+    window.addEventListener("pointerdown", onGesture, true);
+    window.addEventListener("keydown", onGesture, true);
+
     /**
      * Retries the tune, or -- past MAX_RETRIES -- gives up and shows the
      * real error.
@@ -534,6 +588,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
         return;
       }
       if (!retryable || retryCountRef.current >= MAX_RETRIES) {
+        releaseScreen();
         setError(finalError);
         setLoading(false);
         onGiveUpRef.current?.(lastFailWasBusyRef.current ? "busy" : "offline");
@@ -574,6 +629,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
 
     const onPlaying = () => {
       if (playingSince === null) playingSince = Date.now();
+      holdScreen();
       endStall();
       clearTuneTimer();
       clearStallTimer();
@@ -755,6 +811,23 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
         video.addEventListener("canplay", onCanPlay);
       });
     };
+
+    /*
+      Safari's own HLS player reports a broken session only as an `error` on
+      the video element, and nothing listened for it: a stream that died
+      mid-game left a frozen picture until the page was reloaded (2026-11-09,
+      "media error 4" on an iPhone after the phone locked). After the first
+      picture it is handled like an hls.js fatal error: retried, or re-tuned
+      on return if the page is hidden. Before it, the tune timer stays the
+      judge of a dead channel, as it always was.
+    */
+    let nativeErrorSeen = false;
+    const onNativeError = () => {
+      if (disposed || playingSince === null || nativeErrorSeen) return;
+      nativeErrorSeen = true;
+      if (document.visibilityState !== "hidden") setRebuffering(true);
+      scheduleRetry("Playback failed.");
+    };
     // How far behind the live edge we are, recomputed as playback moves. This
     // is what replaces a progress bar: a broadcast has no start and no end, so
     // "37% through" is meaningless, but "2 minutes behind live" is not.
@@ -875,14 +948,30 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
       setRebuffering(false);
       setRetryToken((t) => t + 1);
     };
+    /** Re-tunes unless the playhead moves within RESUME_CHECK_MS. */
+    const armResumeCheck = (skipIfPaused: boolean) => {
+      const from = video.currentTime;
+      if (resumeTimer !== null) clearTimeout(resumeTimer);
+      resumeTimer = setTimeout(() => {
+        resumeTimer = null;
+        if (disposed || document.visibilityState === "hidden") return;
+        if (skipIfPaused && video.paused) return;
+        if (video.currentTime - from < 0.5) retuneNow();
+      }, RESUME_CHECK_MS);
+    };
     const onReturn = (restoredFromCache: boolean) => {
       const now = Date.now();
       const hiddenForMs = hiddenAt === null ? 0 : now - hiddenAt;
       const advancedWhileHiddenSec = video.currentTime - hiddenFromTime;
       hiddenAt = null;
+      if (!video.paused) holdScreen();
       // A viewer who paused before locking gets their pause back, not a
-      // stream that starts by itself; pressing play re-tunes if it has to.
-      if (pausedAtHide && !restoredFromCache && !failedWhileHidden) return;
+      // stream that starts by itself. Their next play checks the session is
+      // still there (onPlayEvent), since Jellyfin drops it after 60 s.
+      if (pausedAtHide && !restoredFromCache && !failedWhileHidden) {
+        checkOnNextPlay = true;
+        return;
+      }
       const action = resumeAction({
         hiddenForMs,
         advancedWhileHiddenSec,
@@ -898,21 +987,17 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
       stayBehindRef.current = false;
       seekToLiveEdge(video, {}, cushionRef.current);
       resumePlayback(video);
-      const from = video.currentTime;
-      if (resumeTimer !== null) clearTimeout(resumeTimer);
-      resumeTimer = setTimeout(() => {
-        resumeTimer = null;
-        if (disposed || document.visibilityState === "hidden") return;
-        if (video.currentTime - from < 0.5) retuneNow();
-      }, RESUME_CHECK_MS);
+      armResumeCheck(false);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {
         hiddenAt = Date.now();
         hiddenFromTime = video.currentTime;
-        // The viewer's own pause, not the one iOS makes as the screen locks
-        // (which can land a moment before this event).
-        pausedAtHide = video.paused && playingSince !== null && pausedAt !== null && Date.now() - pausedAt > 1_500;
+        // The viewer's own pause, not the one iOS makes as the screen locks.
+        // That one can land seconds before this event: about 2 s on
+        // 2026-11-09, past the 1.5 s this used to allow, so the page came
+        // back to a dead stream and did nothing (isViewerPause).
+        pausedAtHide = video.paused && playingSince !== null && pausedAt !== null && pausedByViewer;
         // A stall cut short by the lock is not a stall of the feed.
         stallStartedAt = null;
         return;
@@ -921,9 +1006,15 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     };
     const onPauseEvent = () => {
       pausedAt = Date.now();
+      pausedByViewer = isViewerPause(pausedAt, lastGestureAt);
+      releaseScreen();
     };
     const onPlayEvent = () => {
       pausedAt = null;
+      if (checkOnNextPlay) {
+        checkOnNextPlay = false;
+        armResumeCheck(true);
+      }
     };
     const onPageShow = (e: PageTransitionEvent) => {
       // Restored from the back-forward cache: pagehide already ended the
@@ -944,6 +1035,7 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
 
     const start = () => {
       if (supportsNativeHls()) {
+        video.addEventListener("error", onNativeError);
         video.src = src;
         startPlayback();
       } else if (Hls.isSupported()) {
@@ -1044,6 +1136,10 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     return () => {
       disposed = true;
       if (resumeTimer !== null) clearTimeout(resumeTimer);
+      releaseScreen();
+      window.removeEventListener("pointerdown", onGesture, true);
+      window.removeEventListener("keydown", onGesture, true);
+      video.removeEventListener("error", onNativeError);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pageshow", onPageShow);
       video.removeEventListener("pause", onPauseEvent);

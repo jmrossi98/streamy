@@ -6,6 +6,7 @@ import {
   channelCanStart,
   feedStillNamesGame,
   isChronicStalling,
+  isViewerPause,
   resumeAction,
   shouldRescanForFeed,
   stallFailoverOrder,
@@ -121,6 +122,19 @@ describe("feedStillNamesGame", () => {
   });
   it("drops an empty slot", () => {
     expect(feedStillNamesGame("NHL | 08 -", fixture)).toBe(false);
+  });
+});
+
+describe("isViewerPause", () => {
+  it("counts a pause right after a tap or key press as the viewer's", () => {
+    expect(isViewerPause(10_000, 9_800)).toBe(true);
+    expect(isViewerPause(10_000, 10_000)).toBe(true);
+  });
+  it("does not count the pause iOS makes as the screen locks", () => {
+    // Last touch long before; the lock's pause lands with no gesture.
+    expect(isViewerPause(40_000, 9_000)).toBe(false);
+    // Never touched the page at all (the channel autoplayed).
+    expect(isViewerPause(40_000, 0)).toBe(false);
   });
 });
 
