@@ -73,3 +73,27 @@ export function windowLivePlaylist(text: string, maxSegments = LIVE_PLAYLIST_WIN
   }
   return [...header, ...lines.slice(keepFrom)].join("\n");
 }
+
+/**
+ * A live master playlist that tells the player there are no closed captions.
+ *
+ * Broadcast feeds carry CEA-608 captions inside the video, and Safari's own
+ * HLS player draws them whenever the phone's caption setting is on, including
+ * in iOS full screen, where nothing on the page can turn them off. An iPhone
+ * showed a wall of roll-up text over the Bills game (2026-11-09).
+ * CLOSED-CAPTIONS=NONE on every variant says there are none, and any
+ * CLOSED-CAPTIONS rendition group is dropped. A media playlist (no
+ * EXT-X-STREAM-INF) is returned untouched.
+ */
+export function withoutClosedCaptions(text: string): string {
+  if (!text.includes("#EXT-X-STREAM-INF")) return text;
+  return text
+    .split("\n")
+    .filter((l) => !(l.startsWith("#EXT-X-MEDIA:") && /TYPE=CLOSED-CAPTIONS/.test(l)))
+    .map((l) => {
+      if (!l.startsWith("#EXT-X-STREAM-INF:")) return l;
+      if (/CLOSED-CAPTIONS=/.test(l)) return l.replace(/CLOSED-CAPTIONS=("[^"]*"|[^,\r]*)/, "CLOSED-CAPTIONS=NONE");
+      return l.replace(/(\r?)$/, ",CLOSED-CAPTIONS=NONE$1");
+    })
+    .join("\n");
+}

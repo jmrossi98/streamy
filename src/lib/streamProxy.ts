@@ -10,7 +10,7 @@ import {
 } from "./jellyfin";
 import { pinRecordedMediaSource, shouldResetTranscode } from "./streamRecoveryRules";
 import { trickplayVersion } from "./trickplayRules";
-import { windowLivePlaylist } from "./hlsPlaylistRules";
+import { windowLivePlaylist, withoutClosedCaptions } from "./hlsPlaylistRules";
 import { streamMeter, type MeterTag } from "./streamMeter";
 import { touchPlaybackSession } from "./playbackKeepalive";
 import { playSessionOf } from "./playbackKeepaliveRules";
@@ -239,7 +239,7 @@ export async function proxyJellyfinHlsResource(
   }
   // A live playlist is windowed before the rewrite, so the work per fetch
   // stops growing with how long the viewer has been tuned.
-  const rewritten = (live ? windowLivePlaylist(text) : text)
+  const rewritten = (live ? withoutClosedCaptions(windowLivePlaylist(text)) : text)
     .split("\n")
     .map((line) => {
       const trimmed = line.trim();
