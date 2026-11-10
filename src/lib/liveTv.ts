@@ -597,7 +597,18 @@ export async function waitForLineupChannel(name: string, timeoutMs = 15_000, eve
   }
 }
 
-export async function refreshGuide(): Promise<boolean> {
+/**
+ * Has Jellyfin re-read the lineup.
+ *
+ * `urgent` is for a channel someone is waiting to watch (a game page's found
+ * feed). Jellyfin's "Refresh Guide" reads the lineup in its first ~3 s and
+ * then spends about 3 minutes on guide data (23:12:30-23:15:34 on
+ * 2026-11-09), so a channel added mid-run is not seen until the next run. An
+ * urgent refresh stops the running one and starts over, and the new channel
+ * is listed within seconds. Otherwise (a removal, the cleanup pass) a running
+ * refresh is left to finish and one more runs after it.
+ */
+export async function refreshGuide(opts: { urgent?: boolean } = {}): Promise<boolean> {
   if (!isJellyfinConfiguredForLiveTv()) return false;
   try {
     const task = await guideTask();
@@ -606,9 +617,9 @@ export async function refreshGuide(): Promise<boolean> {
     // Jellyfin ignores a start request for a task that is already running, and
     // a refresh already under way read the lineup before this change existed.
     // That is how the second of two back-to-back promotes went missing
-    // (2026-10-04: 2245 appeared, 2246 did not, until a refresh by hand). So
-    // when one is running, wait for it and then run another.
+    // (2026-10-04: 2245 appeared, 2246 did not, until a refresh by hand).
     if (task.State && task.State !== "Idle") {
+      if (opts.urgent && (await restartGuideTask(task.Id))) return true;
       void refreshGuideAfterCurrent(task.Id);
       return true;
     }
@@ -616,6 +627,40 @@ export async function refreshGuide(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** How long a stopped refresh may take to wind down before the restart is given up on. */
+const GUIDE_STOP_WAIT_MS = 20_000;
+/** One restart at a time: a second urgent add waits, then restarts again so its channel is read too. */
+let restartChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Stops the running guide refresh and starts a fresh one. False if it could
+ * not be stopped in time; the caller then queues a follow-up instead.
+ */
+function restartGuideTask(id: string): Promise<boolean> {
+  const run = restartChain.then(async () => {
+    const current = await guideTask().catch(() => undefined);
+    if (current && current.State && current.State !== "Idle") {
+      const stopped = await fetch(`${JELLYFIN_URL}/ScheduledTasks/Running/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "X-Emby-Token": JELLYFIN_API_KEY! },
+        signal: AbortSignal.timeout(LIVE_TV_TIMEOUT_MS),
+      }).catch(() => null);
+      if (!stopped?.ok) return false;
+      const deadline = Date.now() + GUIDE_STOP_WAIT_MS;
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        const task = await guideTask().catch(() => undefined);
+        if (task && (!task.State || task.State === "Idle")) break;
+        if (Date.now() > deadline) return false;
+      }
+    }
+    console.log("[live-tv] restarted the guide refresh so a new channel is read now");
+    return startGuideTask(id);
+  });
+  restartChain = run.catch(() => false);
+  return run.catch(() => false);
 }
 
 type GuideTask = { Id?: string; Name?: string; Key?: string; State?: string };
@@ -634,8 +679,13 @@ async function startGuideTask(id: string): Promise<boolean> {
   return res.ok;
 }
 
-/** How long to wait for a running guide refresh before giving up on the follow-up. */
-const GUIDE_WAIT_MS = 90_000;
+/**
+ * How long to wait for a running guide refresh before starting the follow-up
+ * anyway. A run takes about 3 minutes; the old 90 s ended just before one
+ * finished, the start landed on a running task and was ignored, and a found
+ * Sharks feed never reached Jellyfin (2026-11-09).
+ */
+const GUIDE_WAIT_MS = 6 * 60_000;
 let followUpQueued = false;
 
 /** Waits for the running refresh to finish, then starts one more. At most one queued. */
