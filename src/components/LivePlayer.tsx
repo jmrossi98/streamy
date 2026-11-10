@@ -395,6 +395,61 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     resumePlayback(v);
   }, [resumePlayback]);
 
+  /*
+    Sound comes on at the viewer's first tap anywhere on the page. A browser
+    that refused sound at autoplay (an iPhone always does, until a tap) only
+    allows it from inside a tap, and this used to need a "Tap for sound"
+    button; any tap now counts, the one that reveals the controls included.
+    click/touchend/keydown, not pointerdown: iOS does not treat a touchstart
+    as a gesture for media. Unmute only, so a tap on pause still pauses.
+  */
+  useEffect(() => {
+    if (!soundBlocked) return;
+    const unmute = () => {
+      const v = videoRef.current;
+      if (v) v.muted = false;
+      autoMutedRef.current = false;
+      setSoundBlocked(false);
+    };
+    const opts = { capture: true, once: true } as const;
+    window.addEventListener("click", unmute, opts);
+    window.addEventListener("touchend", unmute, opts);
+    window.addEventListener("keydown", unmute, opts);
+    return () => {
+      window.removeEventListener("click", unmute, opts);
+      window.removeEventListener("touchend", unmute, opts);
+      window.removeEventListener("keydown", unmute, opts);
+    };
+  }, [soundBlocked]);
+
+  /*
+    No captions on live. Broadcast feeds carry closed captions inside the
+    video. hls.js on desktop keeps them hidden, but Safari's own player shows
+    them, and on an iPhone that was a wall of roll-up text over the game
+    (2026-11-09). The proxy also marks live playlists CLOSED-CAPTIONS=NONE
+    (withoutClosedCaptions), which covers iOS full screen; this catches any
+    caption track the page sees anyway. Metadata tracks are left alone.
+  */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const tracks = video.textTracks;
+    const hide = () => {
+      for (const track of Array.from(tracks)) {
+        if ((track.kind === "captions" || track.kind === "subtitles") && track.mode !== "disabled") {
+          track.mode = "disabled";
+        }
+      }
+    };
+    hide();
+    tracks.addEventListener("addtrack", hide);
+    tracks.addEventListener("change", hide);
+    return () => {
+      tracks.removeEventListener("addtrack", hide);
+      tracks.removeEventListener("change", hide);
+    };
+  }, []);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -1266,25 +1321,6 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
         {rebuffering && !loading && !error && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40">
             <Spinner label="Reconnecting…" />
-          </span>
-        )}
-        {/* Not blocking: the picture plays on underneath, muted. */}
-        {soundBlocked && !needsTap && !error && (
-          <span className="absolute left-3 top-3 z-10">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => {
-                const v = videoRef.current;
-                if (!v) return;
-                v.muted = false;
-                autoMutedRef.current = false;
-                setSoundBlocked(false);
-                void v.play().catch(() => {});
-              }}
-            >
-              Tap for sound
-            </Button>
           </span>
         )}
         {needsTap && !error && (

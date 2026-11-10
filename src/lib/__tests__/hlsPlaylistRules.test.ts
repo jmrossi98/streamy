@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { windowLivePlaylist } from "../hlsPlaylistRules";
+import { windowLivePlaylist, withoutClosedCaptions } from "../hlsPlaylistRules";
 
 function livePlaylist(segments: number, opts: { event?: boolean; seq?: number; discontinuityBefore?: number[] } = {}): string {
   const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:1", `#EXT-X-MEDIA-SEQUENCE:${opts.seq ?? 0}`];
@@ -56,5 +56,35 @@ describe("windowLivePlaylist", () => {
   it("is stable: windowing an already-windowed list changes nothing", () => {
     const once = windowLivePlaylist(livePlaylist(900), 600);
     expect(windowLivePlaylist(once, 600)).toBe(once);
+  });
+});
+
+describe("withoutClosedCaptions", () => {
+  it("marks every variant of a master playlist as having no captions", () => {
+    const master = [
+      "#EXTM3U",
+      '#EXT-X-STREAM-INF:BANDWIDTH=8192000,CODECS="avc1.4d4028,mp4a.40.2",RESOLUTION=1280x720',
+      "live.m3u8?PlaySessionId=abc",
+      "",
+    ].join("\n");
+    const out = withoutClosedCaptions(master);
+    expect(out).toContain('RESOLUTION=1280x720,CLOSED-CAPTIONS=NONE\nlive.m3u8');
+  });
+
+  it("replaces a declared caption group and drops its rendition", () => {
+    const master = [
+      "#EXTM3U",
+      '#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc",NAME="English",INSTREAM-ID="CC1",DEFAULT=YES,AUTOSELECT=YES',
+      '#EXT-X-STREAM-INF:BANDWIDTH=8192000,CLOSED-CAPTIONS="cc",RESOLUTION=1280x720',
+      "live.m3u8",
+    ].join("\n");
+    const out = withoutClosedCaptions(master);
+    expect(out).not.toContain("TYPE=CLOSED-CAPTIONS");
+    expect(out).toContain("BANDWIDTH=8192000,CLOSED-CAPTIONS=NONE,RESOLUTION=1280x720");
+  });
+
+  it("leaves media playlists alone", () => {
+    const media = livePlaylist(3);
+    expect(withoutClosedCaptions(media)).toBe(media);
   });
 });
