@@ -482,6 +482,8 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
       same handler, never across a render.
     */
     let lastCatchUpAt = 0;
+    /** The playhead at the previous timeupdate, to tell playback moving from a seek. */
+    let lastTick = 0;
     const CATCH_UP_COOLDOWN_MS = 4_000;
     /** A rewind to apply a grown cushion is not repeated inside this; growth comes a gap at a time. */
     const REWIND_COOLDOWN_MS = 20_000;
@@ -780,6 +782,10 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     };
 
     const onWaiting = (e?: Event) => {
+      // `stalled` means no bytes arrived for a few seconds, not that playback
+      // stopped. Safari sends it while playing from a full buffer, and it put
+      // "Reconnecting…" over a picture that never paused.
+      if (e?.type === "stalled" && video.readyState >= 3) return;
       // Counted the way the telemetry counts a stall (usePlaybackTelemetry):
       // after the first picture, and not the wait a seek causes.
       if (
@@ -896,6 +902,18 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
     const onTimeUpdate = () => {
       // Chrome doesn't always fire `playing` after a wait; the playhead moving is the surer sign.
       if (stallStartedAt !== null && !video.paused && video.currentTime > stallFrom + 0.5) endStall();
+      /*
+        The same sign ends "Reconnecting…". Only `playing` used to clear it,
+        and Safari's own player often never sends one: after a seek back to
+        the live edge it just carries on. So the overlay sat over a game that
+        was playing fine (iPhone, 2026-11-09). A normal tick forward with
+        data buffered ahead counts; the jump a seek makes does not.
+      */
+      const tick = video.currentTime;
+      if (!video.paused && !video.seeking && video.readyState >= 3 && tick > lastTick && tick - lastTick < 2) {
+        setRebuffering(false);
+      }
+      lastTick = tick;
       if (video.seekable.length === 0) {
         setBehind(null);
         return;
