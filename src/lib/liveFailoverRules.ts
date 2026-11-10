@@ -197,6 +197,22 @@ export const SESSION_LOST_HIDDEN_MS = 50_000;
 /** After a shorter absence, how long to give the player to move again before re-tuning. */
 export const RESUME_CHECK_MS = 4_000;
 
+/** How soon after a tap or key press a pause counts as the viewer's own. */
+export const VIEWER_PAUSE_GESTURE_MS = 1_000;
+
+/**
+ * Whether a pause was the viewer's, not one the system made.
+ *
+ * iOS pauses video as the screen locks, with no tap on the page, and that
+ * pause can land seconds before the page is hidden. Timing alone could not
+ * tell it from the viewer pausing and then locking: on 2026-11-09 the lock's
+ * pause came ~2 s early, was read as the viewer's, and the page came back to
+ * a dead stream and left it there.
+ */
+export function isViewerPause(pausedAt: number, lastGestureAt: number): boolean {
+  return lastGestureAt > 0 && pausedAt - lastGestureAt >= 0 && pausedAt - lastGestureAt <= VIEWER_PAUSE_GESTURE_MS;
+}
+
 export type ResumeAction = "none" | "retune" | "check";
 
 /**
