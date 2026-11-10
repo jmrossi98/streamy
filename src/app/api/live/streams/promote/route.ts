@@ -94,7 +94,7 @@ export async function POST(request: Request) {
         refreshing: false,
         existing: true,
         // So the page can play it now; it is in the lineup already.
-        jellyfinId: await waitForLineupChannel(already.name, 3_000),
+        jellyfinId: await listedOrRefresh(already.name),
         note: `Already added for this game as "${already.name}".`,
       });
     }
@@ -111,7 +111,7 @@ export async function POST(request: Request) {
     // the lineup, and the game's list only had what was added for it). Linked,
     // not owned: the cleanup pass never removes a channel that was there first.
     if (fixtureId) await linkToGame(fixtureId, existing.id, existing.name);
-    const existingJellyfinId = await waitForLineupChannel(existing.name, 3_000);
+    const existingJellyfinId = await listedOrRefresh(existing.name);
     if (watchedForGame) await rememberWatch(userId, watchedForGame, existing.name, existingJellyfinId);
     return NextResponse.json({
       id: existing.id,
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
   // which of the two things actually happened -- "added, refreshing" and
   // "added, but you will have to wait" are different messages, and guessing
   // between them is how "I added it and nothing happened" gets reported.
-  const refreshing = await refreshGuide();
+  const refreshing = await refreshGuide({ urgent: true });
   // Answer once Jellyfin actually lists it, so the page can switch straight
   // away instead of waiting a fixed time and hoping (see waitForLineupChannel).
   const jellyfinId = refreshing ? await waitForLineupChannel(channelName) : null;
@@ -216,6 +216,28 @@ async function rememberWatch(userId: string, fixtureId: string, name: string, je
     console.error("[promote] couldn't remember the pick:", err);
   }
 }
+
+/**
+ * Jellyfin's id for a channel already in the lineup, refreshing the guide when
+ * Jellyfin doesn't list it yet. A feed the page added earlier can be in
+ * Dispatcharr but missing from Jellyfin if that refresh never ran, and
+ * answering "already added" without one left it missing for good: the
+ * Islanders-Sharks feed on 2026-11-09 was asked for twice and never listed.
+ */
+async function listedOrRefresh(name: string): Promise<string | null> {
+  const id = await waitForLineupChannel(name, 3_000);
+  if (id) return id;
+  // At most once every RELIST_COOLDOWN_MS per name: every viewer's page asks,
+  // and a record left behind for a channel that is gone must not restart the
+  // guide on each visit.
+  const key = name.trim().toLowerCase();
+  const now = Date.now();
+  if (now - (relistAskedAt.get(key) ?? 0) < RELIST_COOLDOWN_MS) return null;
+  relistAskedAt.set(key, now);
+  return (await refreshGuide({ urgent: true })) ? waitForLineupChannel(name) : null;
+}
+const RELIST_COOLDOWN_MS = 2 * 60_000;
+const relistAskedAt = new Map<string, number>();
 
 /** How long a link to a game is kept: games are a day's business. */
 const LINK_TTL_MS = 3 * 86_400_000;
