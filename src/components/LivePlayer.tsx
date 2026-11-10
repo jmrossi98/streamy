@@ -649,11 +649,18 @@ export function LivePlayer({ channelId, channelName, nowPlaying, onGiveUp, onChr
           doesn't: unmuting then makes Chrome and Safari *pause* the video,
           which used to leave an autoplayed channel frozen. So check, and if
           it paused, carry on muted and offer sound instead.
+
+          Once per forced mute. The play() below fires `playing` again, and
+          with the flag still set that unmuted again, was paused again, and
+          so on without end. An iPhone never allows sound without a tap, so
+          every autoplayed channel ran this loop. It pegged Safari's page:
+          the video stopped fetching, the heartbeat stopped, and iOS killed
+          the tab ~30 s later (the Bills game, 2026-11-09).
         */
+        autoMutedRef.current = false;
         video.muted = false;
         setTimeout(() => {
           if (!video.paused) {
-            autoMutedRef.current = false;
             setSoundBlocked(false);
             return;
           }
