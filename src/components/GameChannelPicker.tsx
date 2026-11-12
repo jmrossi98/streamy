@@ -18,6 +18,8 @@ import { LivePlayer } from "@/components/LivePlayer";
 import type { ChannelInfo } from "@/lib/dispatcharr";
 import { KEEPING_UP_SPEED, cleanChannelName } from "@/lib/liveChannelRules";
 import { foundFeedTakesOver, resolveStoredChoice, type StoredChoice } from "@/lib/gameChannelChoice";
+import { notePreempted } from "@/lib/presenceClient";
+import { playbackMedia } from "@/lib/usePlaybackTelemetry";
 
 export type PendingAdd = { name: string; mine: boolean };
 
@@ -298,6 +300,20 @@ export function GameChannelPicker({
   useEffect(() => {
     selectedRef.current = selectedId;
   }, [selectedId]);
+  /** The name of what's on now, to mark an automatic switch away from it (see below). */
+  const selectedNameRef = useRef<string | null>(null);
+
+  /*
+    The page moving the player on by its own choice -- a found feed taking
+    over, a better default -- is a switch, not a channel failing to start.
+    Said before the switch, so the stopping player records it as one
+    (SWITCHED_BEFORE_PICTURE): on 2026-11-12 Ana's "NHL SAN JOSE SHARKS" was
+    13 s into its tune when the game's feed took over, and the admin was
+    emailed that it "didn't start for Ana" while she watched the game.
+  */
+  const markSwitchedAway = (name: string | null | undefined) => {
+    if (name) notePreempted(playbackMedia("live", name));
+  };
 
   // A better default from a refresh is taken up, unless the viewer chose.
   const defaultId = channel?.id ?? null;
@@ -305,6 +321,7 @@ export function GameChannelPicker({
   if (defaultId !== lastDefault) {
     setLastDefault(defaultId);
     if (!userPicked && defaultId) {
+      if (selectedId !== defaultId) markSwitchedAway(options.find((c) => c.id === selectedId)?.name);
       setSelectedId(defaultId);
       setHeld(false);
     }
@@ -423,6 +440,7 @@ export function GameChannelPicker({
         }
         // The viewer picked something while the name was checked: theirs stands.
         if (selectedRef.current !== before) return;
+        if (before !== ch.id) markSwitchedAway(selectedNameRef.current);
         setPickedId(null);
         setSelectedId(ch.id);
         setHeld(false);
@@ -485,6 +503,9 @@ export function GameChannelPicker({
   }, [held, searchBeat]);
 
   const selected = options.find((c) => c.id === selectedId) ?? options[0] ?? null;
+  useEffect(() => {
+    selectedNameRef.current = selected?.name ?? null;
+  });
 
   const providerOf = (c: LiveChannel): string | null => infoByChannel[c.name]?.provider ?? null;
   /**

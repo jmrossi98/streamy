@@ -26,6 +26,7 @@
  */
 
 import type { ChannelVerdict, StreamHealth } from "./liveChannelRules";
+import { SWITCHED_BEFORE_PICTURE } from "./viewerActivityRules";
 
 /** A PlaybackEvent row as these rules need it. */
 export type LiveEvent = {
@@ -106,6 +107,8 @@ type Try = {
   pictureAt: number | null;
   signal: boolean;
   error: string | null;
+  /** The page moved on before the picture (SWITCHED_BEFORE_PICTURE): says nothing about the channel. */
+  switched: boolean;
 };
 
 /**
@@ -135,7 +138,7 @@ export function liveTunes(events: LiveEvent[], now: number = Date.now()): Tune[]
       open = null;
     };
     const begin = (at: number): Try => {
-      const t: Try = { startAt: at, endAt: null, lastAt: at, played: false, pictureAt: null, signal: false, error: null };
+      const t: Try = { startAt: at, endAt: null, lastAt: at, played: false, pictureAt: null, signal: false, error: null, switched: false };
       tries.push(t);
       return t;
     };
@@ -159,6 +162,7 @@ export function liveTunes(events: LiveEvent[], now: number = Date.now()): Tune[]
           else open.error = open.error ?? e.detail;
         }
       } else if (e.kind === "stop") {
+        if (open && e.detail === SWITCHED_BEFORE_PICTURE) open.switched = true;
         close(e.at);
       }
     }
@@ -174,7 +178,8 @@ export function liveTunes(events: LiveEvent[], now: number = Date.now()): Tune[]
       else if (t.endAt == null) {
         if (now - t.startAt > OPEN_TRY_MS) continue; // a tab that died mid-tune
         outcome = "pending";
-      } else if (t.signal || t.endAt - t.startAt >= MIN_FAILED_TRY_MS) outcome = "failed";
+      } else if (t.switched && !t.signal) continue; // the page moved on to something better
+      else if (t.signal || t.endAt - t.startAt >= MIN_FAILED_TRY_MS) outcome = "failed";
       else continue; // flicked past
 
       const playedUntil = t.played ? (t.endAt ?? Math.min(now, t.lastAt + ASSUME_PLAYING_MS)) : null;
