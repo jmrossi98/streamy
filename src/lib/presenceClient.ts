@@ -49,6 +49,27 @@ export function takePresence(): { playing: PlayingNow | null; events: IncomingEv
   return { playing, events };
 }
 
+/**
+ * Players the page is moving on from by its own choice -- a feed the search
+ * found takes over, a better default arrives -- by media, with when. Read
+ * once by the player's telemetry as it stops (takePreempted), so a stop before
+ * the picture is recorded as a switch, not a failed start.
+ */
+const preempted = new Map<string, number>();
+/** A note older than this belongs to some other stop. */
+const PREEMPT_TTL_MS = 10_000;
+
+export function notePreempted(media: string): void {
+  preempted.set(media, Date.now());
+}
+
+/** Whether this player was moved on by the page just now; the note is used up. */
+export function takePreempted(media: string): boolean {
+  const at = preempted.get(media);
+  preempted.delete(media);
+  return at != null && Date.now() - at <= PREEMPT_TTL_MS;
+}
+
 /** PresenceReporter registers how to send early. */
 export function onUrgentPresence(fn: (() => void) | null): void {
   onUrgent = fn;

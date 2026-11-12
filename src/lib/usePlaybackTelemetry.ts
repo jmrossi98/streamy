@@ -1,8 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import type { PlaybackKind } from "./viewerActivityRules";
-import { flushPresenceSoon, queuePlaybackEvent, setPlayingNow, updatePlayingState } from "./presenceClient";
+import { SWITCHED_BEFORE_PICTURE, type PlaybackKind } from "./viewerActivityRules";
+import { flushPresenceSoon, queuePlaybackEvent, setPlayingNow, takePreempted, updatePlayingState } from "./presenceClient";
+
+/** How a player names what it plays in its events: "Live: ESPN", "Frieren S1E29". */
+export function playbackMedia(kind: PlaybackKind, title: string): string {
+  return `${kind === "live" ? "Live: " : ""}${title}`;
+}
 
 /**
  * Reports how a player is doing to the admin Viewers panel: when it started,
@@ -23,7 +28,7 @@ export function usePlaybackTelemetry(
   opts: { kind: PlaybackKind; title: string; error: string | null; attempt?: number; active?: boolean; startOnMount?: boolean }
 ) {
   const { kind, title, error, attempt = 0, active = true, startOnMount = false } = opts;
-  const media = `${kind === "live" ? "Live: " : ""}${title}`;
+  const media = playbackMedia(kind, title);
   const mediaRef = useRef(media);
   useEffect(() => {
     mediaRef.current = media;
@@ -93,7 +98,12 @@ export function usePlaybackTelemetry(
       v.removeEventListener("error", onError);
       if (!startedAt) return;
       if (stallAt != null) queuePlaybackEvent("stall", media, "still stalled when stopped", Date.now() - stallAt);
-      queuePlaybackEvent("stop", media, played ? null : "stopped before the picture started", Date.now() - startedAt);
+      // Moved on by the page (notePreempted) is a switch; any other stop
+      // before the picture may be a channel that wouldn't start. The note is
+      // used up either way, so it can't mislabel a later stop.
+      const switched = takePreempted(media);
+      const detail = played ? null : switched ? SWITCHED_BEFORE_PICTURE : "stopped before the picture started";
+      queuePlaybackEvent("stop", media, detail, Date.now() - startedAt);
       setPlayingNow(null);
       // Tell the server now, not at the next 20s beat: a tab that navigated
       // away or closed should stop showing as "playing" right away, which is

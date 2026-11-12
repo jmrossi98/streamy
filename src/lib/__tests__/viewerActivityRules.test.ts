@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deviceLabel, parsePresence, presenceOf, sessionHealth } from "../viewerActivityRules";
+import { SWITCHED_BEFORE_PICTURE, deviceLabel, parsePresence, presenceOf, sessionHealth } from "../viewerActivityRules";
 
 const NOW = 1_800_000_000_000;
 
@@ -67,6 +67,17 @@ describe("sessionHealth", () => {
     const h = sessionHealth([ev("start", 1), ev("playing", 2, 8700), ev("stall", 3, 1200), ev("stop", 4)]);
     expect(h.verdict).toBe("smooth");
     expect(h.medianStartMs).toBe(8700);
+  });
+
+  it("smooth: a tune the page switched away from before its picture is not a failure", () => {
+    const h = sessionHealth([
+      { ...ev("start", 1), media: "Live: NHL SAN JOSE SHARKS" },
+      { ...ev("stop", 2, 13_197, SWITCHED_BEFORE_PICTURE), media: "Live: NHL SAN JOSE SHARKS" },
+      { ...ev("start", 3), media: "Live: NHL | 06 - 10pm Penguins @ Sharks" },
+      { ...ev("playing", 4, 8_192), media: "Live: NHL | 06 - 10pm Penguins @ Sharks" },
+    ]);
+    expect(h.verdict).toBe("smooth");
+    expect(h.errors).toBe(0);
   });
 
   it("failing: the iPhone loop -- starts that never reached a picture", () => {

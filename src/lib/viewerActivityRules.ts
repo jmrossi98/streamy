@@ -139,6 +139,17 @@ export function isActivelyPlaying(lastSeenAt: number, now = Date.now()): boolean
 export const NOTICEABLE_STALL_MS = 1_000;
 
 /**
+ * The stop detail a player records when the page moved it on before its
+ * picture arrived -- the game's own feed taking over, a better default -- as
+ * opposed to "stopped before the picture started", which is anything else.
+ * A switch says nothing about the channel. On 2026-11-12 Ana's pick "NHL SAN
+ * JOSE SHARKS" was 13 s into its tune when the Penguins-Sharks feed the search
+ * had found took over; counted as a failed start, it emailed Jake "didn't
+ * start for Ana" while she was watching the game.
+ */
+export const SWITCHED_BEFORE_PICTURE = "switched before the picture started";
+
+/**
  * A start that never reached a picture but was followed this soon by one that
  * did (same media) was recovered by the player's own retry, not a failure.
  */
@@ -216,7 +227,9 @@ export function sessionHealth(
     } else if (e.kind === "retry") {
       retries += 1;
     } else if (e.kind === "stop") {
-      failOpen();
+      // Moved on by the page before the picture: not a start that failed.
+      if (e.detail === SWITCHED_BEFORE_PICTURE) open = null;
+      else failOpen();
     }
   }
   failOpen();

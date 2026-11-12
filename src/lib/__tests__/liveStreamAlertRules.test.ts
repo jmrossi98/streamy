@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ALERT_DEDUPE_MS, alertMessage, incidentsToAlert, streamIncidents, type StreamIncident } from "../liveStreamAlertRules";
 import type { LiveEvent } from "../liveChannelStateRules";
+import { SWITCHED_BEFORE_PICTURE } from "../viewerActivityRules";
 
 const T0 = Date.parse("2026-10-18T20:25:00Z");
 const S = 1000;
@@ -28,6 +29,18 @@ describe("streamIncidents", () => {
     expect(streamIncidents(bein, gaveUpAt + 30 * S)).toEqual([]);
     const [i] = streamIncidents(bein, gaveUpAt + 61 * S);
     expect(i).toMatchObject({ kind: "failed-start", channel: "BEIN SPORTS 2 HD", key: "beinsports2hd", tries: 3, userName: "jaker" });
+  });
+
+  it("does not report a tune the page switched away from before its picture", () => {
+    // 2026-11-12, 23:27 ET: "NHL SAN JOSE SHARKS didn't start for Ana" -- the
+    // game's own feed had taken over 13 s in, and she was watching the game.
+    const events = [
+      ev(T0, "start", "NHL SAN JOSE SHARKS"),
+      ev(T0 + 13 * S, "stop", "NHL SAN JOSE SHARKS", SWITCHED_BEFORE_PICTURE, 13_197),
+      ev(T0 + 13 * S, "start", "NHL | 06 - 10pm Penguins @ Sharks"),
+      ev(T0 + 22 * S, "playing", "NHL | 06 - 10pm Penguins @ Sharks", null, 8_192),
+    ];
+    expect(streamIncidents(events, T0 + 5 * 60 * S)).toEqual([]);
   });
 
   it("does not report a failed start that a retry rescued within a minute", () => {

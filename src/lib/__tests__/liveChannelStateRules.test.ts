@@ -12,6 +12,7 @@ import {
   withWorkingState,
   type LiveEvent,
 } from "../liveChannelStateRules";
+import { SWITCHED_BEFORE_PICTURE } from "../viewerActivityRules";
 
 const T0 = Date.parse("2026-10-18T20:25:00Z");
 const MIN = 60_000;
@@ -39,6 +40,30 @@ function playedTune(sessionId: string, at: number, channel: string, userName = "
 }
 
 describe("liveTunes", () => {
+  it("does not count a tune the page switched away from before its picture", () => {
+    // 2026-11-12: Ana's pick was 13 s into its tune when the game's own feed took over.
+    const events = [
+      ev("s1", T0, "start", "NHL SAN JOSE SHARKS"),
+      ev("s1", T0 + 13_000, "stop", "NHL SAN JOSE SHARKS", SWITCHED_BEFORE_PICTURE, 13_197),
+      ev("s1", T0 + 13_000, "start", "NHL | 06 - 10pm Penguins @ Sharks"),
+      ev("s1", T0 + 22_000, "playing", "NHL | 06 - 10pm Penguins @ Sharks", null, 8_192),
+    ];
+    const tunes = liveTunes(events, T0 + 10 * MIN);
+    expect(tunes.map((t) => [t.channel, t.outcome])).toEqual([["NHL | 06 - 10pm Penguins @ Sharks", "played"]]);
+    // The same stop without the switch is a failed start, as before.
+    const unexplained = events.map((e) => (e.kind === "stop" ? { ...e, detail: "stopped before the picture started" } : e));
+    expect(liveTunes(unexplained, T0 + 10 * MIN).find((t) => t.key === "nhlsanjosesharks")?.outcome).toBe("failed");
+  });
+
+  it("still counts a switch that came after the player's own error", () => {
+    const events = [
+      ev("s1", T0, "start", "ESPN+ 425"),
+      ev("s1", T0 + 5_000, "error", "ESPN+ 425", "Playback failed."),
+      ev("s1", T0 + 9_000, "stop", "ESPN+ 425", SWITCHED_BEFORE_PICTURE, 9_000),
+    ];
+    expect(liveTunes(events, T0 + 10 * MIN)[0]?.outcome).toBe("failed");
+  });
+
   it("folds the player's own retries into one failed tune", () => {
     // 2026-10-18: BEIN SPORTS HD, four tries in 80 s, never a picture.
     const tunes = liveTunes(failedTune("s1", T0, "BEIN SPORTS HD"), T0 + 10 * MIN);
