@@ -31,6 +31,7 @@ import { GameStreamFinder } from "@/components/GameStreamFinder";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
+import { recordGameVisit } from "@/lib/gamePrep";
 
 /**
  * One game's page: which channel is showing it, and what else might be.
@@ -78,6 +79,9 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   try {
     const userId = await getValidSessionUserId(session);
     if (userId) {
+      // Teaches pre-game prep which teams this household follows (gamePrep.ts).
+      // Not awaited: it must never slow the page.
+      void recordGameVisit(userId, fixture);
       const row = await prisma.gameChannelChoice.findUnique({
         where: { userId_fixtureId: { userId, fixtureId } },
         select: { channelId: true, name: true, pickedAt: true },

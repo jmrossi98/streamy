@@ -1108,6 +1108,22 @@ model GameChannelLink {
   @@index([createdAt])
 }
 
+// A signed-in viewer opening a game's page, with the game's teams: how pre-game
+// prep learns which teams people follow (gamePrepRules.ts), so a followed
+// team's game has its own feed in the lineup before anyone opens the page.
+// One row per person and game, swept after the follow window.
+model GameVisit {
+  userId    String
+  fixtureId String
+  league    String
+  homeTeam  String?
+  awayTeam  String?
+  visitedAt DateTime @default(now())
+
+  @@id([userId, fixtureId])
+  @@index([visitedAt])
+}
+
 /// The healer's re-searches of a wanted episode or movie, so a title no
 /// indexer carries is given up on after a day instead of re-searched for
 /// ever -- see searchGiveUpRules.ts. One row per title; deleted when it is

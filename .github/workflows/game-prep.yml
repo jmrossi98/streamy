@@ -1,0 +1,44 @@
+name: game prep
+
+# Pre-game prep (src/lib/gamePrep.ts): a followed team's game gets its own feed
+# found, checked for video and added to Live TV before anyone opens the game's
+# page, so the page opens on the game instead of searching while its viewer
+# waits (89 s for Ana on 2026-11-12).
+#
+# Every 10 minutes, offset from the download warden's :00/:10 so the two
+# passes don't land on mediabox together. A game is first tried 45 minutes
+# before its start and every pass after until a feed plays.
+on:
+  schedule:
+    - cron: "5-59/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: game-prep
+  cancel-in-progress: false
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run a prep pass
+        env:
+          SECRET: ${{ secrets.DOWNLOAD_WARDEN_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SECRET}" ]; then
+            echo "::error::DOWNLOAD_WARDEN_SECRET is not set"
+            exit 1
+          fi
+          code=$(curl -sS -o report.json -w '%{http_code}' -m 290 -X POST \
+            -H "Authorization: Bearer ${SECRET}" \
+            https://streamy-app.com/api/cron/game-prep)
+          echo "HTTP ${code}"
+          cat report.json
+          echo
+          test "${code}" = "200"
+          jq -r '"skipped=\(.skipped // "-") followed=\(.followed | length) games=\(.games | map("\(.name): \(.action)") | join("; "))"' report.json
+          jq -e '.errors | length == 0' report.json > /dev/null || {
+            echo "::warning::The pass reported step errors:"
+            jq -r '.errors[] | "  \(.step): \(.error)"' report.json
+          }

@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSession, getValidSessionUserId } from "@/lib/auth";
-import { isDispatcharrConfigured, listPromotedStreamIds, listStreams } from "@/lib/dispatcharr";
+import { isDispatcharrConfigured } from "@/lib/dispatcharr";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
-import { getAutomaticRenewals } from "@/lib/renewals";
-import { providerAlert } from "@/lib/credentialRules";
-import { gameStreamQueries, gameStreamScore, rankGameStreams } from "@/lib/gameStreamRules";
-import { namesGameDate } from "@/lib/liveGuideGrid";
+import { listGameStreamCandidates } from "@/lib/gameStreamCandidates";
 import { isStreamProbeConfigured } from "@/lib/streamProbe";
-import { cached } from "@/lib/ttlCache";
 
 /**
  * Provider streams that might carry one of today's games, for the game page's
@@ -27,37 +23,8 @@ export async function GET(request: Request) {
   const fixture = (await getTodaysFixtures().catch(() => [])).find((f) => f.id === fixtureId);
   if (!fixture) return NextResponse.json({ streams: [] });
 
-  const [pages, promoted, renewals] = await Promise.all([
-    // Cached per game for a few minutes: the search took 23s on 2026-10-18,
-    // and the page asks again right after adding a feed (and for every other
-    // viewer of the same game). Only a complete answer is kept.
-    cached(
-      `game-streams:${fixture.id}`,
-      3 * 60_000,
-      () => Promise.all(gameStreamQueries(fixture).map((q) => listStreams({ search: q, pageSize: 100 }).catch(() => null))),
-      { skipCacheIf: (pages) => pages.some((p) => p === null) }
-    ),
-    listPromotedStreamIds().catch(() => null),
-    getAutomaticRenewals().catch(() => []),
-  ]);
-  const expiredProviders = new Set(
-    renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
-  );
-  const streams = rankGameStreams(
-    pages.flatMap((p) => p?.items ?? []),
-    fixture,
-    { promoted: new Set(promoted?.keys() ?? []), expiredProviders }
-  );
   return NextResponse.json({
-    streams: streams.map((s) => ({
-      id: s.id,
-      name: s.name,
-      provider: s.provider,
-      logoUrl: s.logoUrl,
-      score: gameStreamScore(s.name, fixture),
-      // Carries the game's own date: auto-add waits for these (pickAutoAdd).
-      dated: !!fixture.startUtc && namesGameDate(s.name, Date.parse(fixture.startUtc)),
-    })),
+    streams: await listGameStreamCandidates(fixture),
     // Whether the page should check the top candidates with
     // /api/live/game-streams/verify. Off when the probe is not set up, which
     // leaves the list exactly as it was before checking existed.
