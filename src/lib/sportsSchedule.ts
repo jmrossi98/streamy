@@ -168,6 +168,37 @@ function toFixture(league: string, e: EspnEvent): Fixture | null {
   };
 }
 
+/**
+ * The league and teams of one game by its fixture id ("NHL:401892695"), from
+ * ESPN's summary for that event -- for a game that is no longer on today's
+ * schedule (pre-game prep learning followed teams from past picks). Null when
+ * the id or ESPN's answer can't be read.
+ */
+export async function fetchFixtureTeams(
+  fixtureId: string
+): Promise<{ league: string; homeTeam: string | null; awayTeam: string | null } | null> {
+  const i = fixtureId.indexOf(":");
+  const league = i > 0 ? LEAGUES.find((l) => l.label === fixtureId.slice(0, i)) : undefined;
+  const eventId = fixtureId.slice(i + 1);
+  if (!league || !/^[0-9]{1,12}$/.test(eventId)) return null;
+  try {
+    const res = await fetch(`${ESPN_BASE}/${league.path}/summary?event=${eventId}`, {
+      signal: AbortSignal.timeout(ESPN_TIMEOUT_MS),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { header?: { competitions?: { competitors?: EspnCompetitor[] }[] } };
+    const competitors = data.header?.competitions?.[0]?.competitors ?? [];
+    const side = (homeAway: string) =>
+      cleanText(competitors.find((c) => c.homeAway === homeAway)?.team?.displayName ?? "") || null;
+    const homeTeam = side("home");
+    const awayTeam = side("away");
+    return homeTeam || awayTeam ? { league: league.label, homeTeam, awayTeam } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchLeague(label: string, path: string): Promise<Fixture[]> {
   try {
     const res = await fetch(`${ESPN_BASE}/${path}/scoreboard`, {
