@@ -127,7 +127,9 @@ export function ChannelCard({
   // a single row of title text, and top-aligning left every card looking
   // top-heavy with dead space under the name.
   const className =
-    "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none " +
+    // h-full: in a row of cards every card is as tall as the tallest, instead
+    // of a short one leaving a gap under itself.
+    "flex h-full w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors focus:outline-none " +
     (unavailable && !selectMode ? "opacity-60 " : "") +
     (selectMode
       ? selected
@@ -189,7 +191,9 @@ export function ChannelCard({
           {channel.number && (
             <span className="shrink-0 tabular-nums text-xs text-white/40">{channel.number}</span>
           )}
-          <h3 className="truncate text-sm font-semibold text-white">{channel.name}</h3>
+          {/* Two lines, not one: on a phone "NFL - NFL NETWORK" and "NBA
+              LEAGUE PASS" were cut to "NFL - NFL NET..." (2026-11-13). */}
+          <h3 className="line-clamp-2 min-w-0 break-words text-sm font-semibold leading-snug text-white">{channel.name}</h3>
           {!selectMode && (
             <span className="ml-auto shrink-0">
               <WatchlistToggle

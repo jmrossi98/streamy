@@ -45,8 +45,10 @@ export function SportsGameRow({ game, onChange }: { game: SportsGame; onChange: 
         {leagueTag(game.league)}
       </Badge>
       {/* Full-width line of its own on a phone, where the badge, the score
-          and the control leave no room for two team names. */}
-      <p className="order-last w-full min-w-0 flex-1 truncate text-sm text-white/90 sm:order-none sm:w-auto" title={game.title}>
+          and the control leave no room for two team names. basis-full, not
+          w-full: flex-1's zero basis kept it on the first line, cut to a few
+          letters (2026-11-13). */}
+      <p className="order-last min-w-0 basis-full break-words text-sm text-white/90 sm:order-none sm:flex-1 sm:truncate" title={game.title}>
         {game.title}
       </p>
       <span className="shrink-0 text-xs text-white/50">{detail}</span>
