@@ -1,8 +1,16 @@
 import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { getSiteSettings } from "@/lib/siteSettings";
+import { MAINTENANCE_PATH, showMaintenance } from "@/lib/siteSettingsRules";
 
-export async function middleware(req: NextRequest) {
+/**
+ * Runs in front of every page (not API routes or static files; see the
+ * matcher). Next 16 renamed middleware.ts to proxy.ts and runs it on the
+ * Node.js runtime, which is what lets the maintenance switch be read from the
+ * database here.
+ */
+export async function proxy(req: NextRequest) {
   const token = await getToken({
     req,
     secret: process.env.NEXTAUTH_SECRET,
@@ -12,6 +20,14 @@ export async function middleware(req: NextRequest) {
   // invalidate a session whose password has since changed. That token is still
   // a decodable object, so checking truthiness alone would keep letting it in.
   if (token?.id) {
+    // Maintenance (Admin -> Security -> Site access): everyone but an admin
+    // sees the maintenance page, at the address they asked for, so a reload
+    // once it is over lands them where they were going. The token's isAdmin
+    // claim is enough here: this is a closed sign, not a security boundary.
+    const { maintenance } = await getSiteSettings();
+    if (showMaintenance(req.nextUrl.pathname, token.isAdmin === true, maintenance)) {
+      return NextResponse.rewrite(new URL(MAINTENANCE_PATH, req.url));
+    }
     return NextResponse.next();
   }
 

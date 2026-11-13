@@ -13,7 +13,7 @@ import { PlayerHarness } from "./PlayerHarness";
  *
  * 404s unless PLAYER_HARNESS_ENABLED=1 is set -- this is a test fixture, not
  * a feature, and streamy-app.com never sets it. Reachable without a session
- * (see middleware.ts's matcher) specifically so CI doesn't need a seeded
+ * (see proxy.ts's matcher) specifically so CI doesn't need a seeded
  * user/DB just to drive it; this env check is what actually keeps it out of
  * production, not the session gate.
  *
