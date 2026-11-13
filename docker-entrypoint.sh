@@ -18,6 +18,12 @@
 # has no way to reach across to litestream's, and coordinating two containers'
 # startup order for a race that resolves itself within a few hundred
 # milliseconds is more moving parts than the problem calls for.
+#
+# The retries were not enough for a deploy that ships a migration: on
+# 2026-11-12 every one of them lost and the site was down until litestream was
+# stopped by hand. The deploy (.github/workflows/deploy.yml, "migrations vs
+# litestream") now stops litestream itself when the new image has a migration
+# to apply, swaps the app, and starts litestream again once it is in.
 set -e
 
 mkdir -p /app/data /app/.next/cache

@@ -542,8 +542,16 @@ jobs:
             }
             app_container() { docker compose -f docker-compose.prod.yml ps -q app 2>/dev/null | head -n 1; }
             DRAIN_SET=0
+            # Set while litestream is stopped for a migration (below); the EXIT
+            # trap starts it again if the script stops before it does.
+            LITESTREAM_PAUSED=0
             clear_drain() {
               rc=$?
+              if [ "$LITESTREAM_PAUSED" = "1" ]; then
+                if ! docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} up -d --no-deps litestream; then
+                  echo "litestream: could not start it again; run: docker compose -f docker-compose.prod.yml up -d litestream"
+                fi
+              fi
               if [ "$DRAIN_SET" = "1" ]; then
                 # The new container runs migrations before it listens; give it
                 # up to ~3 min. If it never answers, the flag's 20-min TTL ends
@@ -594,6 +602,45 @@ jobs:
               done
             fi
 
+            # ---- migrations vs litestream ----
+            # `prisma migrate deploy` needs a brief exclusive lock on prod.db,
+            # and litestream, replicating the same file every second, kept
+            # winning it: on 2026-09-15, 2026-09-27 and 2026-11-12 the new app
+            # retried, gave up, restarted, and the site was down until
+            # litestream was stopped by hand. So when the new image has a
+            # migration to apply, the app is swapped first with litestream
+            # stopped, and litestream comes back with everything else once the
+            # migration is in (or after five minutes, whatever happened).
+            # pending-migrations.cjs is the image's own read-only check, the one
+            # its entrypoint runs; anything but "all applied" counts as pending,
+            # since pausing the backup for a minute is the safe side.
+            if MIGRATIONS=$(docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} run --rm --no-deps -T --entrypoint node app /app/pending-migrations.cjs 2>&1); then
+              echo "migrations: ${MIGRATIONS}"
+            else
+              echo "migrations: ${MIGRATIONS}"
+              echo "migrations: pending; swapping the app with litestream stopped"
+              docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} stop litestream || true
+              LITESTREAM_PAUSED=1
+              docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} up -d --no-deps app
+              i=0
+              while [ $i -lt 60 ]; do
+                C=$(app_container || true)
+                if [ -n "$C" ] && docker logs "$C" 2>&1 | grep -qE "All migrations have been successfully applied|No pending migrations to apply"; then
+                  echo "migrations: applied"
+                  break
+                fi
+                if [ -n "$C" ] && [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$C" 2>/dev/null)" = "healthy" ]; then
+                  echo "migrations: the app is healthy"
+                  break
+                fi
+                i=$((i + 1))
+                sleep 5
+              done
+              [ $i -lt 60 ] || echo "migrations: not confirmed after 5 minutes; starting litestream again anyway"
+            fi
+
+            # Starts litestream again too, if it was stopped above.
             docker compose -f docker-compose.prod.yml ${COMPOSE_PROFILES} up -d --remove-orphans
+            LITESTREAM_PAUSED=0
             # Old :latest becomes untagged (<none>) after each pull — prune frees disk (layers still shared).
             docker image prune -f
