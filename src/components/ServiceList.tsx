@@ -1,18 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Field, Select, TextInput, scrollListClass } from "@/components/ui";
+import { Badge, Button, Field, Select, TextInput } from "@/components/ui";
 import { CredentialForm, IptvLines, useCredentialTargets } from "@/components/CredentialsPanel";
 import {
   buildServiceList,
   describeCost,
-  describeDue,
   dueUrgencyClass,
   formatUsd,
   pairedDetail,
   type ServiceItem,
 } from "@/lib/spendRules";
+import { lineSummary } from "@/lib/iptvLineRules";
+import { attentionText, dueLabel, rowFacts } from "@/lib/subscriptionRowRules";
 import type { SpendRow } from "@/components/SpendPanel";
 // Type-only: these modules reach the services and must not reach the browser.
 import type { Renewal } from "@/lib/renewals";
@@ -54,6 +55,8 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ key: string; text: string } | null>(null);
+  // The row whose login and links are shown (Details).
+  const [details, setDetails] = useState<string | null>(null);
 
   const items = buildServiceList(rows, autoRenewals, targets);
 
@@ -103,7 +106,9 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
       )}
       {failed && <p className="px-4 pt-3 text-xs text-amber-200/70">Couldn&apos;t read the services&apos; logins; prices and renewals are still shown.</p>}
 
-      <ul className={scrollListClass({}, "divide-y divide-white/5")}>
+      {/* As long as its contents: a short scroll box inside the page cut the
+          list off mid-row on a phone (2026-11-13). */}
+      <ul className="divide-y divide-white/5">
         {items.map((item) => {
           const s = item.sub;
           const r = item.renewal;
@@ -120,82 +125,101 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
           const renewsOn = dateIso
             ? new Date(dateIso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
             : null;
+          // Everything below is said once (subscriptionRowRules.ts): one kind,
+          // one line of facts, the date on the right, and a line of its own
+          // only for a problem nothing else on the row shows.
+          const kind = s?.category || r?.source || c?.service || null;
+          const expired = c?.alert?.tone === "danger";
+          const attention = attentionText(c?.alert);
+          const due = dueLabel(daysLeft, r?.problem);
+          const metered = s?.cadence === "metered" && typeof s.actual === "number" ? `${formatUsd(s.actual)} this month` : null;
+          // An IPTV provider's size comes from its lines; anything else from what was detected.
+          const size = c?.lines ? lineSummary(c.lines) : r?.detail ? pairedDetail(r.detail, !!s?.renewsAt) : null;
+          const facts = rowFacts([s ? describeCost(s.cost, s.cadence) : null, metered, size]);
+          const hasDetails = (c?.fields.length ?? 0) > 0 || !!s?.url;
+          const detailsOpen = details === item.key;
           return (
-            <li key={item.key} className={"px-4 py-3 " + (cancelled ? "opacity-40" : "")}>
-              {/* One line on a desktop. On a phone the name column takes the
-                  first line, price and date the second, the buttons the third:
-                  three fixed-width columns on one line left the name a few
-                  pixels, and it drew over the price. */}
-              <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-                <div className="min-w-0 flex-1 basis-52 sm:basis-0">
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-sm font-medium text-white">{name}</span>
-                    {(s?.category || r?.source) && <Badge>{s?.category || r?.source}</Badge>}
-                    {c && <Badge tone="info">{c.service}</Badge>}
-                    {c?.alert && <Badge tone={c.alert.tone}>{c.alert.tone === "danger" ? "Expired" : "Check"}</Badge>}
-                    {cancelled && <span className="text-[11px] text-white/40">cancelled</span>}
+            <li key={item.key} className={"px-4 py-4 " + (cancelled ? "opacity-50" : "")}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-white">{name}</span>
+                    {kind && <Badge>{kind}</Badge>}
+                    {expired && <Badge tone="danger">Expired</Badge>}
+                    {cancelled && <Badge>Cancelled</Badge>}
                   </div>
-                  {s?.notes && <p className="truncate text-xs text-white/40">{s.notes}</p>}
-                  {r && (r.detail || r.problem) && (
-                    <p className={`truncate text-xs ${r.problem ? "text-amber-200/70" : "text-white/40"}`}>
-                      {r.problem || pairedDetail(r.detail, !!s?.renewsAt)}
-                    </p>
-                  )}
-                  {c && <p className="truncate text-xs text-white/40">{c.fields.map((f) => `${f.label}: ${f.current}`).join(" · ")}</p>}
-                  {c?.lines && (
-                    <IptvLines
-                      target={c}
-                      onChanged={(text) => {
-                        setNotice({ key: item.key, text });
-                        void reload();
-                      }}
-                    />
-                  )}
-                  {c?.alert && (
-                    <p className={`text-xs ${c.alert.tone === "danger" ? "text-red-300/80" : "text-amber-200/80"}`}>{c.alert.text}</p>
-                  )}
-                  {notice?.key === item.key && <p className="text-xs text-emerald-300/80">{notice.text}</p>}
-                  {s?.url && (
-                    <a href={s.url} target="_blank" rel="noreferrer" className="truncate text-xs text-white/40 underline hover:text-white/70">
-                      manage
-                    </a>
-                  )}
-                </div>
-                <div className="ml-auto flex shrink-0 items-start gap-3">
-                <div className="text-right">
-                  {s && <p className="text-sm tabular-nums text-white/80">{describeCost(s.cost, s.cadence)}</p>}
-                  {s?.cadence === "metered" && (
-                    <p className="text-xs tabular-nums text-white/40">{typeof s.actual === "number" ? formatUsd(s.actual) + " MTD" : "no data"}</p>
-                  )}
+                  {facts && <p className="mt-0.5 text-xs text-white/50">{facts}</p>}
+                  {s?.notes && <p className="mt-0.5 line-clamp-2 text-xs text-white/40">{s.notes}</p>}
                 </div>
                 {/* Every row's date the same way, whichever source it came
                     from: an entered date wins over a detected one, and either
                     is changed through Edit. */}
-                <div className="w-28 text-right">
-                  {!cancelled && daysLeft !== null ? (
-                    <>
-                      <p className={`text-sm tabular-nums ${dueUrgencyClass(daysLeft)}`}>{describeDue(daysLeft, r?.problem)}</p>
-                      {renewsOn && <p className="text-[11px] tabular-nums text-white/35">{renewsOn}</p>}
-                    </>
-                  ) : (
-                    !cancelled && <p className="text-xs text-white/30">no date</p>
-                  )}
-                </div>
-                </div>
-                <div className="flex shrink-0 basis-full gap-1 sm:basis-auto">
-                  <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "info" })} disabled={busy}>
-                    Edit
-                  </Button>
-                  {c && (
-                    <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "login" })} disabled={busy}>
-                      {c.fields.some((f) => f.name === "apiKey") ? "Update key" : "Update login"}
-                    </Button>
-                  )}
-                  <Button size="xs" variant="ghost" onClick={() => toggle(item)} disabled={busy}>
-                    {cancelled ? "Restore" : "Cancel"}
-                  </Button>
-                </div>
+                {!cancelled && (
+                  <div className="shrink-0 text-right">
+                    {due ? (
+                      <>
+                        <p className={`text-sm tabular-nums ${dueUrgencyClass(daysLeft)}`}>{due}</p>
+                        {renewsOn && <p className="text-[11px] tabular-nums text-white/40">{renewsOn}</p>}
+                      </>
+                    ) : (
+                      <p className="text-xs text-white/30">no date</p>
+                    )}
+                  </div>
+                )}
               </div>
+              {attention && <p className={`mt-2 text-xs ${expired ? "text-red-300/80" : "text-amber-200/80"}`}>{attention}</p>}
+              {r?.problem && !attention && <p className="mt-2 text-xs text-amber-200/70">{r.problem}</p>}
+              {c?.lines && (
+                <IptvLines
+                  target={c}
+                  onChanged={(text) => {
+                    setNotice({ key: item.key, text });
+                    void reload();
+                  }}
+                />
+              )}
+              {notice?.key === item.key && <p className="mt-2 text-xs text-emerald-300/80">{notice.text}</p>}
+              <div className="mt-3 flex flex-wrap gap-1">
+                <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "info" })} disabled={busy}>
+                  Edit
+                </Button>
+                {c && (
+                  <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "login" })} disabled={busy}>
+                    {c.fields.some((f) => f.name === "apiKey") ? "Update key" : "Update login"}
+                  </Button>
+                )}
+                {/* "Mark cancelled", not "Cancel": beside Edit it read as closing a form. */}
+                <Button size="xs" variant="ghost" onClick={() => toggle(item)} disabled={busy}>
+                  {cancelled ? "Restore" : "Mark cancelled"}
+                </Button>
+                {hasDetails && (
+                  <Button size="xs" variant="ghost" aria-expanded={detailsOpen} onClick={() => setDetails(detailsOpen ? null : item.key)}>
+                    {detailsOpen ? "Hide details" : "Details"}
+                  </Button>
+                )}
+              </div>
+              {/* The login (masked) and where it is managed: wanted now and
+                  then, not on every look at the list. */}
+              {detailsOpen && (
+                <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded bg-white/[0.03] px-3 py-2 text-xs">
+                  {c?.fields.map((f) => (
+                    <Fragment key={f.name}>
+                      <dt className="text-white/40">{f.label}</dt>
+                      <dd className="truncate text-white/70">{f.current}</dd>
+                    </Fragment>
+                  ))}
+                  {s?.url && (
+                    <>
+                      <dt className="text-white/40">Managed at</dt>
+                      <dd className="truncate">
+                        <a href={s.url} target="_blank" rel="noreferrer" className="text-white/70 underline hover:text-white">
+                          {s.url.replace(/^https?:\/\//, "")}
+                        </a>
+                      </dd>
+                    </>
+                  )}
+                </dl>
+              )}
               {open?.key === item.key && open.mode === "info" && (
                 <InfoForm
                   initial={infoFor(item)}
