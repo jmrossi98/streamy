@@ -22,6 +22,12 @@
  * commonly small file sizes) and reliably available across indexers, which
  * keeps a run fast and this from meaningfully taxing a tracker.
  *
+ * The release is chosen here, not by Radarr's search (2026-11-13,
+ * playbackCheckRules.ts): Radarr's pick was a dead 720p torrent twelve days
+ * running. The smallest acceptable usenet copy is grabbed and moved to the
+ * front of SABnzbd's queue, so the check tests the pipeline rather than a
+ * swarm or whoever queued a batch of remuxes that afternoon.
+ *
  * Deleted from Radarr (file included) at the end of every run, pass or fail
  * -- storage-neutral and repeatable. The per-stage detail stored in the
  * database is enough to diagnose a failure; keeping the file around isn't
@@ -29,7 +35,17 @@
  */
 
 import { prisma } from "./db";
-import { requestMovie, deleteRadarrMovie, getRadarrCompletedMovies, isRadarrConfigured } from "./radarr";
+import {
+  requestMovie,
+  deleteRadarrMovie,
+  getRadarrCompletedMovies,
+  isRadarrConfigured,
+  grabChosenRelease,
+  getRadarrMovieQueue,
+  cancelRadarrQueueItem,
+} from "./radarr";
+import { forceSabJob } from "./sabnzbd";
+import { describeTestRelease, pickTestRelease, type TestReleaseCandidate } from "./playbackCheckRules";
 import { findJellyfinMovieItemId, jellyfinHlsMasterUrl, isJellyfinConfigured } from "./jellyfin";
 import { notify, isNotifyConfigured } from "./notify";
 
@@ -40,6 +56,8 @@ const MAX_WAIT_FOR_IMPORT_MS = 10 * 60 * 1000; // grab -> download -> import, re
 const IMPORT_POLL_INTERVAL_MS = 15_000;
 const MAX_WAIT_FOR_JELLYFIN_MS = 90 * 1000; // Jellyfin's own scan after import lands
 const JELLYFIN_POLL_INTERVAL_MS = 5_000;
+// How long a fresh grab takes to show up in Radarr's queue with its client id.
+const QUEUE_APPEAR_MS = 45_000;
 const FAR_SEGMENT_INDEX = 200; // ~10 minutes in -- proves seeking, not just start
 const SEGMENT_MIN_BYTES = 10_000; // a 200 with an empty body is still a failure
 
@@ -47,6 +65,21 @@ type Stage = { name: string; ok: boolean; detail: string };
 
 async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Puts the test download at the front of SABnzbd's queue once Radarr has
+ * handed it over. Returns whether it did; a torrent, or a client that never
+ * shows the job, is left as it is.
+ */
+async function jumpQueue(radarrId: number): Promise<boolean> {
+  const deadline = Date.now() + QUEUE_APPEAR_MS;
+  while (Date.now() < deadline) {
+    const entry = (await getRadarrMovieQueue(radarrId).catch(() => [])).find((q) => q.downloadId);
+    if (entry) return entry.protocol === "usenet" && entry.downloadId ? forceSabJob(entry.downloadId) : false;
+    await sleep(3_000);
+  }
+  return false;
 }
 
 async function waitForImport(radarrId: number, timeoutMs: number): Promise<boolean> {
@@ -97,13 +130,31 @@ async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }
     return { stages, radarrId };
   }
 
-  const req = await requestMovie(TEST_MOVIE_TMDB_ID);
+  const req = await requestMovie(TEST_MOVIE_TMDB_ID, "hd", { search: false });
   if (!req.ok) {
     stages.push({ name: "grab", ok: false, detail: req.error });
     return { stages, radarrId };
   }
   radarrId = req.radarrId;
-  stages.push({ name: "grab", ok: true, detail: `requested via Radarr (id ${radarrId})` });
+  if (req.status === "requested") {
+    const pick = await grabChosenRelease<TestReleaseCandidate>(radarrId, pickTestRelease).catch((err: unknown) => {
+      console.error("[playbackCheck] release search failed:", err);
+      return null;
+    });
+    if (!pick) {
+      stages.push({ name: "grab", ok: false, detail: `no usable release in Radarr's search (Radarr id ${radarrId})` });
+      return { stages, radarrId };
+    }
+    const forced = await jumpQueue(radarrId);
+    stages.push({
+      name: "grab",
+      ok: true,
+      detail: `grabbed ${describeTestRelease(pick)} via Radarr (id ${radarrId})${forced ? ", first in SABnzbd's queue" : ""}`,
+    });
+  } else {
+    // Left over from an interrupted run: already downloading or on disk.
+    stages.push({ name: "grab", ok: true, detail: `already ${req.status} in Radarr (id ${radarrId})` });
+  }
 
   const imported = await waitForImport(radarrId, MAX_WAIT_FOR_IMPORT_MS);
   stages.push({
@@ -226,6 +277,12 @@ export async function runPlaybackCheck(): Promise<PlaybackCheckResult> {
   } finally {
     // Always clean up, pass or fail -- see the module doc for why.
     if (radarrId != null) {
+      // A download still in flight goes too: deleting the movie leaves it in
+      // the client, and a leftover torrent made every later run's grab of it
+      // a 409 "already added" (2026-11).
+      for (const q of await getRadarrMovieQueue(radarrId).catch(() => [])) {
+        await cancelRadarrQueueItem(q.queueId).catch(() => false);
+      }
       await deleteRadarrMovie(radarrId).catch((err) => console.error("[playbackCheck] cleanup failed:", err));
     }
   }

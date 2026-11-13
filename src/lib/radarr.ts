@@ -897,6 +897,40 @@ export async function fastCopyRadarrMovie(radarrId: number, alreadyTried: Readon
   }
 }
 
+/**
+ * Runs Radarr's release search for a movie and grabs the release `choose`
+ * picks (a manual grab: Radarr takes it as chosen). Returns it, or null when
+ * nothing would do.
+ */
+export async function grabChosenRelease<R extends { guid: string; indexerId: number }>(
+  radarrId: number,
+  choose: (releases: R[]) => R | null
+): Promise<R | null> {
+  if (!isRadarrConfigured()) return null;
+  const releases = await radarrFetch<R[]>(`/api/v3/release?movieId=${radarrId}`, {
+    signal: AbortSignal.timeout(DEEP_SEARCH_TIMEOUT_MS),
+  });
+  const pick = choose(releases);
+  if (!pick) return null;
+  await radarrFetch(`/api/v3/release`, {
+    method: "POST",
+    body: JSON.stringify({ guid: pick.guid, indexerId: pick.indexerId }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  return pick;
+}
+
+/** A movie's entries in Radarr's queue: the client's id for each and its protocol. */
+export async function getRadarrMovieQueue(
+  radarrId: number
+): Promise<{ queueId: number; downloadId: string | null; protocol: string | null }[]> {
+  if (!isRadarrConfigured()) return [];
+  const q = await radarrFetch<{ records: { id: number; downloadId?: string; protocol?: string }[] }>(
+    `/api/v3/queue?movieIds=${radarrId}&pageSize=${QUEUE_PAGE_SIZE}`
+  );
+  return q.records.map((r) => ({ queueId: r.id, downloadId: r.downloadId ?? null, protocol: r.protocol ?? null }));
+}
+
 export type QueueHealth = {
   /** This queue entry itself -- what removing one specific download targets. */
   queueId: number;
@@ -1126,7 +1160,10 @@ export type RadarrRequestResult =
  */
 export async function requestMovie(
   tmdbId: string,
-  tier: QualityTier = "hd"
+  tier: QualityTier = "hd",
+  // The playback check adds without searching and picks its own release
+  // (playbackCheckRules.ts); every viewer's request searches.
+  { search = true }: { search?: boolean } = {}
 ): Promise<RadarrRequestResult> {
   if (!isRadarrConfigured()) return { ok: false, error: "Radarr is not configured" };
 
@@ -1152,10 +1189,12 @@ export async function requestMovie(
         // else re-asking for an admin's title leaves it on 4K.
         const uhd = tier === "uhd" ? resolveQualityProfileId("uhd", RADARR_QUALITY_PROFILE_ID, RADARR_QUALITY_PROFILE_ID_4K) : null;
         await setRadarrMovieMonitored(existing[0].id, true, uhd);
-        await radarrFetch(`/api/v3/command`, {
-          method: "POST",
-          body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
-        });
+        if (search) {
+          await radarrFetch(`/api/v3/command`, {
+            method: "POST",
+            body: JSON.stringify({ name: "MoviesSearch", movieIds: [existing[0].id] }),
+          });
+        }
         return { ok: true, radarrId: existing[0].id, status: "requested" };
       }
       return { ok: true, radarrId: existing[0].id, status };
@@ -1179,7 +1218,7 @@ export async function requestMovie(
         ),
         rootFolderPath: RADARR_ROOT_FOLDER,
         monitored: true,
-        addOptions: { searchForMovie: true },
+        addOptions: { searchForMovie: search },
       }),
     });
     return { ok: true, radarrId: created.id, status: "requested" };

@@ -56,6 +56,22 @@ export async function prioritizeNewDownloads(jobs: ArrJob[]): Promise<number> {
   return changed;
 }
 
+/**
+ * Moves one job to the front of SABnzbd's queue (priority Force). For the
+ * playback check: its test download must not wait behind someone's batch of
+ * 4K remuxes, or the check fails on a queue rather than a fault. Best-effort.
+ */
+export async function forceSabJob(nzoId: string): Promise<boolean> {
+  if (!config()) return false;
+  try {
+    await sabApi({ mode: "queue", name: "priority", value: nzoId, value2: "2" });
+    return true;
+  } catch (err) {
+    console.error(`[sabnzbd] could not force ${nzoId}:`, err);
+    return false;
+  }
+}
+
 /** Shorter than the panel's refresh, so each refresh sees new progress; shared across its renders. */
 const PROGRESS_TTL_MS = 2_000;
 
