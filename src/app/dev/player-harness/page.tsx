@@ -36,6 +36,9 @@ export default async function PlayerHarnessPage({
   const params = await searchParams;
   const progressSeconds = Number(params.progress ?? "0") || 0;
   const autoPlay = params.autoPlay === "1";
+  // A transcode decided on the server, as for an MKV in Safari (see
+  // e2e/player-webkit.spec.ts): the source is then an HLS playlist.
+  const forceTranscode = params.transcode === "1";
 
-  return <PlayerHarness progressSeconds={progressSeconds} autoPlay={autoPlay} />;
+  return <PlayerHarness progressSeconds={progressSeconds} autoPlay={autoPlay} forceTranscode={forceTranscode} />;
 }

@@ -36,6 +36,14 @@ export default defineConfig({
   },
 
   projects: [
+    // Safari, for what only its own HLS player does: the iPhone black screen
+    // (2026-11-13) was a <video> the server rendered without a source that
+    // hydration never added. The harness needs no session.
+    {
+      name: "webkit",
+      testMatch: /player-webkit\.spec\.ts/,
+      use: { ...devices["Desktop Safari"] },
+    },
     // Signs in once; every authenticated project below reuses the cookie jar
     // it saves rather than re-driving the login form per spec file.
     {
@@ -52,7 +60,7 @@ export default defineConfig({
     // Everything else, already signed in.
     {
       name: "chromium",
-      testIgnore: /(login|auth)\.spec\.ts/,
+      testIgnore: /(login|auth|player-webkit)\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
     },

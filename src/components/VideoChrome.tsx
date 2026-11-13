@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { formatTime } from "@/lib/usePlayerChrome";
 import { liveTrackPercent } from "@/lib/liveTimeline";
-import { PREVIEW_HEIGHT, PREVIEW_WIDTH, seekHover } from "@/lib/seekHoverRules";
+import { PREVIEW_HEIGHT, PREVIEW_WIDTH, seekHover, previewFillOk } from "@/lib/seekHoverRules";
 import { useSeekPreview } from "@/lib/useSeekPreview";
 
 type ChromeState = {
@@ -153,7 +153,8 @@ export function VideoChrome({
   } = useSeekPreview(
     live || !hasMouse ? null : previewSrc,
     duration,
-    live || !hasMouse ? null : trickplaySrc
+    live || !hasMouse ? null : trickplaySrc,
+    previewFillOk(busy, currentTime, buffered, duration)
   );
   const previewOn = (!!previewSrc || previewTrickplay) && !previewFailed;
 

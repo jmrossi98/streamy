@@ -27,7 +27,11 @@ const MAX_FRAMES = 300;
  *   - a position seen once is instant from then on.
  *
  * One seek at a time; what the pointer is on always goes ahead of the
- * background fill.
+ * background fill. The fill also waits whenever `backgroundOk` is false: it
+ * pulls from the same file through the same connection as the picture, and
+ * on a 9 GB game recording its seeks across the whole title took about as
+ * much as the stream itself, so playback stalled six times in a minute
+ * (2026-11-13). The player says when its own buffer can spare it.
  *
  * Jellyfin's trickplay thumbnails come first when the title has them
  * (`trickplaySrc`, see trickplayRules.ts): they are plain JPEG sheets, so they
@@ -39,7 +43,8 @@ const MAX_FRAMES = 300;
 export function useSeekPreview(
   rawSrc: string | null | undefined,
   duration: number,
-  trickplaySrc?: string | null
+  trickplaySrc?: string | null,
+  backgroundOk = true
 ): {
   videoRef: RefObject<HTMLVideoElement>;
   canvasRef: RefObject<HTMLCanvasElement>;
@@ -82,6 +87,7 @@ export function useSeekPreview(
   const backlog = useRef<number[]>([]);
   const seekingFor = useRef<number | null>(null);
   const filled = useRef(false);
+  const backgroundOkRef = useRef(backgroundOk);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [frameSrc, setFrameSrc] = useState<string | null>(null);
 
@@ -138,7 +144,7 @@ export function useSeekPreview(
     let t: number | undefined;
     const want = pointed.current;
     if (want != null && !frames.current.has(want)) t = want;
-    else {
+    else if (backgroundOkRef.current) {
       while (backlog.current.length > 0 && t === undefined) {
         const candidate = backlog.current.shift()!;
         if (!frames.current.has(candidate)) t = candidate;
@@ -152,6 +158,12 @@ export function useSeekPreview(
       seekingFor.current = null;
     }
   }, []);
+
+  // The player's buffer can spare the fill again: carry on with it.
+  useEffect(() => {
+    backgroundOkRef.current = backgroundOk;
+    if (backgroundOk) next();
+  }, [backgroundOk, next]);
 
   // A different title: forget everything held for the last one.
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nearestFrame, prewarmTimes, seekHover } from "../seekHoverRules";
+import { PREVIEW_FILL_MIN_AHEAD_S, nearestFrame, prewarmTimes, previewFillOk, seekHover } from "../seekHoverRules";
 
 describe("pointing at the seek bar", () => {
   it("maps the pointer to a time, snapped so a sweep is not a seek per pixel", () => {
@@ -52,5 +52,27 @@ describe("filling in the bar in the background", () => {
   it("copes with a short clip and an unknown length", () => {
     expect(prewarmTimes(12).length).toBeLessThanOrEqual(2);
     expect(prewarmTimes(0)).toEqual([]);
+  });
+});
+
+describe("previewFillOk", () => {
+  // The Capitals-Canadiens recording, 2026-11-13: 174 minutes, playing at 7 s.
+  const duration = 174 * 60;
+
+  it("waits while the picture is buffering", () => {
+    expect(previewFillOk(true, 7, 60, duration)).toBe(false);
+  });
+
+  it("waits while the picture has little buffered ahead", () => {
+    expect(previewFillOk(false, 7, 12, duration)).toBe(false);
+  });
+
+  it("fills in once the picture has enough buffered ahead", () => {
+    expect(previewFillOk(false, 7, 7 + PREVIEW_FILL_MIN_AHEAD_S, duration)).toBe(true);
+  });
+
+  it("fills in near the end, once everything left is buffered", () => {
+    expect(previewFillOk(false, duration - 10, duration, duration)).toBe(true);
+    expect(previewFillOk(false, duration - 10, duration - 5, duration)).toBe(false);
   });
 });

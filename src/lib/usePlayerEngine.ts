@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, type RefObject } from "react";
+import { useState, useRef, useEffect, useCallback, useSyncExternalStore, type RefObject } from "react";
 import { cueLine } from "./subtitleCueRules";
 import Hls from "hls.js";
 import { isMobileViewport } from "./videoFullscreen";
@@ -70,6 +70,10 @@ function placeLoadedCues(e: Event) {
  * a start sequence that is superseded must not leave a listener behind to
  * seek and play() later (each re-run of the start effect used to add another).
  */
+/** The browser's HLS support never changes while a page is open. */
+const subscribeNever = () => () => {};
+const noAnswerOnServer = () => null;
+
 function seekThenRun(v: HTMLVideoElement, target: () => number, then: () => void): () => void {
   const run = () => {
     const at = target();
@@ -185,8 +189,20 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // <video src>; everyone else needs hls.js to feed it in via MSE -- see the
   // hls.js-management effect below and supportsNativeHls for why
   // canPlayType() isn't how that split gets decided.
-  const [nativeHlsSupport] = useState(supportsNativeHls);
-  const needsHlsJs = transcoding && !nativeHlsSupport;
+  //
+  // Decided in the browser only, and undecided (null) while hydrating. The
+  // server has no navigator, so it always answered "no native HLS"; on an
+  // iPhone or Safari the browser answers "yes", and with a transcode forced
+  // from the server (an MKV) the server's <video> had no src while the
+  // browser's wanted one. React 19 doesn't patch attributes while hydrating,
+  // so the element kept no source, hls.js stood aside for the native player,
+  // and nothing ever loaded: a game recording on an iPhone was a black screen
+  // that never requested a byte (2026-11-13). useSyncExternalStore hydrates
+  // with the server's null and then renders the browser's answer as an
+  // ordinary update, which does set the attribute.
+  const nativeHlsSupport = useSyncExternalStore<boolean | null>(subscribeNever, supportsNativeHls, noAnswerOnServer);
+  const hlsDecided = nativeHlsSupport !== null;
+  const needsHlsJs = transcoding && nativeHlsSupport === false;
   const hlsRef = useRef<Hls | null>(null);
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(defaultSubtitle);
   // Applies the default once per title, including one that arrives after
@@ -219,7 +235,9 @@ export function usePlayerEngine(opts: PlayerEngineOptions) {
   // starts at 0, so requesting the stream any earlier starts Jellyfin's encode
   // at a position the resume seek then throws away -- see resumeStartRules.ts.
   const holdTranscode = holdTranscodeForResume(transcoding, resumeSettled);
-  const videoSrc = !videoUrl || holdTranscode
+  // A transcode also waits for the browser's HLS answer (hlsDecided): its URL
+  // goes either to the element or to hls.js, never both.
+  const videoSrc = !videoUrl || holdTranscode || (transcoding && !hlsDecided)
     ? ""
     : transcoding
       ? `${videoUrl}/hls/master.m3u8?session=${playSessionId}${chosenAudio != null ? `&audio=${chosenAudio}` : ""}`
