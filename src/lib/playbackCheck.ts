@@ -170,7 +170,7 @@ async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }
     stages.push({
       name: "grab",
       ok: true,
-      detail: `grabbed ${describeTestRelease(pick)} via Radarr (id ${radarrId})${forced ? ", first in SABnzbd's queue" : ""}`,
+      detail: `grabbed ${describeTestRelease(pick)} via Radarr (id ${radarrId})${forced ? ", first in SABnzbd's queue" : ""} [${offered}]`,
     });
   } else {
     // Left over from an interrupted run: already downloading or on disk.
