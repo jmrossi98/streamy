@@ -36,7 +36,9 @@ describe("pickTestRelease", () => {
     // The smallest usenet "copy" on 2026-11-13 was part 1 of a split upload.
     const split = rel({ title: "Night of the Living Dead (1968) 3X-audio Remastered x264 aac.part01", size: 0.6 * GB });
     expect(pickTestRelease([split, ...search])?.title).toBe("NOTLD.REMASTERED.1080p.BluRay.x265");
-    expect(summarizeReleases([split, ...search])).toBe("6 found, usable: 2 usenet, 2 torrent");
+    expect(summarizeReleases([split, ...search])).toBe(
+      "6 found, usable: 2 usenet, 2 torrent; most often rejected: N is larger than maximum allowed N (1)"
+    );
   });
 
   it("describes the pick for the run's detail", () => {

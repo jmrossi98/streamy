@@ -52,7 +52,17 @@ function usable<R extends TestReleaseCandidate>(releases: R[]): R[] {
 export function summarizeReleases(releases: TestReleaseCandidate[]): string {
   const ok = usable(releases);
   const n = (p: string) => ok.filter((r) => r.protocol === p).length;
-  return `${releases.length} found, usable: ${n("usenet")} usenet, ${n("torrent")} torrent`;
+  // The commonest reason Radarr gave, numbers blanked so sizes group together.
+  const counts = new Map<string, number>();
+  for (const r of releases) {
+    for (const why of r.rejections ?? []) {
+      const key = why.replace(/[\d.]+\s*(MB|GB)/g, "N").slice(0, 80);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const why = top ? `; most often rejected: ${top[0]} (${top[1]})` : "";
+  return `${releases.length} found, usable: ${n("usenet")} usenet, ${n("torrent")} torrent${why}`;
 }
 
 export function pickTestRelease<R extends TestReleaseCandidate>(releases: R[]): R | null {
