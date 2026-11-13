@@ -45,7 +45,7 @@ import {
   cancelRadarrQueueItem,
 } from "./radarr";
 import { forceSabJob } from "./sabnzbd";
-import { describeTestRelease, pickTestRelease, type TestReleaseCandidate } from "./playbackCheckRules";
+import { describeTestRelease, pickTestRelease, summarizeReleases, type TestReleaseCandidate } from "./playbackCheckRules";
 import { findJellyfinMovieItemId, jellyfinHlsMasterUrl, isJellyfinConfigured } from "./jellyfin";
 import { notify, isNotifyConfigured } from "./notify";
 
@@ -137,12 +137,19 @@ async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }
   }
   radarrId = req.radarrId;
   if (req.status === "requested") {
-    const pick = await grabChosenRelease<TestReleaseCandidate>(radarrId, pickTestRelease).catch((err: unknown) => {
-      console.error("[playbackCheck] release search failed:", err);
+    let offered = "no search results";
+    let failure: string | null = null;
+    const pick = await grabChosenRelease<TestReleaseCandidate>(radarrId, (releases) => {
+      offered = summarizeReleases(releases);
+      return pickTestRelease(releases);
+    }).catch((err: unknown) => {
+      failure = err instanceof Error ? err.message : String(err);
+      console.error("[playbackCheck] release search or grab failed:", err);
       return null;
     });
     if (!pick) {
-      stages.push({ name: "grab", ok: false, detail: `no usable release in Radarr's search (Radarr id ${radarrId})` });
+      const why = failure ? `search or grab failed: ${String(failure).slice(0, 200)}` : `no usable release (${offered})`;
+      stages.push({ name: "grab", ok: false, detail: `${why} (Radarr id ${radarrId})` });
       return { stages, radarrId };
     }
     const forced = await jumpQueue(radarrId);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeTestRelease, pickTestRelease, type TestReleaseCandidate } from "../playbackCheckRules";
+import { describeTestRelease, pickTestRelease, summarizeReleases, type TestReleaseCandidate } from "../playbackCheckRules";
 
 const GB = 1024 ** 3;
 
@@ -30,6 +30,13 @@ describe("pickTestRelease", () => {
 
   it("skips samples, fakes and anything too big for the window", () => {
     expect(pickTestRelease([rel({ size: 50 * 1024 ** 2 }), rel({ size: 40 * GB })])).toBeNull();
+  });
+
+  it("never a piece of a split upload or a sample", () => {
+    // The smallest usenet "copy" on 2026-11-13 was part 1 of a split upload.
+    const split = rel({ title: "Night of the Living Dead (1968) 3X-audio Remastered x264 aac.part01", size: 0.6 * GB });
+    expect(pickTestRelease([split, ...search])?.title).toBe("NOTLD.REMASTERED.1080p.BluRay.x265");
+    expect(summarizeReleases([split, ...search])).toBe("6 found, usable: 2 usenet, 2 torrent");
   });
 
   it("describes the pick for the run's detail", () => {
