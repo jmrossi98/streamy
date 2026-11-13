@@ -34,17 +34,32 @@ export const MAX_TEST_RELEASE_BYTES = 12 * 1024 ** 3;
 /** A torrent with fewer seeders than this is the swarm that failed for twelve days. */
 export const MIN_TEST_TORRENT_SEEDERS = 5;
 
-export function pickTestRelease<R extends TestReleaseCandidate>(releases: R[]): R | null {
-  const usable = releases.filter(
+/** One piece of a split upload ("...aac.part01"), or a sample: not a movie on its own. */
+const PARTIAL = /\.part\d+\b|\bpart ?\d{2,}\b|\bsample\b/i;
+
+function usable<R extends TestReleaseCandidate>(releases: R[]): R[] {
+  return releases.filter(
     (r) =>
       !r.rejected &&
       (r.rejections?.length ?? 0) === 0 &&
       r.size >= MIN_TEST_RELEASE_BYTES &&
-      r.size <= MAX_TEST_RELEASE_BYTES
+      r.size <= MAX_TEST_RELEASE_BYTES &&
+      !PARTIAL.test(r.title)
   );
-  const usenet = usable.filter((r) => r.protocol === "usenet").sort((a, b) => a.size - b.size);
+}
+
+/** What a search offered, for a run's detail when nothing would do. */
+export function summarizeReleases(releases: TestReleaseCandidate[]): string {
+  const ok = usable(releases);
+  const n = (p: string) => ok.filter((r) => r.protocol === p).length;
+  return `${releases.length} found, usable: ${n("usenet")} usenet, ${n("torrent")} torrent`;
+}
+
+export function pickTestRelease<R extends TestReleaseCandidate>(releases: R[]): R | null {
+  const ok = usable(releases);
+  const usenet = ok.filter((r) => r.protocol === "usenet").sort((a, b) => a.size - b.size);
   if (usenet[0]) return usenet[0];
-  const torrents = usable
+  const torrents = ok
     .filter((r) => r.protocol === "torrent" && (r.seeders ?? 0) >= MIN_TEST_TORRENT_SEEDERS)
     .sort((a, b) => (b.seeders ?? 0) - (a.seeders ?? 0) || a.size - b.size);
   return torrents[0] ?? null;
