@@ -44,7 +44,7 @@ import {
   getRadarrMovieQueue,
   cancelRadarrQueueItem,
 } from "./radarr";
-import { forceSabJob } from "./sabnzbd";
+import { forceSabJob, forceSabJobNamed } from "./sabnzbd";
 import { describeTestRelease, pickTestRelease, summarizeReleases, type TestReleaseCandidate } from "./playbackCheckRules";
 import { findJellyfinMovieItemId, jellyfinHlsMasterUrl, isJellyfinConfigured } from "./jellyfin";
 import { notify, isNotifyConfigured } from "./notify";
@@ -56,8 +56,9 @@ const MAX_WAIT_FOR_IMPORT_MS = 10 * 60 * 1000; // grab -> download -> import, re
 const IMPORT_POLL_INTERVAL_MS = 15_000;
 const MAX_WAIT_FOR_JELLYFIN_MS = 90 * 1000; // Jellyfin's own scan after import lands
 const JELLYFIN_POLL_INTERVAL_MS = 5_000;
-// How long a fresh grab takes to show up in Radarr's queue with its client id.
-const QUEUE_APPEAR_MS = 45_000;
+// How long a fresh grab may take to reach SABnzbd (or Radarr's queue, which
+// refreshes about once a minute).
+const QUEUE_APPEAR_MS = 120_000;
 const FAR_SEGMENT_INDEX = 200; // ~10 minutes in -- proves seeking, not just start
 const SEGMENT_MIN_BYTES = 10_000; // a 200 with an empty body is still a failure
 
@@ -72,11 +73,14 @@ async function sleep(ms: number) {
  * handed it over. Returns whether it did; a torrent, or a client that never
  * shows the job, is left as it is.
  */
-async function jumpQueue(radarrId: number): Promise<boolean> {
+async function jumpQueue(radarrId: number, release: TestReleaseCandidate): Promise<boolean> {
+  if (release.protocol !== "usenet") return false;
   const deadline = Date.now() + QUEUE_APPEAR_MS;
   while (Date.now() < deadline) {
+    // SABnzbd has it first, by name; Radarr's queue catches up within a minute.
+    if (await forceSabJobNamed(release.title)) return true;
     const entry = (await getRadarrMovieQueue(radarrId).catch(() => [])).find((q) => q.downloadId);
-    if (entry) return entry.protocol === "usenet" && entry.downloadId ? forceSabJob(entry.downloadId) : false;
+    if (entry?.downloadId && entry.protocol === "usenet") return forceSabJob(entry.downloadId);
     await sleep(3_000);
   }
   return false;
@@ -152,7 +156,7 @@ async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }
       stages.push({ name: "grab", ok: false, detail: `${why} (Radarr id ${radarrId})` });
       return { stages, radarrId };
     }
-    const forced = await jumpQueue(radarrId);
+    const forced = await jumpQueue(radarrId, pick);
     stages.push({
       name: "grab",
       ok: true,

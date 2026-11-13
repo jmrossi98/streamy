@@ -72,6 +72,29 @@ export async function forceSabJob(nzoId: string): Promise<boolean> {
   }
 }
 
+/**
+ * forceSabJob for a job found by its release name: SABnzbd has the job the
+ * moment Radarr hands it over, a minute before Radarr's own queue shows it
+ * (the first live run of the new playback check missed it by waiting on
+ * Radarr). Returns whether one was found and forced.
+ */
+export async function forceSabJobNamed(releaseTitle: string): Promise<boolean> {
+  if (!config()) return false;
+  try {
+    const data = await sabApi<{ queue: { slots: { nzo_id: string; filename: string }[] } }>({
+      mode: "queue",
+      search: releaseTitle,
+      limit: "20",
+    });
+    const norm = (t: string) => t.toLowerCase().replace(/\.nzb$/, "").replace(/[^a-z0-9]+/g, "");
+    const slot = data.queue.slots.find((s) => norm(s.filename) === norm(releaseTitle)) ?? data.queue.slots[0];
+    return slot ? forceSabJob(slot.nzo_id) : false;
+  } catch (err) {
+    console.error(`[sabnzbd] could not find ${releaseTitle}:`, err);
+    return false;
+  }
+}
+
 /** Shorter than the panel's refresh, so each refresh sees new progress; shared across its renders. */
 const PROGRESS_TTL_MS = 2_000;
 
