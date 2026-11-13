@@ -7,6 +7,7 @@ import { Badge, ButtonLink } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import { liveTabHref } from "@/lib/liveTabs";
 import type { Fixture } from "@/lib/sportsSchedule";
+import { upcomingStartLabel } from "@/lib/fixtureTimeRules";
 
 type ScheduleFixture = Fixture & { epgConfirmedChannelNames: string[] };
 
@@ -96,12 +97,14 @@ function FixtureRow({ fixture: f, live = false }: { fixture: ScheduleFixture; li
       <Badge tone={live ? "danger" : "neutral"} title={f.league} className="min-w-12 shrink-0 justify-center uppercase tracking-wide">
         {leagueTag(f.league)}
       </Badge>
-      <p className="order-last w-full min-w-0 flex-1 truncate text-sm text-white/90 sm:order-none sm:w-auto" title={f.name}>
+      {/* Its own full-width line on a phone, under the league, time and button. */}
+      <p className="order-last min-w-0 basis-full break-words text-sm text-white/90 sm:order-none sm:flex-1 sm:truncate" title={f.name}>
         {f.name}
       </p>
       <span className={`shrink-0 text-xs ${live ? "font-semibold text-netflix-red" : "text-white/50"}`}>
         {live && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-netflix-red align-middle" />}
-        {f.detail}
+        {/* The period and clock while it is on; before, just when it starts. */}
+        {live ? f.detail : (upcomingStartLabel(f.startUtc) ?? f.detail)}
       </span>
       <ButtonLink href={`/live/game/${encodeURIComponent(f.id)}`} variant={live ? "primary" : "secondary"} size="sm" className="ml-auto shrink-0">
         {live ? "Watch" : "Open"}

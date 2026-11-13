@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { LiveChannel } from "@/lib/liveTv";
 import type { ChannelVerdict } from "@/lib/liveChannelRules";
 import { Badge, cx } from "@/components/ui";
@@ -49,6 +49,12 @@ type Props = {
   guidePrograms: Record<string, GuideProgram[]>;
   statusByChannel: Record<string, ChannelVerdict>;
   logoFallbacks: Record<string, string>;
+  /**
+   * Called as the bottom of the rows comes near while scrolling inside the
+   * grid, so the page can hand it more channels: every channel is reachable by
+   * scrolling, with no "Show more" button (2026-11-13). Absent: no more to give.
+   */
+  onReachEnd?: () => void;
 };
 
 /**
@@ -60,8 +66,29 @@ type Props = {
  * at the same time, and it keeps a six-hour-wide grid from ever widening the
  * page on a phone.
  */
-export function LiveGuideGrid({ channels, guidePrograms, statusByChannel, logoFallbacks }: Props) {
+export function LiveGuideGrid({ channels, guidePrograms, statusByChannel, logoFallbacks, onReachEnd }: Props) {
   const nowMs = useSyncExternalStore(subscribeClock, clockSnapshot, serverClock);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const reachEnd = useRef(onReachEnd);
+  useEffect(() => {
+    reachEnd.current = onReachEnd;
+  });
+  // The rows scroll inside the grid's own box, so that box is what the end
+  // is watched against -- ahead of time, so the next channels are drawn before
+  // anyone reaches the last one.
+  const hasMore = !!onReachEnd;
+  const ready = nowMs != null;
+  useEffect(() => {
+    const box = boxRef.current;
+    const end = endRef.current;
+    if (!hasMore || !ready || !box || !end) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) reachEnd.current?.();
+    }, { root: box, rootMargin: "0px 0px 800px 0px" });
+    io.observe(end);
+    return () => io.disconnect();
+  }, [hasMore, ready, channels.length]);
 
   // Keyed on the half-hour, not the tick: the window only moves when the
   // clock crosses a column boundary, so the rows are laid out once per column.
@@ -97,6 +124,7 @@ export function LiveGuideGrid({ channels, guidePrograms, statusByChannel, logoFa
 
   return (
     <div
+      ref={boxRef}
       className={cx(
         GRID_VARS,
         // Its own scroll box in both axes. max-h so the sticky header has
@@ -144,6 +172,7 @@ export function LiveGuideGrid({ channels, guidePrograms, statusByChannel, logoFa
             </div>
           </div>
         ))}
+        {hasMore && <div ref={endRef} aria-hidden className="h-px" />}
       </div>
     </div>
   );

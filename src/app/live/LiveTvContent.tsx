@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
@@ -13,8 +13,9 @@ import { guideKey, programsForChannel, type GuideProgram } from "@/lib/liveGuide
 import { SportsTab } from "@/components/SportsTab";
 import { RecordingsTab } from "@/components/RecordingsTab";
 import { LiveNowGames } from "@/components/LiveNowGames";
+import { LoadMoreWhenNear } from "@/components/LoadMoreWhenNear";
 import type { ScheduleFixture } from "@/lib/liveSchedule";
-import { Button, ButtonLink, Select, TabBar, TabLink, TextInput } from "@/components/ui";
+import { ButtonLink, Select, TabBar, TabLink, TextInput } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import { groupIntoShelves } from "@/lib/liveShelves";
 import { LIVE_TABS, liveTabHref, parseLiveTab, type LiveTab } from "@/lib/liveTabs";
@@ -241,7 +242,9 @@ function NowTab({
   );
 
   const card = (c: LiveChannel) => (
-    <div key={c.id} className="w-72 shrink-0 snap-start">
+    // Most of a phone's width (the next card still peeks in), so a name has
+    // room; the usual 18rem from sm up.
+    <div key={c.id} className="w-[85vw] max-w-sm shrink-0 snap-start sm:w-72">
       <ChannelCard
         channel={c}
         inList={listed.has(c.id)}
@@ -354,6 +357,10 @@ function GuideTab({
   }, [inCategory, query, guidePrograms]);
 
   const visible = filtered.slice(0, shown);
+  // More as the list scrolls near its end, rather than a "Show more" button:
+  // every channel is reachable just by scrolling (2026-11-13).
+  const more = shown < filtered.length;
+  const showMore = useCallback(() => setShown((n) => n + PAGE_SIZE), []);
 
   // A grid of nothing but "No guide info" rows is a worse channel list than
   // the channel list, so with no listings for any channel at all (the EPG
@@ -438,6 +445,7 @@ function GuideTab({
             guidePrograms={guidePrograms}
             statusByChannel={statusByChannel}
             logoFallbacks={logoFallbacks}
+            onReachEnd={more ? showMore : undefined}
           />
         ) : (
           <>
@@ -455,6 +463,7 @@ function GuideTab({
                 />
               ))}
             </div>
+            {more && <LoadMoreWhenNear onNear={showMore} count={visible.length} />}
           </>
         ))}
 
@@ -462,14 +471,6 @@ function GuideTab({
         <p className="py-10 text-center text-sm text-white/40">
           {query ? <>No channels match “{query}”.</> : "No channels of this type."}
         </p>
-      )}
-
-      {shown < filtered.length && (
-        <div className="mt-4 flex justify-center">
-          <Button variant="secondary" onClick={() => setShown((n) => n + PAGE_SIZE)}>
-            Show {Math.min(PAGE_SIZE, filtered.length - shown)} more
-          </Button>
-        </div>
       )}
 
       {truncated && !query && shown >= filtered.length && (

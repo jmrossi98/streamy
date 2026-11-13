@@ -88,7 +88,7 @@ export function LiveNowGames({
         {pick.fixtures.map((f) => (
           <article
             key={f.id}
-            className="flex w-72 shrink-0 snap-start flex-col gap-2 rounded-lg border border-white/10 bg-netflix-dark/80 p-3"
+            className="flex w-[85vw] max-w-sm shrink-0 snap-start flex-col gap-2 rounded-lg border border-white/10 bg-netflix-dark/80 p-3 sm:w-72"
           >
             <div className="flex items-center gap-2">
               <span
@@ -101,7 +101,7 @@ export function LiveNowGames({
                 {f.detail}
               </span>
             </div>
-            <p className="truncate text-sm font-semibold text-white" title={f.name}>
+            <p className="line-clamp-2 text-sm font-semibold leading-snug text-white" title={f.name}>
               {f.name}
             </p>
             <ButtonLink
