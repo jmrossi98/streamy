@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, Field, TextInput, scrollListClass } from "@/components/ui";
+import { Button, Field, TextInput } from "@/components/ui";
 // Type-only: credentials.ts calls the services with Streamy's own keys and must not reach the browser.
 import type { CredentialTarget } from "@/lib/credentials";
-import { lineAlert, lineDaysLeft, lineSummary, type IptvLine } from "@/lib/iptvLineRules";
+import { lineDaysLeft, type IptvLine } from "@/lib/iptvLineRules";
+import { dueUrgencyClass } from "@/lib/spendRules";
+import { lineExpiryText, lineLabel } from "@/lib/subscriptionRowRules";
 
 /**
  * The outside-provider logins and API keys (see lib/credentials.ts), loaded
@@ -68,12 +70,6 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
   }
 
   const fmt = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-  const expiry = (l: IptvLine) => {
-    if (!l.expiresUtc) return "no expiry date";
-    const days = lineDaysLeft(l);
-    const left = days === null ? "" : days < 0 ? " (lapsed)" : days === 0 ? " (today)" : ` (${days}d)`;
-    return `expires ${fmt(l.expiresUtc)}${left}`;
-  };
   // Where the date in effect came from, when it isn't simply the panel's.
   const source = (l: IptvLine) => {
     if (!l.manualExpiresUtc) return null;
@@ -82,41 +78,49 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
   };
 
   return (
-    <div className="mt-1 space-y-1">
-      <p className="text-xs text-white/40">{lineSummary(lines)}</p>
-      <ul className={scrollListClass({}, "space-y-0.5")}>
+    <div className="mt-3">
+      {/* One aligned row per line, its expiry once in the colour of how soon
+          (2026-11-13: each line used to add "Expires in 2 days." after its
+          own date, and the list repeated the row's "2 lines · 2 connections"). */}
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">Lines</p>
+      <ul className="divide-y divide-white/5 rounded border border-white/5">
         {lines.map((l) => {
-          const alert = lineAlert(l);
+          const days = lineDaysLeft(l);
           return (
-            <li key={l.id} className="flex flex-wrap items-center gap-x-2 text-xs text-white/50">
-              <span>{l.name}</span>
-              {l.isDefault && <span className="text-white/30">account login</span>}
-              <span className="text-white/30">{expiry(l)}</span>
-              {source(l) && <span className="text-white/25">{source(l)}</span>}
-              {l.viewers > 0 && <span className="text-white/30">{l.viewers} watching</span>}
-              {alert && <span className={alert.tone === "danger" ? "text-red-300/80" : "text-amber-200/80"}>{alert.text}</span>}
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => setDating(dating?.id === l.id ? null : { id: l.id, value: l.expiresUtc?.slice(0, 10) ?? "" })}
-                disabled={busy}
-              >
-                {dating?.id === l.id ? "Cancel" : "Edit date"}
-              </Button>
-              {!l.isDefault && (
-                <Button size="xs" variant="ghost" onClick={() => void send({ action: "remove-line", lineId: l.id })} disabled={busy}>
-                  Remove
-                </Button>
-              )}
+            <li key={l.id} className="px-2 py-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="min-w-0 flex-1 truncate text-white/80">
+                  {lineLabel(l)}
+                  {l.viewers > 0 && <span className="ml-2 text-white/35">{l.viewers} watching</span>}
+                </span>
+                <span className={`tabular-nums ${dueUrgencyClass(days)}`} title={source(l) ?? undefined}>
+                  {lineExpiryText(l.expiresUtc, days, fmt)}
+                </span>
+                <span className="flex gap-1">
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setDating(dating?.id === l.id ? null : { id: l.id, value: l.expiresUtc?.slice(0, 10) ?? "" })}
+                    disabled={busy}
+                  >
+                    {dating?.id === l.id ? "Cancel" : "Edit date"}
+                  </Button>
+                  {!l.isDefault && (
+                    <Button size="xs" variant="ghost" onClick={() => void send({ action: "remove-line", lineId: l.id })} disabled={busy}>
+                      Remove
+                    </Button>
+                  )}
+                </span>
+              </div>
               {dating?.id === l.id && (
                 <form
-                  className="flex w-full flex-wrap items-end gap-2 pb-1"
+                  className="mt-2 flex w-full flex-wrap items-end gap-2 pb-1"
                   onSubmit={(e) => {
                     e.preventDefault();
                     void send({ action: "line-expiry", lineId: l.id, lineName: l.name, date: dating.value });
                   }}
                 >
-                  <Field label={`${l.name} expires on`} hint="A later date from the panel (a renewal) replaces this on its own">
+                  <Field label={`${lineLabel(l)} expires on`} hint="A later date from the panel (a renewal) replaces this on its own">
                     <TextInput type="date" value={dating.value} onChange={(e) => setDating({ id: l.id, value: e.target.value })} />
                   </Field>
                   <Button type="submit" variant="primary" size="sm" disabled={busy || !dating.value}>
@@ -136,7 +140,7 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
       </ul>
       {adding ? (
         <form
-          className="grid gap-2 sm:grid-cols-3"
+          className="mt-2 grid gap-2 sm:grid-cols-3"
           autoComplete="off"
           onSubmit={(e) => {
             e.preventDefault();
@@ -160,7 +164,7 @@ export function IptvLines({ target, onChanged }: { target: CredentialTarget; onC
           {error && <p className="text-xs text-amber-200/80 sm:col-span-3">{error}</p>}
         </form>
       ) : (
-        <Button size="xs" variant="ghost" onClick={() => setAdding(true)} disabled={busy}>
+        <Button size="xs" variant="ghost" onClick={() => setAdding(true)} disabled={busy} className="mt-1">
           Add line
         </Button>
       )}
