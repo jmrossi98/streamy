@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { useVisualViewportBox } from "@/hooks/useVisualViewportBox";
+import { HomelabBanner } from "@/components/HomelabBanner";
+import type { HomelabStatus } from "@/lib/homelabBreakerRules";
 
 /**
  * Drops the footer and pins the main area to the viewport so the page itself
@@ -55,7 +57,14 @@ function ChromeOnlyScreen({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function LayoutShell({ children }: { children: React.ReactNode }) {
+export function LayoutShell({
+  children,
+  homelab = null,
+}: {
+  children: React.ReactNode;
+  /** Whether mediabox was reachable at render; null for a signed-out visitor (no banner). */
+  homelab?: HomelabStatus | null;
+}) {
   const pathname = usePathname();
   const fullscreen = isFullscreenRoute(pathname);
   const chromeOnly = isChromeOnlyRoute(pathname);
@@ -99,6 +108,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       {!fullscreen && <Navbar />}
+      {!fullscreen && homelab && <HomelabBanner initial={homelab} />}
       <main
         className={`w-full min-w-0 min-h-screen bg-netflix-black ${
           fullscreen ? "" : "pt-[env(safe-area-inset-top,0px)]"

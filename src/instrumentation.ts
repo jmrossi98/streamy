@@ -10,6 +10,12 @@
  * (lib/appLogs.ts), for /api/internal/app-logs -- skill runs on mediabox
  * can't read `docker logs` on Lightsail. Output to the real console is
  * unchanged.
+ *
+ * 2026-11-13: the homelab breaker (lib/homelabBreaker.ts). It wraps fetch so
+ * requests to mediabox fail at once while mediabox is off, instead of each
+ * waiting out a 10 s connect timeout -- which made every page that reads
+ * mediabox hang and look like Streamy itself was down. Installed before any
+ * request is served (register finishes first).
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -18,6 +24,12 @@ export async function register() {
     installConsoleCapture();
   } catch (err) {
     console.error("[app-logs] capture not installed:", err instanceof Error ? err.message : err);
+  }
+  try {
+    const { installHomelabBreaker } = await import("./lib/homelabBreaker");
+    installHomelabBreaker();
+  } catch (err) {
+    console.error("[homelab] breaker not installed:", err instanceof Error ? err.message : err);
   }
   setTimeout(() => {
     void import("./lib/resumeJobs")

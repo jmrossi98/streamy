@@ -9,6 +9,7 @@ import { HomeRefresh } from "@/components/HomeRefresh";
 import { LayoutShell } from "@/components/LayoutShell";
 import { VisitReporter } from "@/components/VisitReporter";
 import { PresenceReporter } from "@/components/PresenceReporter";
+import { homelabStatus } from "@/lib/homelabBreaker";
 
 const bebas = Bebas_Neue({
   weight: "400",
@@ -51,6 +52,9 @@ export default async function RootLayout({
   // appearing two network round trips later.
   const session = await getSession();
   const watchlist = await getWatchlistSnapshot(session);
+  // Whether mediabox answers (homelabBreaker.ts, an in-memory read): signed-in
+  // viewers get a banner while it's off; a visitor at the login page doesn't.
+  const homelab = session?.user ? homelabStatus() : null;
 
   return (
     <html lang="en" className={bebas.variable}>
@@ -74,7 +78,7 @@ export default async function RootLayout({
             <HomeRefresh />
             <VisitReporter />
             <PresenceReporter />
-            <LayoutShell>{children}</LayoutShell>
+            <LayoutShell homelab={homelab}>{children}</LayoutShell>
           </WatchlistProvider>
         </SessionProvider>
       </body>
