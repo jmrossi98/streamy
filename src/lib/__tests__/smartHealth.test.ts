@@ -30,6 +30,13 @@ describe("diskProblems", () => {
   // A healthy drive reports zero for its entire life, so one is not "a small
   // normal number" -- it is the beginning of the end, and must not be rounded
   // away as noise.
+  it("names the drive by its label when the snapshot has one", () => {
+    expect(diskProblems(disk({ label: "HDD 2", device: "/dev/sdc", pendingSectors: 2 }))).toEqual([
+      "HDD 2 (sdc): 2 pending sector(s)",
+    ]);
+    expect(diskProblems(disk({ pendingSectors: 2 }))).toEqual(["sdb: 2 pending sector(s)"]);
+  });
+
   it("treats a single reallocated sector as a problem", () => {
     expect(diskProblems(disk({ reallocatedSectors: 1 }))[0]).toMatch(/1 reallocated/);
   });

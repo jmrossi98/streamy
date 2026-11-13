@@ -1,3 +1,7 @@
+import { Badge } from "@/components/ui";
+import type { DriveUsage } from "@/lib/diskUsage";
+import { driveFullness } from "@/lib/storageDriveRules";
+
 export type StorageChartProps = {
   totalSpace: number;
   freeSpace: number;
@@ -163,5 +167,66 @@ export function StorageChart({
         </li>
       </ul>
     </div>
+  );
+}
+
+/**
+ * Each drive of the /data pool on its own (2026-11-13), under the pool's chart.
+ *
+ * The pool's percentage hides the case worth knowing: mergerfs keeps a show on
+ * the drive it is already on, so one drive can fill while the pool looks
+ * roomy. Each drive gets its own meter and a badge from 85% (storageDriveRules).
+ * Games here are the ROM folders on that drive.
+ */
+export function StorageDrives({ drives }: { drives: DriveUsage[] }) {
+  if (drives.length < 2) return null;
+  return (
+    <section className="flex flex-col gap-4 border-t border-white/10 pt-4" aria-label="Drives">
+      <h3 className="text-sm font-semibold text-white/80">Drives</h3>
+      <ul className="flex flex-col gap-4">
+        {drives.map((d) => {
+          const { bars, usedWidth } = buildStorageSegments(
+            d.totalBytes,
+            d.freeBytes,
+            d.categories.movies,
+            d.categories.tv,
+            d.categories.roms
+          );
+          const { usedPct, state } = driveFullness(d.totalBytes, d.freeBytes);
+          const holds = bars
+            .filter((b) => b.key !== "other")
+            .map((b) => `${b.label} ${formatBytes(b.value)}`)
+            .join(" · ");
+          return (
+            <li key={d.mount || d.label} className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-sm font-medium text-white">{d.label}</span>
+                {state === "full" && <Badge tone="danger">Nearly full</Badge>}
+                {state === "filling" && <Badge tone="warning">Filling up</Badge>}
+                <span className="ml-auto text-xs tabular-nums text-white/50">
+                  {formatBytes(d.freeBytes)} free of {formatBytes(d.totalBytes)} · {usedPct}% used
+                </span>
+              </div>
+              <div className="flex h-2 w-full overflow-hidden rounded bg-white/[0.07]">
+                {bars.map((b, i) => (
+                  <div
+                    key={b.key}
+                    className="h-full"
+                    style={{ width: `${b.width}%`, backgroundColor: b.color, marginRight: i < bars.length - 1 ? 2 : 0 }}
+                    title={`${b.label}: ${formatBytes(b.value)} (${b.pct.toFixed(1)}%)`}
+                  />
+                ))}
+                <div
+                  className="h-full"
+                  style={{ width: `${Math.max(100 - usedWidth, 0)}%`, backgroundColor: COLORS.free }}
+                  title={`Free space: ${formatBytes(d.freeBytes)}`}
+                />
+              </div>
+              <p className="text-xs text-white/40">{holds || "Empty so far"}</p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

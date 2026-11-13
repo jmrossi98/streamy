@@ -180,7 +180,7 @@ function BoxCard({ data }: { data: StreamingNow }) {
         {Object.entries(b.disks).map(([name, d]) => (
           <Stat
             key={name}
-            label={name === "sda" ? "SSD" : name === "sdb" ? "HDD" : name}
+            label={d.label ?? name}
             value={`${d.busyPct.toFixed(0)}% busy`}
             warn={d.busyPct >= 80}
             hint={`${d.readMBps.toFixed(1)} r · ${d.writeMBps.toFixed(1)} w MB/s`}

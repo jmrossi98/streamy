@@ -77,8 +77,8 @@ describe("deriveThroughput", () => {
 describe("diskNames", () => {
   it("collects every disk seen anywhere in the window, sorted", () => {
     const names = diskNames([
-      { t: "", cpu: null, ambient: null, disks: { sdb: 45 }, diskKinds: {}, gpu: null },
-      { t: "", cpu: null, ambient: null, disks: { sda: 43, sdb: 45 }, diskKinds: {}, gpu: null },
+      { t: "", cpu: null, ambient: null, disks: { sdb: 45 }, diskKinds: {}, diskLabels: {}, gpu: null },
+      { t: "", cpu: null, ambient: null, disks: { sda: 43, sdb: 45 }, diskKinds: {}, diskLabels: {}, gpu: null },
     ]);
     expect(names).toEqual(["sda", "sdb"]);
   });
@@ -114,5 +114,15 @@ describe("diskLabel", () => {
   // than mislabel.
   it("falls back to the device name when the kind is unknown", () => {
     expect(diskLabel("sdb", {}, ["sdb"])).toBe("sdb");
+  });
+
+  // Since 2026-11-13 the sampler names each disk by mount point: "HDD 1" stays
+  // the old drive even when the letters swap at boot.
+  it("prefers the sampler's own name", () => {
+    const two = { sdb: "hdd", sdc: "hdd" };
+    const labels = { sdb: "HDD 1", sdc: "HDD 2" };
+    expect(diskLabel("sdb", two, ["sdb", "sdc"], labels)).toBe("HDD 1");
+    expect(diskLabel("sdc", two, ["sdb", "sdc"], labels)).toBe("HDD 2");
+    expect(diskLabel("sdd", { sdd: "hdd" }, ["sdb", "sdd"], labels)).toBe("HDD");
   });
 });

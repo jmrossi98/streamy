@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getDiskUsage, isDiskUsageConfigured } from "../diskUsage";
+import { getDiskUsage, isDiskUsageConfigured, parseDrives } from "../diskUsage";
 
 const realFetch = global.fetch;
 
@@ -52,6 +52,7 @@ describe("getDiskUsage", () => {
       totalBytes: 100,
       freeBytes: 10,
       categories: { movies: 1, tv: 2, roms: 3, torrents: 4 },
+      drives: [],
       generatedAt: "2026-09-15T00:00:00Z",
     });
   });
@@ -86,5 +87,26 @@ describe("getDiskUsage", () => {
 
     const result = await getDiskUsage();
     expect(result?.categories).toEqual({ movies: 5, tv: 0, roms: 0, torrents: 0 });
+  });
+});
+
+describe("parseDrives", () => {
+  // The shape disk-usage-report.sh writes since the pool (2026-11-13).
+  it("reads each drive of the pool", () => {
+    const drives = parseDrives([
+      { label: "HDD 1", mount: "/mnt/disk1", device: "sdb", totalBytes: 7937, freeBytes: 1466, categories: { movies: 2093, tv: 3811, roms: 394, torrents: 754 } },
+      { label: "HDD 2", mount: "/mnt/disk2", device: "sdc", totalBytes: 7997, freeBytes: 7997, categories: { movies: 0, tv: 0, roms: 0, torrents: 0 } },
+    ]);
+    expect(drives.map((d) => [d.label, d.freeBytes, d.categories.tv])).toEqual([
+      ["HDD 1", 1466, 3811],
+      ["HDD 2", 7997, 0],
+    ]);
+  });
+
+  it("drops entries without numbers and tolerates a missing list", () => {
+    expect(parseDrives([{ label: "HDD 1" }, null, "x", { label: "HDD 2", totalBytes: 10, freeBytes: 5 }])).toEqual([
+      { label: "HDD 2", mount: "", totalBytes: 10, freeBytes: 5, categories: { movies: 0, tv: 0, roms: 0, torrents: 0 } },
+    ]);
+    expect(parseDrives(undefined)).toEqual([]);
   });
 });

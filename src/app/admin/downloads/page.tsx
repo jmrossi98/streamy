@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { unstable_noStore } from "next/cache";
 import { getDiskUsage } from "@/lib/diskUsage";
 import { AdminSection } from "@/components/ui";
-import { StorageChart } from "@/components/StorageChart";
+import { StorageChart, StorageDrives } from "@/components/StorageChart";
 import { getGamesStorageSize } from "@/lib/games";
 import { AdminDownloadsSections } from "@/components/AdminDownloadsSections";
 import { PanelWaiting } from "@/components/PanelWaiting";
@@ -48,12 +48,15 @@ async function StorageUsage() {
     return <p className="text-white/50 text-sm">Storage info unavailable - mediabox isn&apos;t reachable.</p>;
   }
   return (
-    <StorageChart
-      totalSpace={diskUsage.totalBytes}
-      freeSpace={diskUsage.freeBytes}
-      moviesSize={diskUsage.categories.movies}
-      tvSize={diskUsage.categories.tv}
-      gamesSize={gamesSize}
-    />
+    <div className="flex flex-col gap-5">
+      <StorageChart
+        totalSpace={diskUsage.totalBytes}
+        freeSpace={diskUsage.freeBytes}
+        moviesSize={diskUsage.categories.movies}
+        tvSize={diskUsage.categories.tv}
+        gamesSize={gamesSize}
+      />
+      <StorageDrives drives={diskUsage.drives} />
+    </div>
   );
 }
