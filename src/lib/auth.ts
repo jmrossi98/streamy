@@ -5,6 +5,7 @@ import { getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import { getSiteSettings } from "./siteSettings";
 import { readUserGate } from "./userGate";
 import { pickNextAvatarColor } from "./userAvatarColors";
 import { emailApprovalRequest } from "./approvalEmail";
@@ -121,6 +122,12 @@ export const authOptions: NextAuthOptions = {
           if (intent === "signin") {
             await recordLoginAttempt({ name, ip, outcome: "unknown_user" });
             throw new Error("Incorrect password.");
+          }
+          // Sign-ups closed (Admin -> Security -> Site access): the page shows
+          // no Sign up tab then, and this refuses one sent anyway. Not when no
+          // admin exists yet -- the first admin's account is made this way.
+          if (!(await getSiteSettings()).signupsOpen && (await prisma.user.count({ where: { isAdmin: true } })) > 0) {
+            throw new Error("New accounts aren't being made right now. Ask the admin for one.");
           }
           // Creating an account is an unauthenticated write, so it needs its
           // own ceiling -- otherwise one script can fill the user table with

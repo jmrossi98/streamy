@@ -6,6 +6,8 @@ import { VisitorsPanel } from "@/components/VisitorsPanel";
 import { getVisitorSummary } from "@/lib/siteVisits";
 import { VisitorMapPanel } from "@/components/VisitorMapPanel";
 import { getRecentAuditLog } from "@/lib/auditLog";
+import { SiteAccessPanel } from "@/components/SiteAccessPanel";
+import { getSiteSettings } from "@/lib/siteSettings";
 
 /**
  * Who has been here, and whether anything about it looks wrong.
@@ -17,14 +19,20 @@ import { getRecentAuditLog } from "@/lib/auditLog";
 export default async function AdminSecurityPage() {
   unstable_noStore();
 
-  const [security, auditLog, visitors] = await Promise.all([
+  const [security, auditLog, visitors, siteSettings] = await Promise.all([
     runSecurityChecks(),
     getRecentAuditLog().catch(() => []),
     getVisitorSummary("portfolio"),
+    getSiteSettings(),
   ]);
 
   return (
       <div className="space-y-10">
+      {/* First on the admin landing page: the switch to reach for before a change. */}
+      <AdminSection title="Site access">
+        <SiteAccessPanel initial={siteSettings} />
+      </AdminSection>
+
       <AdminSection title="Security">
         <SecurityPanel
           activity={security.activity}
