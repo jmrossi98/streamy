@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Panel } from "@/components/ui";
 import { ROW_H2_CLASS } from "@/lib/browseLayout";
 import type { SportsGame } from "@/lib/sportarr";
 import { SportsGameRow } from "@/components/SportsGameRow";
+import { RecentGames } from "@/components/RecentGames";
 
 type Answer = { configured: boolean; downloading: SportsGame[]; ready: SportsGame[] };
 
@@ -19,9 +20,11 @@ async function readRecordings(): Promise<Answer> {
 
 /**
  * The Recordings tab: every game Sportarr is fetching or has, each one
- * click from playing. Three empty states, kept apart for the same reason the
- * Live TV ones are -- "not configured", "can't reach it" and "nothing
- * recorded yet" each send someone to a different place.
+ * click from playing, and under them the games that finished in the last few
+ * days, each one a click from downloading (RecentGames; moved here from the
+ * Sports tab on 2026-11-13). Three empty states, kept apart for the same
+ * reason the Live TV ones are -- "not configured", "can't reach it" and
+ * "nothing recorded yet" each send someone to a different place.
  */
 export function RecordingsTab() {
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -52,6 +55,13 @@ export function RecordingsTab() {
   }, [load]);
 
   const downloading = (answer?.downloading.length ?? 0) > 0;
+  // Listed above Recent games, so not repeated there.
+  const listed = useMemo(
+    () => new Set([...(answer?.downloading ?? []), ...(answer?.ready ?? [])].map((g) => g.id)),
+    [answer]
+  );
+  // A download started from Recent games belongs under Downloading at once.
+  const onRecentChange = useCallback(() => void load(() => true), [load]);
   useEffect(() => {
     if (!downloading) return;
     let live = true;
@@ -84,17 +94,6 @@ export function RecordingsTab() {
     );
   }
   if (!answer) return <p className="mt-6 text-sm text-white/40">Loading…</p>;
-
-  if (answer.downloading.length === 0 && answer.ready.length === 0) {
-    return (
-      <Panel className="mt-6 text-center">
-        <p className="text-base font-semibold text-white/80">No recordings yet</p>
-        <p className="mx-auto mt-2 max-w-md text-sm text-white/50">
-          Pick a finished game on the Sports tab and choose Download. It shows up here while it downloads and once it’s ready to watch.
-        </p>
-      </Panel>
-    );
-  }
 
   // A row's own check/download answers replace it in whichever list it is
   // in; a download that finishes moves lists on the next poll.
@@ -135,6 +134,12 @@ export function RecordingsTab() {
           </ul>
         </section>
       )}
+      {answer.downloading.length === 0 && answer.ready.length === 0 && (
+        <p className="mb-8 text-sm text-white/40">
+          No recordings yet. Choose Download on a game below; it shows up here while it downloads and once it’s ready to watch.
+        </p>
+      )}
+      <RecentGames exclude={listed} onChange={onRecentChange} />
     </>
   );
 }
