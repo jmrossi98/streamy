@@ -5,9 +5,11 @@ import { WatchPlayer } from "@/components/WatchPlayer";
 export function PlayerHarness({
   progressSeconds,
   autoPlay,
+  forceTranscode = false,
 }: {
   progressSeconds: number;
   autoPlay: boolean;
+  forceTranscode?: boolean;
 }) {
   return (
     <WatchPlayer
@@ -20,6 +22,7 @@ export function PlayerHarness({
       initialProgressSeconds={progressSeconds}
       runtimeMinutes={1}
       autoPlay={autoPlay}
+      forceTranscode={forceTranscode}
       videoUrl="/test-assets/pause-test-clip.mp4"
     />
   );

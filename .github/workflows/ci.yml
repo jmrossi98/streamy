@@ -80,10 +80,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Chromium
-        # Only the browser the suite actually uses -- all projects in
-        # playwright.config.ts are Desktop Chrome.
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers
+        # Chromium for the suite, WebKit for the one spec about Safari's own
+        # HLS player (e2e/player-webkit.spec.ts).
+        run: npx playwright install --with-deps chromium webkit
 
       # build:e2e, not build. The webServer runs .next/standalone/server.js,
       # and only this script copies public/ and .next/static into that output.

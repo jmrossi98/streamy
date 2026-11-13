@@ -60,3 +60,23 @@ export function prewarmTimes(duration: number, count = PREWARM_FRAMES): number[]
   }
   return out;
 }
+
+/**
+ * Seconds of picture the player must have buffered ahead before the seek
+ * preview's background fill may pull from the same file.
+ */
+export const PREVIEW_FILL_MIN_AHEAD_S = 20;
+
+/**
+ * Whether the seek preview may fill in frames in the background right now
+ * (useSeekPreview): the picture isn't buffering and has PREVIEW_FILL_MIN_AHEAD_S
+ * buffered ahead, or everything up to the end. The fill's seeks share the
+ * picture's connection; on a 9 GB game recording they starved it into six
+ * stalls in a minute (2026-11-13). What the pointer is on is not held back.
+ */
+export function previewFillOk(busy: boolean | undefined, currentTime: number, buffered: number, duration: number): boolean {
+  if (busy) return false;
+  const ahead = buffered - currentTime;
+  if (ahead >= PREVIEW_FILL_MIN_AHEAD_S) return true;
+  return duration > 0 && buffered >= duration - 1;
+}
