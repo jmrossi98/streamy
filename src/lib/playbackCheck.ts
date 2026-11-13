@@ -56,6 +56,11 @@ const MAX_WAIT_FOR_IMPORT_MS = 10 * 60 * 1000; // grab -> download -> import, re
 const IMPORT_POLL_INTERVAL_MS = 15_000;
 const MAX_WAIT_FOR_JELLYFIN_MS = 90 * 1000; // Jellyfin's own scan after import lands
 const JELLYFIN_POLL_INTERVAL_MS = 5_000;
+// A search right after the add can come back with every release rejected:
+// Radarr is still loading the movie it just added (two of three live runs on
+// 2026-11-13, while a search a minute later found 54 usable). Try again.
+const SEARCH_ATTEMPTS = 3;
+const SEARCH_RETRY_MS = 20_000;
 // How long a fresh grab may take to reach SABnzbd (or Radarr's queue, which
 // refreshes about once a minute).
 const QUEUE_APPEAR_MS = 120_000;
@@ -143,14 +148,19 @@ async function runStages(): Promise<{ stages: Stage[]; radarrId: number | null }
   if (req.status === "requested") {
     let offered = "no search results";
     let failure: string | null = null;
-    const pick = await grabChosenRelease<TestReleaseCandidate>(radarrId, (releases) => {
-      offered = summarizeReleases(releases);
-      return pickTestRelease(releases);
-    }).catch((err: unknown) => {
-      failure = err instanceof Error ? err.message : String(err);
-      console.error("[playbackCheck] release search or grab failed:", err);
-      return null;
-    });
+    let pick: TestReleaseCandidate | null = null;
+    for (let attempt = 1; attempt <= SEARCH_ATTEMPTS && !pick && !failure; attempt++) {
+      if (attempt > 1) await sleep(SEARCH_RETRY_MS);
+      const id = radarrId;
+      pick = await grabChosenRelease<TestReleaseCandidate>(id, (releases) => {
+        offered = summarizeReleases(releases);
+        return pickTestRelease(releases);
+      }).catch((err: unknown) => {
+        failure = err instanceof Error ? err.message : String(err);
+        console.error("[playbackCheck] release search or grab failed:", err);
+        return null;
+      });
+    }
     if (!pick) {
       const why = failure ? `search or grab failed: ${String(failure).slice(0, 200)}` : `no usable release (${offered})`;
       stages.push({ name: "grab", ok: false, detail: `${why} (Radarr id ${radarrId})` });
