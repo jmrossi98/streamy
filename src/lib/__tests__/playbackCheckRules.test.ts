@@ -28,6 +28,13 @@ describe("pickTestRelease", () => {
     expect(pickTestRelease(torrents.filter((r) => (r.seeders ?? 0) < 5))).toBeNull();
   });
 
+  it("a torrent fallback is a small one", () => {
+    const big = rel({ title: "NOTLD.1080p.X264-AMIABLE", protocol: "torrent", size: 9.8 * GB, seeders: 60 });
+    const small = rel({ title: "NOTLD.720p.x264", protocol: "torrent", size: 1.1 * GB, seeders: 8 });
+    expect(pickTestRelease([big, small])?.title).toBe("NOTLD.720p.x264");
+    expect(pickTestRelease([big])).toBeNull();
+  });
+
   it("skips samples, fakes and anything too big for the window", () => {
     expect(pickTestRelease([rel({ size: 50 * 1024 ** 2 }), rel({ size: 40 * GB })])).toBeNull();
   });

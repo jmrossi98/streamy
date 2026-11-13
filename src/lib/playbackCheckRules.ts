@@ -33,6 +33,11 @@ export const MIN_TEST_RELEASE_BYTES = 400 * 1024 ** 2;
 export const MAX_TEST_RELEASE_BYTES = 12 * 1024 ** 3;
 /** A torrent with fewer seeders than this is the swarm that failed for twelve days. */
 export const MIN_TEST_TORRENT_SEEDERS = 5;
+/**
+ * The torrent fallback's size limit: a public swarm won't move 9.8 GB inside
+ * the 10-minute window (2026-11-13 run 4 tried), however many seeders it has.
+ */
+export const MAX_TEST_TORRENT_BYTES = 4 * 1024 ** 3;
 
 /** One piece of a split upload ("...aac.part01"), or a sample: not a movie on its own. */
 const PARTIAL = /\.part\d+\b|\bpart ?\d{2,}\b|\bsample\b/i;
@@ -70,7 +75,7 @@ export function pickTestRelease<R extends TestReleaseCandidate>(releases: R[]): 
   const usenet = ok.filter((r) => r.protocol === "usenet").sort((a, b) => a.size - b.size);
   if (usenet[0]) return usenet[0];
   const torrents = ok
-    .filter((r) => r.protocol === "torrent" && (r.seeders ?? 0) >= MIN_TEST_TORRENT_SEEDERS)
+    .filter((r) => r.protocol === "torrent" && (r.seeders ?? 0) >= MIN_TEST_TORRENT_SEEDERS && r.size <= MAX_TEST_TORRENT_BYTES)
     .sort((a, b) => (b.seeders ?? 0) - (a.seeders ?? 0) || a.size - b.size);
   return torrents[0] ?? null;
 }
