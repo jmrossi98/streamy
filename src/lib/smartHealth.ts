@@ -17,6 +17,8 @@ const PROBE_TIMEOUT_MS = 6_000;
 
 export type SmartDisk = {
   device: string;
+  /** "SSD", "HDD 1", "HDD 2": the name by mount point (since 2026-11-13). */
+  label?: string | null;
   model: string;
   serialTail: string;
   /** null when the drive didn't report an overall assessment. */
@@ -79,7 +81,10 @@ export async function getSmartSnapshot(): Promise<SmartSnapshot | null> {
 /** A disk's problems, in the order a human would want to hear them. */
 export function diskProblems(d: SmartDisk): string[] {
   const problems: string[] = [];
-  const name = d.device.replace("/dev/", "");
+  // "HDD 2 (sdc)": the name says which drive to pull, the letter is what
+  // smartctl and dmesg call it today.
+  const dev = d.device.replace("/dev/", "");
+  const name = d.label ? `${d.label} (${dev})` : dev;
 
   // The drive's own verdict first: an explicit false here is SMART being as
   // loud as it gets, and outranks anything derived from individual counters.

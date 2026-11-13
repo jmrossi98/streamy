@@ -43,6 +43,7 @@ export async function ConnectionsPanel() {
   // written before the sampler recorded them simply falls back to device
   // names rather than mislabelling anything.
   const kinds = temps.at(-1)?.diskKinds ?? {};
+  const labels = temps.at(-1)?.diskLabels ?? {};
 
   return (
     <div className="space-y-6">
@@ -80,7 +81,7 @@ export async function ConnectionsPanel() {
             { label: "CPU", values: temps.map((p) => p.cpu) },
             { label: "GPU", values: temps.map((p) => p.gpu) },
             ...disks.map((d) => ({
-              label: diskLabel(d, kinds, disks),
+              label: diskLabel(d, kinds, disks, labels),
               values: temps.map((p) => p.disks[d] ?? null),
             })),
             { label: "Ambient", values: temps.map((p) => p.ambient) },

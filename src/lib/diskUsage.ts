@@ -16,17 +16,50 @@
 
 const PROBE_TIMEOUT_MS = 6_000;
 
-export type DiskUsage = {
+type Categories = {
+  movies: number;
+  tv: number;
+  roms: number;
+  torrents: number;
+};
+
+/**
+ * One drive of the /data pool (2026-11-13: two 8 TB HDDs pooled by mergerfs).
+ * `label` is the name that survives a reboot ("HDD 1"), from where the drive
+ * is mounted rather than its sdX letter.
+ */
+export type DriveUsage = {
+  label: string;
+  mount: string;
   totalBytes: number;
   freeBytes: number;
-  categories: {
-    movies: number;
-    tv: number;
-    roms: number;
-    torrents: number;
-  };
+  categories: Categories;
+};
+
+export type DiskUsage = {
+  /** The pool as a whole (or the one drive, before the pool). */
+  totalBytes: number;
+  freeBytes: number;
+  categories: Categories;
+  /** Each drive of the pool; empty when /data is a single drive. */
+  drives: DriveUsage[];
   generatedAt: string;
 };
+
+function categoriesOf(c: Partial<Categories> | undefined): Categories {
+  return { movies: c?.movies ?? 0, tv: c?.tv ?? 0, roms: c?.roms ?? 0, torrents: c?.torrents ?? 0 };
+}
+
+/** The drives in a snapshot, keeping only entries that carry real numbers. */
+export function parseDrives(raw: unknown): DriveUsage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((d) => {
+    if (!d || typeof d !== "object") return [];
+    const e = d as Partial<DriveUsage>;
+    if (typeof e.label !== "string" || typeof e.totalBytes !== "number" || typeof e.freeBytes !== "number") return [];
+    return [{ label: e.label, mount: typeof e.mount === "string" ? e.mount : "", totalBytes: e.totalBytes, freeBytes: e.freeBytes, categories: categoriesOf(e.categories) }];
+  });
+}
 
 function baseUrl(): string {
   return process.env.FLASH_LIBRARY_URL?.replace(/\/$/, "") ?? "";
@@ -58,12 +91,8 @@ export async function getDiskUsage(): Promise<DiskUsage | null> {
     return {
       totalBytes: body.totalBytes,
       freeBytes: body.freeBytes,
-      categories: {
-        movies: body.categories.movies ?? 0,
-        tv: body.categories.tv ?? 0,
-        roms: body.categories.roms ?? 0,
-        torrents: body.categories.torrents ?? 0,
-      },
+      categories: categoriesOf(body.categories),
+      drives: parseDrives((body as { drives?: unknown }).drives),
       generatedAt: body.generatedAt ?? "",
     };
   } catch {

@@ -32,10 +32,18 @@ export type MetricPoint = {
   energy?: { packageUj: number | null; dramUj: number | null };
   /** device -> "ssd" | "hdd", read from the kernel's rotational flag. */
   diskKinds?: Record<string, string>;
+  /**
+   * device -> a name that survives a reboot ("SSD", "HDD 1", "HDD 2"), from
+   * where the disk is mounted (mediabox-infra scripts/disks.py, 2026-11-13).
+   */
+  diskLabels?: Record<string, string>;
   mem: { totalBytes: number; availableBytes: number };
   fs: {
     root: { totalBytes: number; freeBytes: number };
+    /** /data: the pool of both HDDs since 2026-11-13. */
     data: { totalBytes: number; freeBytes: number };
+    /** Each drive of the pool, by its stable label. */
+    drives?: { label: string; mount: string; totalBytes: number; freeBytes: number }[];
   };
 };
 
@@ -61,6 +69,7 @@ export type TempPoint = {
   gpu: number | null;
   disks: Record<string, number>;
   diskKinds: Record<string, string>;
+  diskLabels: Record<string, string>;
 };
 
 /** Watts over an interval, derived from RAPL energy counters. */
@@ -166,6 +175,7 @@ export function deriveTemps(history: MetricsHistory): TempPoint[] {
     gpu: p.temps?.gpu ?? null,
     disks: p.temps?.disks ?? {},
     diskKinds: p.diskKinds ?? {},
+    diskLabels: p.diskLabels ?? {},
   }));
 }
 
@@ -228,8 +238,12 @@ export function diskNames(points: TempPoint[]): string[] {
 export function diskLabel(
   device: string,
   kinds: Record<string, string>,
-  allDevices: string[]
+  allDevices: string[],
+  // The sampler's own name for the disk, when it gives one: "HDD 1" says
+  // which drive, where "HDD (sdb)" only says which letter it had this boot.
+  labels: Record<string, string> = {}
 ): string {
+  if (labels[device]) return labels[device];
   const kind = kinds[device];
   if (!kind) return device;
   const pretty = kind === "ssd" ? "SSD" : kind === "hdd" ? "HDD" : kind.toUpperCase();

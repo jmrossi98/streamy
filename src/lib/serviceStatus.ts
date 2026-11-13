@@ -1237,9 +1237,13 @@ async function componentStatuses(): Promise<ServiceStatus[]> {
     detail: `${memPct}% used - ${gib(memUsed)} of ${gib(latest.mem.totalBytes)}`,
   });
 
+  // Each pool drive gets its own row (2026-11-13): mergerfs keeps a show on
+  // the drive it is on, so one drive can fill while the pool looks roomy.
+  const drives = latest.fs.drives ?? [];
   const fsRows: [string, { totalBytes: number; freeBytes: number }][] = [
     ["mediabox SSD (system)", latest.fs.root],
-    ["mediabox HDD (media)", latest.fs.data],
+    [drives.length > 1 ? "mediabox media pool" : "mediabox HDD (media)", latest.fs.data],
+    ...drives.map((d): [string, { totalBytes: number; freeBytes: number }] => [`mediabox ${d.label}`, d]),
   ];
   for (const [name, fs] of fsRows) {
     const usedPct = pct(fs.totalBytes - fs.freeBytes, fs.totalBytes);

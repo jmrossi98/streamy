@@ -27,7 +27,8 @@ export type BoxVitals = {
     primary: { iface: string; rxMbps?: number; txMbps?: number };
     tailscale: { rxMbps: number; txMbps: number } | null;
   };
-  disks: Record<string, { busyPct: number; readMBps: number; writeMBps: number }>;
+  /** label/kind: the disk's stable name ("HDD 1") and "ssd" | "hdd", since 2026-11-13. */
+  disks: Record<string, { busyPct: number; readMBps: number; writeMBps: number; label?: string; kind?: string }>;
   transcodeCache: { bytes: number; files: number } | null;
   zombies: number;
   streamPriority: {
