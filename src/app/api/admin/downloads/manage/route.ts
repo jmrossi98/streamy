@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { cancelRadarrDownload, cancelRadarrQueueItem, deleteRadarrMovie } from "@/lib/radarr";
+import { cancelRadarrDownload, deleteRadarrMovie, forgetRadarrQueueReads } from "@/lib/radarr";
 import {
   cancelSonarrDownload,
   cancelSonarrQueueItem,
@@ -9,6 +9,7 @@ import {
   deleteSonarrSeries,
   deleteSonarrEpisode,
   getSonarrQueueHealth,
+  forgetSonarrQueueReads,
   removeSonarrEpisodes,
   removeSonarrSeries,
 } from "@/lib/sonarr";
@@ -108,9 +109,17 @@ export async function POST(request: Request) {
           // stopped) -- see cancelRules.ts. Blocklisting was the old way of
           // making a cancel stick, and it followed the title into any later,
           // deliberate request.
+          //
+          // A movie is cancelled as a movie, never by queue id: it has one
+          // download, and the panel's queue id can be a refresh old -- Radarr
+          // renumbers an entry as it moves through states. A stale id 404'd,
+          // the cancel failed and the movie kept downloading, which is how
+          // Fantasia and Guardians 2 and 3 "came back" (2026-11-13). The
+          // movie-level cancel unmonitors first, stops searches, removes
+          // every entry and sweeps again a few seconds later.
           mediaType === "movie"
-          ? await cancelRadarrQueueItem(queueId, { unmonitor: true })
-          : await cancelSonarrQueueItem(queueId)
+          ? await cancelRadarrDownload(id, { unmonitor: true })
+          : await cancelSonarrQueueItem(queueId, { episodeIdHint: episodeId })
         : mediaType === "movie"
           ? await cancelRadarrDownload(id, { unmonitor: true })
           : await cancelSonarrDownload(id)
@@ -131,6 +140,10 @@ export async function POST(request: Request) {
   // status until status reconciliation catches up, so cancelling from the
   // admin panel looked like it hadn't taken effect.
   await prisma.mediaRequest.deleteMany({ where: { mediaType, externalId: id } });
+  // And the panel's cached queue: its next render must not redraw what was
+  // just cancelled.
+  if (mediaType === "movie") forgetRadarrQueueReads();
+  else forgetSonarrQueueReads();
 
   logAudit(admin.name, `${mediaType}.admin.${action}`, title);
   return NextResponse.json({ ok: true });

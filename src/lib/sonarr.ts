@@ -1062,32 +1062,46 @@ export async function cancelSonarrQueueItem(
     // only) stopped seeing it, upgrades stopped, and a re-grab that failed
     // left the episode stranded for good.
     keepWanted = false,
-  }: { blocklist?: boolean; keepWanted?: boolean } = {}
+    // The episode the caller saw this entry for. The panel's queue id can be
+    // a refresh old -- the entry is renumbered as it moves through states --
+    // and a stale id 404'd, failing the cancel and leaving the episode
+    // downloading (2026-11-13). With this, the entry is found by its episode.
+    episodeIdHint = null,
+  }: { blocklist?: boolean; keepWanted?: boolean; episodeIdHint?: number | null } = {}
 ): Promise<boolean> {
   if (!isSonarrConfigured()) return false;
   try {
     // Which episode this entry belongs to, read before the delete because
     // afterwards there is nothing left to ask. Cancelling has to stop the
     // episode being wanted, not just stop this one transfer -- see below.
-    let episodeId: number | null = null;
+    let episodeId: number | null = episodeIdHint;
     let downloadId: string | undefined;
+    // The entry to remove: the id asked for, or with a hint, whatever entry
+    // the episode has now -- none at all means the download is already gone.
+    let target: number | null = episodeIdHint == null ? queueId : null;
     try {
       const queue = await sonarrFetch<{
         records: { id: number; episodeId?: number; downloadId?: string }[];
       }>(`/api/v3/queue?pageSize=250`);
-      const record = queue.records.find((r) => r.id === queueId);
-      episodeId = record?.episodeId ?? null;
+      const record =
+        queue.records.find((r) => r.id === queueId) ??
+        (episodeIdHint != null ? queue.records.find((r) => r.episodeId === episodeIdHint) : undefined);
+      episodeId = record?.episodeId ?? episodeIdHint;
       downloadId = record?.downloadId;
+      if (record) target = record.id;
     } catch (err) {
       console.error(`[sonarr] could not resolve the episode for queue ${queueId}:`, err);
+      target = queueId;
     }
 
-    // A private tracker's torrent that still owes seeding stays in the client.
-    const removal = await clientRemoval(downloadId);
-    await sonarrFetch(`/api/v3/queue/${queueId}?removeFromClient=${removal.removeFromClient}&blocklist=${blocklist}`, {
-      method: "DELETE",
-    });
-    await removal.after();
+    if (target != null) {
+      // A private tracker's torrent that still owes seeding stays in the client.
+      const removal = await clientRemoval(downloadId);
+      await sonarrFetch(`/api/v3/queue/${target}?removeFromClient=${removal.removeFromClient}&blocklist=${blocklist}`, {
+        method: "DELETE",
+      });
+      await removal.after();
+    }
 
     // A cancel that only removes the queue entry is not a cancel.
     //
@@ -1120,6 +1134,11 @@ export async function cancelSonarrQueueItem(
     console.error(`[sonarr] cancelSonarrQueueItem failed for ${queueId}:`, err);
     return false;
   }
+}
+
+/** The Sonarr counterpart of forgetRadarrQueueReads. */
+export function forgetSonarrQueueReads(): void {
+  forgetShared("sonarr:queue:active");
 }
 
 export type QueuedEpisodeSearch = {

@@ -5,7 +5,7 @@
  * no title matching involved.
  */
 
-import { inBatches, sharedRead } from "./sharedRead";
+import { forgetShared, inBatches, sharedRead } from "./sharedRead";
 import { pickDeepRelease, type DeepRelease } from "./deepSearchRules";
 import { pickFastCopies, type FastCopyRelease } from "./fastCopyRules";
 import { movieSearchesToCancel, type ArrCommand } from "./cancelRules";
@@ -602,6 +602,15 @@ export async function cancelRadarrDownload(
     console.error(`[radarr] cancelRadarrDownload failed for ${radarrId}:`, err);
     return false;
   }
+}
+
+/**
+ * Drops the cached read of Radarr's queue, so the next downloads-panel render
+ * asks again: after a cancel, a cached copy redrew the cancelled entry, which
+ * read as the download "coming back" (2026-11-13).
+ */
+export function forgetRadarrQueueReads(): void {
+  forgetShared("radarr:queue:active");
 }
 
 /** Unmonitors a movie and cancels any live search for it. Best-effort per step. */
