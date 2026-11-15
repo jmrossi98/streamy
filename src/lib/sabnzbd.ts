@@ -124,3 +124,78 @@ export async function getSabProgress(): Promise<ClientProgress> {
     return new Map();
   }
 }
+
+/** A job SABnzbd holds, queued or finished, by the name it was given. */
+export type SabJob = {
+  nzoId: string;
+  name: string;
+  category: string;
+  state: "queued" | "downloading" | "processing" | "completed" | "failed";
+  /** 0-100 while it downloads; null otherwise. */
+  progress: number | null;
+  failMessage: string | null;
+};
+
+const SAB_JOBS_TTL_MS = 3_000;
+
+/** Every job in SABnzbd's queue and recent history. Throws when SABnzbd cannot be read. */
+export async function listSabJobs(): Promise<SabJob[]> {
+  return sharedRead("sab:jobs", SAB_JOBS_TTL_MS, async () => {
+    const [queue, history] = await Promise.all([
+      sabApi<{ queue: { slots: { nzo_id: string; filename: string; cat: string; status: string; percentage?: string }[] } }>({
+        mode: "queue",
+        limit: "500",
+      }),
+      sabApi<{ history: { slots: { nzo_id: string; name: string; category: string; status: string; fail_message?: string }[] } }>({
+        mode: "history",
+        limit: "300",
+      }),
+    ]);
+    return [
+      ...queue.queue.slots.map((s): SabJob => {
+        const downloading = /downloading|fetching|grabbing/i.test(s.status);
+        return {
+          nzoId: s.nzo_id,
+          name: s.filename,
+          category: s.cat,
+          state: downloading ? "downloading" : "queued",
+          progress: sabPercent(s.percentage),
+          failMessage: null,
+        };
+      }),
+      ...history.history.slots.map(
+        (s): SabJob => ({
+          nzoId: s.nzo_id,
+          name: s.name,
+          category: s.category,
+          state: s.status === "Completed" ? "completed" : s.status === "Failed" ? "failed" : "processing",
+          progress: null,
+          failMessage: s.fail_message || null,
+        })
+      ),
+    ];
+  });
+}
+
+/**
+ * Hands SABnzbd an NZB's contents under the given job name and category;
+ * the job's nzo id, or null when SABnzbd would not take it. Uploaded rather
+ * than passed as a URL: SABnzbd cannot always reach the link Prowlarr hands
+ * out, and stalls at "Grabbing" when it cannot.
+ */
+export async function addSabNzbFile(nzb: string, jobName: string, category: string): Promise<string | null> {
+  const cfg = config();
+  if (!cfg) return null;
+  const qs = new URLSearchParams({ mode: "addfile", cat: category, nzbname: jobName, output: "json", apikey: cfg.key });
+  const form = new FormData();
+  form.append("name", new Blob([nzb], { type: "application/x-nzb" }), `${jobName}.nzb`);
+  const res = await fetch(`${cfg.base}/api?${qs.toString()}`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { status?: boolean; nzo_ids?: string[] } | null;
+  return body?.status ? (body.nzo_ids?.[0] ?? null) : null;
+}
