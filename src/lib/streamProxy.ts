@@ -10,6 +10,7 @@ import {
 } from "./jellyfin";
 import { pinRecordedMediaSource, shouldResetTranscode } from "./streamRecoveryRules";
 import { trickplayVersion } from "./trickplayRules";
+import { cleanSubtitleText } from "./subtitleTextRules";
 import { windowLivePlaylist, withoutClosedCaptions } from "./hlsPlaylistRules";
 import { streamMeter, type MeterTag } from "./streamMeter";
 import { touchPlaybackSession } from "./playbackKeepalive";
@@ -254,7 +255,10 @@ export async function proxyJellyfinHlsResource(
   return new Response(rewritten, { status: upstream.status, headers });
 }
 
-/** Proxies one WebVTT subtitle track -- small text, no range/streaming needed. */
+/**
+ * Proxies one WebVTT subtitle track -- small text, no range/streaming needed.
+ * ASS codes Jellyfin leaves in the text are cleaned out (see subtitleTextRules).
+ */
 export async function proxyJellyfinSubtitle(
   itemId: string,
   mediaSourceId: string,
@@ -266,7 +270,7 @@ export async function proxyJellyfinSubtitle(
   let body: string;
   try {
     if (!upstream.ok) return new Response("Subtitle unavailable", { status: 502 });
-    body = await upstream.text();
+    body = cleanSubtitleText(await upstream.text());
   } catch {
     return new Response("Subtitle unavailable", { status: 502 });
   } finally {
