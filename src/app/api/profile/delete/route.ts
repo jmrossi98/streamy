@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { canDeleteOwnProfile, OWN_PROFILE_REFUSALS } from "@/lib/accountDeletion";
 
 /**
  * Delete your own profile (User row). Cascades watchlist + progress.
@@ -15,8 +16,12 @@ import { prisma } from "@/lib/db";
  * so anyone who could reach the site could delete any profile by name.
  *
  * The branch existed for "API clients" that never materialised: the only caller
- * is the signed-in self-delete in Navbar.tsx. Removing it costs nothing and is
- * the whole fix.
+ * is the signed-in self-delete on the Account page. Removing it costs nothing
+ * and is the whole fix.
+ *
+ * The last admin is refused (canDeleteOwnProfile): an instance with no admin
+ * cannot appoint one. The admin-side delete already refused it; this one
+ * didn't until it moved from the navbar to the Account page (2026-11-15).
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -40,6 +45,18 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "You can only remove your own profile." },
       { status: 403 }
+    );
+  }
+
+  const [self, adminCount] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { isAdmin: true } }),
+    prisma.user.count({ where: { isAdmin: true } }),
+  ]);
+  const verdict = canDeleteOwnProfile(self, adminCount);
+  if (!verdict.ok) {
+    return NextResponse.json(
+      { error: OWN_PROFILE_REFUSALS[verdict.reason] ?? "This profile can't be deleted." },
+      { status: verdict.reason === "not-found" ? 404 : 409 }
     );
   }
 

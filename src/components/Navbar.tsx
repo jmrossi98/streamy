@@ -25,7 +25,6 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [hamburgerOpen, setHamburgerOpen] = useState(false);
-  const [deletingProfile, setDeletingProfile] = useState(false);
 
   const isSignInScreen =
     pathname === "/login" || pathname === "/login";
@@ -45,35 +44,8 @@ export function Navbar() {
   const initial = session?.user?.name?.slice(0, 1).toUpperCase() ?? "?";
   const profileBg = avatarColorOrFallback(session?.user?.avatarColor);
 
-  async function deleteOwnProfile() {
-    if (!session?.user?.id) return;
-    if (
-      !window.confirm(
-        "Delete your profile? Your watchlist and watch progress will be removed. This cannot be undone."
-      )
-    ) {
-      return;
-    }
-    setDeletingProfile(true);
-    try {
-      const res = await fetch("/api/profile/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: session.user.id }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        window.alert(data.error ?? "Could not delete profile.");
-        return;
-      }
-      setMenuOpen(false);
-      setHamburgerOpen(false);
-      await signOut({ callbackUrl: "/login" });
-    } finally {
-      setDeletingProfile(false);
-    }
-  }
-
+  // Deleting your profile lives on the Account page (DeleteProfileSection),
+  // behind a typed confirmation -- not one tap away in these menus.
   return (
     <header
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${
@@ -229,14 +201,6 @@ export function Navbar() {
                       <div className="p-4 border-t border-white/10 space-y-2">
                         <button
                           type="button"
-                          disabled={deletingProfile}
-                          onClick={() => void deleteOwnProfile()}
-                          className="w-full py-3 rounded border border-red-500/40 text-red-400 text-sm font-medium hover:bg-red-950/40 active:bg-red-950/60 transition-colors touch-manipulation disabled:opacity-50"
-                        >
-                          {deletingProfile ? "Deleting…" : "Delete profile"}
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => { setHamburgerOpen(false); signOut({ callbackUrl: "/login" }); }}
                           className="w-full py-3 rounded bg-white/10 text-white text-sm font-medium hover:bg-white/20 active:bg-white/25 transition-colors touch-manipulation"
                         >
@@ -310,14 +274,6 @@ export function Navbar() {
                           onClick={() => { setMenuOpen(false); signOut({ callbackUrl: "/login" }); }}
                         >
                           Sign out
-                        </button>
-                        <button
-                          type="button"
-                          disabled={deletingProfile}
-                          className="w-full text-left px-4 py-2 text-sm text-red-400/90 hover:bg-white/10 hover:text-red-300 disabled:opacity-50"
-                          onClick={() => void deleteOwnProfile()}
-                        >
-                          {deletingProfile ? "Deleting…" : "Delete profile"}
                         </button>
                       </div>
                     </>
