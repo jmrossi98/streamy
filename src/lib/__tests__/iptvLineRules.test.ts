@@ -1,13 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
+  BACKUP_URLS_KEY,
   isLineDead,
   isLineLogin,
   lineAlert,
   lineCapacity,
+  lineLoginOf,
   lineProfilePatterns,
   lineReplaceIsPositional,
   lineSummary,
   nextLineName,
+  normalizeServerUrl,
+  parseBackupUrls,
+  storedBackupUrls,
   type IptvLine,
 } from "../iptvLineRules";
 
@@ -88,5 +93,56 @@ describe("naming and capacity", () => {
     expect(lineAlert(line(), NOW)).toBeNull();
     expect(lineAlert(line({ expiresUtc: "2026-10-17T10:00:00Z" }), NOW)?.tone).toBe("warning");
     expect(lineAlert(line({ status: "Expired" }), NOW)?.tone).toBe("danger");
+  });
+});
+
+describe("a line's own server", () => {
+  const apply = (url: string, u: string, p: string, server: string | null) => {
+    const { search, replace } = lineProfilePatterns(u, p, server);
+    return url.replace(new RegExp(search), replace);
+  };
+
+  it("swaps the server as well as the login", () => {
+    expect(apply("http://line.trex.cc/live/old/old/1234.ts", "u2", "p2", "http://backup.trex.cc:8080")).toBe(
+      "http://backup.trex.cc:8080/live/u2/p2/1234.ts"
+    );
+    expect(apply("http://line.trex.cc/old/old/1234", "u2", "p2", "http://b.example")).toBe("http://b.example/u2/p2/1234");
+    expect(apply("http://line.trex.cc/live/old/old/1.ts", "u2", "p2", null)).toBe("http://line.trex.cc/live/u2/p2/1.ts");
+  });
+
+  it("reads back the login and server a rewrite carries", () => {
+    const withServer = lineProfilePatterns("4dad0abc", "pw", "http://b.example:8080").replace;
+    expect(lineLoginOf(withServer)).toEqual({ serverUrl: "http://b.example:8080", username: "4dad0abc", password: "pw" });
+    expect(lineLoginOf(lineProfilePatterns("u2", "p2").replace)).toEqual({ serverUrl: null, username: "u2", password: "p2" });
+    expect(lineLoginOf("$1u3/p3/")).toEqual({ serverUrl: null, username: "u3", password: "p3" });
+    // The main login's identity rewrite carries no login of its own.
+    expect(lineLoginOf("$1")).toBeNull();
+    expect(lineLoginOf(null)).toBeNull();
+  });
+
+  it("normalizes what is typed to scheme://host[:port]", () => {
+    expect(normalizeServerUrl("line.trex.cc")).toBe("http://line.trex.cc");
+    expect(normalizeServerUrl(" HTTPS://Line.Trex.cc:8443/player_api.php?x=1 ")).toBe("https://line.trex.cc:8443");
+    expect(normalizeServerUrl("ftp://x.example")).toBeNull();
+    expect(normalizeServerUrl("http://user:pw@x.example")).toBeNull();
+    expect(normalizeServerUrl("")).toBeNull();
+  });
+
+  it("takes backups one per line, without duplicates or the line's own server", () => {
+    expect(parseBackupUrls("a.example\nhttp://b.example:8080, a.example\n\nhttp://own.example", "http://own.example")).toEqual({
+      urls: ["http://a.example", "http://b.example:8080"],
+      bad: [],
+    });
+    expect(parseBackupUrls("ftp://nope b.example").bad).toEqual(["ftp://nope"]);
+  });
+
+  it("reads stored backups whatever shape the profile's properties are in", () => {
+    expect(storedBackupUrls({ [BACKUP_URLS_KEY]: ["b.example", 7, "ftp://x"], user_info: {} })).toEqual(["http://b.example"]);
+    expect(storedBackupUrls(null)).toEqual([]);
+    expect(storedBackupUrls({ [BACKUP_URLS_KEY]: "b.example" })).toEqual([]);
+  });
+
+  it("says when a provider has no active lines", () => {
+    expect(lineSummary([line({ isDefault: true, active: false })])).toBe("No active lines");
   });
 });

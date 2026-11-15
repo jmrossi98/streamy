@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ProviderState } from "@/lib/providerAvailability";
 import Link from "next/link";
 import type { LiveChannel, LiveProgram } from "@/lib/liveTv";
 import { WatchlistToggle } from "@/components/WatchlistToggle";
@@ -96,7 +97,7 @@ type Props = {
    * tune would fail; "down" = the provider is offline or lapsed. Shown so a
    * viewer sees it before clicking into a spinner. "ok"/undefined shows nothing.
    */
-  providerState?: "ok" | "full" | "down";
+  providerState?: ProviderState;
 };
 
 export function ChannelCard({
@@ -112,7 +113,8 @@ export function ChannelCard({
 }: Props) {
   // Not working (liveChannelStateRules.ts) greys the card the same way: it is
   // only on screen at all because it is in this person's My Stations.
-  const unavailable = providerState === "full" || providerState === "down" || status?.notWorking === "hidden";
+  const unavailable =
+    providerState === "full" || providerState === "down" || providerState === "nolines" || status?.notWorking === "hidden";
   // Ticks so the progress bar advances while the page is open -- a guide that
   // freezes the moment it renders is worse than no progress bar.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -231,6 +233,9 @@ export function ChannelCard({
         )}
         {providerState === "down" && !info?.stale && (
           <p className="truncate text-[11px] text-red-400/80">Provider offline</p>
+        )}
+        {providerState === "nolines" && (
+          <p className="truncate text-[11px] text-red-400/80">No active provider lines</p>
         )}
 
         {/* Only the states worth acting on. "live" and "unknown" render

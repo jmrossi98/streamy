@@ -9,7 +9,7 @@ import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
 import { findChannelIdByName, getChannelInfo, isDispatcharrConfigured, listIptvAccounts } from "@/lib/dispatcharr";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
-import { channelProviderState, providerAvailability } from "@/lib/providerAvailability";
+import { channelProviderState, providerAvailability, type ProviderState } from "@/lib/providerAvailability";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -57,7 +57,7 @@ export default async function LiveChannelPage({
   // the page.
   let provider: string | null = null;
   let stale = false;
-  let providerState: "ok" | "full" | "down" | null = null;
+  let providerState: ProviderState | null = null;
   if (isDispatcharrConfigured()) {
     try {
       const info = (await getChannelInfo())?.get(channel.name);
@@ -130,6 +130,12 @@ export default async function LiveChannelPage({
         {providerState === "down" && (
           <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
             {provider ?? "This provider"} is offline right now, so this channel can&rsquo;t be tuned.
+          </p>
+        )}
+        {providerState === "nolines" && (
+          <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            There are no active provider lines for {provider ?? "this provider"} right now, so this channel can&rsquo;t be
+            tuned.
           </p>
         )}
         <LivePlayer

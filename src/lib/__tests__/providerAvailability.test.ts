@@ -34,6 +34,13 @@ describe("providerAvailability", () => {
     expect(a["dead"].state).toBe("down");
   });
 
+  it("says the provider has no lines when every one has been removed", () => {
+    // The main login switched off is what removing the last line leaves.
+    const a = providerAvailability([{ name: "trex", lines: [line({ active: false })] }], new Set(["trex"]));
+    expect(a["trex"]).toEqual({ free: 0, capacity: 0, state: "nolines" });
+    expect(providerAvailability([{ name: "none", lines: [] }])["none"].state).toBe("nolines");
+  });
+
   it("ignores dead lines in the counts", () => {
     const a = providerAvailability([
       { name: "p", lines: [line({ maxStreams: 1, viewers: 0 }), line({ id: 2, status: "banned", maxStreams: 1 })] },
@@ -53,6 +60,7 @@ describe("channelProviderState / unavailableLabel", () => {
   it("labels only the states worth showing", () => {
     expect(unavailableLabel("full")).toBe("Lines in use");
     expect(unavailableLabel("down")).toBe("Provider offline");
+    expect(unavailableLabel("nolines")).toBe("No active provider lines");
     expect(unavailableLabel("ok")).toBeNull();
     expect(unavailableLabel(null)).toBeNull();
   });

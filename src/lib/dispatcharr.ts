@@ -24,7 +24,15 @@ import { cleanText } from "./text";
 import { cached } from "./ttlCache";
 import { sliceStreamPage } from "./streamSearch";
 import { epgUrlFor, relinkChannelStreams, type RelinkStream } from "./iptvRelinkRules";
-import { lineProfilePatterns, nextLineName, type IptvLine } from "./iptvLineRules";
+import {
+  BACKUP_URLS_KEY,
+  lineLoginOf,
+  lineProfilePatterns,
+  nextLineName,
+  normalizeServerUrl,
+  storedBackupUrls,
+  type IptvLine,
+} from "./iptvLineRules";
 
 const DISPATCHARR_URL = process.env.DISPATCHARR_URL?.replace(/\/$/, "");
 const DISPATCHARR_USER = process.env.DISPATCHARR_USER;
@@ -927,20 +935,29 @@ type RawProfile = {
   max_streams?: number;
   current_viewers?: number;
   exp_date?: string | null;
-  custom_properties?: { user_info?: { status?: string } } | null;
+  search_pattern?: string;
+  replace_pattern?: string;
+  custom_properties?: ({ user_info?: { status?: string } } & Record<string, unknown>) | null;
 };
 
-/** Only what the panel needs: never the login a profile's rewrite carries. */
-function toLine(p: RawProfile): IptvLine {
+/**
+ * Only what the panel needs: never the login a profile's rewrite carries. A
+ * switched-off account has no active lines: that is what removing the last
+ * one does (removeIptvLine), and Dispatcharr's proxy skips its streams.
+ */
+function toLine(p: RawProfile, account: { server_url?: string; is_active?: boolean }): IptvLine {
+  const accountServerUrl = account.server_url ?? "";
   return {
     id: p.id,
     name: p.name,
     isDefault: !!p.is_default,
-    active: p.is_active !== false,
+    active: p.is_active !== false && account.is_active !== false,
     maxStreams: p.max_streams ?? 0,
     viewers: p.current_viewers ?? 0,
     expiresUtc: p.exp_date ?? null,
     status: p.custom_properties?.user_info?.status ?? null,
+    serverUrl: p.is_default ? normalizeServerUrl(accountServerUrl) : (lineLoginOf(p.replace_pattern)?.serverUrl ?? null),
+    backupUrls: storedBackupUrls(p.custom_properties),
   };
 }
 
@@ -954,11 +971,20 @@ export function listIptvAccountsCached(): Promise<IptvAccount[] | null> {
   return memoized("iptvAccounts", listIptvAccounts);
 }
 
+type RawXcAccount = {
+  id: number;
+  name: string;
+  account_type?: string;
+  is_active?: boolean;
+  server_url?: string;
+  username?: string;
+  password?: string;
+  profiles?: RawProfile[];
+};
+
 /** The Xtream Codes provider accounts (the IPTV logins). Null when Dispatcharr is unreachable. */
 export async function listIptvAccounts(): Promise<IptvAccount[] | null> {
-  const raw = await api<
-    { id: number; name: string; account_type?: string; is_active?: boolean; server_url?: string; username?: string; password?: string; profiles?: RawProfile[] }[]
-  >("/api/m3u/accounts/");
+  const raw = await api<RawXcAccount[]>("/api/m3u/accounts/");
   if (!raw) return null;
   return raw
     .filter((a) => a.account_type === "XC")
@@ -968,21 +994,58 @@ export async function listIptvAccounts(): Promise<IptvAccount[] | null> {
       serverUrl: a.server_url ?? "",
       username: a.username ?? "",
       hasPassword: !!a.password,
-      lines: (a.profiles ?? []).sort((x, y) => Number(!!y.is_default) - Number(!!x.is_default) || x.id - y.id).map(toLine),
+      lines: (a.profiles ?? [])
+        .sort((x, y) => Number(!!y.is_default) - Number(!!x.is_default) || x.id - y.id)
+        .map((p) => toLine(p, a)),
     }));
 }
 
+/** A line's server as its rewrite should carry it: null when it is the provider's own. */
+function ownServer(serverUrl: string | null | undefined, account: RawXcAccount): string | null {
+  const url = normalizeServerUrl(serverUrl);
+  return url && url !== normalizeServerUrl(account.server_url) ? url : null;
+}
+
+/** A profile's custom properties with the backups replaced; everything Dispatcharr keeps there is left as it was. */
+function withBackups(p: RawProfile, backups: string[]): Record<string, unknown> {
+  return { ...(p.custom_properties ?? {}), [BACKUP_URLS_KEY]: backups };
+}
+
+/** What adding a line did: an extra line, or -- with every line removed -- the main login again. */
+export type AddLineResult = { line: IptvLine; becameMain: boolean; update: IptvUpdateResult | null };
+
 /**
- * Adds another login on the same panel as a line: a Dispatcharr profile whose
- * rewrite swaps that login into every stream URL, with one connection. The
- * proxy then uses it whenever the other lines are busy -- see
- * iptvLineRules.ts. Dispatcharr is asked to read the line's own status and
- * expiry straight away, so a dead login shows as dead on the spot.
+ * Adds another login as a line: a Dispatcharr profile whose rewrite swaps
+ * that login (and, with `serverUrl`, the server) into every stream URL, with
+ * one connection. The proxy then uses it whenever the other lines are busy
+ * -- see iptvLineRules.ts. Dispatcharr is asked to read the line's own status
+ * and expiry straight away, so a dead login shows as dead on the spot.
+ *
+ * With every line removed (the account switched off), the login becomes the
+ * main one again instead: the account's own login is what every stream URL
+ * is built from.
  */
-export async function addIptvLine(accountId: number, username: string, password: string): Promise<IptvLine | null> {
-  const account = await api<{ profiles?: RawProfile[] }>(`/api/m3u/accounts/${accountId}/`);
+export async function addIptvLine(
+  accountId: number,
+  username: string,
+  password: string,
+  { serverUrl, backupUrls = [] }: { serverUrl?: string | null; backupUrls?: string[] } = {}
+): Promise<AddLineResult | null> {
+  const account = await api<RawXcAccount>(`/api/m3u/accounts/${accountId}/`);
   if (!account) return null;
-  const { search, replace } = lineProfilePatterns(username, password);
+  const main = (account.profiles ?? []).find((p) => p.is_default);
+  if (main && account.is_active === false) {
+    await api(`/api/m3u/accounts/${accountId}/`, { method: "PATCH", body: JSON.stringify({ is_active: true }) });
+    await api(`/api/m3u/accounts/${accountId}/profiles/${main.id}/`, {
+      method: "PATCH",
+      body: JSON.stringify({ custom_properties: withBackups(main, backupUrls) }),
+    });
+    const update = await updateIptvAccount(accountId, { username, password, serverUrl: normalizeServerUrl(serverUrl) ?? undefined });
+    const after = (await api<RawXcAccount>(`/api/m3u/accounts/${accountId}/`)) ?? { ...account, is_active: true };
+    const profile = (after.profiles ?? []).find((p) => p.id === main.id) ?? main;
+    return { line: toLine(profile, after), becameMain: true, update };
+  }
+  const { search, replace } = lineProfilePatterns(username, password, ownServer(serverUrl, account));
   const created = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/`, {
     method: "POST",
     body: JSON.stringify({
@@ -992,19 +1055,132 @@ export async function addIptvLine(accountId: number, username: string, password:
       is_default: false,
       search_pattern: search,
       replace_pattern: replace,
+      custom_properties: { [BACKUP_URLS_KEY]: backupUrls },
     }),
   });
   if (!created || typeof created.id !== "number") return null;
   await api(`/api/m3u/refresh-account-info/${created.id}/`, { method: "POST", body: "{}" });
   const after = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${created.id}/`);
-  return toLine(after ?? created);
+  return { line: toLine(after ?? created, account), becameMain: false, update: null };
 }
 
-/** Removes an extra line. The account's own login is never removed this way. */
-export async function removeIptvLine(accountId: number, lineId: number): Promise<boolean> {
-  const line = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`);
-  if (!line || line.is_default) return false;
-  return (await api(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`, { method: "DELETE" })) !== null;
+export type LineChanges = {
+  username?: string;
+  password?: string;
+  /** Undefined keeps the line's server; null, or the provider's own, puts it back on the provider's. */
+  serverUrl?: string | null;
+  backupUrls?: string[];
+};
+
+export type EditLineResult = { ok: true; line: IptvLine; update: IptvUpdateResult | null } | { ok: false; message: string };
+
+/**
+ * Changes one line's login, server or backups. The main login is the
+ * account's own, so its login and server go through updateIptvAccount (the
+ * playlist refreshed and channels moved over, about half a minute); an extra
+ * line's are its rewrite.
+ */
+export async function editIptvLine(accountId: number, lineId: number, changes: LineChanges): Promise<EditLineResult> {
+  const [account, profile] = await Promise.all([
+    api<RawXcAccount>(`/api/m3u/accounts/${accountId}/`),
+    api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`),
+  ]);
+  if (!account || !profile) return { ok: false, message: "Could not read that line from Dispatcharr." };
+
+  if (profile.is_default) {
+    let update: IptvUpdateResult | null = null;
+    const serverUrl = normalizeServerUrl(changes.serverUrl);
+    const login = {
+      username: changes.username || undefined,
+      password: changes.password || undefined,
+      serverUrl: serverUrl && serverUrl !== normalizeServerUrl(account.server_url) ? serverUrl : undefined,
+    };
+    if (login.username || login.password || login.serverUrl) {
+      update = await updateIptvAccount(accountId, login);
+      if (!update) return { ok: false, message: "Dispatcharr did not accept the change." };
+    }
+    if (changes.backupUrls) {
+      await api(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ custom_properties: withBackups(profile, changes.backupUrls) }),
+      });
+    }
+    const after = (await api<RawXcAccount>(`/api/m3u/accounts/${accountId}/`)) ?? account;
+    const line = (after.profiles ?? []).find((p) => p.id === lineId) ?? profile;
+    return { ok: true, line: toLine(line, after), update };
+  }
+
+  const current = lineLoginOf(profile.replace_pattern);
+  const username = changes.username || current?.username;
+  const password = changes.password || current?.password;
+  if (!username || !password) {
+    return { ok: false, message: "This line's login could not be read back; type its username and password again." };
+  }
+  const serverUrl = changes.serverUrl === undefined ? (current?.serverUrl ?? null) : ownServer(changes.serverUrl, account);
+  const { search, replace } = lineProfilePatterns(username, password, serverUrl);
+  const body: Record<string, unknown> = { search_pattern: search, replace_pattern: replace };
+  if (changes.backupUrls) body.custom_properties = withBackups(profile, changes.backupUrls);
+  const saved = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  if (!saved) return { ok: false, message: "Dispatcharr did not accept the change." };
+  if (replace !== profile.replace_pattern) {
+    await api(`/api/m3u/refresh-account-info/${lineId}/`, { method: "POST", body: "{}" });
+  }
+  const after = await api<RawProfile>(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`);
+  return { ok: true, line: toLine(after ?? saved, account), update: null };
+}
+
+/**
+ * What removing a line did. The main login cannot simply go -- every stream
+ * URL is built from it -- so removing it promotes the next line's login in
+ * its place, or, when it is the last line, switches the account off (its
+ * main profile cannot be switched off on its own: Dispatcharr's API refuses
+ * any change to a default profile but its name, patterns and properties).
+ * The provider then has no lines; Dispatcharr's proxy skips an inactive
+ * account's streams, and Live TV says why.
+ */
+export type RemoveLineResult =
+  | { ok: true; outcome: "removed" }
+  | { ok: true; outcome: "promoted"; promoted: string; update: IptvUpdateResult | null }
+  | { ok: true; outcome: "switched-off" }
+  | { ok: false; message: string };
+
+export async function removeIptvLine(accountId: number, lineId: number): Promise<RemoveLineResult> {
+  const account = await api<RawXcAccount>(`/api/m3u/accounts/${accountId}/`);
+  const line = (account?.profiles ?? []).find((p) => p.id === lineId);
+  if (!account || !line) return { ok: false, message: "Could not read that line from Dispatcharr." };
+
+  if (!line.is_default) {
+    const gone = (await api(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`, { method: "DELETE" })) !== null;
+    return gone ? { ok: true, outcome: "removed" } : { ok: false, message: "Dispatcharr would not remove that line." };
+  }
+
+  const next = (account.profiles ?? [])
+    .filter((p) => !p.is_default && p.is_active !== false)
+    .sort((x, y) => x.id - y.id)
+    .find((p) => lineLoginOf(p.replace_pattern));
+  if (!next) {
+    const off = await api(`/api/m3u/accounts/${accountId}/`, { method: "PATCH", body: JSON.stringify({ is_active: false }) });
+    return off ? { ok: true, outcome: "switched-off" } : { ok: false, message: "Dispatcharr would not switch the provider off." };
+  }
+
+  // The next line's login becomes the account's, with its server and backups.
+  const login = lineLoginOf(next.replace_pattern)!;
+  const update = await updateIptvAccount(accountId, {
+    username: login.username,
+    password: login.password,
+    serverUrl: login.serverUrl ?? undefined,
+  });
+  if (!update) return { ok: false, message: "Dispatcharr did not accept the next line's login." };
+  await api(`/api/m3u/accounts/${accountId}/profiles/${lineId}/`, {
+    method: "PATCH",
+    body: JSON.stringify({ custom_properties: withBackups(line, storedBackupUrls(next.custom_properties)) }),
+  });
+  await api(`/api/m3u/accounts/${accountId}/profiles/${next.id}/`, { method: "DELETE" });
+  await api(`/api/m3u/refresh-account-info/${lineId}/`, { method: "POST", body: "{}" });
+  return { ok: true, outcome: "promoted", promoted: next.name, update };
 }
 
 /** What a saved login change did, for the admin panel to report. */
