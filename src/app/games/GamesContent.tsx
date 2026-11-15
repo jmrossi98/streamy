@@ -2,6 +2,7 @@
 
 import { compareRecent } from "@/lib/gameSortRules";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ScrollableRow } from "@/components/ScrollableRow";
 import { GameCard } from "@/components/GameCard";
@@ -175,6 +176,15 @@ export function GamesContent({ configured, items, platforms, watchlistKeys }: Ga
   return (
     <div className="space-y-10">
       <section className={`space-y-3 ${ROW_SECTION_CLASS}`}>
+        {/* The catalog (IGDB): covers and summaries, a page per game with a
+            Download per console -- usenet first, gamarr as the fallback.
+            The search below still queries gamarr's sources directly. */}
+        <Link
+          href="/games/find"
+          className="inline-flex items-center gap-2 rounded bg-netflix-red px-4 py-2 text-sm font-semibold text-white hover:bg-netflix-red/90"
+        >
+          Find a game
+        </Link>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={query}
