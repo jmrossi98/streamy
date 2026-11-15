@@ -2,14 +2,16 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
+import { DeleteProfileSection } from "@/components/DeleteProfileSection";
 import { JellyfinAppCard } from "@/components/JellyfinAppCard";
 import { WatchHistory } from "@/components/WatchHistory";
+import { canDeleteOwnProfile, OWN_PROFILE_REFUSALS } from "@/lib/accountDeletion";
 import { JELLYFIN_APP_ADDRESS_DEFAULT, jellyfinPasswordIsStreamys } from "@/lib/jellyfinAccountRules";
 
 /**
- * Account settings: the password, how to sign in to the Jellyfin apps, and the
- * person's own watch history. Open to every approved account, each seeing only
- * its own.
+ * Account settings: the password, how to sign in to the Jellyfin apps, the
+ * person's own watch history, and deleting their profile. Open to every
+ * approved account, each seeing only its own.
  */
 export default async function AccountPage() {
   const session = await getSession();
@@ -30,6 +32,9 @@ export default async function AccountPage() {
   });
   if (!user?.approved) redirect("/login");
   const jellyfinAddress = process.env.JELLYFIN_PUBLIC_URL?.trim() || JELLYFIN_APP_ADDRESS_DEFAULT;
+  const adminCount = user.isAdmin ? await prisma.user.count({ where: { isAdmin: true } }) : 0;
+  const deleteVerdict = canDeleteOwnProfile(user, adminCount);
+  const deleteBlocked = deleteVerdict.ok ? null : (OWN_PROFILE_REFUSALS[deleteVerdict.reason] ?? null);
 
   return (
     <div className="min-h-screen max-w-lg mx-auto px-4 sm:px-6 pt-24 pb-16 space-y-8">
@@ -57,6 +62,8 @@ export default async function AccountPage() {
         </p>
         <WatchHistory />
       </section>
+
+      <DeleteProfileSection userId={session.user.id} name={user.name} blockedReason={deleteBlocked} />
     </div>
   );
 }

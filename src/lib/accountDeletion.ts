@@ -64,3 +64,23 @@ export function canDeleteAccount(
 
   return { ok: true };
 }
+
+/**
+ * Whether someone may delete their own profile (the Account page). Anyone may,
+ * except the last admin: an instance with no admin cannot appoint one, and the
+ * self-delete used to allow it (2026-11-15, when it moved off the navbar).
+ *
+ * @param self        the signed-in account
+ * @param adminCount  how many admin accounts exist, this one included
+ */
+export function canDeleteOwnProfile(self: { isAdmin: boolean } | null, adminCount: number): DeletionVerdict {
+  if (!self) return { ok: false, reason: "not-found" };
+  if (self.isAdmin && adminCount <= 1) return { ok: false, reason: "last-admin" };
+  return { ok: true };
+}
+
+/** What the Account page says when the person can't delete their own profile. */
+export const OWN_PROFILE_REFUSALS: Partial<Record<DeletionRefusal, string>> = {
+  "not-found": "This profile no longer exists.",
+  "last-admin": "You're the only admin, so this profile can't be deleted. Make someone else an admin first.",
+};

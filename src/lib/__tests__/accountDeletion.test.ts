@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canDeleteAccount, REFUSAL_MESSAGES, type DeletableAccount } from "../accountDeletion";
+import { canDeleteAccount, canDeleteOwnProfile, OWN_PROFILE_REFUSALS, REFUSAL_MESSAGES, type DeletableAccount } from "../accountDeletion";
 
 const jake: DeletableAccount = { id: "u1", name: "jaker", isAdmin: true };
 const other: DeletableAccount = { id: "u2", name: "Sam", isAdmin: false };
@@ -60,5 +60,25 @@ describe("canDeleteAccount", () => {
     for (const reason of reasons) {
       expect(REFUSAL_MESSAGES[reason]).toBeTruthy();
     }
+  });
+});
+
+describe("canDeleteOwnProfile (the Account page)", () => {
+  it("lets anyone who isn't the last admin delete their own profile", () => {
+    expect(canDeleteOwnProfile({ isAdmin: false }, 1)).toEqual({ ok: true });
+    expect(canDeleteOwnProfile({ isAdmin: false }, 0)).toEqual({ ok: true });
+    expect(canDeleteOwnProfile({ isAdmin: true }, 2)).toEqual({ ok: true });
+  });
+
+  it("refuses the last admin, who could never be replaced", () => {
+    expect(canDeleteOwnProfile({ isAdmin: true }, 1)).toEqual({ ok: false, reason: "last-admin" });
+  });
+
+  it("reports a profile that's already gone", () => {
+    expect(canDeleteOwnProfile(null, 3)).toEqual({ ok: false, reason: "not-found" });
+  });
+
+  it("has a message for every refusal it can give", () => {
+    for (const reason of ["last-admin", "not-found"] as const) expect(OWN_PROFILE_REFUSALS[reason]).toBeTruthy();
   });
 });
