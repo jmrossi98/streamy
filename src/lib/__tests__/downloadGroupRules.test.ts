@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  showProgress,
+  BATCH_MEMBER_GRACE_MS,
+  batchProgress,
   episodeCount,
   foldPacks,
   groupActionLabel,
@@ -11,8 +12,11 @@ import {
   groupStarted,
   groupStatus,
   groupSummary,
+  nextShowBatches,
   seasonLabel,
   type GroupableRow,
+  type KeyedRow,
+  type ShowBatches,
 } from "../downloadGroupRules";
 
 function ep(over: Partial<GroupableRow> = {}): GroupableRow {
@@ -147,31 +151,71 @@ describe("foldPacks", () => {
 
 // Atlanta read 95% and then 88%: the average of what was transferring fell as
 // finished episodes left it and fresh ones joined.
-describe("showProgress", () => {
-  const moving = (progress: number, episodeNumber: number) =>
-    ep({ completed: false, progress, episodeNumber, seriesEpisodes: 10 });
-  const queued = (episodeNumber: number) => ep({ completed: false, queued: true, episodeNumber, seriesEpisodes: 10 });
+describe("a show's batch", () => {
+  type Row = GroupableRow & KeyedRow;
+  const at = (episodeId: number, over: Partial<Row> = {}): Row => ({ ...ep({ episodeNumber: episodeId }), episodeId, ...over });
+  const moving = (episodeId: number, progress: number) => at(episodeId, { completed: false, progress });
+  const queued = (episodeId: number) => at(episodeId, { completed: false, queued: true });
+  const onDisk = (episodeId: number) => at(episodeId);
+  const library = Array.from({ length: 300 }, (_, i) => onDisk(1000 + i));
 
-  it("counts what is left against the whole show", () => {
-    // 10 episodes: 6 on disk and not listed, two at 50%, two queued.
-    expect(showProgress([moving(50, 7), moving(50, 8), queued(9), queued(10)])).toBe(70);
+  function run(...refreshes: Row[][]): number | null {
+    let batches: ShowBatches = new Map();
+    refreshes.forEach((rows, i) => {
+      batches = nextShowBatches(batches, rows, i * 5_000);
+    });
+    const members = batches.get(19);
+    return members ? batchProgress(members) : null;
+  }
+
+  it("is the episode's own progress, not the whole show's", () => {
+    // Counted against 300 episodes on disk this read 100%.
+    expect(run([...library, moving(1, 20)])).toBe(20);
   });
 
   it("goes up, not down, when an episode finishes and the next one starts", () => {
-    const before = showProgress([moving(95, 7), moving(95, 8), queued(9), queued(10)]);
-    const after = showProgress([moving(0, 9), queued(10)]);
-    expect(before).toBe(79);
-    expect(after).toBe(80);
-    expect(groupProgress([moving(0, 9), queued(10)])).toBe(80);
+    const before = [moving(7, 95), moving(8, 95), queued(9), queued(10)];
+    const after = [onDisk(7), onDisk(8), moving(9, 0), queued(10)];
+    expect(run(before)).toBe(47);
+    expect(run(before, after)).toBe(50);
+  });
+
+  it("is never 100 while something is still to come", () => {
+    const rows = Array.from({ length: 299 }, (_, i) => onDisk(i + 1));
+    const all = rows.map((r) => ({ ...r, completed: false, progress: 0 }));
+    expect(run([...all, moving(300, 0)], [...rows, moving(300, 99)])).toBe(99);
   });
 
   it("counts a pack as every episode in it", () => {
-    expect(showProgress([{ ...moving(50, 1), packEpisodes: 10 }])).toBe(50);
+    expect(run([{ ...moving(1, 50), packEpisodes: 10 }, queued(11)])).toBe(45);
   });
 
-  it("says nothing when the show's size is unknown, leaving the old average", () => {
+  it("drops what will not arrive, and keeps an import's brief gap", () => {
+    const start = [moving(1, 100), queued(2)];
+    // Mid-import: the queue entry is gone and the file not yet listed.
+    expect(run(start, [queued(2)])).toBe(50);
+    expect(run(start, [at(2, { completed: false, noRelease: true }), moving(3, 40)])).toBe(70);
+  });
+
+  it("forgets a download gone for good", () => {
+    let batches = nextShowBatches(new Map(), [moving(1, 0), moving(2, 50)], 0);
+    batches = nextShowBatches(batches, [moving(2, 50)], BATCH_MEMBER_GRACE_MS + 1);
+    expect(batchProgress(batches.get(19)!)).toBe(50);
+  });
+
+  it("ends when nothing of the show is in flight, and the next one starts fresh", () => {
+    let batches = nextShowBatches(new Map(), [moving(1, 50)], 0);
+    batches = nextShowBatches(batches, [onDisk(1)], 5_000);
+    expect(batches.has(19)).toBe(false);
+    batches = nextShowBatches(batches, [onDisk(1), moving(2, 10)], 10_000);
+    expect(batchProgress(batches.get(19)!)).toBe(10);
+  });
+
+  it("is what the header shows, with the old average when there is none", () => {
     const rows = [ep({ completed: false, progress: 40 }), ep({ completed: false, progress: 60, episodeNumber: 2 })];
-    expect(showProgress(rows)).toBeNull();
     expect(groupProgress(rows)).toBe(50);
+    expect(groupProgress(rows.map((r) => ({ ...r, seriesProgress: 12 })))).toBe(12);
+    // A batch with nothing moving and nothing done says nothing, like before.
+    expect(groupProgress([ep({ completed: false, queued: true, seriesProgress: 0 })])).toBeNull();
   });
 });

@@ -41,6 +41,7 @@ import { fileBaseName } from "./radarr";
 import { protocolsFromHistory, type HistoryEvent } from "./historyProtocolRules";
 import { TITLE_HISTORY_HOLD_MS } from "./radarr";
 import { forgetShared, inBatches, sharedRead } from "./sharedRead";
+import { compactEpisode, episodeStore, scheduleEpisodeStoreSave, type StoredEpisode } from "./sonarrEpisodeStore";
 import { resolveQualityProfileId, type QualityTier } from "./qualityTier";
 import { episodeQueries, namesEpisode, pushTitle, rankTextResults, TEXT_SEARCH_EVERY_MS } from "./textSearchRules";
 import { prowlarrTextSearch, PROWLARR_TV } from "./prowlarr";
@@ -335,8 +336,6 @@ const PROTOCOL_CACHE_TTL_MS = 30_000;
  * series' own history (seriesProtocols).
  */
 const GRAB_HISTORY_PAGE = 300;
-/** Episode id -> protocol, remembered for the life of the process. */
-const knownProtocols = new Map<number, DownloadProtocol>();
 
 export async function getSonarrCompletedProtocols(): Promise<Map<number, DownloadProtocol>> {
   if (!isSonarrConfigured()) return new Map();
@@ -350,14 +349,20 @@ export async function getSonarrCompletedProtocols(): Promise<Map<number, Downloa
         const history = await sonarrFetch<{
           records: { episodeId?: number; date: string; data?: { protocol?: string } }[];
         }>(`/api/v3/history?pageSize=${GRAB_HISTORY_PAGE}&eventType=1&sortKey=date&sortDirection=descending`);
+        // Remembered across restarts (sonarrEpisodeStore.ts).
+        const known = episodeStore().protocols;
         // Newest first, so the first protocol seen for an episode is its latest grab.
         const seen = new Set<number>();
         for (const r of history.records) {
           if (r.episodeId == null || seen.has(r.episodeId)) continue;
           seen.add(r.episodeId);
-          knownProtocols.set(r.episodeId, normalizeProtocol(r.data?.protocol));
+          const protocol = normalizeProtocol(r.data?.protocol);
+          if (known.get(r.episodeId) !== protocol) {
+            known.set(r.episodeId, protocol);
+            scheduleEpisodeStoreSave();
+          }
         }
-        return new Map(knownProtocols);
+        return new Map(known);
       },
       { staleWhileRevalidate: true }
     );
@@ -408,7 +413,8 @@ export async function getSonarrCompletedEpisodes(): Promise<CompletedEpisode[]> 
 // A file's protocol never changes, so a series' answer is kept for an hour.
 const SERIES_PROTOCOL_TTL_MS = 60 * 60_000;
 
-async function seriesProtocols(seriesId: number): Promise<Map<number, DownloadProtocol>> {
+/** A series' protocols from its own history, or null when Sonarr could not be read. */
+async function seriesProtocols(seriesId: number): Promise<Map<number, DownloadProtocol> | null> {
   try {
     return await sharedRead(
       `sonarr:series-protocols:${seriesId}`,
@@ -422,7 +428,7 @@ async function seriesProtocols(seriesId: number): Promise<Map<number, DownloadPr
       { failureHoldMs: TITLE_HISTORY_HOLD_MS }
     );
   } catch {
-    return new Map();
+    return null;
   }
 }
 
@@ -456,20 +462,9 @@ async function seriesTitles(): Promise<Map<number, string>> {
   }
 }
 
-type EpisodeWithFile = {
-  id: number;
-  seasonNumber: number;
-  episodeNumber: number;
-  title: string;
-  hasFile: boolean;
-  monitored: boolean;
-  airDateUtc?: string | null;
-  episodeFile?: { relativePath?: string; size?: number; dateAdded?: string } | null;
-};
-
 /**
  * Each series' episode list, reused for as long as the series' file statistics
- * read the same.
+ * read the same, and kept across restarts (sonarrEpisodeStore.ts).
  *
  * The finished-episodes list is the series list plus one episode read per
  * series with files -- 63 reads and 8 MB at once against the production box
@@ -479,39 +474,77 @@ type EpisodeWithFile = {
  * it has and how big they are; a show whose figures are unchanged is served
  * from here, so a refresh re-reads only the shows something happened to.
  *
- * Monitoring is not in the statistics, so readers that care about what a show
- * is still owed (getSonarrSeriesPlaces) pass a shorter `maxAgeMs`, and the
- * places that change monitoring from here drop the entry (forgetSeriesPlaces).
+ * What a show is still owed can change without its files changing (an
+ * episode airs), so readers that care (getSonarrSeriesPlaces, for shows with
+ * something in flight) pass a shorter `maxAgeMs`, and the places that change
+ * monitoring from here drop the entry (forgetSeriesPlaces).
  */
 const EPISODE_LIST_MAX_AGE_MS = 6 * 60 * 60_000;
 /** Reads at once against Sonarr when many series need a fresh list -- a cold start. */
 const EPISODE_LIST_BATCH = 8;
-const episodeLists = new Map<number, { signature: string; at: number; episodes: EpisodeWithFile[] }>();
+/** One read per series at a time: the finished list and the places below ask for the same shows. */
+const episodeListReads = new Map<number, Promise<StoredEpisode[]>>();
 
 function fileSignature(s: SeriesSummary): string {
   const st = s.statistics ?? {};
   return `${st.episodeFileCount ?? 0}:${st.sizeOnDisk ?? 0}:${st.totalEpisodeCount ?? 0}:${st.episodeCount ?? 0}`;
 }
 
-async function seriesEpisodes(s: SeriesSummary, maxAgeMs = EPISODE_LIST_MAX_AGE_MS): Promise<EpisodeWithFile[]> {
+function readEpisodeList(s: SeriesSummary): Promise<StoredEpisode[]> {
+  const pending = episodeListReads.get(s.id);
+  if (pending) return pending;
   const signature = fileSignature(s);
-  const hit = episodeLists.get(s.id);
-  if (hit && hit.signature === signature && Date.now() - hit.at < maxAgeMs) return hit.episodes;
   // One call per series, with each episode's file embedded: the file's real
   // name, size and arrival date are what the row shows (the movie side gets
   // the same from movieFile).
-  const episodes = await sonarrFetch<EpisodeWithFile[]>(`/api/v3/episode?seriesId=${s.id}&includeEpisodeFile=true`);
-  episodeLists.set(s.id, { signature, at: Date.now(), episodes });
-  return episodes;
+  const read = sonarrFetch<StoredEpisode[]>(`/api/v3/episode?seriesId=${s.id}&includeEpisodeFile=true`)
+    .then((raw) => {
+      const episodes = raw.map(compactEpisode);
+      // An empty list is a show Sonarr is still filling in. Remembering it
+      // put every row of a new show under "Other" until it expired.
+      if (episodes.length > 0) {
+        episodeStore().lists.set(s.id, { signature, at: Date.now(), episodes });
+        scheduleEpisodeStoreSave();
+      }
+      return episodes;
+    })
+    .finally(() => episodeListReads.delete(s.id));
+  episodeListReads.set(s.id, read);
+  return read;
+}
+
+/**
+ * A series' episodes. With `stale`, a list that is out of date is still
+ * handed back at once, the fresh one read behind it: for the places below,
+ * which need where each episode sits -- something that does not change when
+ * a file lands -- and which re-read every show with a row every five minutes,
+ * blanking the whole panel's seasons for any refresh that ran into Sonarr's
+ * slowness (2026-11-15, "series places 6.0s").
+ */
+async function seriesEpisodes(
+  s: SeriesSummary,
+  maxAgeMs = EPISODE_LIST_MAX_AGE_MS,
+  { stale = false }: { stale?: boolean } = {}
+): Promise<StoredEpisode[]> {
+  const hit = episodeStore().lists.get(s.id);
+  if (hit && hit.signature === fileSignature(s) && Date.now() - hit.at < maxAgeMs) return hit.episodes;
+  if (hit && stale) {
+    readEpisodeList(s).catch((err) => console.error(`[sonarr] could not refresh episodes of series ${s.id}:`, err));
+    return hit.episodes;
+  }
+  return readEpisodeList(s);
 }
 
 async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
   try {
-    const [series, protocols] = await Promise.all([seriesList(), getSonarrCompletedProtocols()]);
+    const [series] = await Promise.all([seriesList(), getSonarrCompletedProtocols()]);
+    // The store rather than the map the history read returned: it also holds
+    // what the series histories below have found since.
+    const protocols = episodeStore().protocols;
 
     const withFiles = series.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0);
     const perSeries = await inBatches(withFiles, EPISODE_LIST_BATCH, async (s) => {
-      let episodes: EpisodeWithFile[];
+      let episodes: StoredEpisode[];
       try {
         episodes = await seriesEpisodes(s);
       } catch (err) {
@@ -523,9 +556,18 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
         return [];
       }
       // Episodes older than the recent-grabs window get their protocol from
-      // this series' own history -- see historyProtocolRules.
-      const missing = episodes.some((e) => e.hasFile && !protocols.has(e.id));
-      const ownHistory = missing ? await seriesProtocols(s.id) : new Map<number, DownloadProtocol>();
+      // this series' own history -- see historyProtocolRules. What it finds
+      // is remembered, and a file it has no grab for is remembered as
+      // "unknown" (shown as no badge, as before): otherwise every restart
+      // re-read the history of nearly every show.
+      const missing = episodes.filter((e) => e.hasFile && !protocols.has(e.id));
+      if (missing.length > 0) {
+        const ownHistory = await seriesProtocols(s.id);
+        if (ownHistory) {
+          for (const e of missing) protocols.set(e.id, ownHistory.get(e.id) ?? "unknown");
+          scheduleEpisodeStoreSave();
+        }
+      }
       return episodes
         .filter((e) => e.hasFile)
         .map((e) => {
@@ -537,7 +579,7 @@ async function fetchCompletedEpisodes(): Promise<CompletedEpisode[]> {
             title: relativePath
               ? fileBaseName(relativePath)
               : `${s.title} · S${e.seasonNumber} E${e.episodeNumber}${e.title ? ` · ${e.title}` : ""}`,
-            protocol: protocols.get(e.id) ?? ownHistory.get(e.id),
+            protocol: protocols.get(e.id),
             sizeBytes: e.episodeFile?.size ?? null,
             addedAt: e.episodeFile?.dateAdded ?? null,
           };
@@ -2717,75 +2759,64 @@ export type SeriesPlaces = {
   episodes: Map<number, { seasonNumber: number; episodeNumber: number }>;
   /** Monitored, aired and not on disk: what the show is still owed. */
   wanted: WantedEpisode[];
-  /** Regular episodes on disk plus those still owed: the whole of what was asked for. */
-  total: number;
 };
 
-/** A show's episode list barely changes; the panel asking for it polls every 2.5s. */
+/** How old a show's list may be when something of it is in flight, so what it is owed stays current. */
 const SERIES_PLACES_TTL_MS = 5 * 60_000;
-const seriesPlaces = new Map<number, { at: number; places: SeriesPlaces }>();
 
 /** Drops what the panel remembers about a show whose monitoring just changed from here. */
 function forgetSeriesPlaces(seriesId?: number): void {
-  if (seriesId == null) {
-    seriesPlaces.clear();
-    episodeLists.clear();
-    return;
-  }
-  seriesPlaces.delete(seriesId);
-  episodeLists.delete(seriesId);
+  const lists = episodeStore().lists;
+  if (seriesId == null) lists.clear();
+  else lists.delete(seriesId);
+  scheduleEpisodeStoreSave();
+}
+
+function placesOf(title: string, episodes: EpisodeForWanted[]): SeriesPlaces {
+  return {
+    title,
+    episodes: new Map(episodes.map((e) => [e.id, { seasonNumber: e.seasonNumber, episodeNumber: e.episodeNumber }])),
+    wanted: wantedEpisodes(episodes),
+  };
 }
 
 /**
  * Each series' title and which season and episode each of its episode ids is,
  * so the downloads panel can fold per-episode rows into shows and seasons.
  * A series that cannot be read is simply absent.
+ *
+ * Served from the shared episode lists, and never waiting on Sonarr for a
+ * show it already has a list for: an out-of-date one is used while the fresh
+ * one is read behind it. `activeIds` are the shows with something in flight,
+ * whose lists are refreshed every few minutes for what they are owed; a show
+ * that is only on disk keeps its list until its files change.
  */
-export async function getSonarrSeriesPlaces(seriesIds: number[]): Promise<Map<number, SeriesPlaces>> {
+export async function getSonarrSeriesPlaces(
+  seriesIds: number[],
+  activeIds: Iterable<number> = seriesIds
+): Promise<Map<number, SeriesPlaces>> {
   const out = new Map<number, SeriesPlaces>();
   if (!isSonarrConfigured()) return out;
+  const active = new Set(activeIds);
   const byId = new Map((await seriesList().catch(() => [] as SeriesSummary[])).map((s) => [s.id, s]));
   await inBatches([...new Set(seriesIds)], EPISODE_LIST_BATCH, async (id) => {
-      const cached = seriesPlaces.get(id);
-      if (cached && Date.now() - cached.at < SERIES_PLACES_TTL_MS) {
-        out.set(id, cached.places);
+    try {
+      const summary = byId.get(id);
+      if (summary) {
+        const maxAge = active.has(id) ? SERIES_PLACES_TTL_MS : EPISODE_LIST_MAX_AGE_MS;
+        out.set(id, placesOf(summary.title, await seriesEpisodes(summary, maxAge, { stale: true })));
         return;
       }
-      try {
-        // The shared series list and episode cache first: a show whose
-        // finished episodes were just listed costs nothing more here. Only a
-        // show the list does not know (added seconds ago) is read on its own.
-        const summary = byId.get(id);
-        const [title, episodes] = summary
-          ? [summary.title, await seriesEpisodes(summary, SERIES_PLACES_TTL_MS)]
-          : await Promise.all([
-              sonarrFetch<{ title: string }>(`/api/v3/series/${id}`).then((s) => s.title),
-              sonarrFetch<EpisodeForWanted[]>(`/api/v3/episode?seriesId=${id}`),
-            ]);
-        const places: SeriesPlaces = {
-          title,
-          episodes: new Map(
-            episodes.map((e) => [e.id, { seasonNumber: e.seasonNumber, episodeNumber: e.episodeNumber }])
-          ),
-          wanted: wantedEpisodes(episodes),
-          total:
-            episodes.filter((e) => e.hasFile && e.seasonNumber !== 0).length +
-            wantedEpisodes(episodes).filter((e) => e.seasonNumber !== 0).length,
-        };
-        // An empty list is a show Sonarr is still filling in. Remembering it
-        // put every row of a new show under "Other" for five minutes.
-        if (episodes.length > 0) seriesPlaces.set(id, { at: Date.now(), places });
-        out.set(id, places);
-      } catch (err) {
-        // A search-loaded Sonarr times out on these reads for minutes at a
-        // time; the show's name and episode places do not change in that
-        // time, so an expired answer beats none.
-        if (cached) {
-          out.set(id, cached.places);
-          return;
-        }
-        console.error(`[sonarr] could not read series ${id} for the downloads panel:`, err);
-      }
+      // A show the series list does not know yet (added seconds ago) is read
+      // on its own, and not remembered: the list will have it shortly.
+      const [title, episodes] = await Promise.all([
+        sonarrFetch<{ title: string }>(`/api/v3/series/${id}`).then((s) => s.title),
+        sonarrFetch<EpisodeForWanted[]>(`/api/v3/episode?seriesId=${id}`),
+      ]);
+      out.set(id, placesOf(title, episodes));
+    } catch (err) {
+      console.error(`[sonarr] could not read series ${id} for the downloads panel:`, err);
+    }
   });
   return out;
 }
