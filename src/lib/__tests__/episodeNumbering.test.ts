@@ -166,6 +166,39 @@ describe("toOtherNumbering by title", () => {
   });
 });
 
+// Hunter x Hunter (2011), 2026-11-14: TMDB 62 + 74 + 12 numbered across the
+// show (season 2 is 63-136, season 3 137-148); TVDB 58 + 78 + 12, each from 1.
+const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+const HXH_TMDB: TmdbLayout = { counts: { 1: 62, 2: 74, 3: 12 }, numbers: { 1: range(1, 62), 2: range(63, 136), 3: range(137, 148) } };
+const HXH_TVDB = [...season(0, 2), ...season(1, 58), ...season(2, 78), ...season(3, 12)];
+
+describe("seasons TMDB numbers across the whole show", () => {
+  it("finds each episode by its place in the show, not its number in the season", () => {
+    expect(toOtherNumbering(HXH_TMDB, HXH_TVDB, { season: 1, episode: 60 })).toEqual({ season: 2, episode: 2 });
+    expect(toOtherNumbering(HXH_TMDB, HXH_TVDB, { season: 2, episode: 63 })).toEqual({ season: 2, episode: 5 });
+    expect(toOtherNumbering(HXH_TMDB, HXH_TVDB, { season: 2, episode: 100 })).toEqual({ season: 2, episode: 42 });
+    expect(toOtherNumbering(HXH_TMDB, HXH_TVDB, { season: 2, episode: 136 })).toEqual({ season: 2, episode: 78 });
+    expect(toOtherNumbering(HXH_TMDB, HXH_TVDB, { season: 3, episode: 137 })).toEqual({ season: 3, episode: 1 });
+  });
+  it("lists the whole season under TMDB's own numbers", () => {
+    const mapped = seasonInOtherNumbering(HXH_TMDB, HXH_TVDB, 2);
+    expect(mapped).toHaveLength(74);
+    expect(mapped[0]).toEqual({ tmdbEpisode: 63, other: { season: 2, episode: 5 } });
+    expect(mapped[73]).toEqual({ tmdbEpisode: 136, other: { season: 2, episode: 78 } });
+  });
+  it("never takes the same-numbered episode, even when the counts agree", () => {
+    const tmdb: TmdbLayout = { counts: { 1: 58, 2: 78 }, numbers: { 1: range(1, 58), 2: range(59, 136) } };
+    const tvdb = [...season(1, 58), ...season(2, 78)];
+    expect(toOtherNumbering(tmdb, tvdb, { season: 2, episode: 63 })).toEqual({ season: 2, episode: 5 });
+    expect(seasonInOtherNumbering(tmdb, tvdb, 2)[0]).toEqual({ tmdbEpisode: 59, other: { season: 2, episode: 1 } });
+  });
+  it("still trusts a title over position", () => {
+    const tmdb: TmdbLayout = { ...HXH_TMDB, titles: { "2:63": "A x Hard x Master?" } };
+    const tvdb = HXH_TVDB.map((e) => (e.season === 2 && e.episode === 9 ? { ...e, title: "A x Hard x Master?" } : e));
+    expect(toOtherNumbering(tmdb, tvdb, { season: 2, episode: 63 })).toMatchObject({ season: 2, episode: 9 });
+  });
+});
+
 describe("sameTitle", () => {
   it("compares names, not spelling", () => {
     expect(sameTitle("The Smoking Peanut", "Smoking Peanut")).toBe(true);

@@ -42,8 +42,19 @@ export type SeasonCounts = Record<number, number>;
 export type AirDates = Record<string, string>;
 /** "season:episode" -> episode name, "2:22" -> "Shanghaied". */
 export type Titles = Record<string, string>;
+/**
+ * Regular season number -> TMDB's own episode numbers in it, in order.
+ *
+ * Nearly always 1..N, but some shows are numbered across the whole run:
+ * Hunter x Hunter (2011) is 62 + 74 + 12 on TMDB with season 2 numbered
+ * 63-136 (2026-11-14). Everything here assumed a season starts at episode 1,
+ * so TMDB's S2E100 -- the 38th episode of the season -- was looked for at
+ * position 100, and 62 of the season's 74 episodes showed as not downloaded
+ * though every one was on disk.
+ */
+export type EpisodeNumbers = Record<number, number[]>;
 /** TMDB's layout of a show: how its regular seasons are cut, and when each episode aired. */
-export type TmdbLayout = { counts: SeasonCounts; airDates?: AirDates; titles?: Titles };
+export type TmdbLayout = { counts: SeasonCounts; airDates?: AirDates; titles?: Titles; numbers?: EpisodeNumbers };
 
 export function airKey(season: number, episode: number): string {
   return `${season}:${episode}`;
@@ -118,6 +129,25 @@ function inShowOrder<T extends EpisodeRef>(refs: T[]): T[] {
   return refs.filter((r) => r.season > 0).sort((a, b) => a.season - b.season || a.episode - b.episode);
 }
 
+/** Whether TMDB numbers this season from somewhere other than 1 (see EpisodeNumbers). */
+function numberedAcrossShow(tmdb: TmdbLayout, season: number): boolean {
+  const numbers = tmdb.numbers?.[season];
+  return !!numbers && numbers.length > 0 && numbers[0] !== 1;
+}
+
+/** Where TMDB's episode sits in its season, 1-based: S2E63 is the 1st of Hunter x Hunter's season 2. */
+function placeInSeason(tmdb: TmdbLayout, season: number, episode: number): number {
+  const at = tmdb.numbers?.[season]?.indexOf(episode) ?? -1;
+  return at >= 0 ? at + 1 : episode;
+}
+
+/** TMDB's episode numbers in a season, in order: its own list, or 1..count. */
+function tmdbNumbers(tmdb: TmdbLayout, season: number): number[] {
+  const numbers = tmdb.numbers?.[season];
+  if (numbers && numbers.length > 0) return numbers;
+  return Array.from({ length: tmdb.counts[season] ?? 0 }, (_, i) => i + 1);
+}
+
 /**
  * The other side's episode for TMDB's season/episode, or null when it has
  * none. `tmdb` null (TMDB unreachable) means no translation at all.
@@ -129,10 +159,15 @@ export function toOtherNumbering<T extends EpisodeRef>(
 ): T | null {
   const direct = other.find((o) => o.season === ref.season && o.episode === ref.episode) ?? null;
   if (!tmdb || ref.season <= 0) return direct;
-  const named = byTitle(tmdb, other, ref, direct);
+  const acrossShow = numberedAcrossShow(tmdb, ref.season);
+  // Across-show numbering: the same-numbered episode is no evidence either
+  // way, so a matching title decides on its own.
+  const named = byTitle(tmdb, other, ref, acrossShow ? null : direct);
   if (named) return named;
   const otherCounts = countsOf(other);
-  if (priorSeasonsAgree(tmdb.counts, otherCounts, ref.season) && direct) return direct;
+  // A season TMDB numbers across the show never shares numbers with the
+  // other side's, however the counts line up: TMDB's S2E63 is no one's S2E63.
+  if (!acrossShow && priorSeasonsAgree(tmdb.counts, otherCounts, ref.season) && direct) return direct;
 
   // The layouts differ somewhere before this episode. The day it aired is
   // the one thing both sides agree on, when both know it.
@@ -144,7 +179,7 @@ export function toOtherNumbering<T extends EpisodeRef>(
     if (sameDay.length > 1 && direct && sameDay.includes(direct)) return direct;
   }
 
-  let position = ref.episode;
+  let position = placeInSeason(tmdb, ref.season, ref.episode);
   for (let s = 1; s < ref.season; s++) position += tmdb.counts[s] ?? 0;
   return inShowOrder(other)[position - 1] ?? null;
 }
@@ -168,6 +203,7 @@ export function seasonInOtherNumbering<T extends EpisodeRef>(
   if (!tmdb || season <= 0) return same();
   const otherCounts = countsOf(other);
   if (
+    !numberedAcrossShow(tmdb, season) &&
     priorSeasonsAgree(tmdb.counts, otherCounts, season) &&
     (tmdb.counts[season] ?? 0) <= (otherCounts[season] ?? 0) &&
     !titlesDisagree(tmdb, other, season)
@@ -175,7 +211,7 @@ export function seasonInOtherNumbering<T extends EpisodeRef>(
     return same();
   }
   const out: { tmdbEpisode: number; other: T }[] = [];
-  for (let e = 1; e <= (tmdb.counts[season] ?? 0); e++) {
+  for (const e of tmdbNumbers(tmdb, season)) {
     const hit = toOtherNumbering(tmdb, other, { season, episode: e });
     if (hit) out.push({ tmdbEpisode: e, other: hit });
   }
