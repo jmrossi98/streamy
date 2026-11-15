@@ -11,8 +11,17 @@
  * both ends at once, which a form here could only half do.
  */
 import { filledValues, iptvUpdateMessage, isServerUrl, maskSecret, maskUsername, providerAlert, type CredentialAlert } from "./credentialRules";
-import { addIptvLine, listIptvAccounts, removeIptvLine, updateIptvAccount } from "./dispatcharr";
-import { isLineLogin, lineAlert, parseLineExpiryInput, withManualExpiry, type IptvLine } from "./iptvLineRules";
+import { addIptvLine, editIptvLine, listIptvAccounts, removeIptvLine, updateIptvAccount } from "./dispatcharr";
+import {
+  isLineLogin,
+  lineAlert,
+  normalizeServerUrl,
+  parseBackupUrls,
+  parseLineExpiryInput,
+  withManualExpiry,
+  type IptvLine,
+} from "./iptvLineRules";
+import { lineLabel } from "./subscriptionRowRules";
 import { prisma } from "./db";
 import { getAutomaticRenewals } from "./renewals";
 import { invalidateCache } from "./ttlCache";
@@ -126,8 +135,29 @@ export async function listCredentialTargets(): Promise<CredentialTarget[]> {
 export type UpdateResult = { ok: boolean; message: string; changed: string[] };
 
 /**
- * Adds another login on the same IPTV panel as a line. Viewers are spread
- * across lines by Dispatcharr and never pick one -- see iptvLineRules.ts.
+ * A typed server and backups, checked: undefined server means "leave it",
+ * null means "the provider's own". The error names what could not be read.
+ */
+function readLineUrls(values: Record<string, unknown>): { serverUrl?: string | null; backupUrls?: string[]; error?: string } {
+  const out: { serverUrl?: string | null; backupUrls?: string[]; error?: string } = {};
+  if (typeof values.serverUrl === "string") {
+    const typed = values.serverUrl.trim();
+    out.serverUrl = typed ? normalizeServerUrl(typed) : null;
+    if (typed && !out.serverUrl) return { error: `"${typed}" is not a server address (http://host or http://host:port).` };
+  }
+  if (typeof values.backupUrls === "string") {
+    const { urls, bad } = parseBackupUrls(values.backupUrls, out.serverUrl);
+    if (bad.length > 0) return { error: `Not a server address: ${bad.join(", ")}` };
+    out.backupUrls = urls;
+  }
+  return out;
+}
+
+/**
+ * Adds another login on the same IPTV provider as a line, optionally on its
+ * own server and with backups. Viewers are spread across lines by
+ * Dispatcharr and never pick one -- see iptvLineRules.ts. With every line
+ * removed, the login becomes the main one again.
  */
 export async function addCredentialLine(key: string, values: Record<string, unknown>): Promise<UpdateResult> {
   const [kind, id] = key.split(":");
@@ -135,16 +165,53 @@ export async function addCredentialLine(key: string, values: Record<string, unkn
   const v = filledValues(values, ["username", "password"]);
   if (!v.username || !v.password) return { ok: false, message: "Username and password required.", changed: [] };
   if (!isLineLogin(v.username) || !isLineLogin(v.password)) return { ok: false, message: "That doesn't look like a panel login.", changed: [] };
-  const line = await addIptvLine(Number(id), v.username, v.password);
-  if (!line) return { ok: false, message: "Dispatcharr did not accept the line.", changed: [] };
+  const urls = readLineUrls(values);
+  if (urls.error) return { ok: false, message: urls.error, changed: [] };
+  const added = await addIptvLine(Number(id), v.username, v.password, { serverUrl: urls.serverUrl, backupUrls: urls.backupUrls });
+  if (!added) return { ok: false, message: "Dispatcharr did not accept the line.", changed: [] };
   invalidateCache("renewals");
+  const { line } = added;
   const alert = lineAlert(line);
+  const what = added.becameMain ? "Main login set" : `${line.name} added`;
   return {
     ok: true,
     changed: ["line"],
     message: alert
-      ? `${line.name} added, but the panel says: ${alert.text}`
-      : `${line.name} added. Viewers use it automatically whenever the other lines are busy.`,
+      ? `${what}, but the panel says: ${alert.text}`
+      : added.becameMain
+        ? `${what}${added.update ? ` (${iptvUpdateMessage(added.update)})` : ""}. Live TV can tune again.`
+        : `${what}. Viewers use it automatically whenever the other lines are busy.`,
+  };
+}
+
+/**
+ * Changes one line: its login (blank fields keep what it has), its server and
+ * its backups. The main login's login or server changing refreshes the
+ * playlist and moves channels over, as replacing a login always has.
+ */
+export async function editCredentialLine(key: string, lineId: number, values: Record<string, unknown>): Promise<UpdateResult> {
+  const [kind, id] = key.split(":");
+  if (kind !== "iptv" || !Number.isInteger(lineId)) return { ok: false, message: "No such line.", changed: [] };
+  const login = filledValues(values, ["username", "password"]);
+  if ((login.username && !isLineLogin(login.username)) || (login.password && !isLineLogin(login.password))) {
+    return { ok: false, message: "That doesn't look like a panel login.", changed: [] };
+  }
+  const urls = readLineUrls(values);
+  if (urls.error) return { ok: false, message: urls.error, changed: [] };
+  const r = await editIptvLine(Number(id), lineId, { ...login, serverUrl: urls.serverUrl, backupUrls: urls.backupUrls });
+  if (!r.ok) return { ok: false, message: r.message, changed: [] };
+  invalidateCache("renewals");
+  const changed = [...Object.keys(login), ...(urls.serverUrl !== undefined ? ["server"] : []), ...(urls.backupUrls ? ["backups"] : [])];
+  const backups = r.line.backupUrls?.length ?? 0;
+  const where = r.line.serverUrl ? new URL(r.line.serverUrl).host : "the provider's server";
+  const alert = lineAlert(r.line);
+  return {
+    ok: true,
+    changed,
+    message:
+      `${lineLabel(r.line)} saved: ${where}, ${backups} backup${backups === 1 ? "" : "s"}.` +
+      (r.update ? ` ${iptvUpdateMessage(r.update)}` : "") +
+      (alert ? ` The panel says: ${alert.text}` : ""),
   };
 }
 
@@ -173,13 +240,24 @@ export async function setLineExpiry(key: string, lineId: number, lineName: strin
   return { ok: true, changed: ["expiry"], message: `${lineName} now expires ${pretty}.` };
 }
 
-/** Removes an extra line. The account's own login stays. */
+/**
+ * Removes a line -- any of them. The main login's place is taken by the next
+ * line's login; the last line is switched off, and Live TV then says the
+ * provider has no active lines (removeIptvLine).
+ */
 export async function removeCredentialLine(key: string, lineId: number): Promise<UpdateResult> {
   const [kind, id] = key.split(":");
   if (kind !== "iptv" || !Number.isInteger(lineId)) return { ok: false, message: "No such line.", changed: [] };
-  const ok = await removeIptvLine(Number(id), lineId);
-  if (ok) invalidateCache("renewals");
-  return ok ? { ok, changed: ["line"], message: "Line removed." } : { ok, changed: [], message: "Dispatcharr would not remove that line." };
+  const r = await removeIptvLine(Number(id), lineId);
+  if (!r.ok) return { ok: false, changed: [], message: r.message };
+  invalidateCache("renewals");
+  const message =
+    r.outcome === "promoted"
+      ? `Main login removed; ${r.promoted}'s login is the main one now.${r.update ? ` ${iptvUpdateMessage(r.update)}` : ""}`
+      : r.outcome === "switched-off"
+        ? "Last line removed. Live TV shows this provider as having no active lines until one is added."
+        : "Line removed.";
+  return { ok: true, changed: ["line"], message };
 }
 
 /** Saves new values for one target. Blank fields are left as they are. */

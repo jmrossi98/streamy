@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSession, requireAdmin } from "@/lib/auth";
-import { addCredentialLine, listCredentialTargets, removeCredentialLine, setLineExpiry, updateCredential } from "@/lib/credentials";
+import {
+  addCredentialLine,
+  editCredentialLine,
+  listCredentialTargets,
+  removeCredentialLine,
+  setLineExpiry,
+  updateCredential,
+} from "@/lib/credentials";
 import { logAudit } from "@/lib/auditLog";
 
 /**
@@ -29,12 +36,14 @@ export async function POST(request: Request) {
   const values = body.values && typeof body.values === "object" ? (body.values as Record<string, unknown>) : {};
   if (!key) return NextResponse.json({ ok: false, message: "key required" }, { status: 400 });
 
-  // "add-line" / "remove-line" are an IPTV provider's extra logins (see
+  // "add-line" / "edit-line" / "remove-line" are an IPTV provider's lines (see
   // iptvLineRules.ts); anything else is a plain replacement of a login or key.
   const action = typeof body.action === "string" ? body.action : "update";
   const result =
     action === "add-line"
       ? await addCredentialLine(key, values)
+      : action === "edit-line"
+        ? await editCredentialLine(key, Number(body.lineId), values)
       : action === "remove-line"
         ? await removeCredentialLine(key, Number(body.lineId))
         : action === "line-expiry"

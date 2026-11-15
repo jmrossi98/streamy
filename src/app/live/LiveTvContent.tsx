@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import type { ProviderState } from "@/lib/providerAvailability";
 import { useSearchParams } from "next/navigation";
 import { CHANNEL_CATEGORIES, classifyChannel, type LiveChannel } from "@/lib/liveTv";
 import { looksLikePlaceholder } from "@/lib/liveTimeline";
@@ -44,7 +45,7 @@ type Props = {
   /** Channel name -> a logo to use when the channel has none of its own. */
   logoFallbacks: Record<string, string>;
   /** Channel name -> its provider's availability: "full" = every line in use, "down" = offline. */
-  providerStateByChannel: Record<string, "ok" | "full" | "down">;
+  providerStateByChannel: Record<string, ProviderState>;
   /** guideKey(channel name) -> EPG listings for the Guide grid. Empty off the Guide tab. */
   guidePrograms: Record<string, GuideProgram[]>;
   /** Today's schedule from the server render, so "Live now" needs no fetch of its own; null if it wasn't ready. */

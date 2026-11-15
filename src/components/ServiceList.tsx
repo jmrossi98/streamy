@@ -183,7 +183,9 @@ export function ServiceList({ rows, autoRenewals }: { rows: SpendRow[]; autoRene
                 <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "info" })} disabled={busy}>
                   Edit
                 </Button>
-                {c && (
+                {/* Not for an IPTV provider: each of its lines has its own Edit
+                    (IptvLines), and this only ever changed the main login. */}
+                {c && !c.lines && (
                   <Button size="xs" variant="ghost" onClick={() => setOpen({ key: item.key, mode: "login" })} disabled={busy}>
                     {c.fields.some((f) => f.name === "apiKey") ? "Update key" : "Update login"}
                   </Button>

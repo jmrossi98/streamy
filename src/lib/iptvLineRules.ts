@@ -38,7 +38,71 @@ export type IptvLine = {
   manualExpiresUtc?: string | null;
   /** The panel's own word for the line: "Active", "Expired", "Banned"... */
   status: string | null;
+  /**
+   * The server this line logs in to ("http://host:port"). The main login's is
+   * the provider's; an extra line's is null when it uses the provider's too.
+   */
+  serverUrl?: string | null;
+  /** Servers to move this line to, in order, when its own stops answering (BACKUP_URLS_KEY). */
+  backupUrls?: string[];
 };
+
+/**
+ * Where a line's backup servers are kept: in its own Dispatcharr profile's
+ * custom properties, beside what the panel reports about it. A provider hands
+ * out a few domains per login and retires them without notice; mediabox's
+ * iptv-credentials-sync.py checks each line's server every ten minutes and,
+ * when it stops accepting the login, moves the line to the first backup that
+ * does (and the old server to the end of the list).
+ */
+export const BACKUP_URLS_KEY = "streamy_backup_urls";
+
+/** At most this many backups per line: each is a login check when the line's server is down. */
+export const MAX_BACKUP_URLS = 8;
+
+/**
+ * "http://host[:port]" from what was typed, or null if it is not an http(s)
+ * address. A bare host means http, which is what panels hand out. Any path is
+ * dropped: a line's server is where "/live/<user>/<pass>/" goes.
+ */
+export function normalizeServerUrl(raw: string | null | undefined): string | null {
+  const v = (raw ?? "").trim();
+  if (!v) return null;
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`);
+    if ((u.protocol !== "http:" && u.protocol !== "https:") || !u.hostname || u.username || u.password) return null;
+    return `${u.protocol}//${u.host}`.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Backup servers typed one per line (or separated by commas or spaces):
+ * normalized, without duplicates or the line's own server, and what could
+ * not be read as a server.
+ */
+export function parseBackupUrls(text: string, own?: string | null): { urls: string[]; bad: string[] } {
+  const urls: string[] = [];
+  const bad: string[] = [];
+  const self = normalizeServerUrl(own);
+  for (const part of text.split(/[\s,]+/).filter(Boolean)) {
+    const url = normalizeServerUrl(part);
+    if (!url) bad.push(part);
+    else if (url !== self && !urls.includes(url)) urls.push(url);
+  }
+  return { urls: urls.slice(0, MAX_BACKUP_URLS), bad };
+}
+
+/** A profile's stored backups, whatever shape the custom properties are in. */
+export function storedBackupUrls(customProperties: unknown): string[] {
+  const raw = (customProperties as Record<string, unknown> | null | undefined)?.[BACKUP_URLS_KEY];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((u): u is string => typeof u === "string")
+    .map((u) => normalizeServerUrl(u))
+    .filter((u): u is string => !!u);
+}
 
 /**
  * Which expiry a line shows: the typed date, unless the panel reports a later
@@ -97,12 +161,45 @@ export function isLineLogin(value: string): boolean {
  * "\g<base>", which no following character can change.
  */
 export const LINE_URL_GROUP = "base";
+/** The group a line with its own server keeps: only the kind of stream ("live/"), not the host. */
+export const LINE_KIND_GROUP = "kind";
 
-export function lineProfilePatterns(username: string, password: string): { search: string; replace: string } {
+/**
+ * With `serverUrl`, the rewrite swaps the server as well as the login, so the
+ * line logs in somewhere other than the provider's main domain. Dispatcharr
+ * takes a line's server from the rewritten URL (apps/m3u/credentials.py
+ * returns its scheme and host), for playback and for reading the line's
+ * expiry alike.
+ */
+export function lineProfilePatterns(
+  username: string,
+  password: string,
+  serverUrl?: string | null
+): { search: string; replace: string } {
+  if (serverUrl) {
+    return {
+      search: `^https?://[^/]+/(?<${LINE_KIND_GROUP}>(?:(?:live|movie|series|timeshift)/)?)[^/]+/[^/]+/`,
+      replace: `${serverUrl}/$<${LINE_KIND_GROUP}>${username}/${password}/`,
+    };
+  }
   return {
     search: `^(?<${LINE_URL_GROUP}>https?://[^/]+/(?:(?:live|movie|series|timeshift)/)?)[^/]+/[^/]+/`,
     replace: `$<${LINE_URL_GROUP}>${username}/${password}/`,
   };
+}
+
+/**
+ * The login and server a line's rewrite carries, read back from its replace
+ * pattern -- the named forms above and the old positional "$1" form. Null for
+ * anything else (the main login's "$1" identity rewrite included). Server-side
+ * only: the result holds the password.
+ */
+export function lineLoginOf(replace: string | null | undefined): { serverUrl: string | null; username: string; password: string } | null {
+  const r = replace ?? "";
+  const own = /^(https?:\/\/[^/]+)\/\$<\w+>([^/]+)\/([^/]+)\/$/.exec(r);
+  if (own) return { serverUrl: normalizeServerUrl(own[1]), username: own[2], password: own[3] };
+  const kept = /^\$(?:<\w+>|\d)([^/]+)\/([^/]+)\/$/.exec(r);
+  return kept ? { serverUrl: null, username: kept[1], password: kept[2] } : null;
 }
 
 /**
@@ -133,8 +230,9 @@ export function isLineDead(line: IptvLine): boolean {
   return line.expiresUtc != null && Date.parse(line.expiresUtc) < Date.now();
 }
 
-/** "2 lines · 2 connections" / "1 line · 1 connection". */
+/** "2 lines · 2 connections" / "1 line · 1 connection" / "No active lines". */
 export function lineSummary(lines: IptvLine[]): string {
+  if (!lines.some((l) => l.active)) return "No active lines";
   const working = lines.filter((l) => l.active && !isLineDead(l)).length;
   const capacity = lineCapacity(lines);
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

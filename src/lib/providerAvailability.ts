@@ -11,7 +11,12 @@
 
 import { isLineDead, type IptvLine } from "./iptvLineRules";
 
-export type ProviderState = "ok" | "full" | "down";
+/**
+ * "nolines": every line of the provider has been removed (Jake, 2026-11-15:
+ * "there could be a time where i need to remove all of them"), so there is
+ * nothing to tune with until one is added again.
+ */
+export type ProviderState = "ok" | "full" | "down" | "nolines";
 
 export type ProviderAvailability = {
   /** Lines not currently in use. */
@@ -39,7 +44,8 @@ export function providerAvailability(
     const capacity = working.reduce((n, l) => n + Math.max(0, l.maxStreams || 0), 0);
     const free = working.reduce((n, l) => n + Math.max(0, (l.maxStreams || 0) - (l.viewers || 0)), 0);
     const down = expired.has(key) || working.length === 0;
-    out[key] = { free, capacity, state: down ? "down" : capacity > 0 && free <= 0 ? "full" : "ok" };
+    const state = !a.lines.some((l) => l.active) ? "nolines" : down ? "down" : capacity > 0 && free <= 0 ? "full" : "ok";
+    out[key] = { free, capacity, state };
   }
   return out;
 }
@@ -57,5 +63,6 @@ export function channelProviderState(
 export function unavailableLabel(state: ProviderState | null): string | null {
   if (state === "full") return "Lines in use";
   if (state === "down") return "Provider offline";
+  if (state === "nolines") return "No active provider lines";
   return null;
 }

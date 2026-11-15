@@ -15,7 +15,7 @@ import {
 import { getChannelInfo, getMappedChannelPrograms, listIptvAccountsCached, type ChannelInfo } from "@/lib/dispatcharr";
 import { getAutomaticRenewals } from "@/lib/renewals";
 import { providerAlert } from "@/lib/credentialRules";
-import { channelProviderState, providerAvailability } from "@/lib/providerAvailability";
+import { channelProviderState, providerAvailability, type ProviderState } from "@/lib/providerAvailability";
 import { fixtureGuidePrograms, trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getLiveScheduleForRender } from "@/lib/liveSchedule";
@@ -79,7 +79,7 @@ export default async function LivePage({
   // Which channels can't be tuned right now because their provider's lines are
   // all in use (or the provider is offline), so the grid can say so instead of
   // opening into a spinner.
-  const providerPromise: Promise<Record<string, "ok" | "full" | "down">> = Promise.all([
+  const providerPromise: Promise<Record<string, ProviderState>> = Promise.all([
     timed("listIptvAccounts", listIptvAccountsCached()),
     timed("renewals", getAutomaticRenewals().catch(() => [])),
     infoPromise,
@@ -89,7 +89,7 @@ export default async function LivePage({
         renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
       );
       const availability = providerAvailability(accounts, expired);
-      const out: Record<string, "ok" | "full" | "down"> = {};
+      const out: Record<string, ProviderState> = {};
       for (const c of channels) {
         const state = channelProviderState(info[c.name]?.provider, availability);
         if (state) out[c.name] = state;
