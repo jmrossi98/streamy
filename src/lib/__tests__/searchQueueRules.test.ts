@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countBlockingSearches, planSearches, seriesRefreshPending, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
+import { countBlockingSearches, coversWholeSeason, planSearches, seriesRefreshPending, isQueueStuck, chooseNextSearch, type QueuedSearch } from "../searchQueueRules";
 
 /** Position-ordered, as the queue hands them over. */
 function row(seriesId: number, episodeId: number): QueuedSearch {
@@ -189,33 +189,55 @@ describe("seriesRefreshPending", () => {
 
 describe("planSearches", () => {
   const ep = (episodeId: number, seriesId: number, seasonNumber: number) => ({ episodeId, seriesId, seasonNumber });
+  const whole = new Set(["7:1", "7:2", "1:1", "2:1", "3:1", "4:1", "5:0", "7:0"]);
 
-  it("turns three or more due episodes of a season into one season search", () => {
-    expect(planSearches([ep(1, 7, 1), ep(2, 7, 1), ep(3, 7, 1)], 3)).toEqual([
+  it("turns three or more due episodes of a wholly wanted season into one season search", () => {
+    expect(planSearches([ep(1, 7, 1), ep(2, 7, 1), ep(3, 7, 1)], 3, whole)).toEqual([
       { kind: "season", seriesId: 7, seasonNumber: 1, episodeIds: [1, 2, 3] },
     ]);
   });
 
+  it("searches part of a season by episode: a season search would grab all of it", () => {
+    expect(planSearches([ep(1, 7, 1), ep(2, 7, 1), ep(3, 7, 1)], 3, new Set())).toEqual([
+      { kind: "episodes", seriesId: 7, episodeIds: [1, 2, 3] },
+    ]);
+  });
+
   it("sends a couple of stray episodes as one episode search", () => {
-    expect(planSearches([ep(1, 7, 1), ep(9, 7, 2)], 3)).toEqual([
+    expect(planSearches([ep(1, 7, 1), ep(9, 7, 2)], 3, whole)).toEqual([
       { kind: "episodes", seriesId: 7, episodeIds: [1] },
       { kind: "episodes", seriesId: 7, episodeIds: [9] },
     ]);
   });
 
   it("never plans a season search for specials", () => {
-    expect(planSearches([ep(1, 7, 0), ep(2, 7, 0), ep(3, 7, 0)], 3)[0].kind).toBe("episodes");
+    expect(planSearches([ep(1, 7, 0), ep(2, 7, 0), ep(3, 7, 0)], 3, whole)[0].kind).toBe("episodes");
   });
 
   it("respects the free slots, oldest request first", () => {
-    const plan = planSearches([ep(1, 1, 1), ep(2, 2, 1), ep(3, 3, 1), ep(4, 4, 1)], 2);
+    const plan = planSearches([ep(1, 1, 1), ep(2, 2, 1), ep(3, 3, 1), ep(4, 4, 1)], 2, whole);
     expect(plan.map((p) => p.seriesId)).toEqual([1, 2]);
-    expect(planSearches([ep(1, 1, 1)], 0)).toEqual([]);
+    expect(planSearches([ep(1, 1, 1)], 0, whole)).toEqual([]);
   });
 
   it("chunks a long list of scattered episodes", () => {
     const many = Array.from({ length: 12 }, (_, i) => ep(i + 1, 5, 0));
-    const plan = planSearches(many, 3);
+    const plan = planSearches(many, 3, whole);
     expect(plan.map((p) => p.episodeIds.length)).toEqual([10, 2]);
+  });
+});
+
+describe("coversWholeSeason", () => {
+  const e = (id: number, hasFile: boolean, airDate: string | null = "2020-01-01") => ({ id, hasFile, airDate });
+
+  it("is every aired episode not on disk", () => {
+    const season = [e(1, true), e(2, false), e(3, false)];
+    expect(coversWholeSeason(season, [2, 3], "2026-11-15")).toBe(true);
+    expect(coversWholeSeason(season, [2], "2026-11-15")).toBe(false);
+  });
+
+  it("does not wait on episodes that have not aired", () => {
+    const season = [e(1, false), e(2, false, "2027-01-01"), e(3, false, null)];
+    expect(coversWholeSeason(season, [1], "2026-11-15")).toBe(true);
   });
 });
