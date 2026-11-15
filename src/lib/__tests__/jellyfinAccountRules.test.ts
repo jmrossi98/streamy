@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { passwordPushNeeded } from "../jellyfinAccountRules";
+import { jellyfinPasswordIsStreamys, passwordPushNeeded } from "../jellyfinAccountRules";
 
 const JF = "jf-user-1";
 const day = (d: number) => new Date(Date.UTC(2026, 9, d));
@@ -22,5 +22,23 @@ describe("passwordPushNeeded", () => {
 
   it("pushes after a Streamy password change", () => {
     expect(passwordPushNeeded({ jellyfinUserId: JF, jellyfinPasswordSyncedAt: day(10), passwordChangedAt: day(20) }, JF)).toBe(true);
+  });
+});
+
+describe("jellyfinPasswordIsStreamys (the Account page's Jellyfin card)", () => {
+  it("is true once the pair is linked and pushed, with no Streamy change since", () => {
+    expect(jellyfinPasswordIsStreamys({ jellyfinUserId: JF, jellyfinPasswordSyncedAt: day(20), passwordChangedAt: day(10) })).toBe(true);
+    expect(jellyfinPasswordIsStreamys({ jellyfinUserId: JF, jellyfinPasswordSyncedAt: day(20), passwordChangedAt: null })).toBe(true);
+  });
+
+  it("is false before the first push or link, so the card says to sign in again", () => {
+    expect(jellyfinPasswordIsStreamys(null)).toBe(false);
+    expect(jellyfinPasswordIsStreamys({ jellyfinUserId: null, jellyfinPasswordSyncedAt: null, passwordChangedAt: null })).toBe(false);
+    // Linked by name (the owner's existing account) but never pushed.
+    expect(jellyfinPasswordIsStreamys({ jellyfinUserId: JF, jellyfinPasswordSyncedAt: null, passwordChangedAt: null })).toBe(false);
+  });
+
+  it("is false after a Streamy password change until the next sign-in pushes it", () => {
+    expect(jellyfinPasswordIsStreamys({ jellyfinUserId: JF, jellyfinPasswordSyncedAt: day(10), passwordChangedAt: day(20) })).toBe(false);
   });
 });
