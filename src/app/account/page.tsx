@@ -2,11 +2,14 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
+import { JellyfinAppCard } from "@/components/JellyfinAppCard";
 import { WatchHistory } from "@/components/WatchHistory";
+import { JELLYFIN_APP_ADDRESS_DEFAULT, jellyfinPasswordIsStreamys } from "@/lib/jellyfinAccountRules";
 
 /**
- * Account settings: the password, and the person's own watch history. Open to
- * every approved account, each seeing only its own.
+ * Account settings: the password, how to sign in to the Jellyfin apps, and the
+ * person's own watch history. Open to every approved account, each seeing only
+ * its own.
  */
 export default async function AccountPage() {
   const session = await getSession();
@@ -16,9 +19,17 @@ export default async function AccountPage() {
   // shown to the user should match the one the server will actually enforce.
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { name: true, approved: true, isAdmin: true },
+    select: {
+      name: true,
+      approved: true,
+      isAdmin: true,
+      jellyfinUserId: true,
+      jellyfinPasswordSyncedAt: true,
+      passwordChangedAt: true,
+    },
   });
   if (!user?.approved) redirect("/login");
+  const jellyfinAddress = process.env.JELLYFIN_PUBLIC_URL?.trim() || JELLYFIN_APP_ADDRESS_DEFAULT;
 
   return (
     <div className="min-h-screen max-w-lg mx-auto px-4 sm:px-6 pt-24 pb-16 space-y-8">
@@ -36,6 +47,8 @@ export default async function AccountPage() {
           <ChangePasswordForm isAdmin={user.isAdmin} />
         </div>
       </section>
+
+      <JellyfinAppCard address={jellyfinAddress} username={user.name} passwordReady={jellyfinPasswordIsStreamys(user)} />
 
       <section>
         <h2 className="mb-1 text-lg font-semibold text-white">Watch history</h2>

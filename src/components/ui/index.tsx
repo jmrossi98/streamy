@@ -20,6 +20,7 @@ import Link from "next/link";
 import { PanelBoundary } from "@/components/PanelBoundary";
 import { TabPending } from "./TabPending";
 export { Artwork } from "./Artwork";
+export { CopyField } from "./CopyField";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");

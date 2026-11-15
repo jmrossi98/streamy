@@ -1,34 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui";
+import { Button, CopyField } from "@/components/ui";
 import type { AppleNotesStatus } from "@/lib/appleNotesRules";
 import { relativeAge } from "@/lib/chatSessionRules";
-
-function CopyField({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="shrink-0 text-white/50">{label}</span>
-      <code className="min-w-0 flex-1 truncate rounded bg-black/40 px-2 py-1 text-white/85">{secret ? "•".repeat(16) : value}</code>
-      <Button
-        size="xs"
-        variant="secondary"
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(value);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          } catch {
-            // Clipboard refused; the value is on screen to copy by hand.
-          }
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </Button>
-    </div>
-  );
-}
 
 function statusLine(s: AppleNotesStatus): string {
   if (!s.receivedAt) return "No sync yet. Build and run the Shortcut once (step 2).";
