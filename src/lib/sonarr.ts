@@ -13,7 +13,10 @@ import { episodeSearchesToCancel, seriesSearchesToCancel, type ArrCommand } from
 import { earliestDownloaded } from "./playStartRules";
 import {
   countBlockingSearches,
+  coversWholeSeason,
   planSearches,
+  SEASON_SEARCH_MIN_EPISODES,
+  seasonKey,
   seriesRefreshPending,
   type SearchCandidate,
   type SonarrCommand,
@@ -1364,6 +1367,40 @@ async function episodesInQueue(): Promise<Set<number>> {
   }
 }
 
+/**
+ * The seasons among these candidates that are wanted whole -- every episode
+ * that has aired and is not on disk is queued (coversWholeSeason) -- and so
+ * may be searched with one SeasonSearch. Only groups big enough for one are
+ * read; a season that cannot be read is searched by episode.
+ */
+async function wholeSeasonsAmong(candidates: SearchCandidate[], queuedIds: number[]): Promise<Set<string>> {
+  const groups = new Map<string, { seriesId: number; seasonNumber: number; size: number }>();
+  for (const c of candidates) {
+    if (c.seasonNumber <= 0) continue;
+    const key = seasonKey(c.seriesId, c.seasonNumber);
+    const g = groups.get(key) ?? { seriesId: c.seriesId, seasonNumber: c.seasonNumber, size: 0 };
+    g.size += 1;
+    groups.set(key, g);
+  }
+  const wanted = new Set([...queuedIds, ...candidates.map((c) => c.episodeId)]);
+  const out = new Set<string>();
+  await Promise.all(
+    [...groups]
+      .filter(([, g]) => g.size >= SEASON_SEARCH_MIN_EPISODES)
+      .map(async ([key, g]) => {
+        try {
+          const season = await sonarrFetch<SonarrEpisode[]>(
+            `/api/v3/episode?seriesId=${g.seriesId}&seasonNumber=${g.seasonNumber}`
+          );
+          if (coversWholeSeason(season, wanted)) out.add(key);
+        } catch (err) {
+          console.error(`[sonarr] could not read season ${key}; searching it by episode:`, err);
+        }
+      })
+  );
+  return out;
+}
+
 /** Kicks off a search for specific episodes. */
 export async function searchSonarrEpisodes(episodeIds: number[]): Promise<void> {
   if (!isSonarrConfigured() || episodeIds.length === 0) return;
@@ -1984,7 +2021,8 @@ async function drainEpisodeSearches(deadline: number | null = null): Promise<voi
       // Grouped and run side by side, not one episode at a time in request
       // order -- see planSearches. Order stopped mattering on 2026-09-28;
       // time to ready is what counts.
-      const plan = planSearches(candidates, MAX_OUTSTANDING_SEARCHES - outstanding);
+      const wholeSeasons = await wholeSeasonsAmong(candidates, await queue.pendingSearchIds());
+      const plan = planSearches(candidates, MAX_OUTSTANDING_SEARCHES - outstanding, wholeSeasons);
       const results = await Promise.all(
         plan.map(async (search) => {
           try {
@@ -2490,11 +2528,21 @@ async function searchSeason(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   // TMDB's season in Sonarr's numbering, which can span several of
   // Sonarr's seasons: Frieren's one TMDB season is Sonarr's S1 and S2.
-  const inOrder = tmdbSeasonInSonarr(tmdb, allEpisodes, seasonNumber);
+  //
+  // Extras (Sonarr's season 0) only when Extras is the season asked for.
+  // TMDB files some of TVDB's specials inside regular seasons -- SpongeBob's
+  // season 3 holds "Party Pooper Pants", TVDB's S00E02 -- so asking for
+  // season 3 asked for those too, and the SeasonSearch below then went out
+  // for season 0 and grabbed 82 of the show's 118 specials (2026-11-15).
+  const mapped = tmdbSeasonInSonarr(tmdb, allEpisodes, seasonNumber);
+  const inOrder = seasonNumber === 0 ? mapped : mapped.filter((e) => e.seasonNumber !== 0);
   const sonarrSeasons = [...new Set(inOrder.map((e) => e.seasonNumber))];
   if (sonarrSeasons.length === 0) sonarrSeasons.push(seasonNumber);
 
-  await monitorSonarrSeasons(seriesId, sonarrSeasons);
+  // Never season 0 itself: Extras asked for are their episodes, monitored
+  // below, and a monitored season 0 would put every special into each later
+  // whole-series search.
+  await monitorSonarrSeasons(seriesId, sonarrSeasons.filter((s) => s !== 0));
 
   const ids = inOrder.map((e) => e.id);
   // An error, not a silent ok. Reporting success for a request that queued
@@ -2527,13 +2575,25 @@ async function searchSeason(
   // first, which gets episode 1 grabbed in ~147s rather than waiting on a
   // 208s batch. The batch then fetches the rest in one go, and the drain
   // skips anything the batch already has in flight.
+  //
+  // Only a Sonarr season asked for whole goes out as a SeasonSearch: sent from
+  // here it counts as started by hand, and Sonarr then grabs every episode of
+  // the season, monitored or not (coversWholeSeason). The episodes of a
+  // season only partly asked for -- and Extras -- are searched one by one.
+  const requested = new Set(ids);
+  const wholeSeasons = sonarrSeasons.filter(
+    (s) => s > 0 && coversWholeSeason(allEpisodes.filter((e) => e.seasonNumber === s), requested)
+  );
   const lead = ids.slice(0, LEAD_EPISODES);
   const rest = ids.slice(LEAD_EPISODES);
-  await searchEpisodesInOrder(seriesId, lead);
-  await recordBatchedEpisodes(seriesId, rest);
+  const seasonOf = new Map(inOrder.map((e) => [e.id, e.seasonNumber]));
+  const batched = rest.filter((id) => wholeSeasons.includes(seasonOf.get(id) ?? -1));
+  const oneByOne = rest.filter((id) => !wholeSeasons.includes(seasonOf.get(id) ?? -1));
+  await searchEpisodesInOrder(seriesId, [...lead, ...oneByOne]);
+  await recordBatchedEpisodes(seriesId, batched);
 
-  for (const sonarrSeason of sonarrSeasons) {
-    if (rest.length > 0) {
+  for (const sonarrSeason of wholeSeasons) {
+    if (batched.length > 0) {
       // Fire-and-forget, and deliberately not part of the ordered queue: this
       // is one command for the whole season, and waiting on it would make the
       // request block for the length of a full search.

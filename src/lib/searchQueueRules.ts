@@ -187,6 +187,33 @@ export type PlannedSearch =
   | { kind: "season"; seriesId: number; seasonNumber: number; episodeIds: number[] }
   | { kind: "episodes"; seriesId: number; episodeIds: number[] };
 
+/** "seriesId:seasonNumber", the key a whole-season set is built of. */
+export function seasonKey(seriesId: number, seasonNumber: number): string {
+  return `${seriesId}:${seasonNumber}`;
+}
+
+/**
+ * Whether `wanted` covers every episode of a season that has aired and is
+ * not on disk -- the only case a SeasonSearch is safe for. Pure.
+ *
+ * A SeasonSearch that Streamy sends counts as started by hand, and Sonarr
+ * then searches every episode of the season, monitored or not, and grabs
+ * whatever it finds. Asking for SpongeBob's season 3 (TMDB) mapped a handful
+ * of its episodes onto TVDB's specials, and the SeasonSearch that followed
+ * for season 0 grabbed 82 of its 118 specials, re-grabbing each one that
+ * failed for two hours after it was cancelled (2026-11-15). So a season is
+ * searched whole only when the whole of it is wanted; otherwise its
+ * episodes are searched one by one.
+ */
+export function coversWholeSeason(
+  seasonEpisodes: { id: number; hasFile: boolean; airDate?: string | null }[],
+  wanted: Iterable<number>,
+  today = new Date().toISOString().slice(0, 10)
+): boolean {
+  const ids = new Set(wanted);
+  return seasonEpisodes.every((e) => e.hasFile || !e.airDate || e.airDate > today || ids.has(e.id));
+}
+
 /**
  * Turns due episodes into at most `slots` Sonarr search commands.
  *
@@ -197,11 +224,16 @@ export type PlannedSearch =
  * one SeasonSearch, the rest one EpisodeSearch listing them all. Groups keep
  * the order of their oldest request, so the earliest ask still goes first.
  */
-export function planSearches(candidates: SearchCandidate[], slots: number): PlannedSearch[] {
+export function planSearches(
+  candidates: SearchCandidate[],
+  slots: number,
+  /** Seasons (seasonKey) wholly wanted -- see coversWholeSeason. Any other is searched by episode. */
+  wholeSeasons: ReadonlySet<string>
+): PlannedSearch[] {
   if (slots <= 0) return [];
   const groups = new Map<string, SearchCandidate[]>();
   for (const c of candidates) {
-    const key = `${c.seriesId}:${c.seasonNumber}`;
+    const key = seasonKey(c.seriesId, c.seasonNumber);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(c);
   }
@@ -209,8 +241,13 @@ export function planSearches(candidates: SearchCandidate[], slots: number): Plan
   for (const group of groups.values()) {
     const { seriesId, seasonNumber } = group[0];
     const episodeIds = [...new Set(group.map((c) => c.episodeId))];
-    // Season 0 is specials: a "season search" there matches nothing useful.
-    if (episodeIds.length >= SEASON_SEARCH_MIN_EPISODES && seasonNumber > 0) {
+    // Season 0 is specials: a "season search" there matches nothing useful,
+    // and it grabs every one of them (coversWholeSeason).
+    if (
+      episodeIds.length >= SEASON_SEARCH_MIN_EPISODES &&
+      seasonNumber > 0 &&
+      wholeSeasons.has(seasonKey(seriesId, seasonNumber))
+    ) {
       plan.push({ kind: "season", seriesId, seasonNumber, episodeIds });
     } else {
       for (let i = 0; i < episodeIds.length; i += MAX_EPISODES_PER_COMMAND) {
