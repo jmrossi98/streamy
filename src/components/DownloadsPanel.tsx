@@ -22,8 +22,12 @@ import {
   groupStarted,
   groupStatus,
   groupSummary,
+  rowKey,
   seasonLabel,
 } from "@/lib/downloadGroupRules";
+
+// Where it lived before it was needed on the server too; the tests import it from here.
+export { rowKey };
 
 export type DownloadRow = {
   /** Unique per row. A show can have several episodes downloading at once,
@@ -88,28 +92,10 @@ export type DownloadRow = {
   /** A season pack added to qBittorrent by hand (manualPackRules.ts): its info
    *  hash, which is what Cancel removes -- there is no Sonarr queue entry. */
   packHash?: string;
-  /** TV only: every episode of the show that is wanted or on disk, for its progress. */
-  seriesEpisodes?: number | null;
+  /** TV only: how far the show's current batch of downloads has got, 0-100 (showBatchProgress). */
+  seriesProgress?: number | null;
 };
 
-/**
- * Stable across a download's *entire* lifecycle (searching -> queued ->
- * completed), not just unique within one snapshot -- deliberately not keyed
- * by queueId. The queue entry is deleted the moment Radarr/Sonarr finishes
- * importing a file, and a completed row has no queueId at all, so keying by
- * it made a download's row change identity mid-transfer: React saw a
- * disappearing `q12345` and an unrelated new `movie-done-67`, unmounted one
- * and mounted the other, and the row visually reset -- reported live as
- * "showed 14%, then reverted to starting, then later showed as downloaded"
- * for a title that, underneath, was progressing the entire time.
- *
- * A movie only ever has one active download at a time, so its externalId
- * alone is already a stable identity across every state. A show is
- * per-episode, so episodeId is preferred once it's known (threaded through
- * from Sonarr's own queue records now, not only completed episodes) --
- * queueId remains a fallback for the rare case it genuinely isn't (multiple
- * simultaneous episodes of the same show, before episodeId was available).
- */
 /**
  * When a row started, short enough to sit inline beside the title.
  *
@@ -127,14 +113,6 @@ function formatStarted(raw: string | null | undefined): string | null {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-export function rowKey(d: DownloadRow): string {
-  if (d.mediaType === "movie") return `movie-${d.externalId}`;
-  if (d.packHash) return `pack-${d.packHash}`;
-  if (d.episodeId != null) return `ep-${d.episodeId}`;
-  if (d.queueId != null) return `q${d.queueId}`;
-  return `show-searching-${d.externalId}`;
 }
 
 // A new request happens on a different page/tab than this panel, so there's
@@ -164,7 +142,7 @@ const MAX_HEIGHT_PX = VISIBLE_ROWS * 52 + (VISIBLE_ROWS - 1) * 12;
 // gone and the library hasn't registered the new file yet. Bridging over
 // that gap with the last real snapshot (rather than letting the row vanish
 // for a poll or two) is what actually fixes the "reverted to starting"
-// report on top of the rowKey fix above: even with a stable key, a real gap
+// report on top of the rowKey fix (downloadGroupRules.ts): even with a stable key, a real gap
 // in the data would still make the row disappear and reappear. 20s covers
 // several poll cycles; if a title is genuinely gone after that (deleted
 // elsewhere), the bridge lapses and it drops out, same as before.

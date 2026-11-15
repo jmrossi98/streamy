@@ -31,6 +31,7 @@ import { getClientProgress } from "@/lib/clientProgress";
 import { withClientProgress } from "@/lib/liveProgressRules";
 import { withTorrentTransfer } from "@/lib/torrentStatusRules";
 import { foldPacks } from "@/lib/downloadGroupRules";
+import { showBatchProgress } from "@/lib/downloadBatches";
 import { episodeLabel, placeFromLabel } from "@/lib/wantedEpisodeRules";
 import { recentGiveUps } from "@/lib/wantedSearches";
 import { giveUpNotice } from "@/lib/searchGiveUpRules";
@@ -340,12 +341,18 @@ export async function AdminDownloadsSections() {
       .filter((id): id is number => id != null),
     ...(await timed("sonarr wanted", withDeadline(getSonarrWantedSeriesIds(), [], PANEL_DEADLINE_MS))),
   ];
+  // Shows with something in flight: what they are owed is kept current.
+  // The rest are only on disk, and their episode places do not change.
+  const inFlightShowIds = [
+    ...downloads.filter((d) => d.mediaType === "show" && !d.completed).map((d) => d.externalId),
+    ...activeShowIds,
+    ...manualPacks.map((p) => p.seriesId),
+  ];
   const places = await timed("series places", withDeadline(
-    getSonarrSeriesPlaces([
-      ...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId),
-      ...activeShowIds,
-      ...manualPacks.map((p) => p.seriesId),
-    ]),
+    getSonarrSeriesPlaces(
+      [...downloads.filter((d) => d.mediaType === "show").map((d) => d.externalId), ...inFlightShowIds],
+      inFlightShowIds
+    ),
     new Map(),
     PANEL_DEADLINE_MS
   ));
@@ -424,7 +431,6 @@ export async function AdminDownloadsSections() {
       continue;
     }
     d.seriesTitle = series.title;
-    d.seriesEpisodes = series.total;
     // The label again when the list does not have the episode: a show added
     // a minute ago can be read before Sonarr has finished filling it in.
     const place =
@@ -469,7 +475,6 @@ export async function AdminDownloadsSections() {
       downloadId: pack.hash,
       packEpisodes: files,
       packHash: pack.hash,
-      seriesEpisodes: series?.total ?? null,
       transfer: describePack({
         progress: pack.progress,
         dlSpeed: pack.dlSpeed,
@@ -483,6 +488,12 @@ export async function AdminDownloadsSections() {
         problems: packImportProblems(pack.files.map((f) => `${pack.savePath}/${f.name}`)),
       }),
     });
+  }
+
+  // How far each show's current batch has got, for its header (nextShowBatches).
+  const seriesProgress = showBatchProgress(downloads);
+  for (const d of downloads) {
+    if (d.mediaType === "show") d.seriesProgress = seriesProgress.get(d.externalId) ?? null;
   }
 
   timing.finish(SLOW_RENDER_MS);

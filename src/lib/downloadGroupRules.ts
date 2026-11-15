@@ -25,9 +25,44 @@ export type GroupableRow = {
   downloadId?: string | null;
   /** Set on the one row that stands for a whole pack: how many episodes it holds. */
   packEpisodes?: number;
-  /** Every episode of the show that is wanted or already on disk. */
-  seriesEpisodes?: number | null;
+  /** How far the show's current batch of downloads has got, 0-100 (nextShowBatches). */
+  seriesProgress?: number | null;
 };
+
+/** What rowKey reads: enough to tell one download from another across its whole life. */
+export type KeyedRow = {
+  mediaType: "movie" | "show";
+  externalId: number;
+  episodeId?: number;
+  queueId?: number | null;
+  packHash?: string;
+};
+
+/**
+ * Stable across a download's *entire* lifecycle (searching -> queued ->
+ * completed), not just unique within one snapshot -- deliberately not keyed
+ * by queueId. The queue entry is deleted the moment Radarr/Sonarr finishes
+ * importing a file, and a completed row has no queueId at all, so keying by
+ * it made a download's row change identity mid-transfer: React saw a
+ * disappearing `q12345` and an unrelated new `movie-done-67`, unmounted one
+ * and mounted the other, and the row visually reset -- reported live as
+ * "showed 14%, then reverted to starting, then later showed as downloaded"
+ * for a title that, underneath, was progressing the entire time.
+ *
+ * A movie only ever has one active download at a time, so its externalId
+ * alone is already a stable identity across every state. A show is
+ * per-episode, so episodeId is preferred once it's known (threaded through
+ * from Sonarr's own queue records now, not only completed episodes) --
+ * queueId remains a fallback for the rare case it genuinely isn't (multiple
+ * simultaneous episodes of the same show, before episodeId was available).
+ */
+export function rowKey(d: KeyedRow): string {
+  if (d.mediaType === "movie") return `movie-${d.externalId}`;
+  if (d.packHash) return `pack-${d.packHash}`;
+  if (d.episodeId != null) return `ep-${d.episodeId}`;
+  if (d.queueId != null) return `q${d.queueId}`;
+  return `show-searching-${d.externalId}`;
+}
 
 /** How many episodes a row stands for: one, unless it is a folded pack. */
 function episodesIn(row: Pick<GroupableRow, "packEpisodes">): number {
@@ -160,37 +195,106 @@ export function groupSummary(rows: GroupableRow[]): string {
 }
 
 /**
- * Average progress of what is actually transferring, or null when nothing
- * is: a collapsed show still has to show that something inside it is moving.
+ * How far a show has got, or null when nothing of it is transferring: a
+ * collapsed show still has to show that something inside it is moving.
+ *
+ * The figure for the show's current batch when the server sent one
+ * (nextShowBatches), so it neither counts the whole library nor goes
+ * backwards as episodes finish; otherwise the average of what is moving.
  */
 export function groupProgress(rows: GroupableRow[]): number | null {
   const moving = rows.filter((r) => !r.completed && !r.queued && !r.searching && !r.noRelease && r.progress != null);
+  const batch = rows.find((r) => r.seriesProgress != null)?.seriesProgress;
+  if (batch != null && (batch > 0 || moving.length > 0)) return batch;
   if (moving.length === 0) return null;
-  const whole = showProgress(rows);
-  if (whole != null) return whole;
   return Math.round(moving.reduce((sum, r) => sum + (r.progress ?? 0), 0) / moving.length);
 }
 
+/** What a batch remembers of one of its downloads. */
+export type BatchMember = {
+  /** Episodes it stands for: one, or every episode of a pack. */
+  weight: number;
+  /** How much of it has arrived, 0-1, as of when it was last seen. */
+  done: number;
+  seenAt: number;
+};
+
+/** Show id -> the downloads in its current batch, by rowKey. */
+export type ShowBatches = Map<number, Map<string, BatchMember>>;
+
 /**
- * How much of the whole show has arrived, or null when its size is unknown.
- *
- * The figure above is the average of whatever is transferring this second,
- * and for a long show that goes backwards: episodes at 95% finish and leave
- * the average, ones at 0% join it, and Atlanta read 95% and then 88% with
- * more of it on disk than before. This counts what is left instead -- every
- * unfinished row, by how much of it is missing -- against all of the show's
- * episodes, so finishing an episode can only move it up.
+ * How long a download can be missing from every list before it leaves its
+ * batch. An import drops it from the queue a moment before the library has
+ * the file (BRIDGE_GRACE_MS in DownloadsPanel); one that was cancelled never
+ * comes back.
  */
-export function showProgress(rows: GroupableRow[]): number | null {
-  const total = rows.find((r) => r.seriesEpisodes != null)?.seriesEpisodes;
-  if (!total || total <= 0) return null;
-  let remaining = 0;
+export const BATCH_MEMBER_GRACE_MS = 60_000;
+
+type BatchRow = GroupableRow & KeyedRow;
+
+function stillComing(r: GroupableRow): boolean {
+  return !r.completed && !r.noRelease;
+}
+
+function fractionDone(r: GroupableRow): number {
+  if (r.queued || r.searching || r.progress == null) return 0;
+  return Math.min(100, Math.max(0, r.progress)) / 100;
+}
+
+/**
+ * Each show's current batch: everything of it seen still on its way since the
+ * show last had nothing in flight. Pure; the server carries it from one
+ * refresh to the next.
+ *
+ * A show's percentage used to count what was left against every episode it
+ * had, wanted or on disk, so one episode at 20% of a 300-episode show read
+ * 100% (2026-11-15), and switched to the plain average of what was moving
+ * whenever Sonarr was too slow to say how big the show was. Before that it
+ * was only the average, which goes backwards: episodes at 95% finish and
+ * leave it, ones at 0% join it (Atlanta read 95%, then 88%). A batch keeps
+ * its finished episodes, so finishing one can only move it up; it grows when
+ * more is asked for, loses what will not arrive (not found) or has gone for
+ * good, and ends when nothing of the show is in flight.
+ */
+export function nextShowBatches(prev: ShowBatches, rows: BatchRow[], now: number): ShowBatches {
+  const byShow = new Map<number, Map<string, BatchRow>>();
   for (const r of rows) {
-    if (r.completed) continue;
-    const moving = !r.queued && !r.searching && !r.noRelease && r.progress != null;
-    remaining += episodesIn(r) * (moving ? 1 - Math.min(100, Math.max(0, r.progress ?? 0)) / 100 : 1);
+    if (r.mediaType !== "show") continue;
+    const show = byShow.get(r.externalId) ?? new Map<string, BatchRow>();
+    byShow.set(r.externalId, show);
+    // An episode being replaced is listed twice, on disk and in flight; the
+    // download is the one that belongs to the batch.
+    const key = rowKey(r);
+    if (!show.has(key) || stillComing(r)) show.set(key, r);
   }
-  return Math.min(100, Math.max(0, Math.round(((total - remaining) / total) * 100)));
+  const out: ShowBatches = new Map();
+  for (const [showId, present] of byShow) {
+    if (![...present.values()].some(stillComing)) continue;
+    const members = new Map(prev.get(showId) ?? []);
+    for (const [key, r] of present) {
+      const member = members.get(key);
+      if (r.noRelease) members.delete(key);
+      else if (!r.completed) members.set(key, { weight: episodesIn(r), done: fractionDone(r), seenAt: now });
+      else if (member) members.set(key, { ...member, done: 1, seenAt: now });
+    }
+    for (const [key, member] of members) {
+      if (!present.has(key) && now - member.seenAt > BATCH_MEMBER_GRACE_MS) members.delete(key);
+    }
+    if (members.size > 0) out.set(showId, members);
+  }
+  return out;
+}
+
+/** How much of a batch has arrived, 0-100, never 100 while any of it is still to come. Pure. */
+export function batchProgress(members: Map<string, BatchMember>): number | null {
+  let weight = 0;
+  let done = 0;
+  for (const m of members.values()) {
+    weight += m.weight;
+    done += m.weight * m.done;
+  }
+  if (weight <= 0) return null;
+  return Math.floor((done / weight) * 100);
 }
 
 /**
