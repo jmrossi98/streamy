@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchesEpisode, matchesTmdbId, isPlayable, type JellyfinItem } from "../jellyfin";
+import { matchesEpisode, matchesTmdbId, isPlayable, seasonEpisodesOnDisk, type JellyfinItem } from "../jellyfin";
 
 // Regression: Jellyfin's AnyProviderIdEquals filter is silently ignored on
 // this server version -- it returned the whole library regardless of the id
@@ -70,5 +70,33 @@ describe("matchesEpisode", () => {
 
   it("does not match an item with no season number", () => {
     expect(matchesEpisode({ Id: "c", IndexNumber: 1 }, 1, 1)).toBe(false);
+  });
+});
+
+// Shows TVDB doesn't list (The Hateful Eight: Extended Version, a Netflix-only
+// cut) can't be in Sonarr, so their episode rows read what is on disk from
+// Jellyfin instead. Only real files of the asked season count.
+describe("seasonEpisodesOnDisk", () => {
+  const ep = (season: number | undefined, episode: number | undefined, location = "FileSystem"): JellyfinItem => ({
+    Id: `${season}-${episode}`,
+    ParentIndexNumber: season,
+    IndexNumber: episode,
+    LocationType: location,
+  });
+
+  it("lists the season's episodes with files, in order", () => {
+    expect(seasonEpisodesOnDisk([ep(1, 3), ep(1, 1), ep(1, 2)], 1)).toEqual([1, 2, 3]);
+  });
+
+  it("leaves out metadata-only stubs", () => {
+    expect(seasonEpisodesOnDisk([ep(1, 1), ep(1, 2, "Virtual")], 1)).toEqual([1]);
+  });
+
+  it("ignores other seasons even if the season filter was ignored", () => {
+    expect(seasonEpisodesOnDisk([ep(1, 1), ep(2, 1), ep(0, 1)], 2)).toEqual([1]);
+  });
+
+  it("ignores items with no episode number and counts a doubled file once", () => {
+    expect(seasonEpisodesOnDisk([ep(1, undefined), ep(1, 4), ep(1, 4)], 1)).toEqual([4]);
   });
 });

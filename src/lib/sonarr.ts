@@ -26,6 +26,7 @@ import { getTmdbSeasonLayout, getTvExternalIds } from "./tmdb";
 import { tvdbIdFromLookup, type SonarrLookupHit } from "./tvdbIdRules";
 import { seasonInOtherNumbering, toOtherNumbering, type TmdbLayout } from "./episodeNumbering";
 import { clientRemoval, deleteTorrents } from "./qbittorrent";
+import { getJellyfinSeasonEpisodesOnDisk } from "./jellyfin";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
 import { expireBlocklist, QUEUE_PAGE_SIZE, toQueueHealth } from "./radarr";
 import { computeProgress } from "./radarr";
@@ -1523,10 +1524,13 @@ async function ensureSeriesInSonarr(
   tmdbId: string,
   tier: QualityTier = "hd"
 ): Promise<
-  { ok: true; sonarrId: number; created: boolean } | { ok: false; error: string }
+  { ok: true; sonarrId: number; created: boolean } | { ok: false; error: string; notListed?: true }
 > {
   const tvdbId = await tvdbIdForTmdb(tmdbId);
-  if (!tvdbId) return { ok: false, error: "No TVDB id found for this show" };
+  // Sonarr can only hold what TVDB lists. A Netflix-only cut (The Hateful
+  // Eight: Extended Version, TMDB 320534) or a show TVDB hasn't caught up with
+  // never will be, so this is "not available", not a failure worth retrying.
+  if (!tvdbId) return { ok: false, error: "TVDB doesn't list this show, so Sonarr can't fetch it", notListed: true };
 
   const existing = await sonarrFetch<{ id: number }[]>(`/api/v3/series?tvdbId=${tvdbId}`);
   if (existing[0]) return { ok: true, sonarrId: existing[0].id, created: false };
@@ -1710,6 +1714,15 @@ export type EpisodeState = {
 };
 export type EpisodeStatusMap = Record<number, EpisodeState>;
 
+/** "Available" for each episode of the season Jellyfin has a file for; Jellyfin numbers a [tmdbid-N] folder as TMDB does. */
+async function jellyfinOnlyStatuses(tmdbId: string, seasonNumber: number): Promise<EpisodeStatusMap> {
+  const statuses: EpisodeStatusMap = {};
+  for (const n of await getJellyfinSeasonEpisodesOnDisk(tmdbId, seasonNumber)) {
+    statuses[n] = { status: "available", progress: null };
+  }
+  return statuses;
+}
+
 /**
  * Per-episode status and live progress for one season, derived from Sonarr
  * rather than stored in Streamy -- Sonarr already knows what's on disk and
@@ -1721,6 +1734,10 @@ export async function getSonarrSeasonStatuses(
 ): Promise<EpisodeStatusMap> {
   if (!isSonarrConfigured()) return {};
   try {
+    // A show TVDB doesn't list can't be in Sonarr, so when its files were
+    // filed by hand (a folder tagged [tmdbid-N]) Jellyfin is the only record
+    // of what is on disk -- and without this its episodes had no Play button.
+    if (!(await tvdbIdForTmdb(tmdbId))) return await jellyfinOnlyStatuses(tmdbId, seasonNumber);
     const episodes = await getSonarrSeasonEpisodes(tmdbId, seasonNumber);
     if (episodes.length === 0) return {};
 
@@ -2469,7 +2486,7 @@ export async function requestSeason(
   tmdbId: string,
   seasonNumber: number,
   tier: QualityTier = "hd"
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<EpisodeRequestResult> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
     const series = await ensureSeriesInSonarr(tmdbId, tier);

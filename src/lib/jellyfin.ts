@@ -290,6 +290,34 @@ export async function findJellyfinEpisodeItemId(
   }
 }
 
+/** The numbers of a season's episodes that have a real file: this season only, no stubs, no unnumbered extras. */
+export function seasonEpisodesOnDisk(items: JellyfinItem[], seasonNumber: number): number[] {
+  const numbers = items
+    .filter((i) => i.ParentIndexNumber === seasonNumber && i.IndexNumber != null && isPlayable(i))
+    .map((i) => i.IndexNumber!);
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
+/**
+ * Which episodes of one season Jellyfin can play, by the show's TMDB id, in
+ * Jellyfin's own numbering. Only for shows Sonarr can't hold (no TVDB entry),
+ * filed by hand under a [tmdbid-N] folder, where that numbering is TMDB's.
+ */
+export async function getJellyfinSeasonEpisodesOnDisk(showTmdbId: string, seasonNumber: number): Promise<number[]> {
+  if (!isJellyfinConfigured()) return [];
+  try {
+    const seriesId = await findJellyfinSeriesId(showTmdbId);
+    if (!seriesId) return [];
+    const episodes = await jellyfinFetch<{ Items: JellyfinItem[] }>(
+      `/Shows/${seriesId}/Episodes?season=${seasonNumber}&fields=ProviderIds`
+    );
+    return seasonEpisodesOnDisk(episodes.Items, seasonNumber);
+  } catch (err) {
+    console.error(`[jellyfin] getJellyfinSeasonEpisodesOnDisk failed for show ${showTmdbId} S${seasonNumber}:`, err);
+    return [];
+  }
+}
+
 /** Whether a show has at least one real episode file scanned in -- gates Play vs. Download. */
 export async function isJellyfinShowAvailable(showTmdbId: string): Promise<boolean> {
   if (!isJellyfinConfigured()) return false;
