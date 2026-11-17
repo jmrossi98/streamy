@@ -27,6 +27,8 @@ import { tvdbIdFromLookup, type SonarrLookupHit } from "./tvdbIdRules";
 import { seasonInOtherNumbering, toOtherNumbering, type TmdbLayout } from "./episodeNumbering";
 import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { getJellyfinSeasonEpisodesOnDisk } from "./jellyfin";
+import { listSabJobs, type SabJob } from "./sabnzbd";
+import { unlistedShowStatuses } from "./tvJobRules";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
 import { expireBlocklist, QUEUE_PAGE_SIZE, toQueueHealth } from "./radarr";
 import { computeProgress } from "./radarr";
@@ -1714,13 +1716,17 @@ export type EpisodeState = {
 };
 export type EpisodeStatusMap = Record<number, EpisodeState>;
 
-/** "Available" for each episode of the season Jellyfin has a file for; Jellyfin numbers a [tmdbid-N] folder as TMDB does. */
-async function jellyfinOnlyStatuses(tmdbId: string, seasonNumber: number): Promise<EpisodeStatusMap> {
-  const statuses: EpisodeStatusMap = {};
-  for (const n of await getJellyfinSeasonEpisodesOnDisk(tmdbId, seasonNumber)) {
-    statuses[n] = { status: "available", progress: null };
-  }
-  return statuses;
+/**
+ * A season of a show Sonarr can't hold: what Jellyfin has a file for (it
+ * numbers a [tmdbid-N] folder as TMDB does), and what is on its way in
+ * SABnzbd under a "[tv tmdb:..]" job -- see tvJobRules.ts.
+ */
+async function unlistedSeasonStatuses(tmdbId: string, seasonNumber: number): Promise<EpisodeStatusMap> {
+  const [onDisk, jobs] = await Promise.all([
+    getJellyfinSeasonEpisodesOnDisk(tmdbId, seasonNumber),
+    listSabJobs().catch((): SabJob[] => []),
+  ]);
+  return unlistedShowStatuses(tmdbId, seasonNumber, onDisk, jobs);
 }
 
 /**
@@ -1734,10 +1740,10 @@ export async function getSonarrSeasonStatuses(
 ): Promise<EpisodeStatusMap> {
   if (!isSonarrConfigured()) return {};
   try {
-    // A show TVDB doesn't list can't be in Sonarr, so when its files were
-    // filed by hand (a folder tagged [tmdbid-N]) Jellyfin is the only record
-    // of what is on disk -- and without this its episodes had no Play button.
-    if (!(await tvdbIdForTmdb(tmdbId))) return await jellyfinOnlyStatuses(tmdbId, seasonNumber);
+    // A show TVDB doesn't list can't be in Sonarr, so Jellyfin (on disk) and
+    // SABnzbd (on its way) are the only records of its episodes -- without
+    // this they had no Play button and no progress.
+    if (!(await tvdbIdForTmdb(tmdbId))) return await unlistedSeasonStatuses(tmdbId, seasonNumber);
     const episodes = await getSonarrSeasonEpisodes(tmdbId, seasonNumber);
     if (episodes.length === 0) return {};
 

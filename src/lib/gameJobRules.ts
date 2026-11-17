@@ -10,7 +10,9 @@
  */
 import { titleSimilarity } from "./romNames";
 
-const JOB = /^\[game ([a-z0-9]+) igdb:(\d+)\] (.+)$/;
+// SABnzbd swaps the ":" for "_" in a job's name (it is a folder name too),
+// so "[game switch igdb:26758]" comes back as "[game switch igdb_26758]".
+const JOB = /^\[game ([a-z0-9]+) igdb[:_](\d+)\] (.+)$/;
 
 export function gameJobName(system: string, igdbId: number, release: string): string {
   return `[game ${system} igdb:${igdbId}] ${release}`;
