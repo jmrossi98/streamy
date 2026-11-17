@@ -92,6 +92,11 @@ export type DownloadRow = {
   /** A season pack added to qBittorrent by hand (manualPackRules.ts): its info
    *  hash, which is what Cancel removes -- there is no Sonarr queue entry. */
   packHash?: string;
+  /** An episode of a show Sonarr can't hold, fetched straight from usenet
+   *  (unlistedGrabs.ts): "<tmdbId>:<season>:<episode>", stable from search to
+   *  file, and the SABnzbd job once there is one -- what Cancel removes.
+   *  Nothing on disk can be deleted from here: Sonarr does not know it. */
+  unlisted?: { key: string; nzoId: string | null };
   /** TV only: how far the show's current batch of downloads has got, 0-100 (showBatchProgress). */
   seriesProgress?: number | null;
 };
@@ -313,6 +318,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
           episodeId: d.episodeId,
           mediaType: d.mediaType,
           packHash: d.packHash,
+          unlistedNzoId: d.unlisted?.nzoId ?? undefined,
           // A row that has not been searched yet has no Radarr/Sonarr queue
           // entry to remove, so the route has to be told that rather than
           // inferring it from a null queueId -- which also means "whole
@@ -473,7 +479,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                 {isManaging ? "…" : "Retry"}
               </Button>
             )}
-            {!d.gaveUp && (
+            {!d.gaveUp && !(d.unlisted && (d.completed || !d.unlisted.nzoId)) && (
               <button
                 type="button"
                 onClick={() => handleManage(d)}
@@ -725,7 +731,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                   <div className="flex shrink-0 items-center justify-end gap-3">
                     <span className="tabular-nums text-white/50">{groupStatus(item.rows)}</span>
                     {groupRetryButton(showKey, item.rows, item.title)}
-                    {groupButton(showKey, item.rows, "series", item, null)}
+                    {!item.rows.some((r) => r.unlisted) && groupButton(showKey, item.rows, "series", item, null)}
                   </div>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
@@ -776,6 +782,7 @@ export function DownloadsPanel({ downloads }: { downloads: DownloadRow[] }) {
                               {item.seasons.length > 1 &&
                                 groupRetryButton(seasonKey, season.rows, `${item.title} - ${seasonLabel(season.seasonNumber)}`)}
                               {season.seasonNumber != null &&
+                                !season.rows.some((r) => r.unlisted) &&
                                 groupButton(seasonKey, season.rows, "season", item, season.seasonNumber)}
                             </div>
                           </div>

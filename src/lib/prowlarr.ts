@@ -17,10 +17,10 @@ export function isProwlarrConfigured(): boolean {
 }
 
 /** Every result for this text in these categories; [] when Prowlarr is not set up. */
-export async function prowlarrTextSearch(query: string, category: number): Promise<TextResult[]> {
+export async function prowlarrTextSearch(query: string, category: number | number[]): Promise<TextResult[]> {
   if (!isProwlarrConfigured()) return [];
   const params = new URLSearchParams({ query, type: "search", limit: "200" });
-  params.append("categories", String(category));
+  for (const c of Array.isArray(category) ? category : [category]) params.append("categories", String(c));
   const res = await fetch(`${PROWLARR}/api/v1/search?${params}`, {
     headers: { "X-Api-Key": PROWLARR_KEY },
     signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),

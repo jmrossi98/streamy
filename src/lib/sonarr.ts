@@ -29,6 +29,7 @@ import { clientRemoval, deleteTorrents } from "./qbittorrent";
 import { getJellyfinSeasonEpisodesOnDisk } from "./jellyfin";
 import { listSabJobs, type SabJob } from "./sabnzbd";
 import { unlistedShowStatuses } from "./tvJobRules";
+import { requestUnlistedEpisodes, unlistedSearchStates } from "./unlistedGrabs";
 import { classifyBadRelease, type BlocklistRecord } from "./downloadHealthRules";
 import { expireBlocklist, QUEUE_PAGE_SIZE, toQueueHealth } from "./radarr";
 import { computeProgress } from "./radarr";
@@ -1726,7 +1727,7 @@ async function unlistedSeasonStatuses(tmdbId: string, seasonNumber: number): Pro
     getJellyfinSeasonEpisodesOnDisk(tmdbId, seasonNumber),
     listSabJobs().catch((): SabJob[] => []),
   ]);
-  return unlistedShowStatuses(tmdbId, seasonNumber, onDisk, jobs);
+  return unlistedShowStatuses(tmdbId, seasonNumber, onDisk, jobs, unlistedSearchStates(tmdbId, seasonNumber));
 }
 
 /**
@@ -1808,6 +1809,8 @@ export async function requestEpisode(
 ): Promise<EpisodeRequestResult> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
+    // TVDB doesn't list it, so Sonarr never can: fetch it from usenet directly.
+    if (!(await tvdbIdForTmdb(tmdbId))) return await requestUnlistedEpisodes(tmdbId, seasonNumber, episodeNumber, tier);
     const series = await ensureSeriesInSonarr(tmdbId, tier);
     if (!series.ok) return series;
 
@@ -2495,6 +2498,8 @@ export async function requestSeason(
 ): Promise<EpisodeRequestResult> {
   if (!isSonarrConfigured()) return { ok: false, error: "Sonarr is not configured" };
   try {
+    // TVDB doesn't list it, so Sonarr never can: fetch its aired episodes from usenet directly.
+    if (!(await tvdbIdForTmdb(tmdbId))) return await requestUnlistedEpisodes(tmdbId, seasonNumber, null, tier);
     const series = await ensureSeriesInSonarr(tmdbId, tier);
     if (!series.ok) return series;
 

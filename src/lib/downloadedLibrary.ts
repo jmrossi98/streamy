@@ -129,14 +129,19 @@ async function loadShows(): Promise<LibraryShow[] | null> {
   const all = await fetchJson<SonarrSeries[]>(`${base.url}/api/v3/series`, base.key);
   if (!all) return null;
 
-  const onDisk = all.filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0 && s.tmdbId);
+  const onDisk = all
+    .filter((s) => (s.statistics?.episodeFileCount ?? 0) > 0 && s.tmdbId)
+    .map((s) => ({ id: String(s.tmdbId), addedAt: s.added ?? null }));
+  // Shows Sonarr can't hold (no TVDB entry), filed under [tmdbid-N] folders.
+  const inSonarr = new Set(onDisk.map((s) => s.id));
+  const { getJellyfinUnlistedShows } = await import("./jellyfin");
+  const unlisted = (await getJellyfinUnlistedShows()).filter((s) => !inSonarr.has(s.tmdbId)).map((s) => ({ id: s.tmdbId, addedAt: s.addedAt }));
   const resolved = await Promise.all(
-    onDisk.map(async (series) => {
-      const id = String(series.tmdbId);
+    [...onDisk, ...unlisted].map(async ({ id, addedAt }) => {
       const [d, meta] = await Promise.all([getShowById(id).catch(() => null), getShowBrowseMeta(id)]);
       // The language only matters for animated shows: it decides "Anime".
       const lang = d?.genres.includes("Animation") ? await getOriginalLanguage("tv", id) : null;
-      return [d, meta, lang, series.added ?? null] as const;
+      return [d, meta, lang, addedAt] as const;
     })
   );
 

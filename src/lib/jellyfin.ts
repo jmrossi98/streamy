@@ -318,6 +318,27 @@ export async function getJellyfinSeasonEpisodesOnDisk(showTmdbId: string, season
   }
 }
 
+/**
+ * Shows filed under a [tmdbid-N] folder -- the ones Sonarr can't hold, fetched
+ * straight from usenet (unlistedGrabs.ts) -- by TMDB id, with when Jellyfin
+ * first saw them. The browse rows otherwise list only what Sonarr has.
+ */
+export async function getJellyfinUnlistedShows(): Promise<{ tmdbId: string; addedAt: string | null }[]> {
+  if (!isJellyfinConfigured()) return [];
+  try {
+    const result = await jellyfinFetch<{ Items: (JellyfinItem & { Path?: string; DateCreated?: string })[] }>(
+      `/Items?IncludeItemTypes=Series&Recursive=true&fields=ProviderIds,Path,DateCreated`
+    );
+    return result.Items.flatMap((i) => {
+      const m = /\[tmdbid-(\d+)\]/.exec(i.Path ?? "");
+      return m ? [{ tmdbId: m[1], addedAt: i.DateCreated ?? null }] : [];
+    });
+  } catch (err) {
+    console.error("[jellyfin] getJellyfinUnlistedShows failed:", err);
+    return [];
+  }
+}
+
 /** Whether a show has at least one real episode file scanned in -- gates Play vs. Download. */
 export async function isJellyfinShowAvailable(showTmdbId: string): Promise<boolean> {
   if (!isJellyfinConfigured()) return false;
