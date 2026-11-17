@@ -20,6 +20,8 @@ describe("game job names", () => {
     expect(name).toBe("[game switch igdb:26758] Super.Mario.Odyssey.NSW-BigBlueBox");
     expect(parseGameJobName(name)).toEqual({ system: "switch", igdbId: 26758, release: "Super.Mario.Odyssey.NSW-BigBlueBox" });
     expect(parseGameJobName("Some.Show.S01E01-GROUP")).toBeNull();
+    // SABnzbd hands the name back with its colon swapped for an underscore.
+    expect(parseGameJobName("[game switch igdb_26758] Super.Mario.Odyssey.NSW-BigBlueBox")).toEqual({ system: "switch", igdbId: 26758, release: "Super.Mario.Odyssey.NSW-BigBlueBox" });
   });
 });
 
