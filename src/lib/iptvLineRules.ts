@@ -221,20 +221,20 @@ export function nextLineName(existing: string[]): string {
 }
 
 /** How many connections the provider allows across its working lines. */
-export function lineCapacity(lines: IptvLine[]): number {
-  return lines.filter((l) => l.active && !isLineDead(l)).reduce((n, l) => n + (l.maxStreams || 0), 0);
+export function lineCapacity(lines: IptvLine[], now: number = Date.now()): number {
+  return lines.filter((l) => l.active && !isLineDead(l, now)).reduce((n, l) => n + (l.maxStreams || 0), 0);
 }
 
-export function isLineDead(line: IptvLine): boolean {
+export function isLineDead(line: IptvLine, now: number = Date.now()): boolean {
   if (/expired|disabled|banned/i.test(line.status ?? "")) return true;
-  return line.expiresUtc != null && Date.parse(line.expiresUtc) < Date.now();
+  return line.expiresUtc != null && Date.parse(line.expiresUtc) < now;
 }
 
 /** "2 lines · 2 connections" / "1 line · 1 connection" / "No active lines". */
-export function lineSummary(lines: IptvLine[]): string {
+export function lineSummary(lines: IptvLine[], now: number = Date.now()): string {
   if (!lines.some((l) => l.active)) return "No active lines";
-  const working = lines.filter((l) => l.active && !isLineDead(l)).length;
-  const capacity = lineCapacity(lines);
+  const working = lines.filter((l) => l.active && !isLineDead(l, now)).length;
+  const capacity = lineCapacity(lines, now);
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   return `${plural(working, "line")} · ${plural(capacity, "connection")}`;
 }

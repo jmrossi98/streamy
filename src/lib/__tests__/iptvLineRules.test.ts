@@ -80,14 +80,14 @@ describe("naming and capacity", () => {
   });
   it("counts connections across working lines only", () => {
     const lines = [line({ id: 1, isDefault: true, name: "Default" }), line(), line({ id: 8, status: "Expired" }), line({ id: 9, active: false })];
-    expect(lineCapacity(lines)).toBe(2);
-    expect(lineSummary(lines)).toBe("2 lines · 2 connections");
-    expect(lineSummary([line({ isDefault: true })])).toBe("1 line · 1 connection");
+    expect(lineCapacity(lines, NOW)).toBe(2);
+    expect(lineSummary(lines, NOW)).toBe("2 lines · 2 connections");
+    expect(lineSummary([line({ isDefault: true })], NOW)).toBe("1 line · 1 connection");
   });
   it("calls a lapsed or banned line dead", () => {
-    expect(isLineDead(line())).toBe(false);
-    expect(isLineDead(line({ status: "Banned" }))).toBe(true);
-    expect(isLineDead(line({ expiresUtc: "2026-10-01T00:00:00Z" }))).toBe(true);
+    expect(isLineDead(line(), NOW)).toBe(false);
+    expect(isLineDead(line({ status: "Banned" }), NOW)).toBe(true);
+    expect(isLineDead(line({ expiresUtc: "2026-10-01T00:00:00Z" }), NOW)).toBe(true);
   });
   it("warns about a line the way it warns about the provider login", () => {
     expect(lineAlert(line(), NOW)).toBeNull();
