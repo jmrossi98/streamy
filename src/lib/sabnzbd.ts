@@ -134,6 +134,10 @@ export type SabJob = {
   /** 0-100 while it downloads; null otherwise. */
   progress: number | null;
   failMessage: string | null;
+  /** The release's size, when SABnzbd says. */
+  sizeBytes?: number | null;
+  /** When a finished job finished, ISO. */
+  completedAt?: string | null;
 };
 
 const SAB_JOBS_TTL_MS = 3_000;
@@ -142,11 +146,15 @@ const SAB_JOBS_TTL_MS = 3_000;
 export async function listSabJobs(): Promise<SabJob[]> {
   return sharedRead("sab:jobs", SAB_JOBS_TTL_MS, async () => {
     const [queue, history] = await Promise.all([
-      sabApi<{ queue: { slots: { nzo_id: string; filename: string; cat: string; status: string; percentage?: string }[] } }>({
+      sabApi<{ queue: { slots: { nzo_id: string; filename: string; cat: string; status: string; percentage?: string; mb?: string }[] } }>({
         mode: "queue",
         limit: "500",
       }),
-      sabApi<{ history: { slots: { nzo_id: string; name: string; category: string; status: string; fail_message?: string }[] } }>({
+      sabApi<{
+        history: {
+          slots: { nzo_id: string; name: string; category: string; status: string; fail_message?: string; bytes?: number; completed?: number }[];
+        };
+      }>({
         mode: "history",
         limit: "300",
       }),
@@ -161,6 +169,7 @@ export async function listSabJobs(): Promise<SabJob[]> {
           state: downloading ? "downloading" : "queued",
           progress: sabPercent(s.percentage),
           failMessage: null,
+          sizeBytes: s.mb != null && Number.isFinite(Number(s.mb)) ? Math.round(Number(s.mb) * 1024 * 1024) : null,
         };
       }),
       ...history.history.slots.map(
@@ -171,6 +180,8 @@ export async function listSabJobs(): Promise<SabJob[]> {
           state: s.status === "Completed" ? "completed" : s.status === "Failed" ? "failed" : "processing",
           progress: null,
           failMessage: s.fail_message || null,
+          sizeBytes: s.bytes ?? null,
+          completedAt: s.completed ? new Date(s.completed * 1000).toISOString() : null,
         })
       ),
     ];
@@ -198,4 +209,21 @@ export async function addSabNzbFile(nzb: string, jobName: string, category: stri
   if (!res.ok) return null;
   const body = (await res.json().catch(() => null)) as { status?: boolean; nzo_ids?: string[] } | null;
   return body?.status ? (body.nzo_ids?.[0] ?? null) : null;
+}
+
+/**
+ * Removes one job, queued or finished, with whatever it downloaded -- the
+ * downloads panel's Cancel on a job only SABnzbd knows about. True when
+ * SABnzbd said so.
+ */
+export async function deleteSabJob(nzoId: string): Promise<boolean> {
+  if (!/^[\w-]+$/.test(nzoId)) return false;
+  const jobs = await listSabJobs().catch((): SabJob[] => []);
+  const job = jobs.find((j) => j.nzoId === nzoId);
+  if (!job) return false;
+  const inQueue = job.state === "queued" || job.state === "downloading";
+  const out = await sabApi<{ status?: boolean }>({ mode: inQueue ? "queue" : "history", name: "delete", value: nzoId, del_files: "1" }).catch(
+    () => null
+  );
+  return out?.status === true;
 }

@@ -54,6 +54,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
+  // An episode of a show Sonarr can't hold (unlistedGrabs.ts): its SABnzbd
+  // job is the whole download. Only ever such a job -- the id comes from a
+  // browser, and this must not reach a game's or anything else's.
+  const unlistedNzoId = typeof body?.unlistedNzoId === "string" ? body.unlistedNzoId : null;
+  if (unlistedNzoId && action === "cancel") {
+    const { deleteSabJob, listSabJobs } = await import("@/lib/sabnzbd");
+    const { parseTvJobName } = await import("@/lib/tvJobRules");
+    const job = (await listSabJobs().catch(() => [])).find((j) => j.nzoId === unlistedNzoId);
+    if (!job || !parseTvJobName(job.name) || !(await deleteSabJob(unlistedNzoId))) {
+      return NextResponse.json({ error: "Couldn't cancel" }, { status: 404 });
+    }
+    logAudit(admin.name, "show.admin.cancel", title, "usenet download of a show Sonarr can't hold");
+    return NextResponse.json({ ok: true });
+  }
+
   // A whole show, or one season of it, from the panel's grouped rows: stop
   // everything in flight for it and delete what is on disk, in one go. The
   // single-row paths below each do only one of those, for one entry.

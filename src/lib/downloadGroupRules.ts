@@ -36,6 +36,7 @@ export type KeyedRow = {
   episodeId?: number;
   queueId?: number | null;
   packHash?: string;
+  unlisted?: { key: string };
 };
 
 /**
@@ -58,6 +59,7 @@ export type KeyedRow = {
  */
 export function rowKey(d: KeyedRow): string {
   if (d.mediaType === "movie") return `movie-${d.externalId}`;
+  if (d.unlisted) return `unlisted-${d.unlisted.key}`;
   if (d.packHash) return `pack-${d.packHash}`;
   if (d.episodeId != null) return `ep-${d.episodeId}`;
   if (d.queueId != null) return `q${d.queueId}`;

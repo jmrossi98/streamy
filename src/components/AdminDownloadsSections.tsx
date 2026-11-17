@@ -37,6 +37,9 @@ import { recentGiveUps } from "@/lib/wantedSearches";
 import { giveUpNotice } from "@/lib/searchGiveUpRules";
 import { getManualSeasonPacks, getTorrentTransfers, type ManualSeasonPack } from "@/lib/qbittorrent";
 import { describePack, packFileEpisode } from "@/lib/manualPackRules";
+import { listSabJobs, type SabJob } from "@/lib/sabnzbd";
+import { activeUnlistedSearches } from "@/lib/unlistedGrabs";
+import { unlistedDownloadRows } from "@/lib/unlistedDownloadRows";
 
 /**
  * Every downloads panel, as one block.
@@ -87,6 +90,7 @@ export async function AdminDownloadsSections() {
     gameWishlist,
     ownedGames,
     flashDownloads,
+    sabJobs,
   ] = await Promise.all([
     timed("radarr queue", withDeadline(getRadarrActiveDownloads(), [], PANEL_DEADLINE_MS)),
     timed("sonarr queue", withDeadline(getSonarrActiveDownloads(), [], PANEL_DEADLINE_MS)),
@@ -120,6 +124,8 @@ export async function AdminDownloadsSections() {
       select: { slug: true, title: true, fileSize: true, storage: true },
       orderBy: { title: "asc" },
     }),
+    // Episodes of shows Sonarr can't hold live only in SABnzbd (unlistedGrabs.ts).
+    timed("sab jobs", withDeadline(listSabJobs(), [] as SabJob[], PANEL_DEADLINE_MS).catch((): SabJob[] => [])),
   ]);
 
   const radarrDownloads = withTorrentTransfer(withClientProgress(radarrQueue, clientProgress), torrentTransfers);
@@ -301,6 +307,9 @@ export async function AdminDownloadsSections() {
     PANEL_DEADLINE_MS
   ));
   downloads.unshift(...searchingRows);
+
+  // Shows Sonarr can't hold: their usenet downloads and searches, under the show like any other.
+  downloads.push(...unlistedDownloadRows(sabJobs, activeUnlistedSearches()));
 
   // Everything still waiting its turn in the ordered search queue.
   //
