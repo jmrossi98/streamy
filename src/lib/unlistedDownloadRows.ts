@@ -25,7 +25,22 @@ function showName(folder: string | null, fallback: string): string {
 
 const se = (s: number, e: number) => `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`;
 
-export function unlistedDownloadRows(jobs: UnlistedJob[], searches: UnlistedSearchRow[]): DownloadRow[] {
+/** The shows whose jobs carry no folder title (the first ones, #655): their TMDB names, to head their rows. */
+export function showsNeedingNames(jobs: UnlistedJob[]): string[] {
+  const ids = new Set<string>();
+  for (const job of jobs) {
+    const p = parseTvJobName(job.name);
+    if (p && !p.folder) ids.add(p.tmdbId);
+  }
+  return [...ids];
+}
+
+export function unlistedDownloadRows(
+  jobs: UnlistedJob[],
+  searches: UnlistedSearchRow[],
+  /** TMDB names by id, for jobs named without a folder title. */
+  names: ReadonlyMap<string, string> = new Map()
+): DownloadRow[] {
   const best = new Map<string, { job: UnlistedJob; tmdbId: string; season: number; episode: number; folder: string | null; release: string }>();
   for (const job of jobs) {
     const p = parseTvJobName(job.name);
@@ -44,7 +59,7 @@ export function unlistedDownloadRows(jobs: UnlistedJob[], searches: UnlistedSear
       mediaType: "show" as const,
       protocol: "usenet" as const,
       sizeBytes: job.sizeBytes ?? null,
-      seriesTitle: showName(folder, release),
+      seriesTitle: showName(folder, names.get(tmdbId) ?? release),
       seasonNumber: season,
       episodeNumber: episode,
       downloadId: job.nzoId,

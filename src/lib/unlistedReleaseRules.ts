@@ -92,6 +92,31 @@ export function matchesUnlistedEpisode(release: string, ep: UnlistedEpisode): bo
   return ` ${norm(release)} `.includes(` ${norm(ep.episodeTitle!)} `);
 }
 
+/**
+ * Text as indexers can find it: no apostrophes (release names write
+ * "Minnies.Haberdashery"), other punctuation as spaces. A query for
+ * "Minnie's Haberdashery" found nothing on any indexer (2026-11-17).
+ */
+export function searchText(s: string): string {
+  return s
+    .replace(/['’]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** The show's name alone: one search that finds most of a short show's episodes at once. */
+export function showQuery(show: string): string {
+  return searchText(show);
+}
+
+/** "Show S01E02", then "Show Episode Title" when the title is distinctive -- for what the show's own search missed. */
+export function episodeSearches(ep: Pick<UnlistedEpisode, "show" | "season" | "episode" | "episodeTitle">): string[] {
+  const se = `S${String(ep.season).padStart(2, "0")}E${String(ep.episode).padStart(2, "0")}`;
+  const out = [`${searchText(ep.show)} ${se}`];
+  if (distinctiveTitle(ep.episodeTitle)) out.push(`${searchText(ep.show)} ${searchText(ep.episodeTitle!)}`);
+  return out;
+}
+
 /** Language words in release names, to the ISO code of the audio they mean. */
 const LANGUAGE_WORDS: Record<string, string> = {
   german: "de", deutsch: "de", french: "fr", truefrench: "fr", vostfr: "fr", vff: "fr",

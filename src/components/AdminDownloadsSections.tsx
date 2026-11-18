@@ -39,7 +39,7 @@ import { getManualSeasonPacks, getTorrentTransfers, type ManualSeasonPack } from
 import { describePack, packFileEpisode } from "@/lib/manualPackRules";
 import { listSabJobs, type SabJob } from "@/lib/sabnzbd";
 import { activeUnlistedSearches } from "@/lib/unlistedGrabs";
-import { unlistedDownloadRows } from "@/lib/unlistedDownloadRows";
+import { showsNeedingNames, unlistedDownloadRows } from "@/lib/unlistedDownloadRows";
 
 /**
  * Every downloads panel, as one block.
@@ -309,7 +309,12 @@ export async function AdminDownloadsSections() {
   downloads.unshift(...searchingRows);
 
   // Shows Sonarr can't hold: their usenet downloads and searches, under the show like any other.
-  downloads.push(...unlistedDownloadRows(sabJobs, activeUnlistedSearches()));
+  const unlistedNames = new Map<string, string>();
+  for (const id of showsNeedingNames(sabJobs)) {
+    const name = (await getShowById(id).catch(() => null))?.name;
+    if (name) unlistedNames.set(id, name);
+  }
+  downloads.push(...unlistedDownloadRows(sabJobs, activeUnlistedSearches(), unlistedNames));
 
   // Everything still waiting its turn in the ordered search queue.
   //
