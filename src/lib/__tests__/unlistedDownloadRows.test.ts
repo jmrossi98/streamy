@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { unlistedDownloadRows, type UnlistedJob } from "../unlistedDownloadRows";
+import { showsNeedingNames, unlistedDownloadRows, type UnlistedJob } from "../unlistedDownloadRows";
 import { rowKey } from "../downloadGroupRules";
 
 const REL = (n: number) => `The.Hateful.Eight.2015.Extended.Version.Chapter.${n}.2160p.NF.WEB-DL.DDP5.1.HEVC-TH8`;
@@ -48,5 +48,12 @@ describe("unlistedDownloadRows", () => {
     const searching = unlistedDownloadRows([], [{ tmdbId: "320534", season: 1, episode: 2, folder: "The Hateful Eight (2019)", at: 0 }])[0];
     const downloading = unlistedDownloadRows([job(2, "downloading", { progress: 1 })], [])[0];
     expect(rowKey(searching)).toBe(rowKey(downloading));
+  });
+
+  it("heads a job named without a folder title with the show's TMDB name", () => {
+    const old: UnlistedJob = { nzoId: "a", name: "[tv tmdb_320534 s1e1] The.Hateful.Eight.2015.Extended.Version.Chapter.1.2160p-TH8", state: "completed", progress: null };
+    expect(showsNeedingNames([old, job(2, "completed")])).toEqual(["320534"]);
+    expect(unlistedDownloadRows([old], [], new Map([["320534", "The Hateful Eight"]]))[0].seriesTitle).toBe("The Hateful Eight");
+    expect(unlistedDownloadRows([old], [])[0].seriesTitle).toBe(old.name.split("] ")[1]);
   });
 });

@@ -7,9 +7,10 @@
  * would otherwise be undownloadable. Jake, 2026-11-17: "if they're available
  * it should be downloaded".
  *
- * So for those, a request does what Sonarr would: a Prowlarr text search per
- * episode (by "Show S01E02" and by the episode's own title, across TV and
- * Movies -- the Hateful Eight chapters are filed under Movies), the strict
+ * So for those, a request does what Sonarr would: a Prowlarr text search for
+ * the show's name (one search finds most of a short show), then per episode it
+ * missed by "Show S01E02" and by the episode's own title -- across TV and
+ * Movies, since the Hateful Eight chapters are filed under Movies -- the strict
  * match and ranking in unlistedReleaseRules.ts, and the best release handed to
  * SABnzbd under a "[tv tmdb:<id> s<N>e<N> {Title (Year)}]" name
  * (tvJobRules.ts). mediabox-infra's unlisted-tv-import.py files it in
@@ -24,8 +25,8 @@
  * "Searching" row, nothing more.
  */
 import { isProwlarrConfigured, prowlarrTextSearch, PROWLARR_MOVIES, PROWLARR_TV } from "./prowlarr";
-import { episodeQueries, TEXT_SEARCH_EVERY_MS } from "./textSearchRules";
-import { rankUnlistedReleases, type UnlistedEpisode, type UnlistedResult } from "./unlistedReleaseRules";
+import { TEXT_SEARCH_EVERY_MS } from "./textSearchRules";
+import { episodeSearches, rankUnlistedReleases, showQuery, type UnlistedEpisode, type UnlistedResult } from "./unlistedReleaseRules";
 import { parseTvJobName, showFolderTitle, tvJobName } from "./tvJobRules";
 import { addSabNzbFile, listSabJobs, type SabJob } from "./sabnzbd";
 import { getJellyfinSeasonEpisodesOnDisk } from "./jellyfin";
@@ -114,6 +115,15 @@ export async function requestUnlistedEpisodes(
     searches.set(key(tmdbId, season, e.episodeNumber), { tmdbId, season, episode: e.episodeNumber, folder, state: "searching", at: Date.now() });
   }
   void (async () => {
+    // The show's own search, once for the whole batch.
+    let showWide: Promise<UnlistedResult[]> | null = null;
+    const wide = () =>
+      (showWide ??= prowlarrTextSearch(showQuery(show.name), [PROWLARR_TV, PROWLARR_MOVIES])
+        .then((r) => r as UnlistedResult[])
+        .catch((err) => {
+          console.error(`[unlisted] ${folder}: show search failed:`, err);
+          return [];
+        }));
     // One at a time: each search already asks every indexer at once.
     for (const e of wanted) {
       const ep: UnlistedEpisode = {
@@ -125,7 +135,7 @@ export async function requestUnlistedEpisodes(
         runtimeMinutes: e.runtime,
       };
       const k = key(tmdbId, season, e.episodeNumber);
-      const grabbed = await grabEpisode(tmdbId, folder, ep, tier).catch((err) => {
+      const grabbed = await grabEpisode(tmdbId, folder, ep, tier, wide).catch((err) => {
         console.error(`[unlisted] ${folder} S${season}E${e.episodeNumber}: search failed:`, err);
         return false;
       });
@@ -137,12 +147,21 @@ export async function requestUnlistedEpisodes(
 }
 
 /** Searches usenet for one episode and hands the best release that fetches to SABnzbd. */
-async function grabEpisode(tmdbId: string, folder: string, ep: UnlistedEpisode, tier: QualityTier): Promise<boolean> {
-  const results: UnlistedResult[] = [];
-  for (const query of episodeQueries(ep.show, ep.season, ep.episode, ep.episodeTitle)) {
-    results.push(...((await prowlarrTextSearch(query, [PROWLARR_TV, PROWLARR_MOVIES])) as UnlistedResult[]));
+async function grabEpisode(
+  tmdbId: string,
+  folder: string,
+  ep: UnlistedEpisode,
+  tier: QualityTier,
+  showWide: () => Promise<UnlistedResult[]>
+): Promise<boolean> {
+  const results: UnlistedResult[] = [...(await showWide())];
+  let ranked = rankUnlistedReleases(results, ep, tier);
+  if (ranked.length === 0) {
+    for (const query of episodeSearches(ep)) {
+      results.push(...((await prowlarrTextSearch(query, [PROWLARR_TV, PROWLARR_MOVIES])) as UnlistedResult[]));
+    }
+    ranked = rankUnlistedReleases(results, ep, tier);
   }
-  const ranked = rankUnlistedReleases(results, ep, tier);
   const label = `${folder} S${ep.season}E${ep.episode}`;
   if (ranked.length === 0) {
     console.log(`[unlisted] ${label}: no release among ${results.length} results`);

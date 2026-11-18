@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   distinctiveTitle,
+  episodeSearches,
   languageOf,
   matchesUnlistedEpisode,
   rankUnlistedReleases,
   resolutionOf,
+  showQuery,
   type UnlistedEpisode,
   type UnlistedResult,
 } from "../unlistedReleaseRules";
@@ -58,6 +60,18 @@ describe("matchesUnlistedEpisode", () => {
     expect(distinctiveTitle("Chapter 3")).toBe(false);
     expect(distinctiveTitle("The Last Chapter")).toBe(true);
     expect(distinctiveTitle("Haberdashery")).toBe(true);
+  });
+});
+
+describe("searches", () => {
+  it("asks for titles the way release names spell them -- no apostrophes", () => {
+    expect(episodeSearches(CH2)).toEqual(["The Hateful Eight S01E02", "The Hateful Eight Minnies Haberdashery"]);
+    expect(episodeSearches(H8(3, "Domergue's Got a Secret"))[1]).toBe("The Hateful Eight Domergues Got a Secret");
+    expect(showQuery("Star Wars: Andor")).toBe("Star Wars Andor");
+  });
+
+  it("skips the title search when the title is not distinctive", () => {
+    expect(episodeSearches({ ...CH1, episodeTitle: "Episode 1" })).toEqual(["The Hateful Eight S01E01"]);
   });
 });
 
