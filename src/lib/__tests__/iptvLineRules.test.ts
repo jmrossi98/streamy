@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   BACKUP_URLS_KEY,
+  deadReason,
   isLineDead,
   isLineLogin,
   lineAlert,
@@ -12,6 +13,7 @@ import {
   nextLineName,
   normalizeServerUrl,
   parseBackupUrls,
+  providerLinesNow,
   storedBackupUrls,
   type IptvLine,
 } from "../iptvLineRules";
@@ -88,6 +90,34 @@ describe("naming and capacity", () => {
     expect(isLineDead(line(), NOW)).toBe(false);
     expect(isLineDead(line({ status: "Banned" }), NOW)).toBe(true);
     expect(isLineDead(line({ expiresUtc: "2026-10-01T00:00:00Z" }), NOW)).toBe(true);
+  });
+  it("says why a line is dead", () => {
+    expect(deadReason(line(), NOW)).toBeNull();
+    expect(deadReason(line({ status: "Banned" }), NOW)).toBe("banned");
+    expect(deadReason(line({ status: "Expired" }), NOW)).toBe("expired");
+    expect(deadReason(line({ expiresUtc: "2026-10-01T00:00:00Z" }), NOW)).toBe("expired");
+  });
+  it("never lists a dead line as one that could be free", () => {
+    // trex, 2026-11-19: main login expired 11-15, two extra lines good -- all four read "free".
+    const at = Date.parse("2026-11-19T23:00:00Z");
+    const rows = providerLinesNow(
+      [
+        {
+          name: "trex",
+          lines: [
+            line({ id: 5, name: "trex Default", isDefault: true, status: "Expired", expiresUtc: "2026-11-15T23:00:00Z" }),
+            line({ id: 7, name: "Line 2", expiresUtc: "2027-04-18T22:00:00Z" }),
+          ],
+        },
+        { name: "strong8k", lines: [line({ id: 6, name: "strong8k Default", isDefault: true, expiresUtc: "2027-04-14T01:15:03Z" })] },
+      ],
+      at
+    );
+    expect(rows.map((r) => [r.provider, r.line, r.dead, r.isDefault])).toEqual([
+      ["trex", "trex Default", "expired", true],
+      ["trex", "Line 2", null, false],
+      ["strong8k", "strong8k Default", null, true],
+    ]);
   });
   it("warns about a line the way it warns about the provider login", () => {
     expect(lineAlert(line(), NOW)).toBeNull();
