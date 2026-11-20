@@ -226,8 +226,49 @@ export function lineCapacity(lines: IptvLine[], now: number = Date.now()): numbe
 }
 
 export function isLineDead(line: IptvLine, now: number = Date.now()): boolean {
-  if (/expired|disabled|banned/i.test(line.status ?? "")) return true;
-  return line.expiresUtc != null && Date.parse(line.expiresUtc) < now;
+  return deadReason(line, now) != null;
+}
+
+/** "expired", "banned" or "disabled" for a line that no longer works; null for one that does. */
+export function deadReason(line: Pick<IptvLine, "status" | "expiresUtc">, now: number = Date.now()): string | null {
+  const word = /expired|disabled|banned/i.exec(line.status ?? "")?.[0];
+  if (word) return word.toLowerCase();
+  return line.expiresUtc != null && Date.parse(line.expiresUtc) < now ? "expired" : null;
+}
+
+/** One line as the admin Viewers panel lists it. */
+export type ProviderLineNow = {
+  id: number;
+  provider: string;
+  line: string;
+  isDefault: boolean;
+  maxStreams: number;
+  viewers: number;
+  active: boolean;
+  /** Why the line can't stream ("expired"...), or null when it can. */
+  dead: string | null;
+  expiresUtc: string | null;
+};
+
+/**
+ * Every provider line, for the Viewers panel's free/in-use row. A dead line
+ * is marked as such: Dispatcharr counts no viewers on it, so it used to read
+ * "free" -- trex's main login expired 2026-11-15 and showed free for days.
+ */
+export function providerLinesNow(accounts: { name: string; lines: IptvLine[] }[], now: number = Date.now()): ProviderLineNow[] {
+  return accounts.flatMap((a) =>
+    a.lines.map((l) => ({
+      id: l.id,
+      provider: a.name,
+      line: l.name,
+      isDefault: l.isDefault,
+      maxStreams: l.maxStreams,
+      viewers: l.viewers,
+      active: l.active,
+      dead: deadReason(l, now),
+      expiresUtc: l.expiresUtc,
+    }))
+  );
 }
 
 /** "2 lines · 2 connections" / "1 line · 1 connection" / "No active lines". */

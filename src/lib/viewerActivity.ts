@@ -7,6 +7,7 @@ import { buildOnNow, onNowAlerts, type OnNowEntry } from "./onNowRules";
 import { streamMeter } from "./streamMeter";
 import { playingTitles } from "./streamingNow";
 import { cached } from "./ttlCache";
+import { providerLinesNow, type ProviderLineNow } from "./iptvLineRules";
 import {
   deviceLabel,
   isActivelyPlaying,
@@ -94,7 +95,8 @@ export type ViewerSessionView = {
   events: ViewerEvent[];
 };
 
-export type ProviderLine = { id: number; provider: string; line: string; maxStreams: number; viewers: number; active: boolean };
+/** A provider line: see iptvLineRules.ts providerLinesNow. */
+export type ProviderLine = ProviderLineNow;
 
 export type ViewerActivity = {
   generatedAt: number;
@@ -163,11 +165,7 @@ export async function getViewerActivity(now = Date.now()): Promise<ViewerActivit
     };
   });
 
-  const lines = accounts
-    ? accounts.flatMap((a) =>
-        a.lines.map((l) => ({ id: l.id, provider: a.name, line: l.name, maxStreams: l.maxStreams, viewers: l.viewers, active: l.active }))
-      )
-    : null;
+  const lines = accounts ? providerLinesNow(accounts, now) : null;
 
   const streams = streamMeter.snapshot().streams.map((s) => ({ ...s, title: titles.get(`${s.user}\u0000${s.kind}`) ?? null }));
   const onNow = buildOnNow({ sessions, jellyfin, streams, connections, now });

@@ -131,7 +131,20 @@ function ProviderLines({ data }: { data: ViewerActivity }) {
               <span className="font-semibold text-white">{l.provider}</span>
               <span className="text-white/40"> · </span>
               <span className="font-medium text-white/80">{l.line}</span>{" "}
-              <Badge tone={busy ? "warning" : "success"}>{busy ? `in use${l.maxStreams ? ` ${Math.max(using.length, l.viewers)}/${l.maxStreams}` : ""}` : "free"}</Badge>
+              {/* A dead line has no viewers either, so it used to read "free". */}
+              {l.dead && !busy ? (
+                <Badge tone="danger">
+                  {l.dead}
+                  {l.dead === "expired" && l.expiresUtc && ` ${new Date(l.expiresUtc).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+                </Badge>
+              ) : (
+                <Badge tone={busy ? "warning" : "success"}>{busy ? `in use${l.maxStreams ? ` ${Math.max(using.length, l.viewers)}/${l.maxStreams}` : ""}` : "free"}</Badge>
+              )}
+              {/* Dispatcharr tries an account's main login before its other
+                  lines, dead or not; removing it promotes the next line. */}
+              {l.dead && l.isDefault && (
+                <span className="mt-1 block text-red-200/80">Main login: Live TV still tries it first. Renew it, or remove it under Spend to make the next line the main one.</span>
+              )}
               {using.map((c) => (
                 <span key={c.channelName} className="mt-1 block text-white/60">
                   {c.channelName} · {c.state}
