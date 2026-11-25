@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOutIfStaleSession } from "@/lib/staleSession";
 import { NO_DETAIL, type RequestDetail } from "@/lib/requestNotice";
+import { LIBRARY_SYNC_SLOW_AFTER, librarySyncDelayMs } from "@/lib/librarySyncRules";
 
 // Actively downloading: refresh often enough that the percentage visibly
 // climbs. Queued/searching: nothing moves second-to-second, so back off.
@@ -174,37 +175,44 @@ export function RequestButton({
     return () => clearInterval(interval);
   }, [status, id, mediaType]);
 
-  // Once available, ask the parent server component to re-check video
-  // availability -- if it's synced already, this component unmounts in
-  // favor of the real Play button. Radarr/Sonarr mark the *download* done
-  // immediately (this webhook-driven status), but Jellyfin's own scan can
-  // lag behind that -- webhooks now proactively ask Jellyfin to rescan (see
-  // requestJellyfinLibraryScan), but that's still a real scan taking real
-  // time, not instant. A single one-shot refresh used to leave the button
-  // reading "Downloaded -- tap to refresh" with the tap doing nothing
-  // visible whenever that first check landed before the scan finished --
-  // reported live as persisting even through a real full-page reload,
-  // because a normal page load only gets *one* check too. This retries with
-  // backoff instead, so the swap usually just happens on its own; syncingRef
-  // (not the request's own `status`, which the retry itself doesn't change)
-  // is what should stop the run if the viewer navigates away or the status
-  // otherwise leaves "available" from under it.
+  // Once available, keep asking the parent server component to re-check
+  // video availability until it is there -- then this component unmounts in
+  // favor of the real Play button. Radarr/Sonarr mark the *download* done at
+  // once, but Jellyfin's scan of the new file can lag by seconds or minutes.
+  // This used to retry for ~40 s and then ask the viewer to "tap to check
+  // again"; it now keeps going for as long as the page is open, on the
+  // schedule in librarySyncRules.ts, and checks straight away when a tab that
+  // was in the background comes back. Jake, 2026-11-25: "when titles are done
+  // downloading, can we refresh ourselves instead of asking the user to?"
   const [checking, startChecking] = useTransition();
   const [stillSyncing, setStillSyncing] = useState(false);
   useEffect(() => {
     if (status !== "available") return;
     let cancelled = false;
-    const delaysMs = [1500, 3000, 6000, 12000, 20000]; // ~42s total
-    (async () => {
-      for (const delay of delaysMs) {
-        await new Promise((r) => setTimeout(r, delay));
-        if (cancelled) return;
-        setStillSyncing(true);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    const check = () => {
+      if (cancelled) return;
+      if (document.visibilityState === "visible") {
+        if (attempt >= LIBRARY_SYNC_SLOW_AFTER) setStillSyncing(true);
         startChecking(() => router.refresh());
       }
-    })();
+      schedule();
+    };
+    const schedule = () => {
+      timer = setTimeout(check, librarySyncDelayMs(attempt++));
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || cancelled) return;
+      if (timer) clearTimeout(timer);
+      check();
+    };
+    schedule();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [status, router]);
 
@@ -295,29 +303,19 @@ export function RequestButton({
 
   if (status === "available") {
     // Downloaded (Radarr/Sonarr's own signal) doesn't mean *playable* yet --
-    // Jellyfin still has to scan the file in, which the retry loop above is
-    // actively waiting on. Distinguishing "just landed here" from "checked
-    // and it's still not showing up" is what the one-shot version couldn't
-    // do: a bare "tap to refresh" that visibly did nothing read as broken.
-    const label = checking
-      ? "Checking…"
-      : stillSyncing
-        ? "Still syncing to the library - tap to check again"
-        : "Downloaded - tap to refresh";
+    // Jellyfin still has to scan the file in, which the loop above keeps
+    // checking for on its own. Nothing here asks the viewer to do anything.
     return (
       <div className={DOWNLOADING_BADGE_CLASS}>
         <div className="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setStillSyncing(true);
-              startChecking(() => router.refresh());
-            }}
-            disabled={checking}
-            className="text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal hover:text-white disabled:opacity-70"
+          <span
+            className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide md:text-base md:normal-case md:tracking-normal"
+            role="status"
+            aria-busy={checking}
           >
-            {label}
-          </button>
+            <span className="h-4 w-4 shrink-0 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+            {stillSyncing ? "Downloaded - still adding to the library…" : "Downloaded - getting it ready…"}
+          </span>
           {authStatus === "authenticated" && (
             <button
               type="button"
