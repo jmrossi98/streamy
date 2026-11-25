@@ -10,6 +10,7 @@
  */
 
 import { isLineDead, type IptvLine } from "./iptvLineRules";
+import { providerAlert } from "./credentialRules";
 
 /**
  * "nolines": every line of the provider has been removed (Jake, 2026-11-15:
@@ -29,9 +30,47 @@ export type ProviderAvailability = {
 export type AccountLike = { name: string; lines: IptvLine[] };
 
 /**
+ * The lines that can stream: switched on, not reported dead, and not the main
+ * login when the renewal probe says that login has lapsed.
+ *
+ * The probe (mediabox iptv-subscriptions.py) asks with the main login only, so
+ * its "Expired" is about that login, not the provider. Treating it as the
+ * whole provider is what broke 2026-11-25: trex's main login had lapsed on
+ * 11-15 while Lines 2 and 3 worked, and every trex channel read "Provider
+ * offline", trex left the game pages' un-added feeds, and Barcelona's page
+ * passed over trex's own feeds for DAZN Combat on strong8k.
+ */
+export function workingLines(lines: IptvLine[], mainLoginExpired = false, now: number = Date.now()): IptvLine[] {
+  return lines.filter((l) => l.active && !isLineDead(l, now) && !(l.isDefault && mainLoginExpired));
+}
+
+/** Lowercased names of the IPTV providers the renewal probe says have lapsed (their main login). */
+export function expiredMainLogins(renewals: { source: string; name: string; daysLeft: number | null; detail?: string; problem?: string }[]): Set<string> {
+  return new Set(renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.trim().toLowerCase()));
+}
+
+/**
+ * Lowercased names of the providers nothing can play from: every line dead.
+ * Without the line list (Dispatcharr unreachable) the probe's word is all
+ * there is, so a lapsed main login counts as the provider.
+ */
+export function deadProviders(accounts: AccountLike[] | null | undefined, expired: Set<string>, now: number = Date.now()): Set<string> {
+  if (!accounts) return new Set(expired);
+  const dead = new Set<string>();
+  const known = new Set<string>();
+  for (const a of accounts) {
+    const key = a.name.trim().toLowerCase();
+    known.add(key);
+    if (workingLines(a.lines, expired.has(key), now).length === 0) dead.add(key);
+  }
+  for (const key of expired) if (!known.has(key)) dead.add(key);
+  return dead;
+}
+
+/**
  * provider name (lowercased) -> availability. `expired` is the set of provider
- * names whose subscription has lapsed (getAutomaticRenewals + providerAlert),
- * which no line count can reveal.
+ * names whose main login the renewal probe says has lapsed (expiredMainLogins):
+ * it rules out that line, not the provider -- see workingLines.
  */
 export function providerAvailability(
   accounts: AccountLike[] | null | undefined,
@@ -40,10 +79,10 @@ export function providerAvailability(
   const out: Record<string, ProviderAvailability> = {};
   for (const a of accounts ?? []) {
     const key = a.name.trim().toLowerCase();
-    const working = a.lines.filter((l) => l.active && !isLineDead(l));
+    const working = workingLines(a.lines, expired.has(key));
     const capacity = working.reduce((n, l) => n + Math.max(0, l.maxStreams || 0), 0);
     const free = working.reduce((n, l) => n + Math.max(0, (l.maxStreams || 0) - (l.viewers || 0)), 0);
-    const down = expired.has(key) || working.length === 0;
+    const down = working.length === 0;
     const state = !a.lines.some((l) => l.active) ? "nolines" : down ? "down" : capacity > 0 && free <= 0 ? "full" : "ok";
     out[key] = { free, capacity, state };
   }

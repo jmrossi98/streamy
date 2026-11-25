@@ -14,8 +14,7 @@ import {
 } from "@/lib/liveTv";
 import { getChannelInfo, getMappedChannelPrograms, listIptvAccountsCached, type ChannelInfo } from "@/lib/dispatcharr";
 import { getAutomaticRenewals } from "@/lib/renewals";
-import { providerAlert } from "@/lib/credentialRules";
-import { channelProviderState, providerAvailability, type ProviderState } from "@/lib/providerAvailability";
+import { channelProviderState, expiredMainLogins, providerAvailability, type ProviderState } from "@/lib/providerAvailability";
 import { fixtureGuidePrograms, trimGuidePrograms, type GuideProgram } from "@/lib/liveGuideGrid";
 import { getTodaysFixtures } from "@/lib/sportsSchedule";
 import { getLiveScheduleForRender } from "@/lib/liveSchedule";
@@ -85,10 +84,7 @@ export default async function LivePage({
     infoPromise,
   ])
     .then(([accounts, renewals, info]) => {
-      const expired = new Set(
-        renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
-      );
-      const availability = providerAvailability(accounts, expired);
+      const availability = providerAvailability(accounts, expiredMainLogins(renewals));
       const out: Record<string, ProviderState> = {};
       for (const c of channels) {
         const state = channelProviderState(info[c.name]?.provider, availability);

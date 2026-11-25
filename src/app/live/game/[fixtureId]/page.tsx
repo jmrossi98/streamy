@@ -29,8 +29,7 @@ import { GameChannelPicker, type PendingAdd } from "@/components/GameChannelPick
 import { namesGameDate, namesOtherDate } from "@/lib/liveGuideGrid";
 import { GameStreamFinder } from "@/components/GameStreamFinder";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
-import { getAutomaticRenewals } from "@/lib/renewals";
-import { providerAlert } from "@/lib/credentialRules";
+import { getDeadProviders } from "@/lib/deadProviders";
 import { recordGameVisit } from "@/lib/gamePrep";
 
 /**
@@ -139,18 +138,15 @@ export default async function GamePage({ params }: { params: Promise<{ fixtureId
   // "Stale" here means "do not default to this": the provider gave up on it,
   // it would not open at the last scan, or its own guide has something other
   // than this sport in the slot.
-  // A provider whose subscription has lapsed: its login no longer works, so
-  // none of its channels can play. On 2026-10-15 trex expired at 22:00 and
-  // a Sharks game fell back to NHL Network on trex -- nothing here knew.
+  // A provider none of whose lines works: none of its channels can play. On
+  // 2026-10-15 trex expired at 22:00 and a Sharks game fell back to NHL
+  // Network on trex -- nothing here knew. Only every line, though: on
+  // 2026-11-25 trex's main login had lapsed with two lines still working, and
+  // Barcelona's page passed over trex's own feeds for DAZN Combat.
   // Best effort, like the lookups above.
   let expiredProviders = new Set<string>();
   try {
-    const renewals = await getAutomaticRenewals();
-    expiredProviders = new Set(
-      renewals
-        .filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger")
-        .map((r) => r.name.toLowerCase())
-    );
+    expiredProviders = await getDeadProviders();
   } catch (err) {
     console.error("[live/game] provider expiry lookup failed:", err);
   }

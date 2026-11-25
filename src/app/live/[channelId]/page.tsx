@@ -8,8 +8,7 @@ import { DemoteChannelButton } from "@/components/DemoteChannelButton";
 import { getLiveChannel, isJellyfinReachable } from "@/lib/liveTv";
 import { findChannelIdByName, getChannelInfo, isDispatcharrConfigured, listIptvAccounts } from "@/lib/dispatcharr";
 import { getAutomaticRenewals } from "@/lib/renewals";
-import { providerAlert } from "@/lib/credentialRules";
-import { channelProviderState, providerAvailability, type ProviderState } from "@/lib/providerAvailability";
+import { channelProviderState, expiredMainLogins, providerAvailability, type ProviderState } from "@/lib/providerAvailability";
 import { LivePlayer } from "@/components/LivePlayer";
 import { BROWSE_PAGE_CLASS } from "@/lib/browseLayout";
 
@@ -70,10 +69,7 @@ export default async function LiveChannelPage({
     // used-up or offline provider is visible before the player spins.
     try {
       const [accounts, renewals] = await Promise.all([listIptvAccounts(), getAutomaticRenewals().catch(() => [])]);
-      const expired = new Set(
-        renewals.filter((r) => r.source === "iptv" && providerAlert(r)?.tone === "danger").map((r) => r.name.toLowerCase())
-      );
-      providerState = channelProviderState(provider, providerAvailability(accounts, expired));
+      providerState = channelProviderState(provider, providerAvailability(accounts, expiredMainLogins(renewals)));
     } catch (err) {
       console.error("[live/channel] provider availability failed:", err);
     }
